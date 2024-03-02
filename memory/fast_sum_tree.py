@@ -1,3 +1,5 @@
+import numpy as np
+
 class FastSumTree(object):
     # https://medium.com/free-code-camp/improvements-in-deep-q-learning-dueling-double-dqn-prioritized-experience-replay-and-fixed-58b130cc5682
 

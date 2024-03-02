@@ -1,3 +1,6 @@
+import sys
+sys.path.append('../')
+
 import os
 # os.environ["OMP_NUM_THREADS"] = f"{1}"
 # os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
@@ -31,15 +34,9 @@ from typing import Deque, Dict, List, Tuple
 import gymnasium as gym
 from time import time
 # import moviepy
-
-# from segment_tree import MinSegmentTree, SumSegmentTree
-
-import operator
-from typing import Callable
-from segment_tree import MinSegmentTree, SumSegmentTree
-from replay_buffer import ReplayBuffer
-from prioritized_replay_buffer import PrioritizedReplayBuffer, FastPrioritizedReplayBuffer
-from rainbow_network import Network
+from memory.replay_buffer import ReplayBuffer
+from memory.prioritized_replay_buffer import PrioritizedReplayBuffer, FastPrioritizedReplayBuffer
+from rainbow.rainbow_network import Network
 
 class RainbowDQN:
     def __init__(

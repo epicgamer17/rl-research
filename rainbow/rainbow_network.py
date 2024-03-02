@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from noisy_dense import NoisyDense
+from layers.noisy_dense import NoisyDense
 # from noisy_conv2d import NoisyConv2D
 
 class Network(tf.keras.Model):
