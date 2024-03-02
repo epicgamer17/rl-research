@@ -1,6 +1,6 @@
 import time
 import gymnasium as gym
-environments_list = [gym.make("CartPole-v1", render_mode="rgb_array"), gym.make("Acrobot-v1", render_mode="rgb_array"), gym.make("MountainCar-v0", render_mode="rgb_array"), ]
+environments_list = gym.make("CartPole-v1", render_mode="rgb_array")
 GAME_ACTIONS = environments_list.action_space.n
 GAME_OBS = environments_list.observation_space.shape[0]
 from copy import deepcopy
