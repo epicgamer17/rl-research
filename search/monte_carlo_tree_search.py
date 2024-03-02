@@ -1,13 +1,11 @@
-# add wining/lossing/draw function
 import time
 import gymnasium as gym
 environments_list = [gym.make("CartPole-v1", render_mode="rgb_array"), gym.make("Acrobot-v1", render_mode="rgb_array"), gym.make("MountainCar-v0", render_mode="rgb_array"), ]
 GAME_ACTIONS = environments_list.action_space.n
 GAME_OBS = environments_list.observation_space.shape[0]
 from copy import deepcopy
-from math import log, inf, sqrt
+from math import log, sqrt, inf
 import random
-
 
 class Node:
     def __init__(self, game, done, parent, observation, action_to_get_here):
@@ -23,7 +21,7 @@ class Node:
 
     def get_UCB_score(self):
         if self.visits == 0:
-            return float('inf')
+            return inf
         return self.total_rollouts / self.visits + sqrt(log(self.parent.visits) / self.visits)
     
     def create_children(self):
@@ -40,11 +38,9 @@ class Node:
         while current.children:
             child = current.children
             max_U = max(c.get_UCB_score() for c in child.values())
-            actions = [ a for a,c in child.items() if c.get_UCB_score() == max_U ]
-            if len(actions) == 0:
-                print("error zero length ", max_U)                      
-            action = random.choice(actions)
-            current = child[action]
+            actions = [ a for a,c in child.items() if c.get_UCB_score() == max_U ]                  
+            action_selected = random.choice(actions)
+            current = child[action_selected]
                 
         if current.visits ==0:
             current.total_rollouts += current.rollout()
