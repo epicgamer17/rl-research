@@ -71,18 +71,14 @@ class Node:
             if done:
                 new_game.reset()
                 new_game.close()
-                break             
-        return v
+                return v          
 
     def choose_next(self):
         if self.done:
             raise ValueError("game has ended")
         if not self.children:
             raise ValueError('no children found and game has not ended')
-        child = self.children
-        max_N = max(node.N for node in child.values())
-        max_children = [ c for a,c in child.items() if c.N == max_N ]
-        if len(max_children) == 0:
-            print("error zero length ", max_N)   
+        max_N = max(node.N for node in self.children.values())
+        max_children = [ c for a,c in self.children.items() if c.N == max_N ]   
         max_child = random.choice(max_children)
         return max_child, max_child.action_to_get_here
