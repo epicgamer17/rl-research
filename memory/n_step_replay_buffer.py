@@ -1,9 +1,14 @@
 import numpy as np
 from collections import deque
 from time import time
+import scipy.signal
+
+def discounted_cumulative_sums(x, discount):
+    # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
+    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 class ReplayBuffer:
-    def __init__(self, observation_dimensions, max_size: int, batch_size = 32, n_step = 1, gamma = 0.99):
+    def __init__(self, observation_dimensions, max_size: int, batch_size = 0, n_step = 1, gamma = 0.99):
         # self.observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         # self.next_observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         observation_buffer_shape = []
@@ -15,9 +20,12 @@ class ReplayBuffer:
         self.action_buffer = np.zeros(max_size, dtype=np.int32)
         self.reward_buffer = np.zeros(max_size, dtype=np.float32)
         self.done_buffer = np.zeros(max_size)
+        self.pointer, self.trajectory_start_index = 0, 0
+
+
 
         self.max_size = max_size
-        self.batch_size = batch_size
+        self.batch_size = batch_size if batch_size > 0 else max_size
         self.pointer = 0
         self.size = 0
 
@@ -51,6 +59,7 @@ class ReplayBuffer:
 
         # print("Buffer Storage Time ", time() - time1)
         return self.n_step_buffer[0]
+        
 
     def sample(self):
         # print("Sampling From Buffer")

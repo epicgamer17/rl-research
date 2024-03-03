@@ -1,18 +1,13 @@
 import sys
 
 sys.path.append("../")
-import rainbow.rainbow_dqn as dqn
+from rainbow.rainbow_agent import RainbowAgent
 
-default_learner_config = {
-    "remove_old_experiences_interval": 100,  # number of learning steps between removing old experiences from remote replay buffer
-}
-
-
-class LearnerBase(dqn.RainbowDQN):
-    def __init__(self, env, config, learner_config=default_learner_config):
+class LearnerBase(RainbowAgent):
+    def __init__(self, env, config):
         super().__init__(model_name="learner", env=env, config=config)
         self.graph_interval = 200
-        self.remove_old_experiences_interval = learner_config[
+        self.remove_old_experiences_interval = config[
             "remove_old_experiences_interval"
         ]
         self.running = False
@@ -66,8 +61,8 @@ class LearnerBase(dqn.RainbowDQN):
 
 
 class SingleMachineLearner(LearnerBase):
-    def __init__(self, env, config, learner_config=default_learner_config):
-        super().__init__(env=env, config=config, learner_config=learner_config)
+    def __init__(self, env, config):
+        super().__init__(env=env, config=config)
 
     def sample_experiences_from_remote_replay_buffer(self):
         pass

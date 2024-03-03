@@ -1,50 +1,56 @@
 import sys
-sys.path.append('../')
+
+sys.path.append("../")
 
 import os
+
 # os.environ["OMP_NUM_THREADS"] = f"{1}"
 # os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
 # os.environ['TF_NUM_INTRAOP_THREADS'] = f"{1}"
 
 import tensorflow as tf
+
 # tf.config.threading.set_intra_op_parallelism_threads(1)
 # tf.config.threading.set_inter_op_parallelism_threads(1)
 
-import gc
-
-gpus = tf.config.list_physical_devices('GPU')
+gpus = tf.config.list_physical_devices("GPU")
 if gpus:
-  try:
-    # Currently, memory growth needs to be the same across GPUs
-    for gpu in gpus:
-      tf.config.experimental.set_memory_growth(gpu, True)
-    logical_gpus = tf.config.list_logical_devices('GPU')
-    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-  except RuntimeError as e:
-    # Memory growth must be set before GPUs have been initialized
-    print(e)
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.list_logical_devices("GPU")
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
 
 import datetime
 import numpy as np
 import copy
 import matplotlib.pyplot as plt
 from IPython.display import clear_output
+
 # import search
 from typing import Deque, Dict, List, Tuple
 import gymnasium as gym
 from time import time
+
 # import moviepy
-from memory.replay_buffer import ReplayBuffer
-from memory.prioritized_replay_buffer import PrioritizedReplayBuffer, FastPrioritizedReplayBuffer
+from memory.n_step_replay_buffer import ReplayBuffer
+from memory.prioritized_replay_buffer import (
+    PrioritizedReplayBuffer,
+    FastPrioritizedReplayBuffer,
+)
 from rainbow.rainbow_network import Network
 
-class RainbowDQN:
+
+class RainbowAgent:
     def __init__(
         self,
         env,
         model_name=datetime.datetime.now().timestamp(),
         config=None,
-        start_episode=0,
     ):
         self.config = config
         self.model_name = model_name
@@ -53,30 +59,42 @@ class RainbowDQN:
         self.observation_dimensions = env.observation_space.shape
         self.num_actions = env.action_space.n
 
-        self.model = Network(config, self.num_actions, input_shape=self.observation_dimensions)
+        self.model = Network(
+            config, self.num_actions, input_shape=self.observation_dimensions
+        )
 
-        self.target_model = Network(config, self.num_actions, input_shape=self.observation_dimensions)
+        self.target_model = Network(
+            config, self.num_actions, input_shape=self.observation_dimensions
+        )
 
         self.optimizer = config["optimizer_function"]
-        self.adam_epsilon=config["adam_epsilon"]
+        self.adam_epsilon = config["adam_epsilon"]
         self.learning_rate = config["learning_rate"]
         self.loss_function = config["loss_function"]
+        # self.clipnorm = config["clipnorm"]
         self.clipnorm = 10.0
 
         self.model.compile(
-            optimizer=self.optimizer(learning_rate=self.learning_rate, epsilon=self.adam_epsilon, clipnorm=self.clipnorm),
+            optimizer=self.optimizer(
+                learning_rate=self.learning_rate,
+                epsilon=self.adam_epsilon,
+                clipnorm=self.clipnorm,
+            ),
             loss=config["loss_function"],
         )
 
         self.target_model.compile(
-            optimizer=self.optimizer(learning_rate=self.learning_rate, epsilon=self.adam_epsilon, clipnorm=self.clipnorm),
+            optimizer=self.optimizer(
+                learning_rate=self.learning_rate,
+                epsilon=self.adam_epsilon,
+                clipnorm=self.clipnorm,
+            ),
             loss=config["loss_function"],
         )
 
         self.target_model.set_weights(self.model.get_weights())
 
         self.num_training_steps = int(config["num_training_steps"])
-        self.start_episode = start_episode
 
         self.discount_factor = config["discount_factor"]
 
@@ -93,8 +111,7 @@ class RainbowDQN:
         # self.per_beta_increase = config["per_beta_increase"]
         self.per_beta_increase = (1 - self.per_beta) / self.num_training_steps
         self.per_epsilon = config["per_epsilon"]
-        # TESTING WITH FAST PRIORITIZED EXPERIENCE REPLAY
-        # it is an approximation but should be much faster computationally
+
         self.memory = PrioritizedReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.memory_size,
@@ -156,7 +173,7 @@ class RainbowDQN:
 
     def prepare_states(self, state):
         if (self.env.observation_space.high == 255).all():
-            state = np.array(state)/255
+            state = np.array(state) / 255
         # print(state.shape)
         if state.shape == self.observation_dimensions:
             new_shape = (1,) + state.shape
@@ -181,7 +198,9 @@ class RainbowDQN:
         return q_values
 
     def select_action(self, state):
-        q_values = np.sum(np.multiply(self.predict_single(state), np.array(self.support)), axis=2)
+        q_values = np.sum(
+            np.multiply(self.predict_single(state), np.array(self.support)), axis=2
+        )
         # print(q_values)
         selected_action = np.argmax(q_values)
         # selected_action = np.argmax(self.predict_single(state))
@@ -223,45 +242,66 @@ class RainbowDQN:
             # print("weights", weights)
             indices = samples["indices"]
             discount_factor = self.discount_factor
-            target_ditributions = self.compute_target_distributions(samples, discount_factor)
-            self.model.loss.actions = samples["actions"]
+            target_ditributions = self.compute_target_distributions(
+                samples, discount_factor
+            )
             initial_distributions = self.model(inputs)
-            distributions_to_train = tf.gather_nd(initial_distributions, list(zip(range(initial_distributions.shape[0]), actions)))
-            elementwise_loss = self.model.loss.call(y_pred=distributions_to_train, y_true=tf.convert_to_tensor
-            (target_ditributions))
-            assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(elementwise_loss)
+            distributions_to_train = tf.gather_nd(
+                initial_distributions,
+                list(zip(range(initial_distributions.shape[0]), actions)),
+            )
+            elementwise_loss = self.model.loss.call(
+                y_pred=distributions_to_train,
+                y_true=tf.convert_to_tensor(target_ditributions),
+            )
+            assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
+                elementwise_loss
+            )
             # print("One Step Learning Time ", time() - time2)
             if self.use_n_step:
                 # print("N-Step Learning")
                 # time2 = time()
-                discount_factor = self.discount_factor ** self.n_step
+                discount_factor = self.discount_factor**self.n_step
                 n_step_samples = self.memory_n.sample_from_indices(indices)
                 actions = n_step_samples["actions"]
                 n_step_observations = n_step_samples["observations"]
                 observations = n_step_observations
                 inputs = self.prepare_states(observations)
-                target_ditributions = self.compute_target_distributions(n_step_samples, discount_factor)
-                self.model.loss.actions = n_step_samples["actions"]
+                target_ditributions = self.compute_target_distributions(
+                    n_step_samples, discount_factor
+                )
                 initial_distributions = self.model(inputs)
-                distributions_to_train = tf.gather_nd(initial_distributions, list(zip(range(initial_distributions.shape[0]), actions)))
-                elementwise_loss_n_step = self.model.loss.call(y_pred=distributions_to_train, y_true=tf.convert_to_tensor(target_ditributions))
+                distributions_to_train = tf.gather_nd(
+                    initial_distributions,
+                    list(zip(range(initial_distributions.shape[0]), actions)),
+                )
+                elementwise_loss_n_step = self.model.loss.call(
+                    y_pred=distributions_to_train,
+                    y_true=tf.convert_to_tensor(target_ditributions),
+                )
                 # add the losses together to reduce variance (original paper just uses n_step loss)
                 elementwise_loss += elementwise_loss_n_step
-                assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(elementwise_loss)
+                assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
+                    elementwise_loss
+                )
                 # print("Elementwise Loss N-Step Shape", elementwise_loss_n_step.shape)
                 # print("N-Step Learning Time ", time() - time2)
 
             # print(weights)
             loss = tf.reduce_mean(elementwise_loss * weights)
 
-        #TRAINING WITH GRADIENT TAPE
+        # TRAINING WITH GRADIENT TAPE
         # print("Computing Gradients")
         # time2 = time()
         gradients = tape.gradient(loss, self.model.trainable_variables)
         # print("Computing Gradients Time ", time() - time2)
         # print("Applying Gradients")
         # time2 = time()
-        self.optimizer(learning_rate=self.learning_rate, epsilon=self.adam_epsilon, clipnorm=self.clipnorm).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
+        self.optimizer(
+            learning_rate=self.learning_rate,
+            epsilon=self.adam_epsilon,
+            clipnorm=self.clipnorm,
+        ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
         # print("Applying Gradients Time ", time() - time2)
 
         # TRAINING WITH tf.train_on_batch
@@ -272,7 +312,9 @@ class RainbowDQN:
         # time2 = time()
         prioritized_loss = elementwise_loss + self.per_epsilon
         # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
-        prioritized_loss = np.clip(prioritized_loss, 0.01, tf.reduce_max(prioritized_loss))
+        prioritized_loss = np.clip(
+            prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
+        )
         self.memory.update_priorities(indices, prioritized_loss)
         # print("Updating Priorities Time ", time() - time2)
 
@@ -294,15 +336,17 @@ class RainbowDQN:
         inputs = self.prepare_states(observations)
         next_observations = samples["next_observations"]
         next_inputs = self.prepare_states(next_observations)
-        rewards = samples["rewards"].reshape(-1,1)
-        dones = samples["dones"].reshape(-1,1)
+        rewards = samples["rewards"].reshape(-1, 1)
+        dones = samples["dones"].reshape(-1, 1)
 
         # print(rewards.shape, dones.shape)
 
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
 
-        target_distributions = target_network_distributions[range(self.replay_batch_size), next_actions]
+        target_distributions = target_network_distributions[
+            range(self.replay_batch_size), next_actions
+        ]
         target_z = rewards + (1 - dones) * (discount_factor) * self.support
         # print("Target Z", target_z.shape)
         target_z = np.clip(target_z, self.v_min, self.v_max)
@@ -394,13 +438,17 @@ class RainbowDQN:
                 counter += 1
             self.target_model.set_weights(new_weights)
         else:
-            if step % self.transfer_frequency == 0 and (len(self.memory) >= self.replay_batch_size):
+            if step % self.transfer_frequency == 0 and (
+                len(self.memory) >= self.replay_batch_size
+            ):
                 self.target_model.set_weights(self.model.get_weights())
         # print("Updating Target Model Time ", time() - time1)
 
     def train(self, graph_interval=200):
         self.is_test = False
-        stat_score = [] # make these num trials divided by graph interval so i dont need to append (to make it faster?)
+        stat_score = (
+            []
+        )  # make these num trials divided by graph interval so i dont need to append (to make it faster?)
         stat_test_score = []
         stat_loss = []
         self.fill_memory()
@@ -413,7 +461,11 @@ class RainbowDQN:
         while training_step < self.num_training_steps:
             # state_input = self.prepare_state(state)
             # clear_output(wait=False)
-            print("{} Training Step: {}/{}".format(self.model_name, training_step, self.num_training_steps))
+            print(
+                "{} Training Step: {}/{}".format(
+                    self.model_name, training_step, self.num_training_steps
+                )
+            )
             # print("Last Training Score: ", stat_score[-1] if len(stat_score) > 0 else 0)
             # print("Last Training Loss: ", stat_loss[-1] if len(stat_loss) > 0 else 0)
             action = self.select_action(state)
@@ -422,28 +474,16 @@ class RainbowDQN:
             done = terminated or truncated
             state = next_state
             score += reward
-
-            if truncated:
-                num_trials_truncated += 1
-            #     if num_trials_truncated > 100:
-            #         num_trials_truncated += self.num_training_steps - step
-            #         break
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 
             if done:
                 state, _ = self.env.reset()
                 stat_score.append(score)
-                if score >= self.env.spec.reward_threshold:
-                    print("Your DQN agent has achieved the env's reward threshold.")
-                    # test_score = self.test()
-                    # if test_score >= self.env.spec.reward_threshold:
-                    #     print("Congratulations!")
-                    #     break
-                    # else:
-                    #     print("It was a fluke!")
                 score = 0
 
-            if (step % self.replay_period) == 0 and (len(self.memory) >= self.replay_batch_size):
+            if (step % self.replay_period) == 0 and (
+                len(self.memory) >= self.replay_batch_size
+            ):
                 model_update_count += 1
                 loss = self.experience_replay()
                 training_step += 1
@@ -457,26 +497,26 @@ class RainbowDQN:
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
             step += 1
 
-            gc.collect()
-
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
         self.export()
         self.env.close()
         return num_trials_truncated / self.num_training_steps
 
     def plot_graph(self, score, loss, test_score, step):
-            fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3, figsize=(30, 5))
-            ax1.plot(score, linestyle="solid")
-            ax1.set_title('Frame {}. Score: {}'.format(step, np.mean(score[-10:])))
-            ax2.plot(loss, linestyle="solid")
-            ax2.set_title('Frame {}. Loss: {}'.format(step, np.mean(loss[-10:])))
-            ax3.plot(test_score, linestyle="solid")
-            ax3.axhline(y=self.env.spec.reward_threshold, color='r', linestyle='-')
-            ax3.set_title('Frame {}. Test Score: {}'.format(step, np.mean(test_score[-10:])))
-            plt.savefig("./{}.png".format(self.model_name))
-            plt.close(fig)
+        fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3, figsize=(30, 5))
+        ax1.plot(score, linestyle="solid")
+        ax1.set_title("Frame {}. Score: {}".format(step, np.mean(score[-10:])))
+        ax2.plot(loss, linestyle="solid")
+        ax2.set_title("Frame {}. Loss: {}".format(step, np.mean(loss[-10:])))
+        ax3.plot(test_score, linestyle="solid")
+        ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
+        ax3.set_title(
+            "Frame {}. Test Score: {}".format(step, np.mean(test_score[-10:]))
+        )
+        plt.savefig("./{}.png".format(self.model_name))
+        plt.close(fig)
 
-    def test(self, video_folder = '', num_trials=100) -> None:
+    def test(self, video_folder="", num_trials=100) -> None:
         """Test the agent."""
         self.is_test = True
         average_score = 0
@@ -495,7 +535,7 @@ class RainbowDQN:
             average_score += score
             print("score: ", score)
 
-        if video_folder == '':
+        if video_folder == "":
             video_folder = "./videos/{}".format(self.model_name)
         # for recording a video
         self.test_env = gym.wrappers.RecordVideo(self.test_env, video_folder)
