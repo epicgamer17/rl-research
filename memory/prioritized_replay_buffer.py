@@ -2,7 +2,7 @@ from time import time
 import numpy as np
 from memory.segment_tree import SumSegmentTree, MinSegmentTree
 from memory.fast_sum_tree import FastSumTree
-from memory.replay_buffer import ReplayBuffer
+from memory.n_step_replay_buffer import ReplayBuffer
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(
