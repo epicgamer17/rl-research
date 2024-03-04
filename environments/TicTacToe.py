@@ -28,7 +28,8 @@ class TicTacToe(gym.Env):
         self.winner()
         reward = 1 if self.done else 0
         self.turn += 1
-        return self.grid, reward, self.done, False, self.turn 
+        self.get_info()
+        return self.grid, reward, self.done, False, 
     
 
     def winner(self):
@@ -37,8 +38,22 @@ class TicTacToe(gym.Env):
                 self.done = True
             if (self.grid[0][i] == self.grid[1][i] == self.grid[2][i]) and (self.grid[0][i]!= 0):
                 self.done = True
+            if (self.grid[0][0] == self.grid[1][1] == self.grid[2][2]) and (self.grid[0][0]!= 0):
+                self.done = True
+            if (self.grid[0][2] == self.grid[1][1] == self.grid[2][0]) and (self.grid[0][2]!= 0):
+                self.done = True
         return self.done
 
+    def get_info(self):
+        dico = {}
+        dico["turn"] = self.turn
+        l = []
+        for i in range(9):
+            if self.grid[i//3][i%3] == 0:
+                l.append(i)
+        dico["possible_actions"] = l
+        return dico
+    
 
 register(
     id='TicTacToe-v0',
