@@ -410,7 +410,7 @@ class RainbowAgent:
         for experience in range(self.min_memory_size):
             # clear_output(wait=False)
             # print("Filling Memory")
-            print("Memory Size: {}/{}".format(experience, self.min_memory_size))
+            # print("Memory Size: {}/{}".format(experience, self.min_memory_size))
             # state_input = self.prepare_state(state)
             action = self.env.action_space.sample()
             self.transition = [state, action]
@@ -461,11 +461,6 @@ class RainbowAgent:
         while training_step < self.num_training_steps:
             # state_input = self.prepare_state(state)
             # clear_output(wait=False)
-            print(
-                "{} Training Step: {}/{}".format(
-                    self.model_name, training_step, self.num_training_steps
-                )
-            )
             # print("Last Training Score: ", stat_score[-1] if len(stat_score) > 0 else 0)
             # print("Last Training Loss: ", stat_loss[-1] if len(stat_loss) > 0 else 0)
             action = self.select_action(state)
@@ -495,6 +490,11 @@ class RainbowAgent:
                 self.export()
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
+                print(
+                "{} Training Step: {}/{}".format(
+                    self.model_name, training_step, self.num_training_steps
+                )
+                )
             step += 1
 
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
