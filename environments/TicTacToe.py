@@ -13,7 +13,7 @@ class TicTacToe(gym.Env):
         self.observation_space = spaces.Box(low=-1, high=1, shape=(3, 3), dtype=np.int)
         self.grid = np.zeros((3, 3))
         self.done = False
-        self.colors = [-1, 1]
+        self.players = [-1, 1]
         self.turn = 0
 
     def reset(self):
@@ -25,16 +25,17 @@ class TicTacToe(gym.Env):
     def step(self, action):
         if action < 0 or action > 8:
             raise ValueError("Action must be between 0 and 8")
-        self.grid[action // 3][action % 3] = self.player[self.turn % 2]
+        self.grid[action // 3][action % 3] = self.players[self.turn % 2]
         self.winner()
         reward = 1 if self.done else 0
         self.turn += 1
-        self._get_info()
+        info = self._get_info()
         return (
             self.grid,
             reward,
             self.done,
             False,
+            info,
         )
 
     def winner(self):
