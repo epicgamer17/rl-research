@@ -1,5 +1,6 @@
 import time
 import gymnasium as gym
+from tic-tac
 environments_list = gym.make("CartPole-v1", render_mode="rgb_array")
 GAME_ACTIONS = environments_list.action_space.n
 GAME_OBS = environments_list.observation_space.shape[0]
