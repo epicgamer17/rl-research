@@ -1,0 +1,44 @@
+import tensorflow as tf
+import numpy as np
+
+from layers.residual import Residual
+
+
+class Network(tf.keras.Model):
+    def __init__(self, config, input_shape, output_shape):
+        super(Network, self).__init__()
+        self.config = config
+        self.input = tf.keras.layers.Conv2D(
+            config["num_filters"],
+            kernel_size=config["kernel_size"],
+            stride=1,
+            padding="same",
+            input_shape=input_shape,
+            activation="relu",
+        )
+        self.input_batch_norm = tf.keras.layers.BatchNormalization()
+        self.residuals = [
+            Residual(config["num_filters"], kernel_size=config["kernel_size"])
+            for _ in range(config["num_res_blocks"])
+        ]
+        self.critic_conv = tf.keras.layers.Conv2D(
+            config["critic_hidden_filters"], kernel_size=1, stride=1, padding="same"
+        )
+        self.critic_batch_norm = tf.keras.layers.BatchNormalization()
+        self.flatten = tf.keras.layers.Flatten()
+        self.critic_dense = tf.keras.layers.Dense(
+            config["critic_dense_size"], activation="relu"
+        )
+        self.critic = tf.keras.layers.Dense(1, activation="tanh")
+
+        self.actor_conv = tf.keras.layers.Conv2D(
+            config["actor_hidden_filters"], kernel_size=1, stride=1, padding="same"
+        )
+        self.actor_batch_norm = tf.keras.layers.BatchNormalization()
+        self.actor_dense = tf.keras.layers.Dense(
+            config["actor_dense_size"], activation="relu"
+        )
+        self.actor = tf.keras.layers.Dense(output_shape, activation="softmax")
+
+    def call(self, inputs):
+        return self.actor(inputs), self.critic(inputs)

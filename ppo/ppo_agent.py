@@ -61,12 +61,6 @@ class PPOAgent:
             config=config,
         )
 
-        # self.old_actor = ActorNetwork(
-        #     input_shape=self.observation_dimensions,
-        #     output_shape=self.num_actions,
-        #     config=config,
-        # )
-
         self.critic = CriticNetwork(
             input_shape=self.observation_dimensions,
             config=config,
@@ -80,31 +74,6 @@ class PPOAgent:
         self.critic_clipnorm = config["critic_clipnorm"]
         self.actor_epsilon = config["actor_epsilon"]
         self.critic_epsilon = config["critic_epsilon"]
-
-        self.actor.compile(
-            optimizer=self.actor_optimizer(
-                learning_rate=self.actor_learning_rate,
-                epsilon=self.actor_epsilon,
-                clipnorm=self.actor_clipnorm,
-            ),
-            loss=config["loss_function"],
-        )
-
-        self.critic.compile(
-            optimizer=self.critic_optimizer(
-                learning_rate=self.critic_learning_rate,
-                epsilon=self.critic_epsilon,
-                clipnorm=self.critic_clipnorm,
-            ),
-            loss=config["loss_function"],
-        )
-
-        # self.old_actor.compile(
-        #     optimizer=self.actor_optimizer(learning_rate=self.actor_learning_rate, epsilon=self.actor_epsilon, clipnorm=self.actor_clipnorm),
-        #     loss=config["loss_function"],
-        # )
-
-        # self.old_actor.set_weights(self.actor.get_weights())
 
         self.clip_param = config["clip_param"]
 

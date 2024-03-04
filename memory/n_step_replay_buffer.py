@@ -3,12 +3,16 @@ from collections import deque
 from time import time
 import scipy.signal
 
+
 def discounted_cumulative_sums(x, discount):
     # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
+
 class ReplayBuffer:
-    def __init__(self, observation_dimensions, max_size: int, batch_size = 0, n_step = 1, gamma = 0.99):
+    def __init__(
+        self, observation_dimensions, max_size: int, batch_size=0, n_step=1, gamma=0.99
+    ):
         # self.observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         # self.next_observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         observation_buffer_shape = []
@@ -16,13 +20,13 @@ class ReplayBuffer:
         observation_buffer_shape += list(observation_dimensions)
         observation_buffer_shape = list(observation_buffer_shape)
         self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
-        self.next_observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
+        self.next_observation_buffer = np.zeros(
+            observation_buffer_shape, dtype=np.float32
+        )
         self.action_buffer = np.zeros(max_size, dtype=np.int32)
         self.reward_buffer = np.zeros(max_size, dtype=np.float32)
         self.done_buffer = np.zeros(max_size)
         self.pointer, self.trajectory_start_index = 0, 0
-
-
 
         self.max_size = max_size
         self.batch_size = batch_size if batch_size > 0 else max_size
@@ -59,20 +63,19 @@ class ReplayBuffer:
 
         # print("Buffer Storage Time ", time() - time1)
         return self.n_step_buffer[0]
-        
 
     def sample(self):
         # print("Sampling From Buffer")
         # time1 = time()
-        idx = np.random.choice(self.size, self.batch_size, replace=False)
+        indices = np.random.choice(self.size, self.batch_size, replace=False)
 
         # print("Buffer Sampling Time ", time() - time1)
         return dict(
-            observations=self.observation_buffer[idx],
-            next_observations=self.next_observation_buffer[idx],
-            actions=self.action_buffer[idx],
-            rewards=self.reward_buffer[idx],
-            dones=self.done_buffer[idx],
+            observations=self.observation_buffer[indices],
+            next_observations=self.next_observation_buffer[indices],
+            actions=self.action_buffer[indices],
+            rewards=self.reward_buffer[indices],
+            dones=self.done_buffer[indices],
         )
 
     def sample_from_indices(self, indices):
