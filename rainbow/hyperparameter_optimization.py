@@ -186,10 +186,10 @@ def create_search_space():
             "replay_batch_size", [2**i for i in range(0, 8)]
         ),  ###########
         "memory_size": hp.choice(
-            "memory_size", [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000]
+            "memory_size", [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000]
         ),  #############
         "min_memory_size": hp.choice(
-            "min_memory_size", [0]
+            "min_memory_size", [0, 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000]
         ),  # 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000
         "n_step": hp.choice("n_step", [1, 2, 3, 4, 5, 8, 10]),
         "discount_factor": hp.choice(
@@ -214,7 +214,7 @@ def create_search_space():
             "advantage_hidden_layers", [0, 1, 2, 3, 4]
         ),  #
         "value_hidden_layers": hp.choice("value_hidden_layers", [0, 1, 2, 3, 4]),  #
-        "num_training_steps": hp.choice("num_training_steps", [25000]),
+        "num_training_steps": hp.choice("num_training_steps", [30000]),
         "per_epsilon": hp.choice(
             "per_epsilon", [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1]
         ),
@@ -228,40 +228,40 @@ def create_search_space():
     }
     initial_best_config = [
         {
-            "activation": "relu",
-            "kernel_initializer": "he_uniform",
-            "optimizer_function": tf.keras.optimizers.legacy.Adam,  # NO SGD OR RMSPROP FOR NOW SINCE IT IS FOR RAINBOW DQN
-            "learning_rate": 0.001,  #
-            "adam_epsilon": 0.00003125,
+            "activation": 1,
+            "kernel_initializer": 6,
+            "optimizer_function": 0,  # NO SGD OR RMSPROP FOR NOW SINCE IT IS FOR RAINBOW DQN
+            "learning_rate": 5,  #
+            "adam_epsilon": 5,
             # NORMALIZATION?
-            "soft_update": False,  # seems to always be false, we can try it with tru
+            "soft_update": 0,  # seems to always be false, we can try it with tru
             "ema_beta": 0.95,
-            "transfer_frequency": 100,
-            "replay_period": 1,
-            "replay_batch_size": 128,
-            "memory_size": 10000,  #############
-            "min_memory_size": 500,
-            "n_step": 3,
-            "discount_factor": 0.99,
-            "atom_size": 51,  #
-            "conv_layers": [],
-            "conv_layers_noisy": False,
-            "width": 512,
+            "transfer_frequency": 3,
+            "replay_period": 3,
+            "replay_batch_size": 7,
+            "memory_size": 8,  
+            "min_memory_size": 4,
+            "n_step": 2,
+            "discount_factor": 3,
+            "atom_size": 4,  #
+            "conv_layers": 0,
+            "conv_layers_noisy": 0,
+            "width": 4,
             "dense_layers": 2,
-            "dense_layers_noisy": True,  # i think this is always true for rainbow
+            "dense_layers_noisy": 0,  # i think this is always true for rainbow
             # REWARD CLIPPING
-            "noisy_sigma": 0.5,  #
-            "loss_function": tf.keras.losses.KLDivergence(),
-            "dueling": True,
-            "advantage_hidden_layers": 1,  #
-            "value_hidden_layers": 1,  #
-            "num_training_steps": 25000,
-            "per_epsilon": 0.001,
-            "per_alpha": 0.5,
-            "per_beta": 0.5,
+            "noisy_sigma": 0,  #
+            "loss_function": 1,
+            "dueling": 0,
+            "advantage_hidden_layers": 0,  #
+            "value_hidden_layers": 0,  #
+            "num_training_steps": 0,
+            "per_epsilon": 3,
+            "per_alpha": 10,
+            "per_beta": 7,
             # 'per_beta_increase': hp.uniform('per_beta_increase', 0, 0.015),
-            "v_min": -500.0,  # MIN GAME SCORE
-            "v_max": 500.0,  # MAX GAME SCORE
+            "v_min": 0,  # MIN GAME SCORE
+            "v_max": 0,  # MAX GAME SCORE
             # 'search_max_depth': 5,
             # 'search_max_time': 10,
         }
