@@ -147,6 +147,7 @@ class AlphaZeroAgent:
         observations = samples["observations"]
         action_probabilities = samples["action_probabilities"]
         rewards = samples["rewards"]
+        print(rewards)
         inputs = self.prepare_states(observations)
         with tf.GradientTape() as tape:
             value, probabilities = self.model(inputs)
@@ -184,6 +185,7 @@ class AlphaZeroAgent:
         state, _ = self.env.reset()
         epoch = 0
         step = 0
+        game_start_step = 0
         while epoch < self.num_epochs:
             num_episodes = 0
             total_score = 0
@@ -195,22 +197,6 @@ class AlphaZeroAgent:
             # MONTE CARLO MONTE CARLO MONTE CARLO (PICK ACTION WITH MONTE CARLO)
             self.transition += # MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY
             next_state, reward, terminated, truncated = self.step(action)
-            
-            if self.memory.size > self.replay_batch_size:
-                epoch += 1
-                loss = self.experience_replay()
-                stat_loss.append(loss)
-                self.memory.clear()
-                stat_score.append(total_score / num_episodes)
-                stat_test_score.append(self.test())
-                self.plot_graph(
-                stat_score,
-                stat_loss,
-                stat_test_score,
-                step,
-                )
-                self.export()
-
             done = terminated or truncated
             state = next_state
             score += reward
@@ -218,12 +204,27 @@ class AlphaZeroAgent:
             if done:
                 num_episodes += 1
                 state, _ = self.env.reset()
+                self.memory.update_reward(game_start_step)
+                game_start_step = step
                 # if score >= self.env.spec.reward_threshold:
                 #     print("Your agent has achieved the env's reward threshold.")
                 total_score += score
                 score = 0
+                if self.memory.size >= self.replay_batch_size:
+                    epoch += 1
+                    loss = self.experience_replay()
+                    stat_loss.append(loss)
+                    self.memory.clear()
+                    stat_score.append(total_score / num_episodes)
+                    stat_test_score.append(self.test())
+                    self.plot_graph(
+                    stat_score,
+                    stat_loss,
+                    stat_test_score,
+                    step,
+                    )
+                    self.export()
 
-            
         self.plot_graph(
             stat_score,
             stat_loss,
