@@ -2,7 +2,7 @@ import gym
 from gymnasium import spaces
 import pygame
 import numpy as np
-
+from gym.envs.registration import register
 
 class TicTacToe(gym.Env):
     metadata = {}
@@ -40,5 +40,8 @@ class TicTacToe(gym.Env):
         return self.done
 
 
-        
-        
+register(
+    id='TicTacToe-v0',
+    entry_point='environments.tic_tac_toe:TicTacToe',
+    max_episode_steps=9,
+)   
