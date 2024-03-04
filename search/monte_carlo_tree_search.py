@@ -66,7 +66,8 @@ class Node:
         new_game = deepcopy(self.game)
         while not done:
             action = new_game.action_space.sample()
-            observation, reward, done, info = new_game.step(action)
+            observation, reward, terminated, truncated, info = new_game.step(action)
+            done = terminated or truncated
             v += reward
             if done:
                 new_game.reset()
