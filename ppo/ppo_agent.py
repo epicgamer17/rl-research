@@ -76,10 +76,8 @@ class PPOAgent:
         self.critic_optimizer = config["critic_optimizer"]
         self.actor_learning_rate = config["actor_learning_rate"]
         self.critic_learning_rate = config["critic_learning_rate"]
-        # self.actor_clipnorm = config["actor_clipnorm"]
-        # self.critic_clipnorm = config["critic_clipnorm"]
-        self.actor_clipnorm = None
-        self.critic_clipnorm = None
+        self.actor_clipnorm = config["actor_clipnorm"]
+        self.critic_clipnorm = config["critic_clipnorm"]
         self.actor_epsilon = config["actor_epsilon"]
         self.critic_epsilon = config["critic_epsilon"]
 
@@ -226,24 +224,30 @@ class PPOAgent:
         # print("Training Actor")
         with tf.GradientTape() as tape:
             if self.discrete_action_space:
-                probability_ratio = tf.exp(
+                log_ratios = (
                     tfp.distributions.Categorical(self.actor(inputs)).log_prob(actions)
                     - log_probabilities
                 )
             else:
                 mean, std = self.actor(inputs)
-                probability_ratio = tf.exp(
+                log_ratios = (
                     tfp.distributions.Normal(mean, std).log_prob(actions)
                     - log_probabilities
                 )
+
+            probability_ratios = tf.exp(log_ratios)
             min_advantages = tf.where(
                 advantages > 0,
                 (1 + self.clip_param) * advantages,
                 (1 - self.clip_param) * advantages,
             )
+            clipped_probability_ratios = tf.clip_by_value(
+                probability_ratios, 1 - self.clip_param, 1 + self.clip_param
+            )
+            print(min_advantages, clipped_probability_ratios * advantages)
 
             actor_loss = tf.math.minimum(
-                probability_ratio * advantages, min_advantages
+                probability_ratios * advantages, min_advantages
             )  #
             actor_loss = -tf.reduce_mean(actor_loss)  #
 
@@ -260,7 +264,6 @@ class PPOAgent:
                 log_probabilities
                 - tfp.distributions.Categorical(self.actor(inputs)).log_prob(actions)
             )
-
         else:
             mean, std = self.actor(inputs)
             kl_divergence = tf.reduce_mean(
@@ -268,10 +271,14 @@ class PPOAgent:
                 - tfp.distributions.Normal(mean, std).log_prob(actions)
             )
         kl_divergence = tf.reduce_sum(kl_divergence)
+        # print(kl_divergence)
+        # print()
         return kl_divergence
 
     def train_critic(self, inputs, returns):
         with tf.GradientTape() as tape:
+            print(returns)
+            print(self.critic(inputs, training=True))
             critic_loss = tf.reduce_mean(
                 (returns - self.critic(inputs, training=True)) ** 2
             )
@@ -303,14 +310,14 @@ class PPOAgent:
             []
         )  # make these num trials divided by graph interval so i dont need to append (to make it faster?)
         stat_test_score = []
-        stat_loss = []
+        stat_actor_loss = []
+        stat_critic_loss = []
         num_trials_truncated = 0
         state, _ = self.env.reset()
-        step = 0
 
         for epoch in range(self.num_epochs):
-            sum_length = 0
             num_episodes = 0
+            total_score = 0
             score = 0
 
             for timestep in range(self.steps_per_epoch):
@@ -319,7 +326,6 @@ class PPOAgent:
                 done = terminated or truncated
                 state = next_state
                 score += reward
-                sum_length += 1
 
                 if done or timestep == self.steps_per_epoch - 1:
                     last_value = (
@@ -328,9 +334,9 @@ class PPOAgent:
                     self.memory.finish_trajectory(last_value)
                     num_episodes += 1
                     state, _ = self.env.reset()
-                    stat_score.append(score)
                     if score >= self.env.spec.reward_threshold:
                         print("Your agent has achieved the env's reward threshold.")
+                    total_score += score
                     score = 0
 
             samples = self.memory.get()
@@ -346,39 +352,58 @@ class PPOAgent:
                 kl_divergence = self.train_actor(
                     inputs, actions, log_probabilities, advantages
                 )
-                stat_loss.append(kl_divergence)
+                stat_actor_loss.append(kl_divergence)
                 if kl_divergence > 1.5 * self.target_kl:
+                    print("Early stopping at iteration {}".format(_))
                     break
 
-            # print("Training Critic")
             for _ in range(self.train_value_iterations):
                 # COULD BREAK UP INTO MINI BATCHES
                 critic_loss = self.train_critic(inputs, returns)
+                stat_critic_loss.append(critic_loss)
                 # stat_loss.append(critic_loss)
 
             # print("Done Training")
             # self.old_actor.set_weights(self.actor.get_weights())
-
+            stat_score.append(total_score / num_episodes)
+            stat_test_score.append(self.test())
+            self.plot_graph(
+                stat_score,
+                stat_actor_loss,
+                stat_critic_loss,
+                stat_test_score,
+                (epoch + 1) * self.steps_per_epoch,
+            )
             self.export()
-            # stat_test_score.append(self.test())
-            self.plot_graph(stat_score, stat_loss, stat_test_score, epoch)
-            step += 1
 
-        self.plot_graph(stat_score, stat_loss, stat_test_score, epoch)
+        self.plot_graph(
+            stat_score,
+            stat_actor_loss,
+            stat_critic_loss,
+            stat_test_score,
+            self.num_epochs * self.steps_per_epoch,
+        )
         self.export()
         self.env.close()
         return num_trials_truncated / self.num_epochs
 
-    def plot_graph(self, score, loss, test_score, step):
-        fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3, figsize=(30, 5))
+    def plot_graph(self, score, actor_loss, critic_loss, test_score, step):
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 20))
         ax1.plot(score, linestyle="solid")
         ax1.set_title("Frame {}. Score: {}".format(step, np.mean(score[-10:])))
-        ax2.plot(loss, linestyle="solid")
-        ax2.set_title("Frame {}. Loss: {}".format(step, np.mean(loss[-10:])))
-        ax3.plot(test_score, linestyle="solid")
-        ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
-        ax3.set_title(
+        ax2.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
+        ax2.set_title(
             "Frame {}. Test Score: {}".format(step, np.mean(test_score[-10:]))
+        )
+        ax2.plot(test_score, linestyle="solid")
+        ax3.plot(actor_loss, linestyle="solid")
+        ax3.axhline(y=self.target_kl, color="r", linestyle="-")
+        ax3.set_title(
+            "Frame {}. Actor Loss: {}".format(step, np.mean(actor_loss[-10:]))
+        )
+        ax4.plot(critic_loss, linestyle="solid")
+        ax4.set_title(
+            "Frame {}. Critic Loss: {}".format(step, np.mean(critic_loss[-10:]))
         )
         plt.savefig("./{}.png".format(self.model_name))
         plt.close(fig)
@@ -393,7 +418,7 @@ class PPOAgent:
             score = 0
 
             while not done:
-                action, value, log_probability = self.select_action(state)
+                action = self.select_action(state)
                 next_state, reward, terminated, truncated = self.step(action)
                 done = terminated or truncated
                 state = next_state
@@ -411,7 +436,7 @@ class PPOAgent:
         score = 0
 
         while not done:
-            action, value, log_probability = self.select_action(state)
+            action = self.select_action(state)
             next_state, reward, terminated, truncated = self.step(action)
             done = terminated or truncated
             state = next_state
