@@ -4,6 +4,7 @@ import pygame
 import numpy as np
 from gym.envs.registration import register
 
+
 class TicTacToe(gym.Env):
     metadata = {}
 
@@ -20,43 +21,55 @@ class TicTacToe(gym.Env):
         self.done = False
         self.turn = 0
         return self.grid, self.turn
-    
+
     def step(self, action):
-        if action <0 or action > 8:
+        if action < 0 or action > 8:
             raise ValueError("Action must be between 0 and 8")
-        self.grid[action//3][action%3] = self.player[self.turn%2]
+        self.grid[action // 3][action % 3] = self.player[self.turn % 2]
         self.winner()
         reward = 1 if self.done else 0
         self.turn += 1
-        self.get_info()
-        return self.grid, reward, self.done, False, 
-    
+        self._get_info()
+        return (
+            self.grid,
+            reward,
+            self.done,
+            False,
+        )
 
     def winner(self):
         for i in range(3):
-            if (self.grid[i][0] == self.grid[i][1] == self.grid[i][2]) and (self.grid[i][0]!= 0):
+            if (self.grid[i][0] == self.grid[i][1] == self.grid[i][2]) and (
+                self.grid[i][0] != 0
+            ):
                 self.done = True
-            if (self.grid[0][i] == self.grid[1][i] == self.grid[2][i]) and (self.grid[0][i]!= 0):
+            if (self.grid[0][i] == self.grid[1][i] == self.grid[2][i]) and (
+                self.grid[0][i] != 0
+            ):
                 self.done = True
-            if (self.grid[0][0] == self.grid[1][1] == self.grid[2][2]) and (self.grid[0][0]!= 0):
+            if (self.grid[0][0] == self.grid[1][1] == self.grid[2][2]) and (
+                self.grid[0][0] != 0
+            ):
                 self.done = True
-            if (self.grid[0][2] == self.grid[1][1] == self.grid[2][0]) and (self.grid[0][2]!= 0):
+            if (self.grid[0][2] == self.grid[1][1] == self.grid[2][0]) and (
+                self.grid[0][2] != 0
+            ):
                 self.done = True
         return self.done
 
-    def get_info(self):
+    def _get_info(self):
         dico = {}
         dico["turn"] = self.turn
         l = []
         for i in range(9):
-            if self.grid[i//3][i%3] == 0:
+            if self.grid[i // 3][i % 3] == 0:
                 l.append(i)
         dico["possible_actions"] = l
         return dico
-    
+
 
 register(
-    id='TicTacToe-v0',
-    entry_point='environments.tic_tac_toe:TicTacToe',
+    id="TicTacToe-v0",
+    entry_point="environments.tic_tac_toe:TicTacToe",
     max_episode_steps=9,
-)   
+)
