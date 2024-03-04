@@ -1,1 +1,0 @@
-0,relu,0.0003125,0,51,(),False,2,True,0.99,True,0.95,orthogonal,0.01,<keras.src.losses.KLDivergence object at 0x000002927F72E710>,50000,500,3,0.5,30000,<class 'keras.src.optimizers.legacy.adam.Adam'>,0.5,0.4,0.001,128,4,False,100,500.0,-500.0,0,512,classiccontrol_1
