@@ -1,6 +1,7 @@
 import time
 import gymnasium as gym
 import environments
+import tensorflow as tf
 env = gym.make("environments/TicTacToe")
 config = {
         'clip_param': 0.2,
@@ -53,16 +54,15 @@ from ppo_agent import PPOAgent
 agent = PPOAgent(env, config=config)
 
 class Node:
-    def __init__(self, game, done, parent, observation, action_to_get_here):
-        self.game = game
+    def __init__(self, observation, done, parent, action_to_get_here, actions_possible):
+        self.observation = observation
         self.done = done
         self.parent = parent
-        self.observation = observation
         self.action__to_get_here = action_to_get_here
         self.children = {}
         self.total_rollouts = 0
         self.visits = 0
-        self.action_to_try = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        self.action_possible = actions_possible
 
     def get_UCB_score(self):
         if self.visits == 0:
@@ -78,7 +78,9 @@ class Node:
             new_game = deepcopy(self.game)
             observation, reward, terminated, truncated, info = new_game.step(action)
             done = terminated or truncated
-            self.children[action] = Node(new_game, done, self, observation, action)
+            new_possible_actions = self.action_to_try
+            new_possible_actions.remove(action)
+            self.children[action] = Node(observation, done, self, action, new_possible_actions)
 
 
     def explore(self):
@@ -100,11 +102,12 @@ class Node:
     
         current.visits += 1      
         dad = current
+        rollouts_rn = current.total_rollouts
             
         while dad.parent:
             dad = dad.parent
             dad.visits += 1
-            dad.total_rollouts += current.total_rollouts
+            dad.total_rollouts += rollouts_rn
 
     def rollout(self):
         if self.done:
@@ -131,3 +134,11 @@ class Node:
         max_children = [ c for a,c in self.children.items() if c.N == max_N ]   
         max_child = random.choice(max_children)
         return max_child, max_child.action_to_get_here
+    
+
+def monte_carlo_search(observation, action_to_get_here, actions_possible):
+    root = Node(observation, False, None, action_to_get_here, actions_possible)
+    while :
+        root.explore() 
+         
+    return root.choose_next()
