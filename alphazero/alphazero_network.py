@@ -41,4 +41,20 @@ class Network(tf.keras.Model):
         self.actor = tf.keras.layers.Dense(output_shape, activation="softmax")
 
     def call(self, inputs):
-        return self.actor(inputs), self.critic(inputs)
+        x = self.input(inputs)
+        x = self.input_batch_norm(x)
+        for residual in self.residuals:
+            x = residual(x)
+        value = self.critic_conv(x)
+        value = self.critic_batch_norm(value)
+        value = self.flatten(value)
+        value = self.critic_dense(value)
+        value = self.critic(value)
+
+        policy = self.actor_conv(x)
+        policy = self.actor_batch_norm(policy)
+        policy = self.flatten(policy)
+        policy = self.actor_dense(policy)
+        policy = self.actor(policy)
+
+        return value, policy
