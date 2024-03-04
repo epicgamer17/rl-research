@@ -237,9 +237,9 @@ def create_search_space():
             "soft_update": 0,  # seems to always be false, we can try it with tru
             "ema_beta": 0.95,
             "transfer_frequency": 3,
-            "replay_period": 3,
+            "replay_period": 1,
             "replay_batch_size": 7,
-            "memory_size": 8,  
+            "memory_size": 8,
             "min_memory_size": 4,
             "n_step": 2,
             "discount_factor": 3,
