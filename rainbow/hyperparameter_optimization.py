@@ -296,7 +296,7 @@ if __name__ == "__main__":
         trials=trials,  # Record the results
         # early_stop_fn=no_progress_loss(5, 1),
         trials_save_file="./classiccontrol_trials.p",
-        # points_to_evaluate=initial_best_config,
+        points_to_evaluate=initial_best_config,
         show_progressbar=False,
     )
 
