@@ -115,10 +115,12 @@ class PPOAgent:
         self.target_kl = config["target_kl"]
 
         # self.replay_batch_size = int(config["replay_batch_size"])
-        self.memory_size = self.steps_per_epoch
+        self.memory_size = self.steps_per_epoch  # times number of agents
+        self.num_minibatches = config["num_minibatches"]
 
         self.discount_factor = config["discount_factor"]
         self.gae_labmda = config["gae_lambda"]
+        self.entropy_coefficient = config["entropy_coefficient"]
 
         self.memory = ReplayBuffer(
             observation_dimensions=self.observation_dimensions,
@@ -220,40 +222,43 @@ class PPOAgent:
 
         return next_state, reward, terminated, truncated
 
-    def train_actor(self, inputs, actions, log_probabilities, advantages):
+    def train_actor(
+        self, inputs, actions, log_probabilities, advantages, learning_rate
+    ):
         # print("Training Actor")
         with tf.GradientTape() as tape:
             if self.discrete_action_space:
-                log_ratios = (
-                    tfp.distributions.Categorical(self.actor(inputs)).log_prob(actions)
-                    - log_probabilities
-                )
+                distribution = tfp.distributions.Categorical(self.actor(inputs))
             else:
                 mean, std = self.actor(inputs)
-                log_ratios = (
-                    tfp.distributions.Normal(mean, std).log_prob(actions)
-                    - log_probabilities
-                )
+                distribution = tfp.distributions.Normal(mean, std)
+
+            log_ratios = distribution.log_prob(actions) - log_probabilities
 
             probability_ratios = tf.exp(log_ratios)
-            min_advantages = tf.where(
-                advantages > 0,
-                (1 + self.clip_param) * advantages,
-                (1 - self.clip_param) * advantages,
-            )
+            # min_advantages = tf.where(
+            #     advantages > 0,
+            #     (1 + self.clip_param) * advantages,
+            #     (1 - self.clip_param) * advantages,
+            # )
+
             clipped_probability_ratios = tf.clip_by_value(
                 probability_ratios, 1 - self.clip_param, 1 + self.clip_param
             )
-            print(min_advantages, clipped_probability_ratios * advantages)
+            # print(min_advantages, clipped_probability_ratios * advantages)
 
             actor_loss = tf.math.minimum(
-                probability_ratios * advantages, min_advantages
-            )  #
-            actor_loss = -tf.reduce_mean(actor_loss)  #
+                probability_ratios * advantages, clipped_probability_ratios * advantages
+            )
+
+            entropy_loss = distribution.entropy()
+            actor_loss = -tf.reduce_mean(actor_loss) - (
+                self.entropy_coefficient * entropy_loss
+            )
 
         actor_gradients = tape.gradient(actor_loss, self.actor.trainable_variables)
         self.actor_optimizer(
-            learning_rate=self.actor_learning_rate,
+            learning_rate=learning_rate,
             epsilon=self.actor_epsilon,
             clipnorm=self.actor_clipnorm,
         ).apply_gradients(
@@ -275,17 +280,17 @@ class PPOAgent:
         # print()
         return kl_divergence
 
-    def train_critic(self, inputs, returns):
+    def train_critic(self, inputs, returns, learning_rate):
         with tf.GradientTape() as tape:
-            print(returns)
-            print(self.critic(inputs, training=True))
+            # print(returns)
+            # print(self.critic(inputs, training=True))
             critic_loss = tf.reduce_mean(
                 (returns - self.critic(inputs, training=True)) ** 2
             )
         # print(critic_loss)
         critic_gradients = tape.gradient(critic_loss, self.critic.trainable_variables)
         self.critic_optimizer(
-            learning_rate=self.critic_learning_rate,
+            learning_rate=learning_rate,
             epsilon=self.critic_epsilon,
             clipnorm=self.critic_clipnorm,
         ).apply_gradients(
@@ -347,20 +352,69 @@ class PPOAgent:
             returns = samples["returns"]
             inputs = self.prepare_states(observations)
 
+            indices = np.arange(len(observations))
+            minibatch_size = len(observations) // self.num_minibatches
+
             for _ in range(self.train_policy_iterations):
-                # COULD BREAK UP INTO MINI BATCHES
-                kl_divergence = self.train_actor(
-                    inputs, actions, log_probabilities, advantages
+
+                learning_rate = self.actor_learning_rate * (
+                    1
+                    - (
+                        (((epoch * self.steps_per_epoch) + timestep) - 1)
+                        / (self.num_epochs * self.steps_per_epoch)
+                    )
                 )
-                stat_actor_loss.append(kl_divergence)
-                if kl_divergence > 1.5 * self.target_kl:
-                    print("Early stopping at iteration {}".format(_))
-                    break
+                # print(learning_rate)
+                learning_rate = max(learning_rate, 0)
+                # COULD BREAK UP INTO MINI BATCHES
+                for start in range(0, len(observations), minibatch_size):
+                    end = start + minibatch_size
+                    batch_indices = indices[start:end]
+                    batch_observations = inputs[batch_indices]
+                    batch_actions = actions[batch_indices]
+                    batch_log_probabilities = log_probabilities[batch_indices]
+                    batch_advantages = advantages[batch_indices]
+                    kl_divergence = self.train_actor(
+                        batch_observations,
+                        batch_actions,
+                        batch_log_probabilities,
+                        batch_advantages,
+                        learning_rate,
+                    )
+                    stat_actor_loss.append(kl_divergence)
+                    if kl_divergence > 1.5 * self.target_kl:
+                        print("Early stopping at iteration {}".format(_))
+                        break
+                # kl_divergence = self.train_actor(
+                #     inputs, actions, log_probabilities, advantages, learning_rate
+                # )
+                # stat_actor_loss.append(kl_divergence)
+                # if kl_divergence > 1.5 * self.target_kl:
+                #     print("Early stopping at iteration {}".format(_))
+                #     break
 
             for _ in range(self.train_value_iterations):
                 # COULD BREAK UP INTO MINI BATCHES
-                critic_loss = self.train_critic(inputs, returns)
-                stat_critic_loss.append(critic_loss)
+                learning_rate = self.actor_learning_rate * (
+                    1
+                    - (
+                        (((epoch * self.steps_per_epoch) + timestep) - 1)
+                        / (self.num_epochs * self.steps_per_epoch)
+                    )
+                )
+                # print(learning_rate)
+                learning_rate = max(learning_rate, 0)
+                for start in range(0, len(observations), minibatch_size):
+                    end = start + minibatch_size
+                    batch_indices = indices[start:end]
+                    batch_observations = inputs[batch_indices]
+                    batch_returns = returns[batch_indices]
+                    critic_loss = self.train_critic(
+                        batch_observations, batch_returns, learning_rate
+                    )
+                    stat_critic_loss.append(critic_loss)
+                # critic_loss = self.train_critic(inputs, returns, learning_rate)
+                # stat_critic_loss.append(critic_loss)
                 # stat_loss.append(critic_loss)
 
             # print("Done Training")
