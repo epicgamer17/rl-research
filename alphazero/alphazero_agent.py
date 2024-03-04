@@ -35,6 +35,7 @@ import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
 import gymnasium as gym
 
+import search.monte_carlo_tree_search as MCTS
 
 class AlphaZeroAgent:
     def __init__(
@@ -186,6 +187,7 @@ class AlphaZeroAgent:
         epoch = 0
         step = 0
         game_start_step = 0
+        temp_env= gym.make("environments/TicTacToe")
         while epoch < self.num_epochs:
             num_episodes = 0
             total_score = 0
@@ -193,10 +195,13 @@ class AlphaZeroAgent:
             step += 1
             # play a game and learn from it
             # MONTE CARLO MONTE CARLO MONTE CARLO (PICK ACTION WITH MONTE CARLO) LOOK FOR 800 MOVES
-            action = self.select_action(state)
+            #action = self.select_action(state)
+            temp_env = copy.deepcopy(self.env)
+            info = temp_env._get_info()
+            action_probabilities = self.MCTS(state, info["possible_actions"], 800)
             # MONTE CARLO MONTE CARLO MONTE CARLO (PICK ACTION WITH MONTE CARLO)
-            self.transition += # MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY
-            next_state, reward, terminated, truncated = self.step(action)
+            self.transition += action_probabilities# MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY
+            next_state, reward, terminated, truncated = self.step(np.argmax(action_probabilities))
             done = terminated or truncated
             state = next_state
             score += reward

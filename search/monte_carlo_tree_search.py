@@ -2,6 +2,7 @@ import time
 import gymnasium as gym
 import environments
 import tensorflow as tf
+import numpy as np
 env = gym.make("environments/TicTacToe")
 config = {
         'clip_param': 0.2,
@@ -50,8 +51,6 @@ from copy import deepcopy
 from math import log, sqrt, inf
 import random
 
-from ppo_agent import PPOAgent
-agent = PPOAgent(env, config=config)
 
 class Node:
     def __init__(self, observation, done, parent, action_to_get_here, actions_possible):
@@ -125,6 +124,7 @@ class Node:
                 new_game.close()
                 return v          
 
+    # not useful for alphazaero
     def choose_next(self):
         if self.done:
             raise ValueError("game has ended")
@@ -136,9 +136,15 @@ class Node:
         return max_child, max_child.action_to_get_here
     
 
-def monte_carlo_search(observation, action_to_get_here, actions_possible):
-    root = Node(observation, False, None, action_to_get_here, actions_possible)
-    while :
-        root.explore() 
-         
-    return root.choose_next()
+def monte_carlo_search(observation, actions_possible, num_of_iterations):
+    root = Node(observation, False, None, None, actions_possible)
+    for i in range(num_of_iterations):
+        root.explore()          
+    tot = 0
+    for action, node in root.children.items():
+        tot += node.get_USB_score()
+    prob_array = np.zeros((1,9))
+    for action, node in root.children.items():
+        prob_array[0][action] = node.visits / tot
+    return prob_array
+    
