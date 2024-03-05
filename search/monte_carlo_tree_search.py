@@ -88,7 +88,7 @@ class Node:
             child = current.children
             max_U = max(c.get_UCB_score() for c in child.values())
             actions = [ a for a,c in child.items() if c.get_UCB_score() == max_U ]                  
-            action_selected = agent.choose_action(actions, self.game) 
+            action_selected = random.choice(actions, self.game) 
             current = child[action_selected]
                 
         if current.visits ==0:
@@ -108,6 +108,7 @@ class Node:
             dad.visits += 1
             dad.total_rollouts += rollouts_rn
 
+    # useless for alphago zero
     def rollout(self):
         if self.done:
             return 0        
