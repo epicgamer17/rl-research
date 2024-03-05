@@ -11,12 +11,12 @@ from tensorflow.keras.layers import InputSpec
 
 
 class Residual(tf.keras.Model):
-    def __init__(self, filters, kernel_size, stride=1, downsample=None, **kwargs):
+    def __init__(self, filters, kernel_size, strides=1, downsample=None, **kwargs):
         super(Residual, self).__init__()
         self.conv1 = tf.keras.layers.Conv2D(
             filters,
             kernel_size=kernel_size,
-            stride=stride,
+            strides=strides,
             padding="same",
             use_bias=False,
         )
@@ -25,7 +25,7 @@ class Residual(tf.keras.Model):
         self.conv2 = tf.keras.layers.Conv2D(
             filters,
             kernel_size=kernel_size,
-            stride=stride,
+            strides=strides,
             padding="same",
             use_bias=False,
         )

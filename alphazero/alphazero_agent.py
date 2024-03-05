@@ -37,6 +37,8 @@ import gymnasium as gym
 
 import MTCS_alphazero as MCTS
 import random
+import gc
+
 
 class AlphaZeroAgent:
     def __init__(
@@ -64,36 +66,23 @@ class AlphaZeroAgent:
         self.clipnorm = None
 
         self.num_epochs = int(config["num_epochs"])
-        # self.replay_batch_size = int(config["replay_batch_size"])
-        self.memory_size = self.steps_per_epoch  # times number of agents
-        self.num_minibatches = config["num_minibatches"]
-
-        self.discount_factor = config["discount_factor"]
-        self.gae_labmda = config["gae_lambda"]
-        self.entropy_coefficient = config["entropy_coefficient"]
+        self.batch_size = int(config["batch_size"])
+        self.memory_size = int(config["memory_size"])  # times number of agents
+        self.max_game_length = int(config["max_game_length"])
+        self.dirichlet_alpha = config["dirichlet_alpha"]
+        self.dirichlet_epsilon = config["dirichlet_epsilon"]
 
         self.memory = ReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.memory_size,
-            gamma=config["discount_factor"],
+            batch_size=self.batch_size,
+            max_game_length=self.max_game_length,
         )
+
         self.c_puct = config["c_puct"]
-        self.montecarlo_iterations = config["montecarlo_iterations"]
+        self.monte_carlo_simulations = config["monte_carlo_simulations"]
         self.transition = list()
         self.is_test = True
-        # self.search = search.Search(
-        #     scoring_function=self.score_state,
-        #     max_depth=config["search_max_depth"],
-        #     max_time=config["search_max_time"],
-        #     transposition_table=search.TranspositionTable(
-        #         buckets=config["search_transposition_table_buckets"],
-        #         bucket_size=config["search_transposition_table_bucket_size"],
-        #         replacement_strategy=search.TranspositionTable.replacement_strategies[
-        #             config["search_transposition_table_replacement_strategy"]
-        #         ],
-        #     ),
-        #     debug=False,
-        # )
 
     def export(self, episode=-1, best_model=False):
         if episode != -1:
@@ -121,8 +110,9 @@ class AlphaZeroAgent:
 
     def predict_single(self, state):
         state_input = self.prepare_states(state)
-        value, probabilities = self.model(inputs=state_input).numpy()
-        return probabilities, value
+        value, probabilities = self.model(inputs=state_input)
+        print(probabilities.numpy(), value.numpy())
+        return probabilities.numpy(), value.numpy()
 
     def select_action(self, state):
         probabilities, value = self.predict_single(state)
@@ -137,13 +127,13 @@ class AlphaZeroAgent:
 
     def step(self, action):
         if not self.is_test:
-            next_state, reward, terminated, truncated, _ = self.env.step(action)
+            next_state, reward, terminated, truncated, info = self.env.step(action)
             self.transition += [reward]
             self.memory.store(*self.transition)
         else:
-            next_state, reward, terminated, truncated, _ = self.test_env.step(action)
+            next_state, reward, terminated, truncated, info = self.test_env.step(action)
 
-        return next_state, reward, terminated, truncated
+        return next_state, reward, terminated, truncated, info
 
     def experience_replay(self):
         samples = self.memory.sample()
@@ -154,61 +144,63 @@ class AlphaZeroAgent:
         inputs = self.prepare_states(observations)
         with tf.GradientTape() as tape:
             value, probabilities = self.model(inputs)
-            loss = (rewards - value) ** 2 - action_probabilities * tf.math.log(probabilities) + self.weight_decay * tf.reduce_sum(self.model.trainable_variables ** 2)
+            loss = (
+                (rewards - value) ** 2
+                - action_probabilities * tf.math.log(probabilities)
+                + self.weight_decay * tf.reduce_sum(self.model.trainable_variables**2)
+            )
 
         gradients = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer(
             learning_rate=self.learning_rate,
             epsilon=self.adam_epsilon,
             clipnorm=self.clipnorm,
-        ).apply_gradients(
-            grads_and_vars=zip(gradients, self.model.trainable_variables)
-        )
+        ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
 
         return loss
 
-    def action_mask(self, q, state, turn):
-        q_copy = copy.deepcopy(q)
-        for i in range(len(q_copy)):
-            if not state.is_valid_move(i):
-                if turn % 2 == 0:
-                    q_copy[i] = float("-inf")
-                else:
-                    q_copy[i] = float("inf")
-        return q_copy
-
-    def monte_carlo_search(self, observation, actions_possible, num_of_iterations):
-        root = MCTS.Node(observation, False, None, None, actions_possible)
-        for i in range(num_of_iterations):
-            self.explore(root)          
-        prob_array = np.zeros((1,9))
+    def monte_carlo_search(self, env, observation, possible_actions, num_simulations):
+        root = MCTS.Node(env, observation, False, None, possible_actions)
+        for i in range(num_simulations):
+            self.explore(root)
+        prob_array = np.zeros((9))
         for action, node in root.children.items():
-            prob_array[0][action] = node.visits / root.visits
+            prob_array[action] = node.visits / root.visits
+        gc.collect()
         return prob_array
 
     def explore(self, root):
         node_current = root
         while node_current.children:
-            child = node_current.children
-            max_U = max(c.return_score() for c in child.values())
-            actions = [ a for a,c in child.items() if c.return_score() == max_U ]                  
-            action_selected = random.choice(actions, node_current.observation) 
-            node_current = child[action_selected]
-                
-        #current.propagation_value += current.rollout()
-        probabilities, value = self.predict_single(node_current.observation)
-        puct_score = value + self.c_puct* probabilities * np.sqrt(node_current.visits)/(1+child.visits)
-        node_current.set_score(puct_score)
-        node_current.create_children()        
+            children = node_current.children
+            print("MCTS Children", children)
+            print("MCTS Visits", [c.visits for c in children.values()])
+            max_puct = max([c.return_score() for c in children.values()])
+            print("MCTS Max U", max_puct)
+            actions = [
+                action
+                for action, child in children.items()
+                if child.return_score() == max_puct
+            ]
+            print("MCTS Actions", actions)
+            action_selected = random.choice(actions)
+            node_current = children[action_selected]
 
-        node_current.visits += 1      
+        if node_current != root:
+            probabilities, value = self.predict_single(node_current.observation)
+            puct_score = value + self.c_puct * probabilities * np.sqrt(
+                node_current.parent.visits
+            ) / (1 + node_current.visits)
+            node_current.set_score(puct_score)
+
+        node_current.create_children()
+        node_current.visits += 1
         parent = node_current
-            
+
         while parent.parent:
             parent = parent.parent
             parent.visits += 1
             parent.score += puct_score
-
 
     def train(self):
         self.is_test = False
@@ -218,7 +210,7 @@ class AlphaZeroAgent:
         stat_test_score = []
         stat_loss = []
         num_trials_truncated = 0
-        state, _ = self.env.reset()
+        state, info = self.env.reset()
         epoch = 0
         step = 0
         game_start_step = 0
@@ -227,22 +219,25 @@ class AlphaZeroAgent:
             total_score = 0
             score = 0
             step += 1
-            # play a game and learn from it
-            # MONTE CARLO MONTE CARLO MONTE CARLO (PICK ACTION WITH MONTE CARLO) LOOK FOR 800 MOVES
-            #action = self.select_action(state)
-            temp_env = copy.deepcopy(self.env)
-            info = temp_env._get_info()
-            action_probabilities = self.monte_carlo_search(self.state, info["possible_actions"], 800)
-            # MONTE CARLO MONTE CARLO MONTE CARLO (PICK ACTION WITH MONTE CARLO)
-            self.transition += action_probabilities# MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY
-            next_state, reward, terminated, truncated = self.step(np.argmax(action_probabilities))
+            possible_actions = (
+                info["possible_actions"]
+                if "possible_actions" in info
+                else self.num_actions
+            )
+            action_probabilities = self.monte_carlo_search(
+                self.env, state, possible_actions, self.monte_carlo_simulations
+            )
+            self.transition += action_probabilities
+            next_state, reward, terminated, truncated, info = self.step(
+                np.argmax(action_probabilities)
+            )
             done = terminated or truncated
             state = next_state
             score += reward
 
             if done:
                 num_episodes += 1
-                state, _ = self.env.reset()
+                state, info = self.env.reset()
                 self.memory.update_reward(game_start_step)
                 game_start_step = step
                 # if score >= self.env.spec.reward_threshold:
@@ -257,10 +252,10 @@ class AlphaZeroAgent:
                     stat_score.append(total_score / num_episodes)
                     stat_test_score.append(self.test())
                     self.plot_graph(
-                    stat_score,
-                    stat_loss,
-                    stat_test_score,
-                    step,
+                        stat_score,
+                        stat_loss,
+                        stat_test_score,
+                        step,
                     )
                     self.export()
 
