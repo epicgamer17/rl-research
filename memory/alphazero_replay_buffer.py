@@ -11,6 +11,8 @@ class ReplayBuffer:
         max_size: int,
         batch_size: int,
         max_game_length: int,
+        num_actions: int,
+        two_player: bool = True,
     ):
         # self.observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         # self.next_observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
@@ -19,7 +21,9 @@ class ReplayBuffer:
         observation_buffer_shape += list(observation_dimensions)
         observation_buffer_shape = list(observation_buffer_shape)
         self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
-        self.action_probabilities_buffer = np.zeros(max_size, dtype=np.int32)
+        self.action_probabilities_buffer = np.empty(
+            (max_size, num_actions), dtype=np.int32
+        )
         self.reward_buffer = np.zeros(max_size, dtype=np.float32)
 
         self.game_observation_buffer = np.zeros(
@@ -32,7 +36,7 @@ class ReplayBuffer:
             dtype=np.float32,
         )
         self.game_action_probabilities_buffer = np.zeros(
-            max_game_length, dtype=np.int32
+            (max_game_length, num_actions), dtype=np.int32
         )
         self.game_reward_buffer = np.zeros(max_game_length, dtype=np.float32)
         self.game_pointer = 0
@@ -43,9 +47,11 @@ class ReplayBuffer:
         self.max_size = max_size
         self.batch_size = batch_size
         self.size = 0
+        self.two_player = two_player
 
     def store(self, observation, action_probabilities_buffer, reward):
         self.game_observation_buffer[self.game_pointer] = observation
+        print(action_probabilities_buffer)
         self.game_action_probabilities_buffer[self.game_pointer] = (
             action_probabilities_buffer
         )
@@ -54,12 +60,16 @@ class ReplayBuffer:
         self.game_length = min(self.game_length + 1, self.max_game_length)
 
     def store_game(self):
-        reward = self.game_reward_buffer[self.game_length - 1]
-        updated_rewards = np.empty((self.game_length), int)
-        updated_rewards[::2] = 1 * reward
-        updated_rewards[1::2] = -1 * reward
-        updated_rewards = np.flip(updated_rewards)
-        self.game_reward_buffer[0:] = updated_rewards
+        if self.two_player:
+            reward = self.game_reward_buffer[self.game_length - 1]
+            updated_rewards = np.empty((self.game_length), int)
+            updated_rewards[::2] = 1 * reward
+            updated_rewards[1::2] = -1 * reward
+            updated_rewards = np.flip(updated_rewards)
+            self.game_reward_buffer[0:] = updated_rewards
+        else:
+            total_reward = sum(self.game_reward_buffer)
+            self.game_reward_buffer = [total_reward] * self.game_length
 
         if self.max_size - self.pointer < self.game_length:
             game_start_index = self.pointer

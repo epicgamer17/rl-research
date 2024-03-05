@@ -35,7 +35,7 @@ import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
 import gymnasium as gym
 
-import MTCS_alphazero as MCTS
+import alphazero.MCTS_alphazero as MCTS
 import random
 import gc
 
@@ -77,6 +77,8 @@ class AlphaZeroAgent:
             max_size=self.memory_size,
             batch_size=self.batch_size,
             max_game_length=self.max_game_length,
+            num_actions=self.num_actions,
+            two_player=config["two_player"],
         )
 
         self.c_puct = config["c_puct"]
@@ -111,13 +113,14 @@ class AlphaZeroAgent:
     def predict_single(self, state):
         state_input = self.prepare_states(state)
         value, probabilities = self.model(inputs=state_input)
-        print(probabilities.numpy().reshape(-1, 1), value.numpy())
-        return probabilities.numpy().reshape(-1, 1), value.numpy()
+        print(probabilities.numpy()[0], value.numpy()[0])
+        return probabilities.numpy()[0].reshape(self.num_actions), value.numpy()[0]
 
     def step(self, action):
         if not self.is_test:
             next_state, reward, terminated, truncated, info = self.env.step(action)
             self.transition += [reward]
+            print(self.transition)
             self.memory.store(*self.transition)
         else:
             next_state, reward, terminated, truncated, info = self.test_env.step(action)
@@ -129,7 +132,7 @@ class AlphaZeroAgent:
         observations = samples["observations"]
         action_probabilities = samples["action_probabilities"]
         rewards = samples["rewards"]
-        print(rewards)
+        print("Rewards", rewards)
         inputs = self.prepare_states(observations)
         with tf.GradientTape() as tape:
             value, probabilities = self.model(inputs)
@@ -145,16 +148,18 @@ class AlphaZeroAgent:
             epsilon=self.adam_epsilon,
             clipnorm=self.clipnorm,
         ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
-
+        print("Loss", loss)
         return loss
 
     def monte_carlo_search(self, env, observation, possible_actions, num_simulations):
         root = MCTS.Node(env, observation, False, None, None, possible_actions)
         for i in range(num_simulations):
+            print("MCTS Simulation", i)
             self.explore(root)
         prob_array = np.zeros((9))
         for action, node in root.children.items():
-            prob_array[action] = node.visits / root.visits
+            prob_array[action] = node.visits / (root.visits - 1)
+            print(node.visits, root.visits - 1)
         gc.collect()
         return prob_array
 
@@ -162,16 +167,16 @@ class AlphaZeroAgent:
         current_node = root
         while current_node.children:
             children = current_node.children
-            print("MCTS Children", children)
-            print("MCTS Visits", [c.visits for c in children.values()])
+            # print("MCTS Children", children)
+            # print("MCTS Visits", [c.visits for c in children.values()])
             max_puct = max([c.return_score() for c in children.values()])
-            print("MCTS Max U", max_puct)
+            # print("MCTS Max U", max_puct)
             actions = [
                 action
                 for action, child in children.items()
                 if child.return_score() == max_puct
             ]
-            print("MCTS Actions", actions)
+            # print("MCTS Actions", actions)
             action_selected = random.choice(actions)
             current_node = children[action_selected]
 
@@ -180,7 +185,7 @@ class AlphaZeroAgent:
             puct_score = value + self.c_puct * probabilities[
                 current_node.parent_action
             ] * np.sqrt(current_node.parent.visits) / (1 + current_node.visits)
-            print("MCTS PUCT", puct_score)
+            # print("MCTS PUCT", puct_score)
             current_node.set_score(puct_score)
 
         current_node.create_children()
@@ -217,7 +222,7 @@ class AlphaZeroAgent:
             action_probabilities = self.monte_carlo_search(
                 self.env, state, possible_actions, self.monte_carlo_simulations
             )
-            self.transition += action_probabilities
+            self.transition = [state, action_probabilities]
             next_state, reward, terminated, truncated, info = self.step(
                 np.argmax(action_probabilities)
             )

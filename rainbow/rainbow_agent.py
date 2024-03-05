@@ -491,9 +491,9 @@ class RainbowAgent:
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
                 print(
-                "{} Training Step: {}/{}".format(
-                    self.model_name, training_step, self.num_training_steps
-                )
+                    "{} Training Step: {}/{}".format(
+                        self.model_name, training_step, self.num_training_steps
+                    )
                 )
             step += 1
 
