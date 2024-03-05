@@ -100,8 +100,9 @@ class AlphaZeroAgent:
         self.model.save(path)
 
     def prepare_states(self, state):
+        state = np.array(state)
         if (self.env.observation_space.high == 255).all():
-            state = np.array(state) / 255
+            state = state / 255
         # print(state.shape)
         if state.shape == self.observation_dimensions:
             new_shape = (1,) + state.shape
@@ -112,6 +113,7 @@ class AlphaZeroAgent:
 
     def predict_single(self, state):
         state_input = self.prepare_states(state)
+        print(state_input.shape)
         value, probabilities = self.model(inputs=state_input)
         print(probabilities.numpy()[0], value.numpy()[0])
         return probabilities.numpy()[0].reshape(self.num_actions), value.numpy()[0]
