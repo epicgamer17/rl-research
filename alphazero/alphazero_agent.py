@@ -35,8 +35,8 @@ import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
 import gymnasium as gym
 
-import alphazero.MTCS_alphazero as MCTS
-
+import MTCS_alphazero as MCTS
+import random
 
 class AlphaZeroAgent:
     def __init__(
@@ -65,20 +65,35 @@ class AlphaZeroAgent:
 
         self.num_epochs = int(config["num_epochs"])
         # self.replay_batch_size = int(config["replay_batch_size"])
-        self.memory_size = config["memory_size"]
-        self.max_game_length = config["max_game_length"]
+        self.memory_size = self.steps_per_epoch  # times number of agents
+        self.num_minibatches = config["num_minibatches"]
+
+        self.discount_factor = config["discount_factor"]
+        self.gae_labmda = config["gae_lambda"]
+        self.entropy_coefficient = config["entropy_coefficient"]
 
         self.memory = ReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.memory_size,
             gamma=config["discount_factor"],
         )
-
-        self.dirichlet_concentration = config["dirichlet_concentration"]
-        self.dirichlet_epsilon = config["dirichlet_epsilon"]
-
+        self.c_puct = config["c_puct"]
+        self.montecarlo_iterations = config["montecarlo_iterations"]
         self.transition = list()
         self.is_test = True
+        # self.search = search.Search(
+        #     scoring_function=self.score_state,
+        #     max_depth=config["search_max_depth"],
+        #     max_time=config["search_max_time"],
+        #     transposition_table=search.TranspositionTable(
+        #         buckets=config["search_transposition_table_buckets"],
+        #         bucket_size=config["search_transposition_table_bucket_size"],
+        #         replacement_strategy=search.TranspositionTable.replacement_strategies[
+        #             config["search_transposition_table_replacement_strategy"]
+        #         ],
+        #     ),
+        #     debug=False,
+        # )
 
     def export(self, episode=-1, best_model=False):
         if episode != -1:
@@ -139,18 +154,16 @@ class AlphaZeroAgent:
         inputs = self.prepare_states(observations)
         with tf.GradientTape() as tape:
             value, probabilities = self.model(inputs)
-            loss = (
-                (rewards - value) ** 2
-                - action_probabilities * tf.math.log(probabilities)
-                + self.weight_decay * tf.reduce_sum(self.model.trainable_variables**2)
-            )
+            loss = (rewards - value) ** 2 - action_probabilities * tf.math.log(probabilities) + self.weight_decay * tf.reduce_sum(self.model.trainable_variables ** 2)
 
         gradients = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer(
             learning_rate=self.learning_rate,
             epsilon=self.adam_epsilon,
             clipnorm=self.clipnorm,
-        ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
+        ).apply_gradients(
+            grads_and_vars=zip(gradients, self.model.trainable_variables)
+        )
 
         return loss
 
@@ -164,6 +177,39 @@ class AlphaZeroAgent:
                     q_copy[i] = float("inf")
         return q_copy
 
+    def monte_carlo_search(self, observation, actions_possible, num_of_iterations):
+        root = MCTS.Node(observation, False, None, None, actions_possible)
+        for i in range(num_of_iterations):
+            self.explore(root)          
+        prob_array = np.zeros((1,9))
+        for action, node in root.children.items():
+            prob_array[0][action] = node.visits / root.visits
+        return prob_array
+
+    def explore(self, root):
+        node_current = root
+        while node_current.children:
+            child = node_current.children
+            max_U = max(c.return_score() for c in child.values())
+            actions = [ a for a,c in child.items() if c.return_score() == max_U ]                  
+            action_selected = random.choice(actions, node_current.observation) 
+            node_current = child[action_selected]
+                
+        #current.propagation_value += current.rollout()
+        probabilities, value = self.predict_single(node_current.observation)
+        puct_score = value + self.c_puct* probabilities * np.sqrt(node_current.visits)/(1+child.visits)
+        node_current.set_score(puct_score)
+        node_current.create_children()        
+
+        node_current.visits += 1      
+        parent = node_current
+            
+        while parent.parent:
+            parent = parent.parent
+            parent.visits += 1
+            parent.score += puct_score
+
+
     def train(self):
         self.is_test = False
         stat_score = (
@@ -175,7 +221,7 @@ class AlphaZeroAgent:
         state, _ = self.env.reset()
         epoch = 0
         step = 0
-        temp_env = gym.make("environments/TicTacToe")
+        game_start_step = 0
         while epoch < self.num_epochs:
             num_episodes = 0
             total_score = 0
@@ -183,15 +229,13 @@ class AlphaZeroAgent:
             step += 1
             # play a game and learn from it
             # MONTE CARLO MONTE CARLO MONTE CARLO (PICK ACTION WITH MONTE CARLO) LOOK FOR 800 MOVES
-            # action = self.select_action(state)
+            #action = self.select_action(state)
             temp_env = copy.deepcopy(self.env)
             info = temp_env._get_info()
-            action_probabilities = self.MCTS(state, info["possible_actions"], 800)
+            action_probabilities = self.monte_carlo_search(self.state, info["possible_actions"], 800)
             # MONTE CARLO MONTE CARLO MONTE CARLO (PICK ACTION WITH MONTE CARLO)
-            self.transition += action_probabilities  # MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY
-            next_state, reward, terminated, truncated = self.step(
-                np.argmax(action_probabilities)
-            )
+            self.transition += action_probabilities# MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY MONTE CARLO PROBABILITY
+            next_state, reward, terminated, truncated = self.step(np.argmax(action_probabilities))
             done = terminated or truncated
             state = next_state
             score += reward
@@ -199,20 +243,24 @@ class AlphaZeroAgent:
             if done:
                 num_episodes += 1
                 state, _ = self.env.reset()
-                self.store_game()
+                self.memory.update_reward(game_start_step)
+                game_start_step = step
+                # if score >= self.env.spec.reward_threshold:
+                #     print("Your agent has achieved the env's reward threshold.")
                 total_score += score
                 score = 0
                 if self.memory.size >= self.replay_batch_size:
                     epoch += 1
                     loss = self.experience_replay()
                     stat_loss.append(loss)
+                    self.memory.clear()
                     stat_score.append(total_score / num_episodes)
-                    # stat_test_score.append(self.test())
+                    stat_test_score.append(self.test())
                     self.plot_graph(
-                        stat_score,
-                        stat_loss,
-                        stat_test_score,
-                        step,
+                    stat_score,
+                    stat_loss,
+                    stat_test_score,
+                    step,
                     )
                     self.export()
 
