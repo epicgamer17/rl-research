@@ -210,10 +210,12 @@ class AlphaZeroAgent:
         step = 0
         game_start_step = 0
         while epoch < self.num_epochs:
+            self.env.render()
             num_episodes = 0
             total_score = 0
             score = 0
             step += 1
+            print("Step", step)
             possible_actions = (
                 info["possible_actions"]
                 if "possible_actions" in info
@@ -283,13 +285,22 @@ class AlphaZeroAgent:
         self.is_test = True
         average_score = 0
         for trials in range(num_trials - 1):
-            state, _ = self.test_env.reset()
+            state, info = self.test_env.reset()
             done = False
             score = 0
 
             while not done:
-                action = self.select_action(state)
-                next_state, reward, terminated, truncated = self.step(action)
+                possible_actions = (
+                    info["possible_actions"]
+                    if "possible_actions" in info
+                    else self.num_actions
+                )
+                action = np.argmax(
+                    self.monte_carlo_search(
+                        self.env, state, possible_actions, self.monte_carlo_simulations
+                    )
+                )
+                next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated
                 state = next_state
 
@@ -306,8 +317,17 @@ class AlphaZeroAgent:
         score = 0
 
         while not done:
-            action = self.select_action(state)
-            next_state, reward, terminated, truncated = self.step(action)
+            possible_actions = (
+                info["possible_actions"]
+                if "possible_actions" in info
+                else self.num_actions
+            )
+            action = np.argmax(
+                self.monte_carlo_search(
+                    self.env, state, possible_actions, self.monte_carlo_simulations
+                )
+            )
+            next_state, reward, terminated, truncated, info = self.step(action)
             done = terminated or truncated
             state = next_state
 
