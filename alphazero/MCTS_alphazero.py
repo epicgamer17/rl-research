@@ -6,6 +6,7 @@ import copy
 class Node:
     def __init__(self, env, observation, done, parent, parent_action, possible_actions):
         self.env = copy.deepcopy(env)
+        self.env.close()
         self.observation = observation
         self.done = done
         self.parent = parent

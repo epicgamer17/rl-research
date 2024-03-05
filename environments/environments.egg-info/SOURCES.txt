@@ -1,8 +1,0 @@
-setup.py
-environments/__init__.py
-environments/tictactoe.py
-environments.egg-info/PKG-INFO
-environments.egg-info/SOURCES.txt
-environments.egg-info/dependency_links.txt
-environments.egg-info/requires.txt
-environments.egg-info/top_level.txt
