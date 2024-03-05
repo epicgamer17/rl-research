@@ -1,1 +1,1 @@
-PPO recreations and implementation from papers
+RL recreations and implementation from papers
