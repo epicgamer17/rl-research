@@ -160,6 +160,10 @@ class AlphaZeroAgent:
         for action, node in root.children.items():
             prob_array[action] = node.visits / (root.visits - 1)
             print(node.visits, root.visits - 1)
+        for child in root.children.values():
+            child.parent = None
+            child = None
+        root.children = None
         root = None
         gc.collect()
         return prob_array
