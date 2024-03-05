@@ -36,6 +36,4 @@ class Node:
                 self.env, observation, done, self, action, child_possible_actions
             )
 
-    def reset_tree(self, root):
-        
 
