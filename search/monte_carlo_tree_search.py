@@ -1,6 +1,6 @@
 import time
 import gymnasium as gym
-import environments.environments as environments
+import environments.environments_.envs as envs
 import tensorflow as tf
 import numpy as np
 
