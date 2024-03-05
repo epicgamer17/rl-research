@@ -1,5 +1,5 @@
-import environments.environments as gym
-from environments.environments import spaces
+import environments.environments_.envs as gym
+from environments.environments_.envs import spaces
 import numpy as np
 
 
