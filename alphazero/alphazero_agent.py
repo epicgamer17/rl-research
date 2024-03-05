@@ -64,12 +64,8 @@ class AlphaZeroAgent:
 
         self.num_epochs = int(config["num_epochs"])
         # self.replay_batch_size = int(config["replay_batch_size"])
-        self.memory_size = self.steps_per_epoch  # times number of agents
-        self.num_minibatches = config["num_minibatches"]
-
-        self.discount_factor = config["discount_factor"]
-        self.gae_labmda = config["gae_lambda"]
-        self.entropy_coefficient = config["entropy_coefficient"]
+        self.memory_size = config["memory_size"]
+        self.max_game_length = config["max_game_length"]
 
         self.memory = ReplayBuffer(
             observation_dimensions=self.observation_dimensions,
@@ -77,21 +73,11 @@ class AlphaZeroAgent:
             gamma=config["discount_factor"],
         )
 
+        self.dirichlet_concentration = config["dirichlet_concentration"]
+        self.dirichlet_epsilon = config["dirichlet_epsilon"]
+
         self.transition = list()
         self.is_test = True
-        # self.search = search.Search(
-        #     scoring_function=self.score_state,
-        #     max_depth=config["search_max_depth"],
-        #     max_time=config["search_max_time"],
-        #     transposition_table=search.TranspositionTable(
-        #         buckets=config["search_transposition_table_buckets"],
-        #         bucket_size=config["search_transposition_table_bucket_size"],
-        #         replacement_strategy=search.TranspositionTable.replacement_strategies[
-        #             config["search_transposition_table_replacement_strategy"]
-        #         ],
-        #     ),
-        #     debug=False,
-        # )
 
     def export(self, episode=-1, best_model=False):
         if episode != -1:
@@ -209,19 +195,15 @@ class AlphaZeroAgent:
             if done:
                 num_episodes += 1
                 state, _ = self.env.reset()
-                self.memory.update_reward(game_start_step)
-                game_start_step = step
-                # if score >= self.env.spec.reward_threshold:
-                #     print("Your agent has achieved the env's reward threshold.")
+                self.store_game()
                 total_score += score
                 score = 0
                 if self.memory.size >= self.replay_batch_size:
                     epoch += 1
                     loss = self.experience_replay()
                     stat_loss.append(loss)
-                    self.memory.clear()
                     stat_score.append(total_score / num_episodes)
-                    stat_test_score.append(self.test())
+                    # stat_test_score.append(self.test())
                     self.plot_graph(
                     stat_score,
                     stat_loss,

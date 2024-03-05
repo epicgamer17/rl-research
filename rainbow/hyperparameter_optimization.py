@@ -103,7 +103,7 @@ def objective(params):
             [name for env in environments_list],
         ]
     ).T
-    with contextlib.closing(multiprocessing.Pool(8)) as pool:
+    with contextlib.closing(multiprocessing.Pool()) as pool:
         scores_list = pool.map_async(
             globalized_training_func, (args for args in args_list)
         ).get()
