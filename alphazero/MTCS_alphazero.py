@@ -4,12 +4,12 @@ import copy
 
 
 class Node:
-    def __init__(self, env, observation, done, parent, possible_actions):
+    def __init__(self, env, observation, done, parent, parent_action, possible_actions):
         self.env = copy.deepcopy(env)
         self.observation = observation
         self.done = done
         self.parent = parent
-        # self.parent_action = parent_action
+        self.parent_action = parent_action
         self.children = {}
         self.visits = 0
         self.possible_actions = possible_actions
@@ -33,5 +33,5 @@ class Node:
                 else self.possible_actions
             )
             self.children[action] = Node(
-                self.env, observation, done, self, child_possible_actions
+                self.env, observation, done, self, action, child_possible_actions
             )
