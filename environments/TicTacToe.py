@@ -1,7 +1,6 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-from gym.envs.registration import register
 
 
 class TicTacToe(gym.Env):
@@ -66,10 +65,3 @@ class TicTacToe(gym.Env):
                 l.append(i)
         dico["possible_actions"] = l
         return dico
-
-
-register(
-    id="TicTacToe-v0",
-    entry_point="environments.tic_tac_toe:TicTacToe",
-    max_episode_steps=9,
-)

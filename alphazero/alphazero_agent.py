@@ -111,19 +111,8 @@ class AlphaZeroAgent:
     def predict_single(self, state):
         state_input = self.prepare_states(state)
         value, probabilities = self.model(inputs=state_input)
-        print(probabilities.numpy(), value.numpy())
-        return probabilities.numpy(), value.numpy()
-
-    def select_action(self, state):
-        probabilities, value = self.predict_single(state)
-        distribution = tfp.distributions.Categorical(probs=probabilities)
-        selected_action = distribution.sample().numpy()
-        if len(selected_action) == 1:
-            selected_action = selected_action[0]
-        value = value[0][0]
-        if not self.is_test:
-            self.transition = [state]
-        return selected_action
+        print(probabilities.numpy().reshape(-1, 1), value.numpy())
+        return probabilities.numpy().reshape(-1, 1), value.numpy()
 
     def step(self, action):
         if not self.is_test:
@@ -160,7 +149,7 @@ class AlphaZeroAgent:
         return loss
 
     def monte_carlo_search(self, env, observation, possible_actions, num_simulations):
-        root = MCTS.Node(env, observation, False, None, possible_actions)
+        root = MCTS.Node(env, observation, False, None, None, possible_actions)
         for i in range(num_simulations):
             self.explore(root)
         prob_array = np.zeros((9))
@@ -170,9 +159,9 @@ class AlphaZeroAgent:
         return prob_array
 
     def explore(self, root):
-        node_current = root
-        while node_current.children:
-            children = node_current.children
+        current_node = root
+        while current_node.children:
+            children = current_node.children
             print("MCTS Children", children)
             print("MCTS Visits", [c.visits for c in children.values()])
             max_puct = max([c.return_score() for c in children.values()])
@@ -184,18 +173,19 @@ class AlphaZeroAgent:
             ]
             print("MCTS Actions", actions)
             action_selected = random.choice(actions)
-            node_current = children[action_selected]
+            current_node = children[action_selected]
 
-        if node_current != root:
-            probabilities, value = self.predict_single(node_current.observation)
-            puct_score = value + self.c_puct * probabilities * np.sqrt(
-                node_current.parent.visits
-            ) / (1 + node_current.visits)
-            node_current.set_score(puct_score)
+        if current_node != root:
+            probabilities, value = self.predict_single(current_node.observation)
+            puct_score = value + self.c_puct * probabilities[
+                current_node.parent_action
+            ] * np.sqrt(current_node.parent.visits) / (1 + current_node.visits)
+            print("MCTS PUCT", puct_score)
+            current_node.set_score(puct_score)
 
-        node_current.create_children()
-        node_current.visits += 1
-        parent = node_current
+        current_node.create_children()
+        current_node.visits += 1
+        parent = current_node
 
         while parent.parent:
             parent = parent.parent
