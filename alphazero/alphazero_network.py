@@ -42,6 +42,7 @@ class Network(tf.keras.Model):
 
     def call(self, inputs):
         x = self.inputs(inputs)
+        print(x.shape)
         x = self.input_batch_norm(x)
         for residual in self.residuals:
             x = residual(x)

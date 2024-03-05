@@ -172,8 +172,9 @@ class RainbowAgent:
         self.model.save(path)
 
     def prepare_states(self, state):
+        state = np.array(state)
         if (self.env.observation_space.high == 255).all():
-            state = np.array(state) / 255
+            state = state / 255
         # print(state.shape)
         if state.shape == self.observation_dimensions:
             new_shape = (1,) + state.shape

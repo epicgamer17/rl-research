@@ -6,6 +6,7 @@ import copy
 class Node:
     def __init__(self, env, observation, done, parent, parent_action, possible_actions):
         self.env = copy.deepcopy(env)
+        self.env.window = None  # to stop rendering when render mode is human
         self.env.close()
         self.observation = observation
         self.done = done
@@ -36,5 +37,3 @@ class Node:
             self.children[action] = Node(
                 self.env, observation, done, self, action, child_possible_actions
             )
-
-
