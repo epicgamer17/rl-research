@@ -3,8 +3,8 @@ from math import log, sqrt, inf
 import copy
 
 
-class Node:
-    def __init__(self, env, observation, done, parent, parent_action, possible_actions):
+class MCTS:
+    def __init__(self, env, observation, done, parent, parent_action, legal_moves):
         self.env = copy.deepcopy(env)
         self.env.window = None  # to stop rendering when render mode is human
         self.env.close()
@@ -12,9 +12,9 @@ class Node:
         self.done = done
         self.parent = parent
         self.parent_action = parent_action
-        self.children = {}
+        self.children = np.array([None] * len(legal_moves))
         self.visits = 0
-        self.possible_actions = possible_actions
+        self.legal_moves = legal_moves
         self.score = 0
 
     def return_score(self):
@@ -24,16 +24,23 @@ class Node:
         self.score = score
 
     def create_children(self):
-        if self.done:
-            return None
-        for action in range(self.possible_actions):
-            observation, reward, terminated, truncated, info = self.env.step(action)
+        for i in range(len(self.legal_moves)):
+            child_env = copy.deepcopy(self.env)
+            observation, reward, terminated, truncated, info = child_env.step(
+                self.legal_moves[i]
+            )
             done = terminated or truncated
-            child_possible_actions = (
-                info["possible_actions"]
-                if "possible_actions" in info
-                else self.possible_actions
+            # print(info["legal_moves"])
+            child_legal_moves = (
+                info["legal_moves"] if "legal_moves" in info else self.legal_moves
             )
-            self.children[action] = Node(
-                self.env, observation, done, self, action, child_possible_actions
+            self.children[i] = Node(
+                child_env,
+                observation,
+                done,
+                self,
+                self.legal_moves[i],
+                child_legal_moves,
             )
+            # print(self.children[i])
+        # print(self.children)

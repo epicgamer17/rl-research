@@ -69,8 +69,13 @@ class AlphaZeroAgent:
         self.batch_size = int(config["batch_size"])
         self.memory_size = int(config["memory_size"])  # times number of agents
         self.max_game_length = int(config["max_game_length"])
+
         self.dirichlet_alpha = config["dirichlet_alpha"]
         self.dirichlet_epsilon = config["dirichlet_epsilon"]
+        self.exploration_moves = config["exploration_moves"]
+
+        self.exploration_tau = config["exploration_tau"]
+        self.exploitation_tau = config["exploitation_tau"]
 
         self.memory = ReplayBuffer(
             observation_dimensions=self.observation_dimensions,
@@ -82,6 +87,7 @@ class AlphaZeroAgent:
         )
 
         self.c_puct = config["c_puct"]
+        self.weight_decay = config["weight_decay"]
         self.monte_carlo_simulations = config["monte_carlo_simulations"]
         self.transition = list()
         self.is_test = True
@@ -113,16 +119,16 @@ class AlphaZeroAgent:
 
     def predict_single(self, state):
         state_input = self.prepare_states(state)
-        print(state_input.shape)
+        # print(state_input.shape)
         value, probabilities = self.model(inputs=state_input)
-        print(probabilities.numpy()[0], value.numpy()[0])
+        print("Probabilities ", probabilities.numpy()[0], "Value", value.numpy()[0])
         return probabilities.numpy()[0].reshape(self.num_actions), value.numpy()[0]
 
     def step(self, action):
         if not self.is_test:
             next_state, reward, terminated, truncated, info = self.env.step(action)
             self.transition += [reward]
-            print(self.transition)
+            # print(self.transition)
             self.memory.store(*self.transition)
         else:
             next_state, reward, terminated, truncated, info = self.test_env.step(action)
@@ -141,8 +147,11 @@ class AlphaZeroAgent:
             loss = (
                 (rewards - value) ** 2
                 - action_probabilities * tf.math.log(probabilities)
-                + self.weight_decay * tf.reduce_sum(self.model.trainable_variables**2)
+                # + self.weight_decay
+                # * tf.reduce_sum(tf.math.square(self.model.trainable_variables))
+                + sum(self.model.losses)
             )
+            loss = tf.reduce_mean(loss)
 
         gradients = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer(
@@ -153,56 +162,80 @@ class AlphaZeroAgent:
         print("Loss", loss)
         return loss
 
-    def monte_carlo_search(self, env, observation, possible_actions, num_simulations):
-        root = MCTS.Node(env, observation, False, None, None, possible_actions)
+    def monte_carlo_search(
+        self, env, observation, legal_moves, num_simulations, game_turn=None
+    ):
+        root = MCTS(env, observation, False, None, None, legal_moves)
         for i in range(num_simulations):
             print("MCTS Simulation", i)
-            self.explore(root)
-        prob_array = np.zeros((9))
-        for action, node in root.children.items():
-            prob_array[action] = node.visits / (root.visits - 1)
-            print(node.visits, root.visits - 1)
-        for child in root.children.values():
+            self.explore(root, game_turn)
+        mcts_policy = np.zeros((9), dtype=np.float32)
+        if game_turn != None and game_turn < self.exploration_moves:
+            tau = self.exploration_tau
+        else:
+            tau = self.exploitation_tau
+        for node in root.children:
+            mcts_policy[node.parent_action] = (node.visits / (root.visits - 1)) ** (
+                1 / tau
+            )
+        # for action, node in root.children.items():
+        # mcts_policy[action] = node.visits / (root.visits - 1)
+        # print(node.visits, root.visits - 1)
+
+        for child in root.children:
             child.parent = None
             child = None
         root.children = None
         root = None
         gc.collect()
-        return prob_array
+        return mcts_policy
 
-    def explore(self, root):
+    def explore(self, root, game_turn):
         current_node = root
-        while current_node.children:
-            children = current_node.children
-            # print("MCTS Children", children)
-            # print("MCTS Visits", [c.visits for c in children.values()])
-            max_puct = max([c.return_score() for c in children.values()])
-            # print("MCTS Max U", max_puct)
-            actions = [
-                action
-                for action, child in children.items()
-                if child.return_score() == max_puct
-            ]
-            # print("MCTS Actions", actions)
-            action_selected = random.choice(actions)
-            current_node = children[action_selected]
+        while current_node.children.any():
+            puct_scores = [c.return_score() for c in current_node.children]
+            max_puct_index = np.argmax(puct_scores)
+            # best_actions = [
+            #     action
+            #     for action, child in children.items()
+            #     if child.return_score() == max_puct
+            # ]
+            # assert (
+            #     len(best_actions) > 0
+            # ), "MCTS Best Actions: {}, Legal Moves: {}".format(
+            #     best_actions, current_node.legal_moves
+            # )
+            # action_selected = random.choice(best_actions)
+            # current_node = children[action_selected]
+            current_node = current_node.children[max_puct_index]
 
-        if current_node != root:
-            probabilities, value = self.predict_single(current_node.observation)
+        probabilities, value = self.predict_single(current_node.observation)
+        probabilities = (
+            1 - self.dirichlet_epsilon
+        ) * probabilities + self.dirichlet_epsilon * np.random.dirichlet(
+            [self.dirichlet_alpha] * self.num_actions
+        )
+        current_node.create_children()
+        print("Legal Moves", current_node.legal_moves)
+        print("Children", current_node.children)
+        for child in current_node.children:
+            print("Child", child)
+            print("Actoin to reach child", child.parent_action)
+            print("Child Legal Moves", child.legal_moves)
+            # _, value = self.predict_single(child.observation)
             puct_score = value + self.c_puct * probabilities[
                 current_node.parent_action
-            ] * np.sqrt(current_node.parent.visits) / (1 + current_node.visits)
+            ] * np.sqrt(child.parent.visits) / (child.visits + 1)
             # print("MCTS PUCT", puct_score)
-            current_node.set_score(puct_score)
+            child.set_score(puct_score)
 
-        current_node.create_children()
         current_node.visits += 1
         parent = current_node
 
         while parent.parent:
             parent = parent.parent
             parent.visits += 1
-            parent.score += puct_score
+            # parent.score += puct_score
 
     def train(self):
         self.is_test = False
@@ -215,25 +248,26 @@ class AlphaZeroAgent:
         state, info = self.env.reset()
         epoch = 0
         step = 0
-        game_start_step = 0
+        game_turn = 0
         while epoch < self.num_epochs:
             self.env.render()
             num_episodes = 0
             total_score = 0
             score = 0
             step += 1
+            game_turn += 1
             print("Step", step)
-            possible_actions = (
-                info["possible_actions"]
-                if "possible_actions" in info
-                else self.num_actions
+            legal_moves = (
+                info["legal_moves"]
+                if "legal_moves" in info
+                else range(self.num_actions)
             )
             action_probabilities = self.monte_carlo_search(
-                self.env, state, possible_actions, self.monte_carlo_simulations
+                self.env, state, legal_moves, self.monte_carlo_simulations, game_turn
             )
             self.transition = [state, action_probabilities]
             next_state, reward, terminated, truncated, info = self.step(
-                np.argmax(action_probabilities)
+                np.random.choice(np.arange(self.num_actions), p=action_probabilities)
             )
             done = terminated or truncated
             state = next_state
@@ -242,19 +276,19 @@ class AlphaZeroAgent:
             if done:
                 num_episodes += 1
                 state, info = self.env.reset()
-                self.memory.update_reward(game_start_step)
-                game_start_step = step
+                game_turn = 0
+                self.memory.store_game()
                 # if score >= self.env.spec.reward_threshold:
                 #     print("Your agent has achieved the env's reward threshold.")
                 total_score += score
                 score = 0
-                if self.memory.size >= self.replay_batch_size:
+                if self.memory.size >= self.batch_size:
                     epoch += 1
                     loss = self.experience_replay()
                     stat_loss.append(loss)
-                    self.memory.clear()
+                    # self.memory.clear()
                     stat_score.append(total_score / num_episodes)
-                    stat_test_score.append(self.test())
+                    stat_test_score.append(self.test(num_trials=5))
                     self.plot_graph(
                         stat_score,
                         stat_loss,
@@ -280,7 +314,7 @@ class AlphaZeroAgent:
         ax2.plot(loss, linestyle="solid")
         ax2.set_title("Frame {}. Loss: {}".format(step, np.mean(loss[-10:])))
         ax3.plot(test_score, linestyle="solid")
-        ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
+        # ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
         ax3.set_title(
             "Frame {}. Test Score: {}".format(step, np.mean(test_score[-10:]))
         )
@@ -297,14 +331,14 @@ class AlphaZeroAgent:
             score = 0
 
             while not done:
-                possible_actions = (
-                    info["possible_actions"]
-                    if "possible_actions" in info
-                    else self.num_actions
+                legal_moves = (
+                    info["legal_moves"]
+                    if "legal_moves" in info
+                    else range(self.num_actions)
                 )
                 action = np.argmax(
                     self.monte_carlo_search(
-                        self.env, state, possible_actions, self.monte_carlo_simulations
+                        self.env, state, legal_moves, self.monte_carlo_simulations
                     )
                 )
                 next_state, reward, terminated, truncated, info = self.step(action)
@@ -324,14 +358,14 @@ class AlphaZeroAgent:
         score = 0
 
         while not done:
-            possible_actions = (
-                info["possible_actions"]
-                if "possible_actions" in info
-                else self.num_actions
+            legal_moves = (
+                info["legal_moves"]
+                if "legal_moves" in info
+                else range(self.num_actions)
             )
             action = np.argmax(
                 self.monte_carlo_search(
-                    self.env, state, possible_actions, self.monte_carlo_simulations
+                    self.env, state, legal_moves, self.monte_carlo_simulations
                 )
             )
             next_state, reward, terminated, truncated, info = self.step(action)

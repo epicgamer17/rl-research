@@ -106,9 +106,10 @@ class TicTacToeEnv(gym.Env):
         )  # The size of a single grid square in pixels
 
         # First we draw the X's and 0's
+        turn = int(self._grid[2, 0, 0])
         for i in range(self.size):
             for j in range(self.size):
-                if self._grid[i, j, 0] == 1:
+                if self._grid[turn, i, j] == 1:
                     pygame.draw.line(
                         canvas,
                         (255, 0, 0),
@@ -123,7 +124,7 @@ class TicTacToeEnv(gym.Env):
                         (j * pix_square_size, (i + 1) * pix_square_size),
                         width=3,
                     )
-                if self._grid[i, j, 1] == 1:
+                if self._grid[1 - turn, i, j] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 0, 0),

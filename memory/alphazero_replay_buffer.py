@@ -22,7 +22,7 @@ class ReplayBuffer:
         observation_buffer_shape = list(observation_buffer_shape)
         self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
         self.action_probabilities_buffer = np.empty(
-            (max_size, num_actions), dtype=np.int32
+            (max_size, num_actions), dtype=np.float32
         )
         self.reward_buffer = np.zeros(max_size, dtype=np.float32)
 
@@ -36,7 +36,7 @@ class ReplayBuffer:
             dtype=np.float32,
         )
         self.game_action_probabilities_buffer = np.zeros(
-            (max_game_length, num_actions), dtype=np.int32
+            (max_game_length, num_actions), dtype=np.float32
         )
         self.game_reward_buffer = np.zeros(max_game_length, dtype=np.float32)
         self.game_pointer = 0
@@ -51,7 +51,8 @@ class ReplayBuffer:
 
     def store(self, observation, action_probabilities_buffer, reward):
         self.game_observation_buffer[self.game_pointer] = observation
-        print(action_probabilities_buffer)
+        # print("Input", action_probabilities_buffer)
+        # print("Shape", self.game_action_probabilities_buffer.shape)
         self.game_action_probabilities_buffer[self.game_pointer] = (
             action_probabilities_buffer
         )
@@ -62,11 +63,13 @@ class ReplayBuffer:
     def store_game(self):
         if self.two_player:
             reward = self.game_reward_buffer[self.game_length - 1]
-            updated_rewards = np.empty((self.game_length), int)
+            updated_rewards = np.empty((self.game_length), float)
             updated_rewards[::2] = 1 * reward
             updated_rewards[1::2] = -1 * reward
             updated_rewards = np.flip(updated_rewards)
-            self.game_reward_buffer[0:] = updated_rewards
+            # print(len(updated_rewards))
+            # print(len(self.game_reward_buffer[:self.game_length]))
+            self.game_reward_buffer[: self.game_length] = updated_rewards
         else:
             total_reward = sum(self.game_reward_buffer)
             self.game_reward_buffer = [total_reward] * self.game_length
@@ -93,6 +96,10 @@ class ReplayBuffer:
             self.observation_buffer[game_start_index:game_end_index] = (
                 self.game_observation_buffer[: self.game_length]
             )
+
+            # print("Buffer Shape", self.action_probabilities_buffer.shape)
+            # print("Game Buffer", self.game_action_probabilities_buffer[: self.game_length])
+
             self.action_probabilities_buffer[game_start_index:game_end_index] = (
                 self.game_action_probabilities_buffer[: self.game_length]
             )
@@ -107,6 +114,11 @@ class ReplayBuffer:
             self.observation_buffer[game_start_index:game_end_index] = (
                 self.game_observation_buffer[: self.game_length]
             )
+
+            # print("Start and end index", game_start_index, game_end_index)
+            # print("Buffer Shape", self.action_probabilities_buffer.shape)
+            # print("Game Buffer", self.game_action_probabilities_buffer[: self.game_length])
+
             self.action_probabilities_buffer[game_start_index:game_end_index] = (
                 self.game_action_probabilities_buffer[: self.game_length]
             )
@@ -115,20 +127,18 @@ class ReplayBuffer:
             )
             self.pointer = (self.pointer + self.game_length) % self.max_size
             self.size = min(self.size + self.game_length, self.max_size)
-        self.game_observation_buffer = np.zeros(
-            list(
-                [
-                    self.max_game_length,
-                ]
-                + list(self.game_observation_buffer.shape[1:])
-            ),
-            dtype=np.float32,
-        )
-        self.game_action_probabilities_buffer = np.zeros(
-            self.max_game_length, dtype=np.int32
-        )
-        self.game_reward_buffer = np.zeros(self.max_game_length, dtype=np.float32)
+
+        self.game_length = 0
         self.game_pointer = 0
+        self.game_observation_buffer = np.zeros_like(
+            self.game_observation_buffer, dtype=np.float32
+        )
+        self.game_action_probabilities_buffer = np.zeros_like(
+            self.game_action_probabilities_buffer, dtype=np.float32
+        )
+        self.game_reward_buffer = np.zeros_like(
+            self.game_reward_buffer, dtype=np.float32
+        )
 
     def sample(self):
         indices = np.random.choice(self.size, size=self.batch_size, replace=False)
