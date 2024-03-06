@@ -11,7 +11,15 @@ from tensorflow.keras.layers import InputSpec
 
 
 class Residual(tf.keras.Model):
-    def __init__(self, filters, kernel_size, strides=1, downsample=None, **kwargs):
+    def __init__(
+        self,
+        filters,
+        kernel_size,
+        strides=1,
+        downsample=None,
+        regularizer=None,
+        **kwargs
+    ):
         super(Residual, self).__init__()
         self.conv1 = tf.keras.layers.Conv2D(
             filters,
@@ -19,8 +27,11 @@ class Residual(tf.keras.Model):
             strides=strides,
             padding="same",
             use_bias=False,
+            kernel_regularizer=regularizer,
         )
-        self.bn1 = tf.keras.layers.BatchNormalization()
+        self.bn1 = tf.keras.layers.BatchNormalization(
+            beta_regularizer=regularizer, gamma_regularizer=regularizer
+        )
         self.relu = tf.keras.layers.Activation("relu")
         self.conv2 = tf.keras.layers.Conv2D(
             filters,
@@ -28,8 +39,11 @@ class Residual(tf.keras.Model):
             strides=strides,
             padding="same",
             use_bias=False,
+            kernel_regularizer=regularizer,
         )
-        self.bn2 = tf.keras.layers.BatchNormalization()
+        self.bn2 = tf.keras.layers.BatchNormalization(
+            beta_regularizer=regularizer, gamma_regularizer=regularizer
+        )
         self.downsample = downsample
 
     def call(self, inputs):
