@@ -30,12 +30,12 @@ import copy
 import numpy as np
 from alphazero.alphazero_network import Network
 
-from memory.alphazero_replay_buffer import ReplayBuffer
+from replay_buffers.alphazero_replay_buffer import ReplayBuffer
 import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
 import gymnasium as gym
 
-import alphazero.MCTS_alphazero as MCTS
+import alphazero.old.MCTS_alphazero as MCTS
 import random
 import gc
 
@@ -208,26 +208,28 @@ class AlphaZeroAgent:
             # action_selected = random.choice(best_actions)
             # current_node = children[action_selected]
             current_node = current_node.children[max_puct_index]
-
-        probabilities, value = self.predict_single(current_node.observation)
-        probabilities = (
-            1 - self.dirichlet_epsilon
-        ) * probabilities + self.dirichlet_epsilon * np.random.dirichlet(
-            [self.dirichlet_alpha] * self.num_actions
-        )
-        current_node.create_children()
-        print("Legal Moves", current_node.legal_moves)
-        print("Children", current_node.children)
-        for child in current_node.children:
-            print("Child", child)
-            print("Actoin to reach child", child.parent_action)
-            print("Child Legal Moves", child.legal_moves)
-            # _, value = self.predict_single(child.observation)
-            puct_score = value + self.c_puct * probabilities[
-                current_node.parent_action
-            ] * np.sqrt(child.parent.visits) / (child.visits + 1)
-            # print("MCTS PUCT", puct_score)
-            child.set_score(puct_score)
+        if not current_node.done:
+            probabilities, value = self.predict_single(current_node.observation)
+            probabilities = (
+                1 - self.dirichlet_epsilon
+            ) * probabilities + self.dirichlet_epsilon * np.random.dirichlet(
+                [self.dirichlet_alpha] * self.num_actions
+            )
+            current_node.create_children()
+            print("Legal Moves", current_node.legal_moves)
+            print("Children", current_node.children)
+            for child in current_node.children:
+                print("Child", child)
+                print("Actoin to reach child", child.parent_action)
+                print("Child Legal Moves", child.legal_moves)
+                print("Child Done", child.done)
+                if child.done:
+                    value = child.reward
+                puct_score = value + self.c_puct * probabilities[
+                    current_node.parent_action
+                ] * np.sqrt(child.parent.visits) / (child.visits + 1)
+                # print("MCTS PUCT", puct_score)
+                child.set_score(puct_score)
 
         current_node.visits += 1
         parent = current_node
@@ -269,7 +271,7 @@ class AlphaZeroAgent:
             next_state, reward, terminated, truncated, info = self.step(
                 np.random.choice(np.arange(self.num_actions), p=action_probabilities)
             )
-            done = terminated or truncated
+            done = terminated or truncated  # or max(action_probabilities) < 0.05
             state = next_state
             score += reward
 

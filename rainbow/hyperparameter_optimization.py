@@ -163,8 +163,8 @@ def create_search_space():
                 "variance_10",
             ],
         ),
-        "optimizer_function": hp.choice(
-            "optimizer_function", [tf.keras.optimizers.legacy.Adam]
+        "optimizer": hp.choice(
+            "optimizer", [tf.keras.optimizers.legacy.Adam]
         ),  # NO SGD OR RMSPROP FOR NOW SINCE IT IS FOR RAINBOW DQN
         "learning_rate": hp.choice(
             "learning_rate", [10, 5, 2, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001]
@@ -185,11 +185,13 @@ def create_search_space():
         "replay_batch_size": hp.choice(
             "replay_batch_size", [2**i for i in range(0, 8)]
         ),  ###########
-        "memory_size": hp.choice(
-            "memory_size", [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000]
+        "replay_buffer_size": hp.choice(
+            "replay_buffer_size",
+            [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000],
         ),  #############
-        "min_memory_size": hp.choice(
-            "min_memory_size", [0, 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000]
+        "min_replay_buffer_size": hp.choice(
+            "min_replay_buffer_size",
+            [0, 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000],
         ),  # 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000
         "n_step": hp.choice("n_step", [1, 2, 3, 4, 5, 8, 10]),
         "discount_factor": hp.choice(
@@ -230,7 +232,7 @@ def create_search_space():
         {
             "activation": 1,
             "kernel_initializer": 6,
-            "optimizer_function": 0,  # NO SGD OR RMSPROP FOR NOW SINCE IT IS FOR RAINBOW DQN
+            "optimizer": 0,  # NO SGD OR RMSPROP FOR NOW SINCE IT IS FOR RAINBOW DQN
             "learning_rate": 5,  #
             "adam_epsilon": 5,
             # NORMALIZATION?
@@ -239,8 +241,8 @@ def create_search_space():
             "transfer_frequency": 3,
             "replay_period": 1,
             "replay_batch_size": 7,
-            "memory_size": 8,
-            "min_memory_size": 4,
+            "replay_buffer_size": 8,
+            "min_replay_buffer_size": 4,
             "n_step": 2,
             "discount_factor": 3,
             "atom_size": 4,  #

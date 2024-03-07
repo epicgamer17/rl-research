@@ -1,21 +1,22 @@
 from time import time
 import numpy as np
-from memory.segment_tree import SumSegmentTree, MinSegmentTree
-from memory.fast_sum_tree import FastSumTree
-from memory.n_step_replay_buffer import ReplayBuffer
+from replay_buffers.segment_tree import SumSegmentTree, MinSegmentTree
+from replay_buffers.fast_sum_tree import FastSumTree
+from replay_buffers.n_step_replay_buffer import ReplayBuffer
+
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(
-            self,
-            observation_dimensions,
-            max_size,
-            batch_size=32,
-            max_priority=1.0,
-            alpha=0.6,
-            # epsilon=0.01,
-            n_step=1,
-            gamma=0.99,
-        ):
+        self,
+        observation_dimensions,
+        max_size,
+        batch_size=32,
+        max_priority=1.0,
+        alpha=0.6,
+        # epsilon=0.01,
+        n_step=1,
+        gamma=0.99,
+    ):
         assert alpha >= 0
 
         super(PrioritizedReplayBuffer, self).__init__(
@@ -41,8 +42,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         transition = super().store(observation, action, reward, next_observation, done)
 
         if transition:
-            self.sum_tree[self.tree_pointer] = self.max_priority ** self.alpha
-            self.min_tree[self.tree_pointer] = self.max_priority ** self.alpha
+            self.sum_tree[self.tree_pointer] = self.max_priority**self.alpha
+            self.min_tree[self.tree_pointer] = self.max_priority**self.alpha
             self.tree_pointer = (self.tree_pointer + 1) % self.max_size
 
         # print("Storing in PrioritizedReplayBuffer Time ", time() - time1)
@@ -83,12 +84,14 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         # priorities += self.self.epsilon
         for index, priority in zip(indices, priorities):
             # print("Priority", priority)
-            assert priority > 0, ("Negative priority: {}".format(priority))
+            assert priority > 0, "Negative priority: {}".format(priority)
             assert 0 <= index < len(self)
 
-            self.sum_tree[index] = priority ** self.alpha
-            self.min_tree[index] = priority ** self.alpha
-            self.max_priority = max(self.max_priority, priority) # could remove and clip priorities in experience replay isntead
+            self.sum_tree[index] = priority**self.alpha
+            self.min_tree[index] = priority**self.alpha
+            self.max_priority = max(
+                self.max_priority, priority
+            )  # could remove and clip priorities in experience replay isntead
 
     def _sample_proportional(self):
         # print("Getting Indices from PrioritizedReplayBuffer Sum Tree")
@@ -116,19 +119,20 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         weight = weight / max_weight
 
         return weight
-    
+
+
 class FastPrioritizedReplayBuffer(ReplayBuffer):
     def __init__(
-            self,
-            observation_dimensions,
-            max_size,
-            batch_size=32,
-            max_priority=1.0,
-            alpha=0.6,
-            # epsilon=0.01,
-            n_step=1,
-            gamma=0.99,
-        ):
+        self,
+        observation_dimensions,
+        max_size,
+        batch_size=32,
+        max_priority=1.0,
+        alpha=0.6,
+        # epsilon=0.01,
+        n_step=1,
+        gamma=0.99,
+    ):
         assert alpha >= 0
 
         super(FastPrioritizedReplayBuffer, self).__init__(
@@ -225,7 +229,7 @@ class FastPrioritizedReplayBuffer(ReplayBuffer):
             assert priority > 0, "Negative priority: {}".format(priority)
             # assert 0 <= index < len(self)
             # self.tree[index] = priority ** self.alpha
-            self.max_priority = max(self.max_priority, priority ** self.alpha)
-            self.min_priority = min(self.min_priority, priority ** self.alpha)
+            self.max_priority = max(self.max_priority, priority**self.alpha)
+            self.min_priority = min(self.min_priority, priority**self.alpha)
             # priority = np.clip(priority, self.epsilon, self.max_priority)
-            self.tree.update(index + self.tree.capacity - 1, priority ** self.alpha)
+            self.tree.update(index + self.tree.capacity - 1, priority**self.alpha)

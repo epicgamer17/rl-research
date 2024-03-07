@@ -48,7 +48,7 @@ class ActorBase(RainbowAgent):
     def run(self):
         self.is_test = False
         self.fetch_latest_params()
-        self.fill_memory()
+        self.fill_replay_buffer()
 
         state, _ = self.env.reset()
         score = 0
@@ -68,9 +68,9 @@ class ActorBase(RainbowAgent):
             state = next_state
             score += reward
 
-            if len(self.memory) >= self.replay_batch_size:
-                # sample n_step memory
-                e = self.memory_n.sample()
+            if len(self.replay_buffer) >= self.replay_batch_size:
+                # sample n_step replay_buffer
+                e = self.n_step_replay_buffer.sample()
 
                 self._push_experiences_to_remote_replay_buffer(e)
 

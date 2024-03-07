@@ -3,13 +3,12 @@ import sys
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
 
+
 class LearnerBase(RainbowAgent):
     def __init__(self, env, config):
         super().__init__(model_name="learner", env=env, config=config)
         self.graph_interval = 200
-        self.remove_old_experiences_interval = config[
-            "remove_old_experiences_interval"
-        ]
+        self.remove_old_experiences_interval = config["remove_old_experiences_interval"]
         self.running = False
 
     def sample_experiences_from_remote_replay_buffer(self):
@@ -28,7 +27,7 @@ class LearnerBase(RainbowAgent):
         )  # make these num trials divided by graph interval so i dont need to append (to make it faster?)
         stat_test_score = []
         stat_loss = []
-        self.fill_memory()
+        self.fill_replay_buffer()
         num_trials_truncated = 0
         state, _ = self.env.reset()
         model_update_count = 0
@@ -39,7 +38,7 @@ class LearnerBase(RainbowAgent):
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 
             if (step % self.replay_period) == 0 and (
-                len(self.memory) >= self.replay_batch_size
+                len(self.replay_buffer) >= self.replay_batch_size
             ):
                 model_update_count += 1
                 loss = self.experience_replay()

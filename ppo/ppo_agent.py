@@ -22,14 +22,14 @@ if gpus:
         logical_gpus = tf.config.list_logical_devices("GPU")
         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
     except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
+        # memory growth must be set before GPUs have been initialized
         print(e)
 
 import datetime
 import copy
 import numpy as np
 from ppo.ppo_network import ActorNetwork, CriticNetwork
-from memory.ppo_replay_buffer import ReplayBuffer
+from replay_buffers.ppo_replay_buffer import ReplayBuffer
 import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
 import gymnasium as gym
@@ -84,16 +84,16 @@ class PPOAgent:
         self.target_kl = config["target_kl"]
 
         # self.replay_batch_size = int(config["replay_batch_size"])
-        self.memory_size = self.steps_per_epoch  # times number of agents
+        self.replay_buffer_size = self.steps_per_epoch  # times number of agents
         self.num_minibatches = config["num_minibatches"]
 
         self.discount_factor = config["discount_factor"]
         self.gae_labmda = config["gae_lambda"]
         self.entropy_coefficient = config["entropy_coefficient"]
 
-        self.memory = ReplayBuffer(
+        self.replay_buffer = ReplayBuffer(
             observation_dimensions=self.observation_dimensions,
-            max_size=self.memory_size,
+            max_size=self.replay_buffer_size,
             gamma=config["discount_factor"],
         )
 
@@ -113,7 +113,7 @@ class PPOAgent:
         #     debug=False,
         # )
 
-    def export(self, episode=-1, best_model=False):
+    def save_checkpoint(self, episode=-1, best_model=False):
         if episode != -1:
             actor_path = "./actor_{}_{}_episodes.keras".format(
                 self.model_name, episode + self.start_episode
@@ -186,7 +186,7 @@ class PPOAgent:
         if not self.is_test:
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             self.transition += [reward]
-            self.memory.store(*self.transition)
+            self.replay_buffer.store(*self.transition)
         else:
             next_state, reward, terminated, truncated, _ = self.test_env.step(action)
 
@@ -306,7 +306,7 @@ class PPOAgent:
                     last_value = (
                         0 if done else self.critic(self.prepare_states(next_state))
                     )
-                    self.memory.finish_trajectory(last_value)
+                    self.replay_buffer.finish_trajectory(last_value)
                     num_episodes += 1
                     state, _ = self.env.reset()
                     if score >= self.env.spec.reward_threshold:
@@ -314,7 +314,7 @@ class PPOAgent:
                     total_score += score
                     score = 0
 
-            samples = self.memory.get()
+            samples = self.replay_buffer.get()
             observations = samples["observations"]
             actions = samples["actions"]
             log_probabilities = samples["log_probabilities"]
@@ -398,7 +398,7 @@ class PPOAgent:
                 stat_test_score,
                 (epoch + 1) * self.steps_per_epoch,
             )
-            self.export()
+            self.save_checkpoint()
 
         self.plot_graph(
             stat_score,
@@ -407,7 +407,7 @@ class PPOAgent:
             stat_test_score,
             self.num_epochs * self.steps_per_epoch,
         )
-        self.export()
+        self.save_checkpoint()
         self.env.close()
         return num_trials_truncated / self.num_epochs
 

@@ -17,7 +17,7 @@ class Residual(tf.keras.Model):
         kernel_size,
         strides=1,
         downsample=None,
-        regularizer=None,
+        kernel_initializer="he_uniform",
         **kwargs
     ):
         super(Residual, self).__init__()
@@ -27,23 +27,20 @@ class Residual(tf.keras.Model):
             strides=strides,
             padding="same",
             use_bias=False,
-            kernel_regularizer=regularizer,
+            kernel_initializer=kernel_initializer,
         )
-        self.bn1 = tf.keras.layers.BatchNormalization(
-            beta_regularizer=regularizer, gamma_regularizer=regularizer
-        )
-        self.relu = tf.keras.layers.Activation("relu")
+        self.bn1 = tf.keras.layers.BatchNormalization()
         self.conv2 = tf.keras.layers.Conv2D(
             filters,
             kernel_size=kernel_size,
             strides=strides,
             padding="same",
             use_bias=False,
-            kernel_regularizer=regularizer,
+            kernel_initializer=kernel_initializer,
         )
-        self.bn2 = tf.keras.layers.BatchNormalization(
-            beta_regularizer=regularizer, gamma_regularizer=regularizer
-        )
+        self.bn2 = tf.keras.layers.BatchNormalization()
+
+        self.relu = tf.keras.layers.Activation("relu")
         self.downsample = downsample
 
     def call(self, inputs):

@@ -1,15 +1,19 @@
 from copy import deepcopy
 from math import log, sqrt, inf
 import copy
+import numpy as np
 
 
 class MCTS:
-    def __init__(self, env, observation, done, parent, parent_action, legal_moves):
+    def __init__(
+        self, env, observation, done, parent, parent_action, legal_moves, reward
+    ):
         self.env = copy.deepcopy(env)
         self.env.window = None  # to stop rendering when render mode is human
         self.env.close()
         self.observation = observation
         self.done = done
+        self.reward = reward
         self.parent = parent
         self.parent_action = parent_action
         self.children = np.array([None] * len(legal_moves))
@@ -34,13 +38,14 @@ class MCTS:
             child_legal_moves = (
                 info["legal_moves"] if "legal_moves" in info else self.legal_moves
             )
-            self.children[i] = Node(
+            self.children[i] = MCTS(
                 child_env,
                 observation,
                 done,
                 self,
                 self.legal_moves[i],
                 child_legal_moves,
+                reward,
             )
             # print(self.children[i])
         # print(self.children)
