@@ -37,8 +37,8 @@ import gymnasium as gym
 from time import time
 
 # import moviepy
-from memory.n_step_replay_buffer import ReplayBuffer
-from memory.prioritized_replay_buffer import (
+from replay_buffers.n_step_replay_buffer import ReplayBuffer
+from replay_buffers.prioritized_replay_buffer import (
     PrioritizedReplayBuffer,
     FastPrioritizedReplayBuffer,
 )
@@ -67,7 +67,7 @@ class RainbowAgent:
             config, self.num_actions, input_shape=self.observation_dimensions
         )
 
-        self.optimizer = config["optimizer_function"]
+        self.optimizer = config["optimizer"]
         self.adam_epsilon = config["adam_epsilon"]
         self.learning_rate = config["learning_rate"]
         self.loss_function = config["loss_function"]
@@ -100,8 +100,10 @@ class RainbowAgent:
 
         self.replay_batch_size = int(config["replay_batch_size"])
         self.replay_period = int(config["replay_period"])
-        self.memory_size = max(int(config["memory_size"]), self.replay_batch_size)
-        self.min_memory_size = int(config["min_memory_size"])
+        self.replay_buffer_size = max(
+            int(config["replay_buffer_size"]), self.replay_batch_size
+        )
+        self.min_replay_buffer_size = int(config["min_replay_buffer_size"])
 
         self.soft_update = config["soft_update"]
         self.transfer_frequency = int(config["transfer_frequency"])
@@ -112,9 +114,9 @@ class RainbowAgent:
         self.per_beta_increase = (1 - self.per_beta) / self.num_training_steps
         self.per_epsilon = config["per_epsilon"]
 
-        self.memory = PrioritizedReplayBuffer(
+        self.replay_buffer = PrioritizedReplayBuffer(
             observation_dimensions=self.observation_dimensions,
-            max_size=self.memory_size,
+            max_size=self.replay_buffer_size,
             batch_size=self.replay_batch_size,
             max_priority=1.0,
             alpha=config["per_alpha"],
@@ -128,9 +130,9 @@ class RainbowAgent:
         self.n_step = config["n_step"]
 
         if self.use_n_step:
-            self.memory_n = ReplayBuffer(
+            self.n_step_replay_buffer = ReplayBuffer(
                 observation_dimensions=self.observation_dimensions,
-                max_size=self.memory_size,
+                max_size=self.replay_buffer_size,
                 batch_size=self.replay_batch_size,
                 n_step=self.n_step,
                 gamma=config["discount_factor"],
@@ -158,7 +160,7 @@ class RainbowAgent:
         #     debug=False,
         # )
 
-    def export(self, episode=-1, best_model=False):
+    def save_checkpoint(self, episode=-1, best_model=False):
         if episode != -1:
             path = "./{}_{}_episodes.keras".format(
                 self.model_name, episode + self.start_episode
@@ -215,12 +217,12 @@ class RainbowAgent:
             done = terminated or truncated
             self.transition += [reward, next_state, done]
             if self.use_n_step:
-                one_step_transition = self.memory_n.store(*self.transition)
+                one_step_transition = self.n_step_replay_buffer.store(*self.transition)
             else:
                 one_step_transition = self.transition
 
             if one_step_transition:
-                self.memory.store(*one_step_transition)
+                self.replay_buffer.store(*one_step_transition)
         else:
             next_state, reward, terminated, truncated, _ = self.test_env.step(action)
 
@@ -235,7 +237,7 @@ class RainbowAgent:
             # time2 = 0
             # time2 = time()
             elementwise_loss = 0
-            samples = self.memory.sample(self.per_beta)
+            samples = self.replay_buffer.sample(self.per_beta)
             actions = samples["actions"]
             observations = samples["observations"]
             inputs = self.prepare_states(observations)
@@ -263,7 +265,7 @@ class RainbowAgent:
                 # print("N-Step Learning")
                 # time2 = time()
                 discount_factor = self.discount_factor**self.n_step
-                n_step_samples = self.memory_n.sample_from_indices(indices)
+                n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
                 actions = n_step_samples["actions"]
                 n_step_observations = n_step_samples["observations"]
                 observations = n_step_observations
@@ -316,7 +318,7 @@ class RainbowAgent:
         prioritized_loss = np.clip(
             prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
         )
-        self.memory.update_priorities(indices, prioritized_loss)
+        self.replay_buffer.update_priorities(indices, prioritized_loss)
         # print("Updating Priorities Time ", time() - time2)
 
         # print("Resetting Noise")
@@ -405,13 +407,13 @@ class RainbowAgent:
                     q_copy[i] = float("inf")
         return q_copy
 
-    def fill_memory(self):
+    def fill_replay_buffer(self):
         state, _ = self.env.reset()
         # print(state)
-        for experience in range(self.min_memory_size):
+        for experience in range(self.min_replay_buffer_size):
             # clear_output(wait=False)
-            # print("Filling Memory")
-            # print("Memory Size: {}/{}".format(experience, self.min_memory_size))
+            # print("Filling replay_buffer")
+            # print("replay_buffer Size: {}/{}".format(experience, self.min_replay_buffer_size))
             # state_input = self.prepare_state(state)
             action = self.env.action_space.sample()
             self.transition = [state, action]
@@ -440,7 +442,7 @@ class RainbowAgent:
             self.target_model.set_weights(new_weights)
         else:
             if step % self.transfer_frequency == 0 and (
-                len(self.memory) >= self.replay_batch_size
+                len(self.replay_buffer) >= self.replay_batch_size
             ):
                 self.target_model.set_weights(self.model.get_weights())
         # print("Updating Target Model Time ", time() - time1)
@@ -452,7 +454,7 @@ class RainbowAgent:
         )  # make these num trials divided by graph interval so i dont need to append (to make it faster?)
         stat_test_score = []
         stat_loss = []
-        self.fill_memory()
+        self.fill_replay_buffer()
         num_trials_truncated = 0
         state, _ = self.env.reset()
         model_update_count = 0
@@ -478,7 +480,7 @@ class RainbowAgent:
                 score = 0
 
             if (step % self.replay_period) == 0 and (
-                len(self.memory) >= self.replay_batch_size
+                len(self.replay_buffer) >= self.replay_batch_size
             ):
                 model_update_count += 1
                 loss = self.experience_replay()
@@ -488,7 +490,7 @@ class RainbowAgent:
                 self.update_target_model(model_update_count)
 
             if training_step % graph_interval == 0 and training_step > 0:
-                self.export()
+                self.save_checkpoint()
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
                 print(
@@ -499,7 +501,7 @@ class RainbowAgent:
             step += 1
 
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
-        self.export()
+        self.save_checkpoint()
         self.env.close()
         return num_trials_truncated / self.num_training_steps
 

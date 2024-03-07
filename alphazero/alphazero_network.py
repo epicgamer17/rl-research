@@ -8,8 +8,84 @@ class Network(tf.keras.Model):
     def __init__(self, config, input_shape, output_shape):
         super(Network, self).__init__()
         self.config = config
-
-        regularizer = tf.keras.regularizers.L2(config["weight_decay"])
+        kernel_initializers = []
+        for i in range(
+            1
+            + config["num_res_blocks"]
+            + config["critic_conv_layers"]
+            + config["critic_dense_layers"]
+            + config["actor_conv_layers"]
+            + config["actor_dense_layers"]
+            + 2
+        ):
+            if config["kernel_initializer"] == "glorot_uniform":
+                kernel_initializers.append(
+                    tf.keras.initializers.glorot_uniform(seed=np.random.seed())
+                )
+            elif config["kernel_initializer"] == "glorot_normal":
+                kernel_initializers.append(
+                    tf.keras.initializers.glorot_normal(seed=np.random.seed())
+                )
+            elif config["kernel_initializer"] == "he_normal":
+                kernel_initializers.append(
+                    tf.keras.initializers.he_normal(seed=np.random.seed())
+                )
+            elif config["kernel_initializer"] == "he_uniform":
+                kernel_initializers.append(
+                    tf.keras.initializers.he_uniform(seed=np.random.seed())
+                )
+            elif config["kernel_initializer"] == "variance_baseline":
+                kernel_initializers.append(
+                    tf.keras.initializers.VarianceScaling(seed=np.random.seed())
+                )
+            elif config["kernel_initializer"] == "variance_0.1":
+                kernel_initializers.append(
+                    tf.keras.initializers.VarianceScaling(
+                        scale=0.1, seed=np.random.seed()
+                    )
+                )
+            elif config["kernel_initializer"] == "variance_0.3":
+                kernel_initializers.append(
+                    tf.keras.initializers.VarianceScaling(
+                        scale=0.3, seed=np.random.seed()
+                    )
+                )
+            elif config["kernel_initializer"] == "variance_0.8":
+                kernel_initializers.append(
+                    tf.keras.initializers.VarianceScaling(
+                        scale=0.8, seed=np.random.seed()
+                    )
+                )
+            elif config["kernel_initializer"] == "variance_3":
+                kernel_initializers.append(
+                    tf.keras.initializers.VarianceScaling(
+                        scale=3, seed=np.random.seed()
+                    )
+                )
+            elif config["kernel_initializer"] == "variance_5":
+                kernel_initializers.append(
+                    tf.keras.initializers.VarianceScaling(
+                        scale=5, seed=np.random.seed()
+                    )
+                )
+            elif config["kernel_initializer"] == "variance_10":
+                kernel_initializers.append(
+                    tf.keras.initializers.VarianceScaling(
+                        scale=10, seed=np.random.seed()
+                    )
+                )
+            elif config["kernel_initializer"] == "lecun_uniform":
+                kernel_initializers.append(
+                    tf.keras.initializers.lecun_uniform(seed=np.random.seed())
+                )
+            elif config["kernel_initializer"] == "lecun_normal":
+                kernel_initializers.append(
+                    tf.keras.initializers.lecun_normal(seed=np.random.seed())
+                )
+            elif config["kernel_initializer"] == "orthogonal":
+                kernel_initializers.append(
+                    tf.keras.initializers.orthogonal(seed=np.random.seed())
+                )
 
         self.inputs = tf.keras.layers.Conv2D(
             config["num_filters"],
@@ -18,16 +94,14 @@ class Network(tf.keras.Model):
             padding="same",
             input_shape=input_shape,
             activation="relu",
-            kernel_regularizer=regularizer,
+            kernel_initializer=kernel_initializers.pop(),
         )
-        self.input_batch_norm = tf.keras.layers.BatchNormalization(
-            beta_regularizer=regularizer, gamma_regularizer=regularizer
-        )
+        self.input_batch_norm = tf.keras.layers.BatchNormalization()
         self.residuals = [
             Residual(
                 config["num_filters"],
                 kernel_size=config["kernel_size"],
-                regularizer=regularizer,
+                kernel_initializer=kernel_initializers.pop(),
             )
             for _ in range(config["num_res_blocks"])
         ]
@@ -40,26 +114,20 @@ class Network(tf.keras.Model):
                     strides=1,
                     padding="same",
                     activation="relu",
-                    kernel_regularizer=regularizer,
+                    kernel_initializer=kernel_initializers.pop(),
                 )
             )
-            self.critic_conv_layers.append(
-                tf.keras.layers.BatchNormalization(
-                    beta_regularizer=regularizer, gamma_regularizer=regularizer
-                )
-            )
+            self.critic_conv_layers.append(tf.keras.layers.BatchNormalization())
         self.critic_dense_layers = []
         for critic_dense_layer in range(config["critic_dense_layers"]):
             self.critic_dense_layers.append(
                 tf.keras.layers.Dense(
                     config["critic_dense_size"],
                     activation="relu",
-                    kernel_regularizer=regularizer,
+                    kernel_initializer=kernel_initializers.pop(),
                 )
             )
-        self.critic = tf.keras.layers.Dense(
-            1, activation="tanh", name="critic", kernel_regularizer=regularizer
-        )
+        self.critic = tf.keras.layers.Dense(1, activation="tanh", name="critic")
 
         self.actor_conv_layers = []
         for actor_conv_layer in range(config["actor_conv_layers"]):
@@ -70,29 +138,26 @@ class Network(tf.keras.Model):
                     strides=1,
                     padding="same",
                     activation="relu",
-                    kernel_regularizer=regularizer,
+                    kernel_initializer=kernel_initializers.pop(),
                 )
             )
-            self.actor_conv_layers.append(
-                tf.keras.layers.BatchNormalization(
-                    beta_regularizer=regularizer, gamma_regularizer=regularizer
-                )
-            )
+            self.actor_conv_layers.append(tf.keras.layers.BatchNormalization())
         self.actor_dense_layers = []
         for actor_dense_layer in range(config["actor_dense_layers"]):
             self.actor_dense_layers.append(
                 tf.keras.layers.Dense(
                     config["actor_dense_size"],
                     activation="relu",
-                    kernel_regularizer=regularizer,
+                    kernel_initializer=kernel_initializers.pop(),
                 )
             )
         self.actor = tf.keras.layers.Dense(
             output_shape,
             activation="softmax",
             name="actor",
-            kernel_regularizer=regularizer,
+            kernel_initializer=kernel_initializers.pop(),
         )
+
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, inputs):

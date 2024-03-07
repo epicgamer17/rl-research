@@ -42,7 +42,7 @@ def main():
         "batch_size": 50,  # number of experiences to push to remote replay buffer in one batch
         "activation": "relu",
         "kernel_initializer": "he_uniform",
-        "optimizer_function": tf.keras.optimizers.legacy.Adam,  # NO SGD OR RMSPROP FOR NOW SINCE IT IS FOR RAINBOW DQN
+        "optimizer": tf.keras.optimizers.legacy.Adam,  # NO SGD OR RMSPROP FOR NOW SINCE IT IS FOR RAINBOW DQN
         "learning_rate": 0.001,  #
         "adam_epsilon": 0.00003125,
         # NORMALIZATION?
@@ -51,8 +51,8 @@ def main():
         "transfer_frequency": 100,
         "replay_period": 1,
         "replay_batch_size": 128,
-        "memory_size": 10000,  #############
-        "min_memory_size": 500,
+        "replay_buffer_size": 10000,  #############
+        "min_replay_buffer_size": 500,
         "n_step": 3,
         "discount_factor": 0.99,
         "atom_size": 51,  #
