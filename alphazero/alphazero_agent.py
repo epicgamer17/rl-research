@@ -14,6 +14,7 @@ class AlphaZeroAgent:
         self.model_name = name
 
         self.env = env
+        self.test_env = copy.deepcopy(env)
         self.num_actions = env.action_space.n
         self.observation_dimensions = env.observation_space.shape
 
@@ -22,10 +23,12 @@ class AlphaZeroAgent:
         self.adam_epsilon = config["adam_epsilon"]
         self.clipnorm = config["clipnorm"]
         # LEARNING RATE SCHEDULE
+        self.value_loss_factor = config["value_loss_factor"]
         self.weight_decay = config["weight_decay"]
 
         self.training_steps = config["training_steps"]
-        self.checkpoint_interval = 1
+        self.games_per_generation = config["games_per_generation"]
+        self.checkpoint_interval = 5
 
         self.model = Network(config, self.observation_dimensions, self.num_actions)
 
@@ -62,62 +65,71 @@ class AlphaZeroAgent:
             info["legal_moves"] if "legal_moves" in info else range(self.num_actions)
         )
         while training_step < self.training_steps:
-            done = False
-            while not done:
-                visit_counts = self.monte_carlo_tree_search(
-                    self.env, state, legal_moves
-                )
-                actions = [action for _, action in visit_counts]
-                visit_counts = np.array(
-                    [count for count, _ in visit_counts], dtype=np.float32
-                )
-                if game.length < self.num_sampling_moves:
-                    temperature = self.initial_temperature
-                else:
-                    temperature = self.exploitation_temperature
+            print("Training Step ", training_step + 1)
+            for _ in range(self.games_per_generation):
+                done = False
+                while not done:
+                    visit_counts = self.monte_carlo_tree_search(
+                        self.env, state, legal_moves
+                    )
+                    actions = [action for _, action in visit_counts]
+                    visit_counts = np.array(
+                        [count for count, _ in visit_counts], dtype=np.float32
+                    )
+                    if game.length < self.num_sampling_moves:
+                        temperature = self.initial_temperature
+                    else:
+                        temperature = self.exploitation_temperature
 
-                visit_counts = np.power(visit_counts, 1 / temperature)
-                visit_counts /= np.sum(visit_counts)
-                action = np.random.choice(actions, p=visit_counts)
+                    visit_counts = np.power(visit_counts, 1 / temperature)
+                    visit_counts /= np.sum(visit_counts)
+                    action = np.random.choice(actions, p=visit_counts)
 
-                # if game.length < self.num_sampling_moves:
-                #     action = np.random.choice(
-                #         actions,
-                #         p=tf.nn.softmax(visit_counts).numpy()
-                #     )
-                # else:
-                #     action = actions[np.argmax(visit_counts)]
+                    # if game.length < self.num_sampling_moves:
+                    #     action = np.random.choice(
+                    #         actions,
+                    #         p=tf.nn.softmax(visit_counts).numpy()
+                    #     )
+                    # else:
+                    #     action = actions[np.argmax(visit_counts)]
 
-                next_state, reward, terminated, truncated, info = self.step(action)
-                done = terminated or truncated
+                    next_state, reward, terminated, truncated, info = self.step(action)
+                    done = terminated or truncated
+                    legal_moves = (
+                        info["legal_moves"]
+                        if "legal_moves" in info
+                        else range(self.num_actions)
+                    )
+                    policy = np.zeros(self.num_actions)
+                    policy[actions] = visit_counts / np.sum(visit_counts)
+                    print("Target Policy", policy)
+                    game.append(state, reward, policy)
+                    state = next_state
+                game.set_rewards()
+                self.replay_buffer.store(game)
+                game = Game()
+                state, info = self.env.reset()
                 legal_moves = (
                     info["legal_moves"]
                     if "legal_moves" in info
                     else range(self.num_actions)
                 )
-                policy = np.zeros(self.num_actions)
-                policy[actions] = visit_counts / np.sum(visit_counts)
-                game.append(state, reward, policy)
-                state = next_state
-            game.set_rewards()
-            self.replay_buffer.store(game)
-            state, info = self.env.reset()
-            game = Game()
-            legal_moves = (
-                info["legal_moves"]
-                if "legal_moves" in info
-                else range(self.num_actions)
-            )
-            if training_step % self.checkpoint_interval == 0:
-                self.save_checkpoint()
             loss = self.experience_replay()
+            training_step += 1
+            if training_step % self.checkpoint_interval == 0:
+                self.test(num_trials=1)
+                self.save_checkpoint()
         self.save_checkpoint()
         # save model to shared storage @Ezra
 
     def monte_carlo_tree_search(self, env, state, legal_moves):
         root = Node(0, env, state, legal_moves)
         value, policy = self.predict_single(state)
-        root.to_play = int(state[0][2][0][0])
+        print("Predicted Policy ", policy)
+        print("Predicted Value ", value)
+        root.to_play = int(
+            state[2][0][0]
+        )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
         policy = {a: policy[a] for a in root.legal_moves}
         policy_sum = sum(policy.values())
         for action, p in policy.items():
@@ -155,7 +167,9 @@ class AlphaZeroAgent:
             if terminated or truncated:  ###
                 value = reward  ###
 
-            node.to_play = int(node.state[0][2][0][0])
+            node.to_play = int(
+                node.state[2][0][0]
+            )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
             policy = {a: policy[a] for a in node.legal_moves}
             policy_sum = sum(policy.values())
             for action, p in policy.items():
@@ -199,16 +213,23 @@ class AlphaZeroAgent:
         inputs = self.prepare_states(observations)
         with tf.GradientTape() as tape:
             values, policies = self.model(inputs)
-            loss = tf.losses.MSE(target_values, values)
-            loss += tf.losses.categorical_crossentropy(target_policies, policies)
-
-            for weights in self.model.trainable_variables:
-                loss += self.weight_decay * tf.nn.l2_loss(weights)
-
-            # loss = tf.reduce_sum(loss)
+            # print("Values ", values)
+            # print("Target Values ", target_values)
+            # print("Policies ", policies)
+            # print("Tartget Policies ", target_policies)
+            value_loss = self.value_loss_factor * tf.losses.MSE(target_values, values)
+            policy_loss = tf.losses.categorical_crossentropy(target_policies, policies)
+            l2_loss = sum(self.model.losses)
+            loss = (value_loss + policy_loss) + l2_loss
             loss = tf.reduce_mean(loss)
 
+        print("Value Loss ", value_loss)
+        print("Policy Loss ", policy_loss)
+        print("L2 Loss ", l2_loss)
+
+        print("Loss ", loss)
         gradients = tape.gradient(loss, self.model.trainable_variables)
+        # print("Gradients ", gradients)
         self.optimizer(
             learning_rate=self.learning_rate,
             epsilon=self.adam_epsilon,
@@ -257,7 +278,7 @@ class AlphaZeroAgent:
         plt.savefig("./{}.png".format(self.model_name))
         plt.close(fig)
 
-    def test(self, video_folder="", num_trials=100) -> None:
+    def test(self, num_trials=100, video_folder="") -> None:
         """Test the agent."""
         self.is_test = True
         average_score = 0
@@ -266,9 +287,10 @@ class AlphaZeroAgent:
         legal_moves = (
             info["legal_moves"] if "legal_moves" in info else range(self.num_actions)
         )
-        for trials in range(num_trials - 1):
+        for trials in range(num_trials):
             done = False
             score = 0
+            test_game_moves = []
             while not done:
                 visit_counts = self.monte_carlo_tree_search(
                     self.test_env, state, legal_moves
@@ -278,7 +300,7 @@ class AlphaZeroAgent:
                     [count for count, _ in visit_counts], dtype=np.float32
                 )
                 action = actions[np.argmax(visit_counts)]
-
+                test_game_moves.append(action)
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated
                 legal_moves = (
@@ -299,36 +321,13 @@ class AlphaZeroAgent:
 
         if video_folder == "":
             video_folder = "./videos/{}".format(self.model_name)
-        # for recording a video
-        self.test_env = gym.wrappers.RecordVideo(self.test_env, video_folder)
-        done = False
-        score = 0
-        while not done:
-            visit_counts = self.monte_carlo_tree_search(
-                self.test_env, state, legal_moves
-            )
-            actions = [action for _, action in visit_counts]
-            visit_counts = np.array(
-                [count for count, _ in visit_counts], dtype=np.float32
-            )
-            action = actions[np.argmax(visit_counts)]
 
-            next_state, reward, terminated, truncated, info = self.step(action)
-            done = terminated or truncated
-            legal_moves = (
-                info["legal_moves"]
-                if "legal_moves" in info
-                else range(self.num_actions)
-            )
-            state = next_state
-            score += reward
-        state, info = self.test_env.reset()
-        legal_moves = (
-            info["legal_moves"] if "legal_moves" in info else range(self.num_actions)
-        )
-        average_score += score
-        print("score: ", score)
-        self.test_env.close()
+        video_test_env = copy.deepcopy(self.test_env)
+        video_test_env.reset()
+        video_test_env = gym.wrappers.RecordVideo(video_test_env, video_folder)
+        for move in test_game_moves:
+            video_test_env.step(move)
+        video_test_env.close()
 
         # reset
         self.is_test = False
