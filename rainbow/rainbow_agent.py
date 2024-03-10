@@ -71,8 +71,7 @@ class RainbowAgent:
         self.adam_epsilon = config["adam_epsilon"]
         self.learning_rate = config["learning_rate"]
         self.loss_function = config["loss_function"]
-        # self.clipnorm = config["clipnorm"]
-        self.clipnorm = 10.0
+        self.clipnorm = config["clipnorm"]
 
         self.model.compile(
             optimizer=self.optimizer(
@@ -177,26 +176,15 @@ class RainbowAgent:
         state = np.array(state)
         if (self.env.observation_space.high == 255).all():
             state = state / 255
-        # print(state.shape)
         if state.shape == self.observation_dimensions:
             new_shape = (1,) + state.shape
             state_input = state.reshape(new_shape)
         else:
             state_input = state
-        # print(state_input.shape)
-        # observation_high = self.env.observation_space.high
-        # observation_low = self.env.observation_space.low
-        # for s in state_input:
-        #     for i in range(len(s)):
-        #         s[i] = s[i] - observation_low[i]
-        #         s[i] = s[i] / (observation_high[i] - observation_low[i])
-        # print(state_input)
-        # NORMALIZE VALUES
         return state_input
 
     def predict_single(self, state):
         state_input = self.prepare_states(state)
-        # print(state_input)
         q_values = self.model(inputs=state_input).numpy()
         return q_values
 
@@ -204,9 +192,7 @@ class RainbowAgent:
         q_values = np.sum(
             np.multiply(self.predict_single(state), np.array(self.support)), axis=2
         )
-        # print(q_values)
         selected_action = np.argmax(q_values)
-        # selected_action = np.argmax(self.predict_single(state))
         if not self.is_test:
             self.transition = [state, selected_action]
         return selected_action
@@ -229,20 +215,13 @@ class RainbowAgent:
         return next_state, reward, terminated, truncated
 
     def experience_replay(self):
-        # print("Experience Replay")
-        # time1 = 0
-        # time1 = time()
         with tf.GradientTape() as tape:
-            # print("One Step Learning")
-            # time2 = 0
-            # time2 = time()
             elementwise_loss = 0
             samples = self.replay_buffer.sample(self.per_beta)
             actions = samples["actions"]
             observations = samples["observations"]
             inputs = self.prepare_states(observations)
             weights = samples["weights"].reshape(-1, 1)
-            # print("weights", weights)
             indices = samples["indices"]
             discount_factor = self.discount_factor
             target_ditributions = self.compute_target_distributions(
@@ -260,10 +239,7 @@ class RainbowAgent:
             assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                 elementwise_loss
             )
-            # print("One Step Learning Time ", time() - time2)
             if self.use_n_step:
-                # print("N-Step Learning")
-                # time2 = time()
                 discount_factor = self.discount_factor**self.n_step
                 n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
                 actions = n_step_samples["actions"]
@@ -287,62 +263,37 @@ class RainbowAgent:
                 assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                     elementwise_loss
                 )
-                # print("Elementwise Loss N-Step Shape", elementwise_loss_n_step.shape)
-                # print("N-Step Learning Time ", time() - time2)
 
-            # print(weights)
             loss = tf.reduce_mean(elementwise_loss * weights)
 
         # TRAINING WITH GRADIENT TAPE
-        # print("Computing Gradients")
-        # time2 = time()
         gradients = tape.gradient(loss, self.model.trainable_variables)
-        # print("Computing Gradients Time ", time() - time2)
-        # print("Applying Gradients")
-        # time2 = time()
         self.optimizer(
             learning_rate=self.learning_rate,
             epsilon=self.adam_epsilon,
             clipnorm=self.clipnorm,
         ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
-        # print("Applying Gradients Time ", time() - time2)
-
         # TRAINING WITH tf.train_on_batch
-        # print("Training Model on Batch")
         # loss = self.model.train_on_batch(samples["observations"], target_ditributions, sample_weight=weights)
 
-        # print("Updating Priorities")
-        # time2 = time()
         prioritized_loss = elementwise_loss + self.per_epsilon
         # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
         prioritized_loss = np.clip(
             prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
         )
         self.replay_buffer.update_priorities(indices, prioritized_loss)
-        # print("Updating Priorities Time ", time() - time2)
-
-        # print("Resetting Noise")
-        # time2 = time()
         self.model.reset_noise()
         self.target_model.reset_noise()
-        # print("Resetting Noise Time ", time() - time2)
-
         loss = loss.numpy()
-        # print("Experience Replay Time ", time() - time1)
         return loss
 
     def compute_target_distributions(self, samples, discount_factor):
-        # print("Computing Target Distributions")
-        # time1 = 0
-        # time1 = time()
         observations = samples["observations"]
         inputs = self.prepare_states(observations)
         next_observations = samples["next_observations"]
         next_inputs = self.prepare_states(next_observations)
         rewards = samples["rewards"].reshape(-1, 1)
         dones = samples["dones"].reshape(-1, 1)
-
-        # print(rewards.shape, dones.shape)
 
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
@@ -351,13 +302,10 @@ class RainbowAgent:
             range(self.replay_batch_size), next_actions
         ]
         target_z = rewards + (1 - dones) * (discount_factor) * self.support
-        # print("Target Z", target_z.shape)
         target_z = np.clip(target_z, self.v_min, self.v_max)
 
         b = ((target_z - self.v_min) / (self.v_max - self.v_min)) * (self.atom_size - 1)
-        # print(b)
         l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
-        # print(l, u)
         m = np.zeros_like(target_distributions)
         assert m.shape == l.shape
         lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
@@ -366,10 +314,7 @@ class RainbowAgent:
         for i in range(self.replay_batch_size):
             np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
             np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
-            # print(m[i])
-        # target_distributions = np.clip(m, 1e-3, 1)
         target_distributions = m
-        # print("Computing Target Distributions Time ", time() - time1)
         return target_distributions
 
     # def score_state(self, state, turn):
@@ -519,7 +464,7 @@ class RainbowAgent:
         plt.savefig("./{}.png".format(self.model_name))
         plt.close(fig)
 
-    def test(self, video_folder="", num_trials=100) -> None:
+    def test(self, num_trials=100, video_folder="") -> None:
         """Test the agent."""
         self.is_test = True
         average_score = 0

@@ -93,15 +93,21 @@ class Network(tf.keras.Model):
             strides=1,
             padding="same",
             input_shape=input_shape,
-            activation="relu",
             kernel_initializer=kernel_initializers.pop(),
+            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+            data_format="channels_first",
         )
-        self.input_batch_norm = tf.keras.layers.BatchNormalization()
+        self.input_batch_norm = tf.keras.layers.BatchNormalization(
+            beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+            gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+            axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
+        )
         self.residuals = [
             Residual(
                 config["num_filters"],
                 kernel_size=config["kernel_size"],
                 kernel_initializer=kernel_initializers.pop(),
+                regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
             )
             for _ in range(config["num_res_blocks"])
         ]
@@ -113,11 +119,18 @@ class Network(tf.keras.Model):
                     kernel_size=3,
                     strides=1,
                     padding="same",
-                    activation="relu",
                     kernel_initializer=kernel_initializers.pop(),
+                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+                    data_format="channels_first",
                 )
             )
-            self.critic_conv_layers.append(tf.keras.layers.BatchNormalization())
+            self.critic_conv_layers.append(
+                tf.keras.layers.BatchNormalization(
+                    beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+                    gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+                    axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
+                )
+            )
         self.critic_dense_layers = []
         for critic_dense_layer in range(config["critic_dense_layers"]):
             self.critic_dense_layers.append(
@@ -125,9 +138,15 @@ class Network(tf.keras.Model):
                     config["critic_dense_size"],
                     activation="relu",
                     kernel_initializer=kernel_initializers.pop(),
+                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
                 )
             )
-        self.critic = tf.keras.layers.Dense(1, activation="tanh", name="critic")
+        self.critic = tf.keras.layers.Dense(
+            1,
+            activation="tanh",
+            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+            name="critic",
+        )
 
         self.actor_conv_layers = []
         for actor_conv_layer in range(config["actor_conv_layers"]):
@@ -137,11 +156,19 @@ class Network(tf.keras.Model):
                     kernel_size=1,
                     strides=1,
                     padding="same",
-                    activation="relu",
                     kernel_initializer=kernel_initializers.pop(),
+                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+                    data_format="channels_first",
                 )
             )
-            self.actor_conv_layers.append(tf.keras.layers.BatchNormalization())
+            self.actor_conv_layers.append(
+                tf.keras.layers.BatchNormalization(
+                    beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+                    gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+                    axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
+                )
+            )
+
         self.actor_dense_layers = []
         for actor_dense_layer in range(config["actor_dense_layers"]):
             self.actor_dense_layers.append(
@@ -149,6 +176,7 @@ class Network(tf.keras.Model):
                     config["actor_dense_size"],
                     activation="relu",
                     kernel_initializer=kernel_initializers.pop(),
+                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
                 )
             )
         self.actor = tf.keras.layers.Dense(
@@ -156,18 +184,22 @@ class Network(tf.keras.Model):
             activation="softmax",
             name="actor",
             kernel_initializer=kernel_initializers.pop(),
+            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
         )
 
         self.flatten = tf.keras.layers.Flatten()
+        self.relu = tf.keras.layers.Activation("relu")
 
     def call(self, inputs):
         x = self.inputs(inputs)
         x = self.input_batch_norm(x)
+        x = self.relu(x)
         for residual in self.residuals:
             x = residual(x)
         critic_x = x
         for layer in self.critic_conv_layers:
             critic_x = layer(critic_x)
+            critic_x = self.relu(critic_x)
         critic_x = self.flatten(critic_x)
         for layer in self.critic_dense_layers:
             critic_x = layer(critic_x)
@@ -175,6 +207,7 @@ class Network(tf.keras.Model):
         actor_x = x
         for layer in self.actor_conv_layers:
             actor_x = layer(actor_x)
+            actor_x = self.relu(actor_x)
         actor_x = self.flatten(actor_x)
         for layer in self.actor_dense_layers:
             actor_x = layer(actor_x)

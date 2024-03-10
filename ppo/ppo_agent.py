@@ -432,7 +432,7 @@ class PPOAgent:
         plt.savefig("./{}.png".format(self.model_name))
         plt.close(fig)
 
-    def test(self, video_folder="", num_trials=100) -> None:
+    def test(self, num_trials=100, video_folder="") -> None:
         """Test the agent."""
         self.is_test = True
         average_score = 0

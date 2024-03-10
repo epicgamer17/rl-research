@@ -16,7 +16,7 @@ class TicTacToeEnv(gym.Env):
         # Observations are planes.
         # The first plane represents player 1s tokens, the second player 2s and the third encodes the current players turn.
         self.observation_space = spaces.Box(
-            low=-1, high=1, shape=(self.size, self.size, 3), dtype=np.int8
+            low=-1, high=1, shape=(self.size, self.size, 3), dtype=np.float64
         )
 
         # We have 9 actions, corresponding to each cell
