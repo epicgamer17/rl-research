@@ -1,3 +1,4 @@
+import gc
 import sys
 
 sys.path.append("../")
@@ -140,6 +141,7 @@ class AlphaZeroAgent:
                     print("Target Policy", policy)
                     game.append(state, reward, policy)
                     state = next_state
+                    gc.collect()
                 game.set_rewards()
                 self.replay_buffer.store(game)
                 stat_score.append(game.rewards[0])
