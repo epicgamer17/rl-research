@@ -47,7 +47,7 @@ class TicTacToeEnv(gym.Env):
 
         # Set a blank board
         self._grid = np.zeros((self.size, self.size, 3))
-        self._grid[2, :, :] = 0  # It's player 1's turn
+        self._grid[:, :, 2] = 0  # It's player 1's turn
 
         # Reset legal moves
         self._legal_moves = np.array(list(range(self.size * self.size)))
@@ -67,14 +67,14 @@ class TicTacToeEnv(gym.Env):
             # could return a negative reward
             raise ValueError("Illegal move")
         # output next player's token first (since that's the one we're inputting to)
-        current_player_board = copy.deepcopy(self._grid[0])
-        self._grid[0] = self._grid[1]
-        self._grid[1] = current_player_board
-        self._grid[1][action // 3][action % 3] = 1
+        current_player_board = copy.deepcopy(self._grid[:, :, 0])
+        self._grid[:, :, 0] = self._grid[:, :, 1]
+        self._grid[:, :, 1] = current_player_board
+        self._grid[action // self.size, action % self.size, 1] = 1
 
         self._legal_moves = self._legal_moves[self._legal_moves != action]
         # encode turn as 1 or 0
-        self._grid[2, :, :] = 1 - self._grid[2, :, :]
+        self._grid[:, :, 2] = 1 - self._grid[:, :, 2]
         # An episode is done iff there is a winner or the board is full
         terminated = self.winner()
         truncated = len(self._legal_moves) == 0
@@ -106,10 +106,10 @@ class TicTacToeEnv(gym.Env):
         )  # The size of a single grid square in pixels
 
         # First we draw the X's and 0's
-        turn = int(self._grid[2, 0, 0])
+        turn = int(self._grid[0, 0, 2])
         for i in range(self.size):
             for j in range(self.size):
-                if self._grid[turn, i, j] == 1:
+                if self._grid[i, j, turn] == 1:
                     pygame.draw.line(
                         canvas,
                         (255, 0, 0),
@@ -124,7 +124,7 @@ class TicTacToeEnv(gym.Env):
                         (j * pix_square_size, (i + 1) * pix_square_size),
                         width=3,
                     )
-                if self._grid[1 - turn, i, j] == 1:
+                if self._grid[i, j, 1 - turn] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 0, 0),
@@ -175,29 +175,29 @@ class TicTacToeEnv(gym.Env):
     def winner(self):
         for i in range(self.size):
             for j in range(self.size):
-                if self._grid[1, i, j] == 1:
+                if self._grid[i, j, 1] == 1:
                     if self._check_win(i, j):
                         return True
         return False
 
     def _check_win(self, i, j):
         # Check row
-        if np.all(self._grid[1, i, :] == 1):
+        if np.all(self._grid[i, :, 1] == 1):
             return True
         # Check column
-        if np.all(self._grid[1, :, j] == 1):
+        if np.all(self._grid[:, j, 1] == 1):
             return True
         # Check diagonals for any cell
         if i + self.win_length <= self.size and j + self.win_length <= self.size:
-            if np.all([self._grid[1, i + k, j + k] for k in range(self.win_length)]):
+            if np.all([self._grid[i + k, j + k, 1] for k in range(self.win_length)]):
                 return True
         if i - self.win_length >= -1 and j + self.win_length <= self.size:
-            if np.all([self._grid[1, i - k, j + k] for k in range(self.win_length)]):
+            if np.all([self._grid[i - k, j + k, 1] for k in range(self.win_length)]):
                 return True
         if i + self.win_length <= self.size and j - self.win_length >= -1:
-            if np.all([self._grid[1, i + k, j - k] for k in range(self.win_length)]):
+            if np.all([self._grid[i + k, j - k, 1] for k in range(self.win_length)]):
                 return True
         if i - self.win_length >= -1 and j - self.win_length >= -1:
-            if np.all([self._grid[1, i - k, j - k] for k in range(self.win_length)]):
+            if np.all([self._grid[i - k, j - k, 1] for k in range(self.win_length)]):
                 return True
         return False

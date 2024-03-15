@@ -30,7 +30,7 @@ class Residual(tf.keras.Model):
             use_bias=False,
             kernel_initializer=kernel_initializer,
             kernel_regularizer=regularizer,
-            data_format="channels_first",
+            data_format="channels_last",
         )
         self.bn1 = tf.keras.layers.BatchNormalization(
             beta_regularizer=regularizer,
@@ -45,7 +45,7 @@ class Residual(tf.keras.Model):
             use_bias=False,
             kernel_initializer=kernel_initializer,
             kernel_regularizer=regularizer,
-            data_format="channels_first",
+            data_format="channels_last",
         )
         self.bn2 = tf.keras.layers.BatchNormalization(
             beta_regularizer=regularizer, gamma_regularizer=regularizer, axis=1

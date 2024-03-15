@@ -95,7 +95,7 @@ class Network(tf.keras.Model):
             input_shape=input_shape,
             kernel_initializer=kernel_initializers.pop(),
             kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            data_format="channels_first",
+            data_format="channels_last",
         )
         self.input_batch_norm = tf.keras.layers.BatchNormalization(
             beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
@@ -121,7 +121,7 @@ class Network(tf.keras.Model):
                     padding="same",
                     kernel_initializer=kernel_initializers.pop(),
                     kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    data_format="channels_first",
+                    data_format="channels_last",
                 )
             )
             self.critic_conv_layers.append(
@@ -158,7 +158,7 @@ class Network(tf.keras.Model):
                     padding="same",
                     kernel_initializer=kernel_initializers.pop(),
                     kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    data_format="channels_first",
+                    data_format="channels_last",
                 )
             )
             self.actor_conv_layers.append(
