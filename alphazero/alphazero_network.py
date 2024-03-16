@@ -95,7 +95,7 @@ class Network(tf.keras.Model):
             input_shape=input_shape,
             kernel_initializer=kernel_initializers.pop(),
             kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            data_format="channels_first",
+            data_format="channels_last",
         )
         self.input_batch_norm = tf.keras.layers.BatchNormalization(
             beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
@@ -121,7 +121,7 @@ class Network(tf.keras.Model):
                     padding="same",
                     kernel_initializer=kernel_initializers.pop(),
                     kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    data_format="channels_first",
+                    data_format="channels_last",
                 )
             )
             self.critic_conv_layers.append(
@@ -158,7 +158,7 @@ class Network(tf.keras.Model):
                     padding="same",
                     kernel_initializer=kernel_initializers.pop(),
                     kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    data_format="channels_first",
+                    data_format="channels_last",
                 )
             )
             self.actor_conv_layers.append(
@@ -181,7 +181,6 @@ class Network(tf.keras.Model):
             )
         self.actor = tf.keras.layers.Dense(
             output_shape,
-            activation="softmax",
             name="actor",
             kernel_initializer=kernel_initializers.pop(),
             kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
@@ -189,6 +188,7 @@ class Network(tf.keras.Model):
 
         self.flatten = tf.keras.layers.Flatten()
         self.relu = tf.keras.layers.Activation("relu")
+        self.softmax = tf.keras.layers.Activation("softmax")
 
     def call(self, inputs):
         x = self.inputs(inputs)
@@ -212,5 +212,7 @@ class Network(tf.keras.Model):
         for layer in self.actor_dense_layers:
             actor_x = layer(actor_x)
         policy = self.actor(actor_x)
+        # print(policy)
+        policy = self.softmax(policy)
 
         return value, policy
