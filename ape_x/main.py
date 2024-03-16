@@ -7,6 +7,8 @@ import numpy as np
 from ape_x.actor import SingleMachineActor
 from ape_x.learner import SingleMachineLearner
 import tensorflow as tf
+import threading
+import copy
 
 
 class ClipReward(gym.RewardWrapper):
@@ -84,15 +86,32 @@ def main():
         config=config,
     )
 
-    a = SingleMachineActor(
-        0,
-        env=make_pacman_env(),
-        config=config,
-        single_machine_learner=l,
-    )
+    num_actors = 1
+    actors = list()
+    for i in range(num_actors):
+        actor_config = copy.deepcopy(config)
+        # TODO: make modifications per actor
 
-    print("running actor")
-    a.run()
+        actors.append(
+            SingleMachineActor(
+                id=i,
+                env=make_pacman_env(),
+                config=actor_config,
+                single_machine_learner=l,
+            )
+        )
+
+    actor_threads = list()
+    for actor in actors:
+        actor_threads.append(
+            threading.Thread(target=actor.run, name=f"actor_{actor.id}")
+        )
+
+    learner_thread = threading.Thread(target=l.run, name="learner")
+    learner_thread.start()
+
+    for actor_thread in actor_threads:
+        actor_thread.start()
 
 
 if __name__ == "__main__":
