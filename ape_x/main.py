@@ -49,7 +49,7 @@ def main():
         "soft_update": False,  # seems to always be false, we can try it with tru
         "ema_beta": 0.95,
         "transfer_frequency": 100,
-        "replay_period": 1,
+        "replay_period": 50,
         "replay_batch_size": 128,
         "replay_buffer_size": 10000,  #############
         "min_replay_buffer_size": 500,
@@ -71,6 +71,7 @@ def main():
         "per_epsilon": 0.001,
         "per_alpha": 0.5,
         "per_beta": 0.5,
+        "clipnorm": 0.5,
         # 'per_beta_increase': hp.uniform('per_beta_increase', 0, 0.015),
         "v_min": -500.0,  # MIN GAME SCORE
         "v_max": 500.0,  # MAX GAME SCORE
@@ -90,6 +91,7 @@ def main():
         single_machine_learner=l,
     )
 
+    print("running actor")
     a.run()
 
 

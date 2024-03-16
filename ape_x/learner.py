@@ -64,7 +64,7 @@ class SingleMachineLearner(LearnerBase):
         super().__init__(env=env, config=config)
 
     def sample_experiences_from_remote_replay_buffer(self):
-        pass
+        return self.replay_buffer.sample()
 
     def update_remote_replay_buffer_priorities(self, indices, priorities):
         pass
