@@ -1,3 +1,31 @@
+import gc
+import sys
+
+sys.path.append("../")
+
+import os
+
+# os.environ["OMP_NUM_THREADS"] = f"{1}"
+# os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
+# os.environ['TF_NUM_INTRAOP_THREADS'] = f"{1}"
+
+import tensorflow as tf
+
+# tf.config.threading.set_intra_op_parallelism_threads(1)
+# tf.config.threading.set_inter_op_parallelism_threads(1)
+
+gpus = tf.config.list_physical_devices("GPU")
+if gpus:
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.list_logical_devices("GPU")
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
+
 import copy
 import numpy as np
 import tensorflow as tf
@@ -18,17 +46,25 @@ class AlphaZeroAgent:
         self.num_actions = env.action_space.n
         self.observation_dimensions = env.observation_space.shape
 
-        self.optimizer = config["optimizer"]
-        self.learning_rate = config["learning_rate"]
-        self.adam_epsilon = config["adam_epsilon"]
-        self.clipnorm = config["clipnorm"]
-        # LEARNING RATE SCHEDULE
-        self.value_loss_factor = config["value_loss_factor"]
-        self.weight_decay = config["weight_decay"]
-
         self.training_steps = config["training_steps"]
         self.games_per_generation = config["games_per_generation"]
         self.checkpoint_interval = 5
+
+        self.optimizer = config["optimizer"]
+        self.min_learning_rate = config["min_learning_rate"]
+        self.max_learning_rate = config["max_learning_rate"]
+        self.learning_rate = self.min_learning_rate
+
+        number_of_lr_cycles = config["number_of_lr_cycles"]
+        self.cycle_length = self.training_steps // number_of_lr_cycles
+        self.learning_rate_step = (self.max_learning_rate - self.min_learning_rate) / (
+            self.cycle_length / 2
+        )  # could do like a dictionairy with episode numbers as update points and then values as new learning rates instead of doing a stepwise system
+
+        self.adam_epsilon = config["adam_epsilon"]
+        self.clipnorm = config["clipnorm"]
+        self.value_loss_factor = config["value_loss_factor"]
+        self.weight_decay = config["weight_decay"]
 
         self.model = Network(config, self.observation_dimensions, self.num_actions)
 
@@ -58,6 +94,13 @@ class AlphaZeroAgent:
         return next_state, reward, terminated, truncated, info
 
     def train(self):
+        stat_score = []
+        stat_policy_loss = []
+        stat_value_loss = []
+        stat_l2_loss = []
+        stat_loss = []
+        stat_test_score = []
+
         state, info = self.env.reset()
         game = Game()
         training_step = 0
@@ -81,17 +124,9 @@ class AlphaZeroAgent:
                     else:
                         temperature = self.exploitation_temperature
 
-                    visit_counts = np.power(visit_counts, 1 / temperature)
-                    visit_counts /= np.sum(visit_counts)
-                    action = np.random.choice(actions, p=visit_counts)
-
-                    # if game.length < self.num_sampling_moves:
-                    #     action = np.random.choice(
-                    #         actions,
-                    #         p=tf.nn.softmax(visit_counts).numpy()
-                    #     )
-                    # else:
-                    #     action = actions[np.argmax(visit_counts)]
+                    temperature_visit_counts = np.power(visit_counts, 1 / temperature)
+                    temperature_visit_counts /= np.sum(temperature_visit_counts)
+                    action = np.random.choice(actions, p=temperature_visit_counts)
 
                     next_state, reward, terminated, truncated, info = self.step(action)
                     done = terminated or truncated
@@ -100,13 +135,16 @@ class AlphaZeroAgent:
                         if "legal_moves" in info
                         else range(self.num_actions)
                     )
+                    # Target Policy doesn't use temperature
                     policy = np.zeros(self.num_actions)
                     policy[actions] = visit_counts / np.sum(visit_counts)
                     print("Target Policy", policy)
                     game.append(state, reward, policy)
                     state = next_state
+                    gc.collect()
                 game.set_rewards()
                 self.replay_buffer.store(game)
+                stat_score.append(game.rewards[0])
                 game = Game()
                 state, info = self.env.reset()
                 legal_moves = (
@@ -114,17 +152,43 @@ class AlphaZeroAgent:
                     if "legal_moves" in info
                     else range(self.num_actions)
                 )
-            loss = self.experience_replay()
+
+            # STAT TRACKING
+            value_loss, policy_loss, l2_loss, loss = self.experience_replay()
+            stat_policy_loss.append(policy_loss)
+            stat_value_loss.append(value_loss)
+            stat_l2_loss.append(l2_loss)
+            stat_loss.append(loss)
+
             training_step += 1
+            # CYCLICAL LEARNING RATE
+            if training_step % self.cycle_length == 0:
+                self.learning_rate_step *= -1
+            self.learning_rate += self.learning_rate_step
+
+            # CHECKPOINTING
             if training_step % self.checkpoint_interval == 0:
-                self.test(num_trials=1)
+                test_score = self.test(num_trials=1)
+                stat_test_score.append(test_score)
                 self.save_checkpoint()
+
+            # GRAPHING
+            self.plot_graph(
+                stat_score,
+                stat_policy_loss,
+                stat_value_loss,
+                stat_l2_loss,
+                stat_loss,
+                stat_test_score,
+                training_step,
+            )
         self.save_checkpoint()
         # save model to shared storage @Ezra
 
     def monte_carlo_tree_search(self, env, state, legal_moves):
         root = Node(0, env, state, legal_moves)
-        value, policy = self.predict_single(state)
+        illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
+        value, policy = self.predict_single(state, illegal_moves)
         print("Predicted Policy ", policy)
         print("Predicted Value ", value)
         root.to_play = int(
@@ -144,12 +208,13 @@ class AlphaZeroAgent:
                 p / policy_sum, child_env, child_state, child_legal_moves
             )
 
-        actions = root.children.keys()
-        noise = np.random.gamma(self.root_dirichlet_alpha, 1, len(actions))
-        for a, n in zip(actions, noise):
-            root.children[a].prior_policy = (
-                1 - self.root_exploration_fraction
-            ) * root.children[a].prior_policy + self.root_exploration_fraction * n
+        if not self.is_test:
+            actions = root.children.keys()
+            noise = np.random.gamma(self.root_dirichlet_alpha, 1, len(actions))
+            for a, n in zip(actions, noise):
+                root.children[a].prior_policy = (
+                    1 - self.root_exploration_fraction
+                ) * root.children[a].prior_policy + self.root_exploration_fraction * n
 
         for _ in range(self.num_simulations):
             node = root
@@ -161,27 +226,40 @@ class AlphaZeroAgent:
                     (self.ucb_score(node, child), action, child)
                     for action, child in node.children.items()
                 )
-                _, reward, terminated, truncated, _ = mcts_env.step(action)
+                _, reward, terminated, truncated, info = mcts_env.step(action)
                 search_path.append(node)
-            value, policy = self.predict_single(node.state)
-            if terminated or truncated:  ###
-                value = reward  ###
-
-            node.to_play = int(
-                node.state[2][0][0]
-            )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
-            policy = {a: policy[a] for a in node.legal_moves}
-            policy_sum = sum(policy.values())
-            for action, p in policy.items():
-                child_state, reward, terminated, truncated, info = mcts_env.step(action)
-                child_legal_moves = (
+                legal_moves = (
                     info["legal_moves"]
                     if "legal_moves" in info
                     else range(self.num_actions)
                 )
-                node.children[action] = Node(
-                    p / policy_sum, mcts_env, child_state, child_legal_moves
-                )
+                illegal_moves = [
+                    a for a in range(self.num_actions) if a not in legal_moves
+                ]
+
+            node.to_play = int(
+                node.state[2][0][0]
+            )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
+
+            if terminated or truncated:  ###
+                value = reward  ###
+            else:
+                value, policy = self.predict_single(node.state, illegal_moves)
+                policy = {a: policy[a] for a in node.legal_moves}
+                policy_sum = sum(policy.values())
+
+                for action, p in policy.items():
+                    child_state, reward, terminated, truncated, info = mcts_env.step(
+                        action
+                    )
+                    child_legal_moves = (
+                        info["legal_moves"]
+                        if "legal_moves" in info
+                        else range(self.num_actions)
+                    )
+                    node.children[action] = Node(
+                        p / policy_sum, mcts_env, child_state, child_legal_moves
+                    )
 
             for node in search_path:
                 node.value_sum += value if node.to_play == root.to_play else -value
@@ -213,10 +291,19 @@ class AlphaZeroAgent:
         inputs = self.prepare_states(observations)
         with tf.GradientTape() as tape:
             values, policies = self.model(inputs)
-            # print("Values ", values)
-            # print("Target Values ", target_values)
-            # print("Policies ", policies)
-            # print("Tartget Policies ", target_policies)
+            # print("Unmasked Policies ", policies)
+            # Set illegal moves probability to zero and renormalize
+            legal_moves_mask = (np.array(target_policies) > 0).astype(int)
+            # print("Target Policies ", target_policies)
+            # print(legal_moves_mask)
+            policies = tf.math.multiply(policies, legal_moves_mask)
+            # print("Masked Policies ", policies)
+            # print("New Policy Sum", tf.reduce_sum(policies, axis=1, keepdims=True))
+            policies = tf.math.divide(
+                policies, tf.reduce_sum(policies, axis=1, keepdims=True)
+            )
+
+            # compute losses
             value_loss = self.value_loss_factor * tf.losses.MSE(target_values, values)
             policy_loss = tf.losses.categorical_crossentropy(target_policies, policies)
             l2_loss = sum(self.model.losses)
@@ -226,16 +313,20 @@ class AlphaZeroAgent:
         print("Value Loss ", value_loss)
         print("Policy Loss ", policy_loss)
         print("L2 Loss ", l2_loss)
-
         print("Loss ", loss)
+
         gradients = tape.gradient(loss, self.model.trainable_variables)
-        # print("Gradients ", gradients)
         self.optimizer(
             learning_rate=self.learning_rate,
             epsilon=self.adam_epsilon,
             clipnorm=self.clipnorm,
         ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
-        return loss
+        return (
+            tf.reduce_mean(value_loss),
+            tf.reduce_mean(policy_loss),
+            tf.reduce_mean(l2_loss),
+            loss,
+        )
 
     def prepare_states(self, state):
         state = np.array(state)
@@ -246,10 +337,15 @@ class AlphaZeroAgent:
             state_input = state
         return state_input
 
-    def predict_single(self, state):
+    def predict_single(self, state, illegal_moves=None):
         state_input = self.prepare_states(state)
         value, policy = self.model(inputs=state_input)
-        return value.numpy()[0], policy.numpy()[0]
+        policy = policy.numpy()[0]
+        # Set illegal moves probability to zero and renormalize
+        if illegal_moves is not None:
+            policy[illegal_moves] = 0
+            policy /= np.sum(policy)
+        return value.numpy()[0], policy
 
     def save_checkpoint(self, episode=-1, best_model=False):
         if episode != -1:
@@ -264,15 +360,23 @@ class AlphaZeroAgent:
 
         self.model.save(path)
 
-    def plot_graph(self, score, loss, test_score, step):
-        fig, ((ax1, ax2, ax3)) = plt.subplots(1, 3, figsize=(30, 5))
+    def plot_graph(
+        self, score, policy_loss, value_loss, l2_loss, loss, test_score, step
+    ):
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
         ax1.plot(score, linestyle="solid")
         ax1.set_title("Frame {}. Score: {}".format(step, np.mean(score[-10:])))
-        ax2.plot(loss, linestyle="solid")
-        ax2.set_title("Frame {}. Loss: {}".format(step, np.mean(loss[-10:])))
-        ax3.plot(test_score, linestyle="solid")
-        # ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
+        ax2.plot(policy_loss, linestyle="solid")
+        ax2.set_title(
+            "Frame {}. Policy Loss: {}".format(step, np.mean(policy_loss[-10:]))
+        )
+        ax3.plot(value_loss, linestyle="solid")
         ax3.set_title(
+            "Frame {}. Value Loss: {}".format(step, np.mean(value_loss[-10:]))
+        )
+        ax4.plot(test_score, linestyle="solid")
+        # ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
+        ax4.set_title(
             "Frame {}. Test Score: {}".format(step, np.mean(test_score[-10:]))
         )
         plt.savefig("./{}.png".format(self.model_name))
