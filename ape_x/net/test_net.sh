@@ -10,7 +10,11 @@ timeout=1
 
 online_opengpu=0
 test_gpu_computers() {
-  for i in $(seq 1 32);do
+  for i in {1..33}; do
+    if [ $i -eq 17 ]; then 
+      continue
+    fi
+
     host="$username@open-gpu-$i.cs.mcgill.ca"
     echo $host
     echo "$host ===============================" >> $file
@@ -24,7 +28,11 @@ test_gpu_computers() {
 
 online_lab_one=0
 test_lab1_computers() {
-  for i in $(seq 1 12);do
+  for i in {2..6}; do
+    if [ "$i" -eq 3]; then
+      continue
+    fi
+
     host="$username@lab1-$i.cs.mcgill.ca"
     echo "$host ===============================" >> $file
     ssh -oStrictHostKeyChecking=no -oConnectTimeout=$timeout "$host" -f 'arp' >> $file
@@ -37,7 +45,11 @@ test_lab1_computers() {
 
 online_lab_two=0
 test_lab2_computers() {
-  for i in $(seq 1 51);do
+  for i in {1..29}; do
+    if [ "$i" -eq 14 ] || [ "$i" -eq 16 ] || [ "$i" -eq 19 ]; then
+      continue
+    fi
+
     host="$username@lab2-$i.cs.mcgill.ca"
     echo "$host ===============================" >> $file
     ssh -oStrictHostKeyChecking=no -oConnectTimeout=$timeout "$host" -f 'arp' >> $file
