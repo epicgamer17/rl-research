@@ -1,5 +1,6 @@
 import sys
 import logging
+import time
 import tensorflow as tf
 import numpy as np
 
@@ -110,34 +111,31 @@ class LearnerBase(RainbowAgent):
         )  # make these num trials divided by graph interval so i dont need to append (to make it faster?)
         stat_test_score = []
         stat_loss = []
-        self.fill_replay_buffer()
+        # self.fill_replay_buffer()
         num_trials_truncated = 0
         state, _ = self.env.reset()
         model_update_count = 0
         score = 0
         training_step = 0
-        step = 0
         while training_step < self.num_training_steps:
             logging.info(
                 f"learner training step: {training_step}/{self.num_training_steps}"
             )
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 
-            if (step % self.replay_period) == 0 and (
-                len(self.replay_buffer) >= self.replay_batch_size
-            ):
+            if self.replay_buffer.size >= self.replay_batch_size:
                 model_update_count += 1
                 loss = self._experience_replay()
                 training_step += 1
                 stat_loss.append(loss)
-
                 self.update_target_model(model_update_count)
+            else:
+                time.sleep(0.1)
 
             if training_step % graph_interval == 0 and training_step > 0:
                 self.export()
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
-            step += 1
 
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
         self.export()

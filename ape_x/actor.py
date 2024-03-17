@@ -43,13 +43,75 @@ class ActorBase(RainbowAgent):
     def fetch_latest_params(self):
         pass
 
-    def _push_experiences_to_remote_replay_buffer(self):
-        thread = threading.Thread(target=self.push_experiences_to_remote_replay_buffer)
+    def _push_experiences_to_remote_replay_buffer(self, experiences, losses):
+        thread = threading.Thread(
+            target=self.push_experiences_to_remote_replay_buffer,
+            args=(experiences, losses),
+        )
         thread.run()
 
     # to be implemented by subclasses
-    def push_experiences_to_remote_replay_buffer(self):
+    def push_experiences_to_remote_replay_buffer(self, experiences, losses):
         pass
+
+    def calculate_losses(self, indices):
+        print("calculating losses...")
+        t = time.time()
+        elementwise_loss = 0
+        samples = self.replay_buffer.sample_from_indices(indices)
+        actions = samples["actions"]
+        observations = samples["observations"]
+        inputs = self.prepare_states(observations)
+        discount_factor = self.discount_factor
+        target_distributions = self.compute_target_distributions(
+            samples, discount_factor
+        )
+        initial_distributions = self.model(inputs)
+        distributions_to_train = tf.gather_nd(
+            initial_distributions,
+            list(zip(range(initial_distributions.shape[0]), actions)),
+        )
+        elementwise_loss = self.model.loss.call(
+            y_pred=distributions_to_train,
+            y_true=tf.convert_to_tensor(target_distributions),
+        )
+        assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
+            elementwise_loss
+        )
+        # if self.use_n_step:
+        discount_factor = self.discount_factor**self.n_step
+        n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
+        actions = n_step_samples["actions"]
+        observations = n_step_samples["observations"]
+        # observations = n_step_observations
+        inputs = self.prepare_states(observations)
+        target_distributions = self.compute_target_distributions(
+            n_step_samples, discount_factor
+        )
+        initial_distributions = self.model(inputs)
+        distributions_to_train = tf.gather_nd(
+            initial_distributions,
+            list(zip(range(initial_distributions.shape[0]), actions)),
+        )
+        elementwise_loss_n_step = self.model.loss.call(
+            y_pred=distributions_to_train,
+            y_true=tf.convert_to_tensor(target_distributions),
+        )
+        # add the losses together to reduce variance (original paper just uses n_step loss)
+        elementwise_loss += elementwise_loss_n_step
+        assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
+            elementwise_loss
+        )
+
+        prioritized_loss = elementwise_loss + self.per_epsilon
+        # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
+        prioritized_loss = np.clip(
+            prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
+        )
+
+        delta_t = time.time() - t
+        logging.info(f"calculate_losses took: {delta_t} s")
+        return prioritized_loss
 
     def run(self):
         self.is_test = False
@@ -78,7 +140,13 @@ class ActorBase(RainbowAgent):
             self.replay_buffer.store(state, action, reward, next_state, done)
 
             if training_step % self.replay_buffer_size == 0 and training_step > 0:
-                self._push_experiences_to_remote_replay_buffer()
+                indices = list(range(self.replay_batch_size))
+                n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
+                prioritized_loss = self.calculate_losses(indices)
+                self.replay_buffer.update_priorities(indices, prioritized_loss)
+                self._push_experiences_to_remote_replay_buffer(
+                    n_step_samples, prioritized_loss
+                )
 
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 
@@ -114,78 +182,25 @@ class SingleMachineActor(ActorBase):
         logging.info(f" {self.model_name} fetching latest params from learner")
         return self.learner.get_weights()
 
-    def push_experiences_to_remote_replay_buffer(self):
+    def push_experiences_to_remote_replay_buffer(self, experiences, losses):
         t = time.time()
+        n = len(experiences["observations"])
         logging.info(
-            f" {self.model_name} pushing {self.replay_batch_size} experiences to remote replay buffer"
-        )
-        indices = list(range(self.replay_batch_size))
-        elementwise_loss = 0
-        samples = self.replay_buffer.sample_from_indices(indices)
-        actions = samples["actions"]
-        observations = samples["observations"]
-        inputs = self.prepare_states(observations)
-        discount_factor = self.discount_factor
-        target_ditributions = self.compute_target_distributions(
-            samples, discount_factor
-        )
-        initial_distributions = self.model(inputs)
-        distributions_to_train = tf.gather_nd(
-            initial_distributions,
-            list(zip(range(initial_distributions.shape[0]), actions)),
-        )
-        elementwise_loss = self.model.loss.call(
-            y_pred=distributions_to_train,
-            y_true=tf.convert_to_tensor(target_ditributions),
-        )
-        assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-            elementwise_loss
-        )
-        # if self.use_n_step:
-        discount_factor = self.discount_factor**self.n_step
-        n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
-        actions = n_step_samples["actions"]
-        n_step_observations = n_step_samples["observations"]
-        # observations = n_step_observations
-        inputs = self.prepare_states(n_step_observations)
-        target_ditributions = self.compute_target_distributions(
-            n_step_samples, discount_factor
-        )
-        initial_distributions = self.model(inputs)
-        distributions_to_train = tf.gather_nd(
-            initial_distributions,
-            list(zip(range(initial_distributions.shape[0]), actions)),
-        )
-        elementwise_loss_n_step = self.model.loss.call(
-            y_pred=distributions_to_train,
-            y_true=tf.convert_to_tensor(target_ditributions),
-        )
-        # add the losses together to reduce variance (original paper just uses n_step loss)
-        elementwise_loss += elementwise_loss_n_step
-        assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-            elementwise_loss
+            f" {self.model_name} pushing {n} experiences to remote replay buffer"
         )
 
-        prioritized_loss = elementwise_loss + self.per_epsilon
-        # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
-        prioritized_loss = np.clip(
-            prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
-        )
-
-        self.replay_buffer.update_priorities(indices, prioritized_loss)
-        print(n_step_samples["observations"].shape)
-
-        for i in range(self.replay_batch_size):
+        for i in range(n):
             self.learner.replay_buffer.store_with_priority(
-                n_step_samples["observations"][i],
-                n_step_samples["actions"][i],
-                n_step_samples["rewards"][i],
-                n_step_samples["next_observations"][i],
-                n_step_samples["dones"][i],
-                prioritized_loss[i],
+                experiences["observations"][i],
+                experiences["actions"][i],
+                experiences["rewards"][i],
+                experiences["next_observations"][i],
+                experiences["dones"][i],
+                losses[i],
             )
 
         delta_t = time.time() - t
+        print("learner replay buffer size: ", self.learner.replay_buffer.size)
         logging.info(f"push_experiences_to_remote_replay_buffer took: {delta_t} s")
 
 
