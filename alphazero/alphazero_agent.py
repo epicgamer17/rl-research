@@ -244,14 +244,14 @@ class AlphaZeroAgent:
                     a for a in range(self.num_actions) if a not in legal_moves
                 ]
 
-            # SET NEW PLAYER TURN FOR LEAF NODE
+            # Turn of the leaf node (if it is a terminal node this will be the losing players turn)
             leaf_node_turn = node.state[2][0][0]
             node.to_play = int(
                 leaf_node_turn
             )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
 
-            if terminated or truncated:  ###
-                value = reward  ###
+            if terminated or truncated:
+                value = -reward  # The game is over and it is your turn (you lost!)
             else:
                 value, policy = self.predict_single(node.state, illegal_moves)
                 # print("Leaf Value ", value)
