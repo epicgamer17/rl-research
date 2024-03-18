@@ -224,6 +224,7 @@ class AlphaZeroAgent:
             mcts_env = copy.deepcopy(env)
             search_path = [node]
 
+            # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
                 # print("Expanded")
                 # print("Child UCBs: ")
@@ -243,14 +244,18 @@ class AlphaZeroAgent:
                     a for a in range(self.num_actions) if a not in legal_moves
                 ]
 
+            # Turn of the leaf node (if it is a terminal node this will be the losing players turn)
+            leaf_node_turn = node.state[2][0][0]
             node.to_play = int(
-                node.state[2][0][0]
+                leaf_node_turn
             )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
 
-            if terminated or truncated:  ###
-                value = reward  ###
+            if terminated or truncated:
+                value = -reward  # The game is over and it is your turn (you lost!)
             else:
                 value, policy = self.predict_single(node.state, illegal_moves)
+                # print("Leaf Value ", value)
+                # print("Leaf Policy ", policy)
                 policy = {a: policy[a] for a in node.legal_moves}
                 policy_sum = sum(policy.values())
 
@@ -263,13 +268,13 @@ class AlphaZeroAgent:
                         if "legal_moves" in info
                         else range(self.num_actions)
                     )
+                    # Create Children Nodes (New Leaf Nodes)
                     node.children[action] = Node(
                         p / policy_sum, mcts_env, child_state, child_legal_moves
                     )
 
-            # print("Search Path ", search_path)
             for node in search_path:
-                node.value_sum += value if node.to_play == root.to_play else -value
+                node.value_sum += value if node.to_play == leaf_node_turn else -value
                 node.visits += 1
 
         visit_counts = [
