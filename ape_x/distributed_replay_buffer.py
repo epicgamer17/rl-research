@@ -31,8 +31,8 @@ from replay_buffers.prioritized_replay_buffer import PrioritizedReplayBuffer
 
 
 class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
-    def __init__(self, *args, **kwargs):
-        self.replay_memory = PrioritizedReplayBuffer(*args, **kwargs)
+    def __init__(self, replay_memory):
+        self.replay_memory = replay_memory
 
         self.weights = bytes()
 
@@ -73,12 +73,10 @@ class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
     def updatePriorities(self, indices, ids, priorities, _context):
         logger.info("updatePriorities", indices, ids, priorities, _context)
         self.replay_memory.update_priorities(indices, priorities, ids)
-        return None
 
     def removeOldExperiences(self, _context):
         # not necessary as replay buffer has a fixed size
         logger.info("removeOldExperiences", _context)
-        return None
 
     def getWeights(self, _context):
         logger.info("getWeights", _context)
@@ -87,7 +85,9 @@ class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
     def setWeights(self, weights, _context):
         logger.info("setWeights", weights, _context)
         self.weights = weights
-        return None
+
+    def ping(self):
+        logger.info("ping")
 
 
 class Server:
@@ -95,7 +95,7 @@ class Server:
         while self.retry:
             try:
                 # Must be a wait_for so we don't block on read()
-                data = await asyncio.wait_for(self.reader.read(4096), timeout=0.1)
+                data = await asyncio.wait_for(self.reader.read(4096), timeout=1)
             except asyncio.TimeoutError:
                 logger.debug("myreader timeout.")
                 continue
@@ -110,7 +110,7 @@ class Server:
         while self.retry:
             try:
                 # Must be a wait_for so we don't block on read()
-                data = await asyncio.wait_for(self.server.read(4096), timeout=0.1)
+                data = await asyncio.wait_for(self.server.read(4096), timeout=1)
                 self.writer.write(data.tobytes())
             except asyncio.TimeoutError:
                 logger.debug("mywriter timeout.")
@@ -121,20 +121,12 @@ class Server:
         logger.debug("mywriter done.")
         return True
 
-    async def start(self, reader, writer):
+    async def start(self, reader, writer, replay_memory):
         # Start TwoPartyServer using TwoWayPipe (only requires bootstrap)
-        env = gym.make("CartPole-v1", render_mode="rgb_array")
 
         self.server = capnp.TwoPartyServer(
             bootstrap=ReplayMemoryImpl(
-                observation_dimensions=env.observation_space.shape,
-                max_size=10000,
-                batch_size=100,
-                max_priority=1.0,
-                alpha=0.5,  # config["per_alpha"],
-                # epsilon=config["per_epsilon"],
-                n_step=3,  # config["n_step"],
-                gamma=0.01,  # config["discount_factor"],
+                replay_memory=replay_memory,
             )
         )
         self.reader = reader
@@ -157,25 +149,46 @@ class Server:
         await tasks
 
 
-async def new_connection(reader, writer):
-    server = Server()
-    await server.start(reader, writer)
+def new_connection_with_replay_memory(replay_memory):
+    async def new_connection(reader, writer):
+        server = Server()
+        await server.start(reader, writer, replay_memory)
+
+    return new_connection
 
 
 async def main():
     host = "localhost"
     port = "60000"
 
+    env = gym.make("CartPole-v1", render_mode="rgb_array")
+    replay_memory = PrioritizedReplayBuffer(
+        observation_dimensions=env.observation_space.shape,
+        max_size=10000,
+        batch_size=100,
+        max_priority=1.0,
+        alpha=0.5,  # config["per_alpha"],
+        # epsilon=config["per_epsilon"],
+        n_step=3,  # config["n_step"],
+        gamma=0.01,  # config["discount_factor"],
+    )
+
     # Handle both IPv4 and IPv6 cases
     try:
         logger.info("Try IPv4")
         server = await asyncio.start_server(
-            new_connection, host, port, family=socket.AF_INET
+            new_connection_with_replay_memory(replay_memory),
+            host,
+            port,
+            family=socket.AF_INET,
         )
     except Exception:
         logger.info("Try IPv6")
         server = await asyncio.start_server(
-            new_connection, host, port, family=socket.AF_INET6
+            new_connection_with_replay_memory(replay_memory),
+            host,
+            port,
+            family=socket.AF_INET6,
         )
 
     async with server:
