@@ -210,22 +210,28 @@ class AlphaZeroAgent:
 
         if not self.is_test:
             actions = root.children.keys()
-            noise = np.random.gamma(self.root_dirichlet_alpha, 1, len(actions))
+            # noise = np.random.gamma(self.root_dirichlet_alpha, 1, len(actions))
+            noise = np.random.dirichlet([self.root_dirichlet_alpha] * len(actions))
+            # print("Noise ", noise)
             for a, n in zip(actions, noise):
                 root.children[a].prior_policy = (
                     1 - self.root_exploration_fraction
                 ) * root.children[a].prior_policy + self.root_exploration_fraction * n
 
         for _ in range(self.num_simulations):
+            # print("Simulation ", _ + 1)
             node = root
             mcts_env = copy.deepcopy(env)
             search_path = [node]
 
             while node.expanded():
+                # print("Expanded")
+                # print("Child UCBs: ")
                 _, action, node = max(
                     (self.ucb_score(node, child), action, child)
                     for action, child in node.children.items()
                 )
+                # print("Action", action)
                 _, reward, terminated, truncated, info = mcts_env.step(action)
                 search_path.append(node)
                 legal_moves = (
@@ -261,6 +267,7 @@ class AlphaZeroAgent:
                         p / policy_sum, mcts_env, child_state, child_legal_moves
                     )
 
+            # print("Search Path ", search_path)
             for node in search_path:
                 node.value_sum += value if node.to_play == root.to_play else -value
                 node.visits += 1
@@ -281,6 +288,9 @@ class AlphaZeroAgent:
             pb_c * child.prior_policy * math.sqrt(parent.visits) / (child.visits + 1)
         )
         value_score = child.value()
+        # print("Prior ", prior_score)
+        # print("Value ", value_score)
+        # print("UCB ", prior_score + value_score)
         return prior_score + value_score
 
     def experience_replay(self):
@@ -345,7 +355,7 @@ class AlphaZeroAgent:
         if illegal_moves is not None:
             policy[illegal_moves] = 0
             policy /= np.sum(policy)
-        return value.numpy()[0], policy
+        return value.numpy().item(), policy
 
     def save_checkpoint(self, episode=-1, best_model=False):
         if episode != -1:
@@ -403,6 +413,7 @@ class AlphaZeroAgent:
                 visit_counts = np.array(
                     [count for count, _ in visit_counts], dtype=np.float32
                 )
+                print("MCTS Policy ", visit_counts / np.sum(visit_counts))
                 action = actions[np.argmax(visit_counts)]
                 test_game_moves.append(action)
                 next_state, reward, terminated, truncated, info = self.step(action)
