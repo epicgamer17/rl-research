@@ -1,7 +1,5 @@
 import numpy as np
 from collections import deque
-from time import time
-import scipy.signal
 
 
 class ReplayBuffer:
