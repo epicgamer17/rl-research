@@ -1,0 +1,54 @@
+2024-03-17 23:42:33,109 matplotlib MainThread DEBUG: matplotlib data path: /home/ezrahuang/miniconda3/envs/ml/lib/python3.11/site-packages/matplotlib/mpl-data
+2024-03-17 23:42:33,112 matplotlib MainThread DEBUG: CONFIGDIR=/home/ezrahuang/.config/matplotlib
+2024-03-17 23:42:33,113 matplotlib MainThread DEBUG: interactive is False
+2024-03-17 23:42:33,113 matplotlib MainThread DEBUG: platform is linux
+2024-03-17 23:42:33,171 matplotlib MainThread DEBUG: CACHEDIR=/home/ezrahuang/.cache/matplotlib
+2024-03-17 23:42:33,174 matplotlib.font_manager MainThread DEBUG: Using fontManager instance from /home/ezrahuang/.cache/matplotlib/fontlist-v330.json
+2024-03-17 23:42:33,852 matplotlib.pyplot MainThread DEBUG: Loaded backend agg version v2.2.
+2024-03-17 23:42:34,792 root Thread-2 (_fetch_latest_params) INFO: fetch_latest_params took: 0.06764578819274902 s
+2024-03-17 23:42:35,741 ape_x.actor actor_0 INFO: actor_0 training step: 100/1000
+2024-03-17 23:42:37,187 ape_x.actor actor_0 INFO: calculate_losses took: 1.4453821182250977 s
+2024-03-17 23:42:37,188 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:37,221 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.0322115421295166 s
+2024-03-17 23:42:37,724 root Thread-3 (_fetch_latest_params) INFO: fetch_latest_params took: 0.025809049606323242 s
+2024-03-17 23:42:38,134 ape_x.actor actor_0 INFO: actor_0 training step: 200/1000
+2024-03-17 23:42:38,369 ape_x.actor actor_0 INFO: calculate_losses took: 0.23371553421020508 s
+2024-03-17 23:42:38,370 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:38,391 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.02021479606628418 s
+2024-03-17 23:42:39,366 ape_x.actor actor_0 INFO: actor_0 training step: 300/1000
+2024-03-17 23:42:39,618 ape_x.actor actor_0 INFO: calculate_losses took: 0.2522854804992676 s
+2024-03-17 23:42:39,619 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:39,636 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.016963720321655273 s
+2024-03-17 23:42:39,658 root Thread-4 (_fetch_latest_params) INFO: fetch_latest_params took: 0.03848910331726074 s
+2024-03-17 23:42:40,814 ape_x.actor actor_0 INFO: actor_0 training step: 400/1000
+2024-03-17 23:42:41,638 ape_x.actor actor_0 INFO: calculate_losses took: 0.8238070011138916 s
+2024-03-17 23:42:41,656 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:41,789 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.13240528106689453 s
+2024-03-17 23:42:42,769 root Thread-5 (_fetch_latest_params) INFO: fetch_latest_params took: 0.05919504165649414 s
+2024-03-17 23:42:43,415 ape_x.actor actor_0 INFO: actor_0 training step: 500/1000
+2024-03-17 23:42:43,742 ape_x.actor actor_0 INFO: calculate_losses took: 0.32702159881591797 s
+2024-03-17 23:42:43,747 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:43,767 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.020813941955566406 s
+2024-03-17 23:42:45,337 ape_x.actor actor_0 INFO: actor_0 training step: 600/1000
+2024-03-17 23:42:45,585 ape_x.actor actor_0 INFO: calculate_losses took: 0.2473897933959961 s
+2024-03-17 23:42:45,586 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:45,602 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.01574993133544922 s
+2024-03-17 23:42:45,693 root Thread-6 (_fetch_latest_params) INFO: fetch_latest_params took: 0.10726809501647949 s
+2024-03-17 23:42:46,711 ape_x.actor actor_0 INFO: actor_0 training step: 700/1000
+2024-03-17 23:42:46,968 ape_x.actor actor_0 INFO: calculate_losses took: 0.2565939426422119 s
+2024-03-17 23:42:46,971 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:46,988 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.01657843589782715 s
+2024-03-17 23:42:47,654 root Thread-7 (_fetch_latest_params) INFO: fetch_latest_params took: 0.07702016830444336 s
+2024-03-17 23:42:48,127 ape_x.actor actor_0 INFO: actor_0 training step: 800/1000
+2024-03-17 23:42:48,391 ape_x.actor actor_0 INFO: calculate_losses took: 0.26265811920166016 s
+2024-03-17 23:42:48,393 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:48,413 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.019552230834960938 s
+2024-03-17 23:42:49,358 ape_x.actor actor_0 INFO: actor_0 training step: 900/1000
+2024-03-17 23:42:49,594 ape_x.actor actor_0 INFO: calculate_losses took: 0.23515009880065918 s
+2024-03-17 23:42:49,596 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:49,611 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.014319658279418945 s
+2024-03-17 23:42:49,686 root Thread-8 (_fetch_latest_params) INFO: fetch_latest_params took: 0.08948993682861328 s
+2024-03-17 23:42:50,814 ape_x.actor actor_0 INFO: actor_0 training step: 1000/1000
+2024-03-17 23:42:51,078 ape_x.actor actor_0 INFO: calculate_losses took: 0.2641634941101074 s
+2024-03-17 23:42:51,079 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: pushing 100 experiences to remote replay buffer
+2024-03-17 23:42:51,100 ape_x.actor Thread-1 (_consume_transitions_queue) INFO: push_batch took: 0.02131509780883789 s

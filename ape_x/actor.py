@@ -233,16 +233,47 @@ class TransitionPusher:
             replay_memory_capnp.ReplayMemory
         )
 
-    def push_batch(self, batch):
+    def push_batch(self, id, batch):
         t = time.time()
-        n = len(batch)
+        (experiences, priorities) = batch
+        n = len(experiences["dones"])
         logger.info(f"pushing {n} experiences to remote replay buffer")
+
+        input = {
+            "ids": list(),
+            "observations": list(),
+            "nextObservations": list(),
+            "actions": list(),
+            "rewards": list(),
+            "dones": list(),
+            "priorities": list(),
+        }
+
+        for i in range(n):
+            input["ids"].append(f"{id}-{uuid.uuid4()}")
+            input["observations"].append(pickle.dumps(experiences["observations"][i]))
+            input["nextObservations"].append(
+                pickle.dumps(experiences["next_observations"][i])
+            )
+            input["actions"].append(experiences["actions"][i].item())
+            input["rewards"].append(experiences["rewards"][i].item())
+            input["dones"].append(experiences["dones"][i].item() == 1)
+            input["priorities"].append(priorities[i].item())
 
         def on_complete(v):
             delta_t = time.time() - t
             logger.info(f"push_batch took: {delta_t} s")
 
-        promise = self.replay_memory.addTransitionBatch(batch)
+        request = self.replay_memory.addTransitionBatch_request()
+        request.batch.ids = input["ids"]
+        request.batch.observations = input["observations"]
+        request.batch.nextObservations = input["nextObservations"]
+        request.batch.actions = input["actions"]
+        request.batch.rewards = input["rewards"]
+        request.batch.dones = input["dones"]
+        request.batch.priorities = input["priorities"]
+
+        promise = request.send()
         promise.then(on_complete).wait()
 
 
@@ -267,22 +298,6 @@ class DistributedActor(ActorBase):
         t = self.transitions_queue.get()
 
         while t is not None:
-            batch = list()
             (experiences, priorities) = t
-            n = len(experiences["observations"])
-            for t in range(n):
-                transition = {
-                    "id": f"{self.id}-{uuid.uuid4()}",
-                    "observation": pickle.dumps(experiences["observations"][t]),
-                    "nextObservation": pickle.dumps(
-                        experiences["next_observations"][t]
-                    ),
-                    "action": experiences["actions"][t].item(),
-                    "reward": experiences["rewards"][t].item(),
-                    "done": experiences["dones"][t].item() == 1,
-                    "priority": priorities[t].item(),
-                }
-                batch.append(transition)
-
-            pusher.push_batch({"transitions": batch})
+            pusher.push_batch(self.id, t)
             t = self.transitions_queue.get()
