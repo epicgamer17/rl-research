@@ -35,11 +35,13 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self.sum_tree = SumSegmentTree(tree_capacity)
         self.min_tree = MinSegmentTree(tree_capacity)
 
-    def store(self, observation, action, reward, next_observation, done):
+    def store(self, observation, action, reward, next_observation, done, id=None):
         # print("Storing in PrioritizedReplayBuffer")
         # time1 = 0
         # time1 = time()
-        transition = super().store(observation, action, reward, next_observation, done)
+        transition = super().store(
+            observation, action, reward, next_observation, done, id
+        )
 
         if transition:
             self.sum_tree[self.tree_pointer] = self.max_priority**self.alpha
@@ -63,9 +65,11 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         return transition
 
     def store_with_priority_exact(
-        self, observation, action, reward, next_observation, done, priority
+        self, observation, action, reward, next_observation, done, priority, id=None
     ):
-        transition = super().store(observation, action, reward, next_observation, done)
+        transition = super().store(
+            observation, action, reward, next_observation, done, id=id
+        )
 
         if transition:
             self.sum_tree[self.tree_pointer] = priority
@@ -105,19 +109,35 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             indices=indices,
         )
 
-    def update_priorities(self, indices, priorities):
-        assert len(indices) == len(priorities)
-        # priorities += self.self.epsilon
-        for index, priority in zip(indices, priorities):
-            # print("Priority", priority)
-            assert priority > 0, "Negative priority: {}".format(priority)
-            assert 0 <= index < len(self)
+    def update_priorities(self, indices, priorities, ids=None):
+        # necessary for shared replay buffer
+        if ids is not None:
+            assert len(priorities) == len(ids) == len(indices)
 
-            self.sum_tree[index] = priority**self.alpha
-            self.min_tree[index] = priority**self.alpha
-            self.max_priority = max(
-                self.max_priority, priority
-            )  # could remove and clip priorities in experience replay isntead
+            for index, id, priority in zip(indices, ids, priorities):
+                assert priority > 0, "Negative priority: {}".format(priority)
+                assert 0 <= index < len(self)
+
+                if self.id_buffer[index] != id:
+                    continue
+
+                self.sum_tree[index] = priority**self.alpha
+                self.min_tree[index] = priority**self.alpha
+                self.max_priority = max(self.max_priority, priority)
+
+        else:
+            assert len(indices) == len(priorities)
+            # priorities += self.self.epsilon
+            for index, priority in zip(indices, priorities):
+                # print("Priority", priority)
+                assert priority > 0, "Negative priority: {}".format(priority)
+                assert 0 <= index < len(self)
+
+                self.sum_tree[index] = priority**self.alpha
+                self.min_tree[index] = priority**self.alpha
+                self.max_priority = max(
+                    self.max_priority, priority
+                )  # could remove and clip priorities in experience replay isntead
 
         return priorities**self.alpha
 
