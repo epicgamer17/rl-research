@@ -25,7 +25,7 @@ import sys
 
 sys.path.append("../")
 
-from ape_x.actor import DistributedActor
+from ape_x.actor import DistributedActor, SingleMachineActor
 from ape_x.learner import SingleMachineLearner
 
 
@@ -144,7 +144,6 @@ def main():
     # learner_config = copy.deepcopy(config)
     # learner_config["num_training_steps"] = 100
     # learner_config["remove_old_experiences_interval"] = 10
-    #
     # learner = SingleMachineLearner(
     #     env=make_cartpole_env(),
     #     config=learner_config,
