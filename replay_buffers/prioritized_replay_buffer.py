@@ -106,6 +106,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
                 self.max_priority, priority
             )  # could remove and clip priorities in experience replay isntead
 
+        return priorities**self.alpha
+
     def _sample_proportional(self):
         # print("Getting Indices from PrioritizedReplayBuffer Sum Tree")
         # time1 = 0
