@@ -4,11 +4,6 @@ from time import time
 import scipy.signal
 
 
-def discounted_cumulative_sums(x, discount):
-    # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
-    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
-
-
 class ReplayBuffer:
     def __init__(
         self, observation_dimensions, max_size: int, batch_size=0, n_step=1, gamma=0.99

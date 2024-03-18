@@ -62,6 +62,19 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         return transition
 
+    def store_with_priority_exact(
+        self, observation, action, reward, next_observation, done, priority
+    ):
+        transition = super().store(observation, action, reward, next_observation, done)
+
+        if transition:
+            self.sum_tree[self.tree_pointer] = priority
+            self.min_tree[self.tree_pointer] = priority
+            self.max_priority = max(self.max_priority, priority)
+            self.tree_pointer = (self.tree_pointer + 1) % self.max_size
+
+        return transition
+
     def sample(self, beta=0.4):
         # print("Sampling from PrioritizedReplayBuffer")
         # time1 = 0
