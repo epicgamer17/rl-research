@@ -1,0 +1,61 @@
+2024-03-18 17:26:52,535 __main__ MainThread INFO: Try IPv4
+2024-03-18 17:27:05,839 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:05,847 __main__ MainThread INFO: adding transitions took 0.008444070816040039. New buffer size: 98
+2024-03-18 17:27:06,067 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:06,069 __main__ MainThread INFO: adding transitions took 0.0020895004272460938. New buffer size: 198
+2024-03-18 17:27:06,133 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:06,135 __main__ MainThread INFO: adding transitions took 0.002048969268798828. New buffer size: 298
+2024-03-18 17:27:08,805 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:08,807 __main__ MainThread INFO: adding transitions took 0.001894235610961914. New buffer size: 398
+2024-03-18 17:27:08,912 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:08,914 __main__ MainThread INFO: adding transitions took 0.0019071102142333984. New buffer size: 498
+2024-03-18 17:27:08,926 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:08,928 __main__ MainThread INFO: adding transitions took 0.0017504692077636719. New buffer size: 598
+2024-03-18 17:27:10,135 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:10,137 __main__ MainThread INFO: adding transitions took 0.0018994808197021484. New buffer size: 698
+2024-03-18 17:27:10,225 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:10,227 __main__ MainThread INFO: adding transitions took 0.001523733139038086. New buffer size: 798
+2024-03-18 17:27:10,381 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:10,383 __main__ MainThread INFO: adding transitions took 0.0016143321990966797. New buffer size: 898
+2024-03-18 17:27:11,260 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:11,263 __main__ MainThread INFO: adding transitions took 0.0025823116302490234. New buffer size: 998
+2024-03-18 17:27:11,321 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:11,324 __main__ MainThread INFO: adding transitions took 0.0023412704467773438. New buffer size: 1098
+2024-03-18 17:27:11,625 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:11,627 __main__ MainThread INFO: adding transitions took 0.0017328262329101562. New buffer size: 1198
+2024-03-18 17:27:12,352 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:12,354 __main__ MainThread INFO: adding transitions took 0.0016906261444091797. New buffer size: 1298
+2024-03-18 17:27:12,360 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:12,362 __main__ MainThread INFO: adding transitions took 0.0014994144439697266. New buffer size: 1398
+2024-03-18 17:27:12,795 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:12,797 __main__ MainThread INFO: adding transitions took 0.002007007598876953. New buffer size: 1498
+2024-03-18 17:27:13,405 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:13,407 __main__ MainThread INFO: adding transitions took 0.0019807815551757812. New buffer size: 1598
+2024-03-18 17:27:13,431 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:13,433 __main__ MainThread INFO: adding transitions took 0.0023522377014160156. New buffer size: 1698
+2024-03-18 17:27:13,947 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:13,948 __main__ MainThread INFO: adding transitions took 0.0018846988677978516. New buffer size: 1798
+2024-03-18 17:27:14,505 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:14,507 __main__ MainThread INFO: adding transitions took 0.0018489360809326172. New buffer size: 1898
+2024-03-18 17:27:14,550 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:14,551 __main__ MainThread INFO: adding transitions took 0.0010082721710205078. New buffer size: 1998
+2024-03-18 17:27:15,112 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:15,113 __main__ MainThread INFO: adding transitions took 0.0012545585632324219. New buffer size: 2098
+2024-03-18 17:27:15,565 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:15,567 __main__ MainThread INFO: adding transitions took 0.0015914440155029297. New buffer size: 2198
+2024-03-18 17:27:15,589 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:15,591 __main__ MainThread INFO: adding transitions took 0.001992940902709961. New buffer size: 2298
+2024-03-18 17:27:16,408 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:16,410 __main__ MainThread INFO: adding transitions took 0.0020599365234375. New buffer size: 2398
+2024-03-18 17:27:16,647 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:16,650 __main__ MainThread INFO: adding transitions took 0.0025162696838378906. New buffer size: 2498
+2024-03-18 17:27:16,662 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:16,664 __main__ MainThread INFO: adding transitions took 0.0018687248229980469. New buffer size: 2598
+2024-03-18 17:27:17,557 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:17,559 __main__ MainThread INFO: adding transitions took 0.0012936592102050781. New buffer size: 2698
+2024-03-18 17:27:17,635 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:17,637 __main__ MainThread INFO: adding transitions took 0.0018782615661621094. New buffer size: 2798
+2024-03-18 17:27:17,747 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:17,749 __main__ MainThread INFO: adding transitions took 0.0021593570709228516. New buffer size: 2898
+2024-03-18 17:27:18,634 __main__ MainThread INFO: adding 100 transitions to buffer
+2024-03-18 17:27:18,636 __main__ MainThread INFO: adding transitions took 0.002008199691772461. New buffer size: 2998

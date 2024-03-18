@@ -1,3 +1,4 @@
+import subprocess
 import tensorflow as tf
 import gym
 import numpy as np
@@ -25,7 +26,7 @@ import sys
 
 sys.path.append("../")
 
-from ape_x.actor import DistributedActor
+from ape_x.actor import DistributedActor, SingleMachineActor
 from ape_x.learner import SingleMachineLearner
 
 
@@ -144,37 +145,23 @@ def main():
     # learner_config = copy.deepcopy(config)
     # learner_config["num_training_steps"] = 100
     # learner_config["remove_old_experiences_interval"] = 10
-    #
     # learner = SingleMachineLearner(
     #     env=make_cartpole_env(),
     #     config=learner_config,
     # )
 
-    num_actors = 1
-    actors = list()
+    num_actors = 3
+
+    processes = list()
     for i in range(num_actors):
-        actor_config = copy.deepcopy(config)
-        actor_config["poll_params_interval"] = 150
-        actor_config["buffer_size"] = 100
-        actor_config["num_training_steps"] = 1000
-        # TODO: make modifications per actor
-
-        actors.append(
-            DistributedActor(
-                id=i,
-                env=make_cartpole_env(),
-                config=actor_config,
-            )
+        id = i
+        process = subprocess.Popen(
+            ["python", "main_actor.py", str(id)],
         )
+        processes.append(process)
 
-    actor_threads = list()
-    for actor in actors:
-        actor_threads.append(
-            threading.Thread(target=actor.run, name=f"actor_{actor.id}")
-        )
-
-    actor_threads[0].start()
-    actor_threads[0].join()
+    for process in processes:
+        process.wait()
 
     # learner_thread = threading.Thread(target=learner.run, name="learner")
     # learner_thread.start()

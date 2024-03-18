@@ -146,7 +146,14 @@ class ActorBase(RainbowAgent):
                 priorities = self.replay_buffer.update_priorities(
                     indices, prioritized_loss
                 )
-                self.transitions_queue.put((n_step_samples, priorities))
+
+                # push to transitions queue. If queue is full and does not have space after 5 seconds, drop the batch
+                try:
+                    self.transitions_queue.put((n_step_samples, priorities), timeout=5)
+                except queue.Full:
+                    logger.warn(
+                        f"{self.model_name} transitions queue full, dropped batch"
+                    )
 
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 
@@ -202,7 +209,7 @@ class SingleMachineActor(ActorBase):
         )
 
         for i in range(n):
-            self.learner.replay_buffer.store_with_priority(
+            self.learner.replay_buffer.store_with_priority_exact(
                 experiences["observations"][i],
                 experiences["actions"][i],
                 experiences["rewards"][i],
@@ -216,11 +223,9 @@ class SingleMachineActor(ActorBase):
         logger.info(f"push_experiences_to_remote_replay_buffer took: {delta_t} s")
 
 
-import asyncio
-import socket
+import pickle
 import capnp
 import uuid
-import pickle
 
 capnp.remove_import_hook()
 replay_memory_capnp = capnp.load("./entities/replayMemory.capnp")
@@ -232,49 +237,45 @@ class TransitionPusher:
         self.replay_memory = self.replay_memory.bootstrap().cast_as(
             replay_memory_capnp.ReplayMemory
         )
+        self.initial_time = time.time()
 
     def push_batch(self, id, batch):
-        t = time.time()
+        self.initial_time = time.time()
         (experiences, priorities) = batch
         n = len(experiences["dones"])
         logger.info(f"pushing {n} experiences to remote replay buffer")
 
-        input = {
-            "ids": list(),
-            "observations": list(),
-            "nextObservations": list(),
-            "actions": list(),
-            "rewards": list(),
-            "dones": list(),
-            "priorities": list(),
-        }
+        ids = list()
+        actions = list()
+        rewards = list()
+        dones = list()
+        pri = list()
 
         for i in range(n):
-            input["ids"].append(f"{id}-{uuid.uuid4()}")
-            input["observations"].append(pickle.dumps(experiences["observations"][i]))
-            input["nextObservations"].append(
-                pickle.dumps(experiences["next_observations"][i])
-            )
-            input["actions"].append(experiences["actions"][i].item())
-            input["rewards"].append(experiences["rewards"][i].item())
-            input["dones"].append(experiences["dones"][i].item() == 1)
-            input["priorities"].append(priorities[i].item())
-
-        def on_complete(v):
-            delta_t = time.time() - t
-            logger.info(f"push_batch took: {delta_t} s")
+            ids.append(f"{id}-{uuid.uuid4()}")
+            actions.append(experiences["actions"][i].item())
+            rewards.append(experiences["rewards"][i].item())
+            dones.append(experiences["dones"][i].item() == 1)
+            pri.append(priorities[i].item())
 
         request = self.replay_memory.addTransitionBatch_request()
-        request.batch.ids = input["ids"]
-        request.batch.observations = input["observations"]
-        request.batch.nextObservations = input["nextObservations"]
-        request.batch.actions = input["actions"]
-        request.batch.rewards = input["rewards"]
-        request.batch.dones = input["dones"]
-        request.batch.priorities = input["priorities"]
+        # request.batch = input
+        request.batch.ids = ids
+        request.batch.observations = pickle.dumps(
+            experiences["observations"], protocol=5
+        )
+        request.batch.nextObservations = pickle.dumps(
+            experiences["next_observations"], protocol=5
+        )
+        request.batch.actions = actions
+        request.batch.rewards = rewards
+        request.batch.dones = dones
+        request.batch.priorities = pri
 
         promise = request.send()
-        promise.then(on_complete).wait()
+        promise.wait()
+        delta_t = time.time() - self.initial_time
+        logger.info(f"push_batch took: {delta_t} s")
 
 
 class DistributedActor(ActorBase):
@@ -298,6 +299,10 @@ class DistributedActor(ActorBase):
         t = self.transitions_queue.get()
 
         while t is not None:
-            (experiences, priorities) = t
-            pusher.push_batch(self.id, t)
+            try:
+                pusher.push_batch(self.id, t)
+
+            except Exception as e:
+                logging.exception(e)
+
             t = self.transitions_queue.get()
