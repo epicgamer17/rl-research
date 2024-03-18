@@ -36,7 +36,7 @@ class TicTacToeEnv(gym.Env):
         self.clock = None
 
     def _get_obs(self):
-        return self._grid
+        return copy.deepcopy(self._grid)
 
     def _get_info(self):
         return {"legal_moves": self._legal_moves}

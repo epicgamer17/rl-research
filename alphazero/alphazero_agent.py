@@ -227,7 +227,7 @@ class AlphaZeroAgent:
                 ]
 
             # Turn of the leaf node (if it is a terminal node this will be the losing players turn)
-            leaf_node_turn = copy.deepcopy(node.state[0][0][2])
+            leaf_node_turn = node.state[0][0][2]
             # print("Leaf Turn", leaf_node_turn)
             node.to_play = int(
                 leaf_node_turn
