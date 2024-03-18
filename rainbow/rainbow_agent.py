@@ -59,6 +59,8 @@ class RainbowAgent:
         self.observation_dimensions = env.observation_space.shape
         self.num_actions = env.action_space.n
 
+        self.start_episode = 0
+
         self.model = Network(
             config, self.num_actions, input_shape=self.observation_dimensions
         )
@@ -457,7 +459,8 @@ class RainbowAgent:
         ax2.plot(loss, linestyle="solid")
         ax2.set_title("Frame {}. Loss: {}".format(step, np.mean(loss[-10:])))
         ax3.plot(test_score, linestyle="solid")
-        ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
+        if self.env.spec.reward_threshold is not None:
+            ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
         ax3.set_title(
             "Frame {}. Test Score: {}".format(step, np.mean(test_score[-10:]))
         )

@@ -246,24 +246,33 @@ class Network(tf.keras.Model):
 
     def call(self, inputs, training=False):
         x = inputs
+        # logging.debug(f"input shape: {x.shape}")
         if self.has_conv_layers:
             for layer in self.conv_layers:
                 x = layer(x)
         if self.has_dense_layers:
             for layer in self.dense_layers:
                 x = layer(x)
+        # logging.debug(f"after dense layers: {x.shape}")
         if self.has_value_hidden_layers:
             for layer in self.value_hidden_layers:
                 x = layer(x)
+        # logging.debug(f"after value hidden layers: {x.shape}")
         value = self.value(x)
+        # logging.debug(f"after value layer: {value.shape}")
         value = self.value_reshaped(value)
+        # logging.debug(f"after value reshaped: {value.shape}")
 
         if self.has_advantage_hidden_layers:
             for layer in self.advantage_hidden_layers:
                 x = layer(x)
+        # logging.debug(f"after advantage hidden layers: {x.shape}")
         advantage = self.advantage(x)
+        # logging.debug(f"after advantage layer: {advantage.shape}")
         advantage = self.advantage_reduced_mean(advantage)
+        # logging.debug(f"after advantage reduced mean: {advantage.shape}")
         advantage = self.advantage_reshaped(advantage)
+        # logging.debug(f"after advantage reshaped: {advantage.shape}")
 
         q = self.add([value, advantage])
         q = tf.keras.activations.softmax(q, axis=-1)

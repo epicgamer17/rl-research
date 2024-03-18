@@ -7,6 +7,13 @@ import numpy as np
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+
+logger = logging.getLogger(__name__)
+
 
 class LearnerBase(RainbowAgent):
     def __init__(self, env, config):
@@ -104,7 +111,7 @@ class LearnerBase(RainbowAgent):
         return loss
 
     def run(self, graph_interval=200):
-        logging.info("learner running")
+        logger.info("learner running")
         self.is_test = False
         stat_score = (
             []
@@ -118,7 +125,7 @@ class LearnerBase(RainbowAgent):
         score = 0
         training_step = 0
         while training_step < self.num_training_steps:
-            logging.info(
+            logger.info(
                 f"learner training step: {training_step}/{self.num_training_steps}"
             )
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
@@ -133,12 +140,12 @@ class LearnerBase(RainbowAgent):
                 time.sleep(0.1)
 
             if training_step % graph_interval == 0 and training_step > 0:
-                self.export()
+                self.save_checkpoint(training_step)
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
 
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
-        self.export()
+        self.save_checkpoint(training_step)
         self.env.close()
         return num_trials_truncated / self.num_training_steps
 
@@ -162,6 +169,30 @@ class SingleMachineLearner(LearnerBase):
     def remove_old_experiences_from_remote_replay_buffer(self):
         # done atomatically in the replay buffer (old experiences overwritten)
         pass
+
+    def get_weights(self):
+        return self.model.get_weights()
+
+
+class DistributedLearner(LearnerBase):
+    def __init__(self, env, config):
+        super().__init__(env=env, config=config)
+
+    def sample_experiences_from_remote_replay_buffer(self):
+        print("Sampling experiences from remote replay buffer")
+        return self.replay_buffer.sample()
+
+    def sample_n_step_experiences_from_remote_replay_buffer(self, indices):
+        print("Sampling n-step experiences from remote replay buffer")
+        return self.n_step_replay_buffer.sample_from_indices(indices)
+
+    def update_remote_replay_buffer_priorities(self, indices, priorities):
+        print("Updating remote replay buffer priorities")
+        return self.replay_buffer.update_priorities(indices, priorities)
+
+    def remove_old_experiences_from_remote_replay_buffer(self):
+        print("Removing old experiences from remote replay buffer")
+        return self.replay_buffer.remove_old_experiences()
 
     def get_weights(self):
         return self.model.get_weights()
