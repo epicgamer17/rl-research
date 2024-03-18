@@ -146,7 +146,14 @@ class ActorBase(RainbowAgent):
                 priorities = self.replay_buffer.update_priorities(
                     indices, prioritized_loss
                 )
-                self.transitions_queue.put((n_step_samples, priorities))
+
+                # push to transitions queue. If queue is full and does not have space after 5 seconds, drop the batch
+                try:
+                    self.transitions_queue.put((n_step_samples, priorities), timeout=5)
+                except queue.Full:
+                    logger.warn(
+                        f"{self.model_name} transitions queue full, dropped batch"
+                    )
 
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 

@@ -44,4 +44,5 @@ interface ReplayMemory {
 
   getWeights @4 () -> (weights :Data);
   setWeights @5 (weights :Data);
+  ping @6 () -> ();
 }
