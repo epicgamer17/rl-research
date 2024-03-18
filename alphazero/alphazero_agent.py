@@ -109,7 +109,8 @@ class AlphaZeroAgent:
         )
         while training_step < self.training_steps:
             print("Training Step ", training_step + 1)
-            for _ in range(self.games_per_generation):
+            for game in range(self.games_per_generation):
+                print("Game ", game + 1)
                 done = False
                 while not done:
                     visit_counts = self.monte_carlo_tree_search(
@@ -186,53 +187,34 @@ class AlphaZeroAgent:
         # save model to shared storage @Ezra
 
     def monte_carlo_tree_search(self, env, state, legal_moves):
-        root = Node(0, env, state, legal_moves)
+        root = Node(0, state, legal_moves)
         illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
         value, policy = self.predict_single(state, illegal_moves)
         print("Predicted Policy ", policy)
         print("Predicted Value ", value)
         root.to_play = int(
-            state[2][0][0]
+            state[0][0][2]
         )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
-        policy = {a: policy[a] for a in root.legal_moves}
-        policy_sum = sum(policy.values())
-        for action, p in policy.items():
-            child_env = copy.deepcopy(env)
-            child_state, reward, terminated, truncated, info = child_env.step(action)
-            child_legal_moves = (
-                info["legal_moves"]
-                if "legal_moves" in info
-                else range(self.num_actions)
-            )
-            root.children[action] = Node(
-                p / policy_sum, child_env, child_state, child_legal_moves
-            )
+        print("Root Turn", root.to_play)
+        root.expand(policy, env)
 
         if not self.is_test:
-            actions = root.children.keys()
-            # noise = np.random.gamma(self.root_dirichlet_alpha, 1, len(actions))
-            noise = np.random.dirichlet([self.root_dirichlet_alpha] * len(actions))
-            # print("Noise ", noise)
-            for a, n in zip(actions, noise):
-                root.children[a].prior_policy = (
-                    1 - self.root_exploration_fraction
-                ) * root.children[a].prior_policy + self.root_exploration_fraction * n
+            root.add_noise(self.root_dirichlet_alpha, self.root_exploration_fraction)
 
         for _ in range(self.num_simulations):
-            # print("Simulation ", _ + 1)
             node = root
             mcts_env = copy.deepcopy(env)
             search_path = [node]
 
             # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
-                # print("Expanded")
-                # print("Child UCBs: ")
                 _, action, node = max(
                     (self.ucb_score(node, child), action, child)
                     for action, child in node.children.items()
                 )
-                # print("Action", action)
+                # print("Action ", action)
+                # print("Legal Moves ", legal_moves)
+                # print("Node Children ", node.children)
                 _, reward, terminated, truncated, info = mcts_env.step(action)
                 search_path.append(node)
                 legal_moves = (
@@ -245,7 +227,8 @@ class AlphaZeroAgent:
                 ]
 
             # Turn of the leaf node (if it is a terminal node this will be the losing players turn)
-            leaf_node_turn = node.state[2][0][0]
+            leaf_node_turn = copy.deepcopy(node.state[0][0][2])
+            # print("Leaf Turn", leaf_node_turn)
             node.to_play = int(
                 leaf_node_turn
             )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
@@ -254,26 +237,21 @@ class AlphaZeroAgent:
                 value = -reward  # The game is over and it is your turn (you lost!)
             else:
                 value, policy = self.predict_single(node.state, illegal_moves)
-                # print("Leaf Value ", value)
-                # print("Leaf Policy ", policy)
-                policy = {a: policy[a] for a in node.legal_moves}
-                policy_sum = sum(policy.values())
+                node.expand(policy, mcts_env)
 
-                for action, p in policy.items():
-                    child_state, reward, terminated, truncated, info = mcts_env.step(
-                        action
-                    )
-                    child_legal_moves = (
-                        info["legal_moves"]
-                        if "legal_moves" in info
-                        else range(self.num_actions)
-                    )
-                    # Create Children Nodes (New Leaf Nodes)
-                    node.children[action] = Node(
-                        p / policy_sum, mcts_env, child_state, child_legal_moves
-                    )
-
+            # print("Backpropagating")
+            # print("Length of Search Path ", len(search_path))
             for node in search_path:
+                # print(
+                #     "Value (to be added) ",
+                #     value if node.to_play == leaf_node_turn else -value,
+                # )
+                # print("Leaf Node Turn ", leaf_node_turn)
+                # print("Node", node)
+                # print("Node Turn ", node.to_play)
+                # print("Node Value Sum ", node.value_sum)
+                # print("Node Visits ", node.visits)
+                # print("Node State ", node.state)
                 node.value_sum += value if node.to_play == leaf_node_turn else -value
                 node.visits += 1
 
@@ -281,6 +259,105 @@ class AlphaZeroAgent:
             (child.visits, action) for action, child in root.children.items()
         ]
         return visit_counts
+
+    # def monte_carlo_tree_search(self, env, state, legal_moves):
+    #     root = Node(0, state, legal_moves)
+    #     illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
+    #     value, policy = self.predict_single(state, illegal_moves)
+    #     print("Predicted Policy ", policy)
+    #     print("Predicted Value ", value)
+    #     root.to_play = int(
+    #         state[2][0][0]
+    #     )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
+    #     policy = {a: policy[a] for a in root.legal_moves}
+    #     policy_sum = sum(policy.values())
+    #     for action, p in policy.items():
+    #         child_env = copy.deepcopy(env)
+    #         child_state, reward, terminated, truncated, info = child_env.step(action)
+    #         child_legal_moves = (
+    #             info["legal_moves"]
+    #             if "legal_moves" in info
+    #             else range(self.num_actions)
+    #         )
+    #         root.children[action] = Node(p / policy_sum, child_state, child_legal_moves)
+
+    #     if not self.is_test:
+    #         actions = root.children.keys()
+    #         # noise = np.random.gamma(self.root_dirichlet_alpha, 1, len(actions))
+    #         noise = np.random.dirichlet([self.root_dirichlet_alpha] * len(actions))
+    #         # print("Noise ", noise)
+    #         for a, n in zip(actions, noise):
+    #             root.children[a].prior_policy = (
+    #                 1 - self.root_exploration_fraction
+    #             ) * root.children[a].prior_policy + self.root_exploration_fraction * n
+
+    #     for _ in range(self.num_simulations):
+    #         # print("Simulation ", _ + 1)
+    #         node = root
+    #         mcts_env = copy.deepcopy(env)
+    #         search_path = [node]
+
+    #         # GO UNTIL A LEAF NODE IS REACHED
+    #         while node.expanded():
+    #             _, action, node = max(
+    #                 (self.ucb_score(node, child), action, child)
+    #                 for action, child in node.children.items()
+    #             )
+    #             _, reward, terminated, truncated, info = mcts_env.step(action)
+    #             search_path.append(node)
+    #             legal_moves = (
+    #                 info["legal_moves"]
+    #                 if "legal_moves" in info
+    #                 else range(self.num_actions)
+    #             )
+    #             illegal_moves = [
+    #                 a for a in range(self.num_actions) if a not in legal_moves
+    #             ]
+
+    #         # Turn of the leaf node (if it is a terminal node this will be the losing players turn)
+    #         leaf_node_turn = node.state[2][0][0]
+    #         node.to_play = int(
+    #             leaf_node_turn
+    #         )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
+
+    #         if terminated or truncated:
+    #             value = -reward  # The game is over and it is your turn (you lost!)
+    #         else:
+    #             value, policy = self.predict_single(node.state, illegal_moves)
+    #             # print("Leaf Value ", value)
+    #             # print("Leaf Policy ", policy)
+    #             policy = {a: policy[a] for a in node.legal_moves}
+    #             policy_sum = sum(policy.values())
+
+    #             for action, p in policy.items():
+    #                 child_state, reward, terminated, truncated, info = mcts_env.step(
+    #                     action
+    #                 )
+    #                 child_legal_moves = (
+    #                     info["legal_moves"]
+    #                     if "legal_moves" in info
+    #                     else range(self.num_actions)
+    #                 )
+    #                 # Create Children Nodes (New Leaf Nodes)
+    #                 node.children[action] = Node(
+    #                     p / policy_sum, child_state, child_legal_moves
+    #                 )
+
+    #         for node in search_path:
+    #             print("Backpropagating")
+    #             print(
+    #                 "Value (to be added) ",
+    #                 value if node.to_play == leaf_node_turn else -value,
+    #             )
+    #             print("Leaf Node Turn ", leaf_node_turn)
+    #             print("Node Turn ", node.to_play)
+    #             node.value_sum += value if node.to_play == leaf_node_turn else -value
+    #             node.visits += 1
+
+    #     visit_counts = [
+    #         (child.visits, action) for action, child in root.children.items()
+    #     ]
+    #     return visit_counts
 
     def ucb_score(self, parent, child):
         pb_c = (
@@ -293,9 +370,6 @@ class AlphaZeroAgent:
             pb_c * child.prior_policy * math.sqrt(parent.visits) / (child.visits + 1)
         )
         value_score = child.value()
-        # print("Prior ", prior_score)
-        # print("Value ", value_score)
-        # print("UCB ", prior_score + value_score)
         return prior_score + value_score
 
     def experience_replay(self):
@@ -306,14 +380,9 @@ class AlphaZeroAgent:
         inputs = self.prepare_states(observations)
         with tf.GradientTape() as tape:
             values, policies = self.model(inputs)
-            # print("Unmasked Policies ", policies)
             # Set illegal moves probability to zero and renormalize
             legal_moves_mask = (np.array(target_policies) > 0).astype(int)
-            # print("Target Policies ", target_policies)
-            # print(legal_moves_mask)
             policies = tf.math.multiply(policies, legal_moves_mask)
-            # print("Masked Policies ", policies)
-            # print("New Policy Sum", tf.reduce_sum(policies, axis=1, keepdims=True))
             policies = tf.math.divide(
                 policies, tf.reduce_sum(policies, axis=1, keepdims=True)
             )
@@ -342,6 +411,11 @@ class AlphaZeroAgent:
             tf.reduce_mean(l2_loss),
             loss,
         )
+
+    def action_mask(self, action):
+        mask = np.zeros(self.num_actions)
+        mask[action] = 1
+        return mask
 
     def prepare_states(self, state):
         state = np.array(state)

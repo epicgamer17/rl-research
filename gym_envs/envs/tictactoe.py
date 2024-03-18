@@ -65,11 +65,17 @@ class TicTacToeEnv(gym.Env):
             raise ValueError("Action must be between 0 and 8")
         if action not in self._legal_moves:
             # could return a negative reward
-            raise ValueError("Illegal move")
+            raise ValueError(
+                "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
+            )
         # output next player's token first (since that's the one we're inputting to)
         current_player_board = copy.deepcopy(self._grid[:, :, 0])
         self._grid[:, :, 0] = self._grid[:, :, 1]
         self._grid[:, :, 1] = current_player_board
+        # print(self._grid[:, :, 0])
+        # print(self._grid[:, :, 1])
+        # print(self._grid[:, :, 2])
+        # print("================")
         self._grid[action // self.size, action % self.size, 1] = 1
 
         self._legal_moves = self._legal_moves[self._legal_moves != action]
