@@ -15,15 +15,12 @@ logger.setLevel(logging.INFO)
 fh = logging.FileHandler("replay_buffer.log", mode="w")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
+fh.setFormatter(
+    logging.Formatter("%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s")
+)
 
 logger.addHandler(fh)
 logger.addHandler(ch)
-
-logging.basicConfig(
-    level=logging.INFO,  # logging.DEBUG,
-    handlers=[fh, ch],
-    format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
-)
 
 
 import time
