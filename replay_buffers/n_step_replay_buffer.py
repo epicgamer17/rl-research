@@ -18,6 +18,8 @@ class ReplayBuffer:
         self.next_observation_buffer = np.zeros(
             observation_buffer_shape, dtype=np.float32
         )
+
+        self.id_buffer = np.zeros(max_size, dtype=np.str_)
         self.action_buffer = np.zeros(max_size, dtype=np.int32)
         self.reward_buffer = np.zeros(max_size, dtype=np.float32)
         self.done_buffer = np.zeros(max_size)
@@ -33,7 +35,7 @@ class ReplayBuffer:
         self.n_step = n_step
         self.gamma = gamma
 
-    def store(self, observation, action, reward, next_observation, done):
+    def store(self, observation, action, reward, next_observation, done, id=None):
         # print("Storing in Buffer")
         # time1 = 0
         # time1 = time()
@@ -47,6 +49,7 @@ class ReplayBuffer:
         # compute n-step return and store
         reward, next_observation, done = self._get_n_step_info()
         observation, action = self.n_step_buffer[0][:2]
+        self.id_buffer[self.pointer] = id
         self.observation_buffer[self.pointer] = observation
         self.action_buffer[self.pointer] = action
         self.reward_buffer[self.pointer] = reward
