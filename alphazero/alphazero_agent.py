@@ -254,8 +254,8 @@ class AlphaZeroAgent:
                 value = reward  ###
             else:
                 value, policy = self.predict_single(node.state, illegal_moves)
-                print("Leaf Value ", value)
-                print("Leaf Policy ", policy)
+                # print("Leaf Value ", value)
+                # print("Leaf Policy ", policy)
                 policy = {a: policy[a] for a in node.legal_moves}
                 policy_sum = sum(policy.values())
 
