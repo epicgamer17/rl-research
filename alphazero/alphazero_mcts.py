@@ -15,7 +15,7 @@ class Node:
         self.legal_moves = legal_moves
 
     def expand(self, policy, env):
-        print("Expanding")
+        # print("Expanding")
         base_env = copy.deepcopy(env)
         env = copy.deepcopy(base_env)
         policy = {a: policy[a] for a in self.legal_moves}

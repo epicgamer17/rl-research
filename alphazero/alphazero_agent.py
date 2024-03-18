@@ -109,8 +109,8 @@ class AlphaZeroAgent:
         )
         while training_step < self.training_steps:
             print("Training Step ", training_step + 1)
-            for game in range(self.games_per_generation):
-                print("Game ", game + 1)
+            for training_game in range(self.games_per_generation):
+                print("Game ", training_game + 1)
                 done = False
                 while not done:
                     visit_counts = self.monte_carlo_tree_search(
