@@ -19,11 +19,27 @@ class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
 
     def addTransitionBatch(self, batch, _context):
         print("addTransitionBatch", batch, _context)
-        return None
+        ids = batch.ids
+        observations = batch.observations
+        nextObservations = batch.nextObservations
+        actions = batch.actions
+        rewards = batch.rewards
+        dones = batch.dones
+        priorities = batch.priorities
+
+        for i in range(len(ids)):
+            self.replay_memory.store_with_priority_exact(
+                observations[i],
+                actions[i],
+                rewards[i],
+                nextObservations[i],
+                dones[i],
+                priorities[i],
+            )
 
     def sample(self, _context):
         print("sample", _context)
-        return None
+        return self.replay_memory.sample()
 
     def updatePriorities(self, indices, priorities, _context):
         print("updatePriorities", indices, priorities, _context)
