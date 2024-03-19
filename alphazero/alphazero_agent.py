@@ -128,7 +128,7 @@ class AlphaZeroAgent:
                     temperature_visit_counts = np.power(visit_counts, 1 / temperature)
                     temperature_visit_counts /= np.sum(temperature_visit_counts)
                     action = np.random.choice(actions, p=temperature_visit_counts)
-
+                    print("Action ", action)
                     next_state, reward, terminated, truncated, info = self.step(action)
                     done = terminated or truncated
                     legal_moves = (
@@ -195,7 +195,7 @@ class AlphaZeroAgent:
         root.to_play = int(
             state[0][0][2]
         )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
-        print("Root Turn", root.to_play)
+        # print("Root Turn", root.to_play)
         root.expand(policy, env)
 
         if not self.is_test:
@@ -208,10 +208,15 @@ class AlphaZeroAgent:
 
             # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
-                _, action, node = max(
+                ucbs = [
                     (self.ucb_score(node, child), action, child)
                     for action, child in node.children.items()
-                )
+                ]
+                _, action, node = max(ucbs)
+
+                # print("UCBs", ucbs)
+                # print("Selected Action", action)
+
                 # print("Action ", action)
                 # print("Legal Moves ", legal_moves)
                 # print("Node Children ", node.children)
@@ -226,7 +231,7 @@ class AlphaZeroAgent:
                     a for a in range(self.num_actions) if a not in legal_moves
                 ]
 
-            # Turn of the leaf node (if it is a terminal node this will be the losing players turn)
+            # Turn of the leaf node
             leaf_node_turn = node.state[0][0][2]
             # print("Leaf Turn", leaf_node_turn)
             node.to_play = int(
@@ -234,17 +239,23 @@ class AlphaZeroAgent:
             )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
 
             if terminated or truncated:
-                value = -reward  # The game is over and it is your turn (you lost!)
+                # value = reward
+                value = -reward
+                # The game is over and it is your turn (you lost!)
             else:
                 value, policy = self.predict_single(node.state, illegal_moves)
                 node.expand(policy, mcts_env)
+                # value = -value
 
+            # UNCOMMENT FOR DEBUGGING
             # print("Backpropagating")
             # print("Length of Search Path ", len(search_path))
             for node in search_path:
                 # print(
                 #     "Value (to be added) ",
                 #     value if node.to_play == leaf_node_turn else -value,
+                #     -value if node.to_play == leaf_node_turn else value,
+                #     value if node.to_play != leaf_node_turn else -value,
                 # )
                 # print("Leaf Node Turn ", leaf_node_turn)
                 # print("Node", node)
@@ -252,7 +263,7 @@ class AlphaZeroAgent:
                 # print("Node Value Sum ", node.value_sum)
                 # print("Node Visits ", node.visits)
                 # print("Node State ", node.state)
-                node.value_sum += value if node.to_play == leaf_node_turn else -value
+                node.value_sum += value if node.to_play != leaf_node_turn else -value
                 node.visits += 1
 
         visit_counts = [
