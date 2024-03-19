@@ -6,7 +6,7 @@ import copy
 
 
 class TicTacToeEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 1}
 
     def __init__(self, render_mode=None, size=3, win_length=3):
         self.size = size  # The size of the square grid
@@ -16,7 +16,7 @@ class TicTacToeEnv(gym.Env):
         # Observations are planes.
         # The first plane represents player 1s tokens, the second player 2s and the third encodes the current players turn.
         self.observation_space = spaces.Box(
-            low=-1, high=1, shape=(self.size, self.size, 3), dtype=np.float64
+            low=0, high=1, shape=(self.size, self.size, 3), dtype=np.float64
         )
 
         # We have 9 actions, corresponding to each cell
@@ -50,7 +50,7 @@ class TicTacToeEnv(gym.Env):
         self._grid[:, :, 2] = 0  # It's player 1's turn
 
         # Reset legal moves
-        self._legal_moves = np.array(list(range(self.size * self.size)))
+        self._legal_moves = np.array(list(range(self.action_space.n)))
 
         observation = self._get_obs()
         info = self._get_info()
@@ -118,16 +118,16 @@ class TicTacToeEnv(gym.Env):
                 if self._grid[i, j, turn] == 1:
                     pygame.draw.line(
                         canvas,
-                        (255, 0, 0),
-                        (j * pix_square_size, i * pix_square_size),
-                        ((j + 1) * pix_square_size, (i + 1) * pix_square_size),
+                        (0, 0, 255),
+                        ((j + 0.165) * pix_square_size, (i + 0.165) * pix_square_size),
+                        ((j + 0.835) * pix_square_size, (i + 0.835) * pix_square_size),
                         width=3,
                     )
                     pygame.draw.line(
                         canvas,
-                        (255, 0, 0),
-                        ((j + 1) * pix_square_size, i * pix_square_size),
-                        (j * pix_square_size, (i + 1) * pix_square_size),
+                        (0, 0, 255),
+                        ((j + 0.835) * pix_square_size, (i + 0.165) * pix_square_size),
+                        ((j + 0.165) * pix_square_size, (i + 0.835) * pix_square_size),
                         width=3,
                     )
                 if self._grid[i, j, 1 - turn] == 1:
@@ -188,11 +188,18 @@ class TicTacToeEnv(gym.Env):
 
     def _check_win(self, i, j):
         # Check row
-        if np.all(self._grid[i, :, 1] == 1):
+        if np.all([self._grid[i, k, 1] for k in range(self.win_length)]):
             return True
         # Check column
-        if np.all(self._grid[:, j, 1] == 1):
+        if np.all([self._grid[k, j, 1] for k in range(self.win_length)]):
             return True
+
+        # if np.all(self._grid[i, :, 1] == 1):
+        #     return True
+        # # Check column
+        # if np.all(self._grid[:, j, 1] == 1):
+        #     return True
+
         # Check diagonals for any cell
         if i + self.win_length <= self.size and j + self.win_length <= self.size:
             if np.all([self._grid[i + k, j + k, 1] for k in range(self.win_length)]):
