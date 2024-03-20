@@ -45,46 +45,44 @@ class ReplayBuffer:
         self.buffer = []
 
     def store(self, game):
-        games = self.augment(game)
-        for game in games:
-            if len(self.buffer) >= self.max_size:
-                self.buffer.pop(0)
-            self.buffer.append(game)
+        if len(self.buffer) >= self.max_size:
+            self.buffer.pop(0)
+        self.buffer.append(game)
 
-    def augment(self, game):
-        augmented_games = []
-        augmented_games.append(game)
-        for rotations in range(3):
-            augmented_game = copy.deepcopy(game)
-            # Rotates the board
-            for i in range(len(game.observation_history)):
-                augmented_game.observation_history[i] = np.rot90(
-                    augmented_game.observation_history[i], k=1
-                )
-                augmented_game.policy_history[i] = np.rot90(
-                    augmented_game.policy_history[i].reshape(3, 3), k=1
-                ).flatten()
-            augmented_games.append(augmented_game)
-        flipped_game = copy.deepcopy(game)
-        for i in range(len(game.observation_history)):
-            flipped_game.observation_history[i] = np.fliplr(
-                flipped_game.observation_history[i]
-            )
-            flipped_game.policy_history[i] = np.fliplr(
-                flipped_game.policy_history[i].reshape(3, 3)
-            ).flatten()
-        augmented_games.append(flipped_game)
-        for rotations in range(3):
-            augmented_game = copy.deepcopy(flipped_game)
-            for i in range(len(game.observation_history)):
-                augmented_game.observation_history[i] = np.rot90(
-                    augmented_game.observation_history[i], k=1
-                )
-                augmented_game.policy_history[i] = np.rot90(
-                    augmented_game.policy_history[i].reshape(3, 3), k=1
-                ).flatten()
-            augmented_games.append(augmented_game)
-        return augmented_games
+    # def augment(self, game):
+    # augmented_games = []
+    # augmented_games.append(game)
+    # for rotations in range(3):
+    #     augmented_game = copy.deepcopy(game)
+    #     # Rotates the board
+    #     for i in range(len(game.observation_history)):
+    #         augmented_game.observation_history[i] = np.rot90(
+    #             augmented_game.observation_history[i], k=1
+    #         )
+    #         augmented_game.policy_history[i] = np.rot90(
+    #             augmented_game.policy_history[i].reshape(3, 3), k=1
+    #         ).flatten()
+    #     augmented_games.append(augmented_game)
+    # flipped_game = copy.deepcopy(game)
+    # for i in range(len(game.observation_history)):
+    #     flipped_game.observation_history[i] = np.fliplr(
+    #         flipped_game.observation_history[i]
+    #     )
+    #     flipped_game.policy_history[i] = np.fliplr(
+    #         flipped_game.policy_history[i].reshape(3, 3)
+    #     ).flatten()
+    # augmented_games.append(flipped_game)
+    # for rotations in range(3):
+    #     augmented_game = copy.deepcopy(flipped_game)
+    #     for i in range(len(game.observation_history)):
+    #         augmented_game.observation_history[i] = np.rot90(
+    #             augmented_game.observation_history[i], k=1
+    #         )
+    #         augmented_game.policy_history[i] = np.rot90(
+    #             augmented_game.policy_history[i].reshape(3, 3), k=1
+    #         ).flatten()
+    #     augmented_games.append(augmented_game)
+    # return augmented_games
 
     def sample(self):
         move_sum = float(sum([len(game) for game in self.buffer]))
