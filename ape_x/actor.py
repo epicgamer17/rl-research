@@ -33,15 +33,16 @@ class ActorBase(RainbowAgent):
         self.id = id
         self.poll_params_interval = config["poll_params_interval"]
         self.buffer_size = config["buffer_size"]
-        self.transitions_queue = queue.Queue(
-            3
-        )  # max about of transition batches to queue before waiting
+
+        # max about of transition batches to queue before dropping
+        self.max_transitions_queue_size = 16
+        self.transitions_queue = queue.Queue(maxsize=self.max_transitions_queue_size)
 
     def _fetch_latest_params(self):
         t = time.time()
         self.fetch_latest_params()
         delta_t = time.time() - t
-        logging.info(f"fetch_latest_params took: {delta_t} s")
+        logger.info(f"fetch_latest_params took: {delta_t} s")
 
     # to be implemented by subclasses
     def fetch_latest_params(self):
@@ -111,7 +112,8 @@ class ActorBase(RainbowAgent):
         return prioritized_loss
 
     def run(self):
-        self.consume_transitions_queue()
+        consume_queue = threading.Thread(target=self.consume_transitions_queue)
+        consume_queue.start()
 
         self.is_test = False
         self.fetch_latest_params()
@@ -172,6 +174,11 @@ class ActorBase(RainbowAgent):
 
         self.env.close()
         self.transitions_queue.put(None)
+
+        # wait for consume_transitions_queue to finish
+        logger.debug("Waiting for consume_transitions_queue to finish")
+        consume_queue.join()
+
         return num_trials_truncated / self.num_training_steps
 
 
@@ -223,24 +230,22 @@ class SingleMachineActor(ActorBase):
         logger.info(f"push_experiences_to_remote_replay_buffer took: {delta_t} s")
 
 
+import asyncio
 import pickle
-import capnp
 import uuid
-
-capnp.remove_import_hook()
-replay_memory_capnp = capnp.load("./entities/replayMemory.capnp")
+from client import ReplayMemoryClient
 
 
 class TransitionPusher:
-    def __init__(self):
-        self.replay_memory = capnp.TwoPartyClient("localhost:60000")
-        self.replay_memory = self.replay_memory.bootstrap().cast_as(
-            replay_memory_capnp.ReplayMemory
-        )
+    def __init__(self, queue: queue.Queue, actor_id: str):
         self.initial_time = time.time()
+        self.queue = queue
+        self.id = actor_id
 
-    def push_batch(self, id, batch):
-        self.initial_time = time.time()
+        self.client = ReplayMemoryClient()
+        self.client.extra_coroutines.append(self.task())
+
+    def prepare_request(self, id, batch):
         (experiences, priorities) = batch
         n = len(experiences["dones"])
         logger.info(f"pushing {n} experiences to remote replay buffer")
@@ -258,7 +263,7 @@ class TransitionPusher:
             dones.append(experiences["dones"][i].item() == 1)
             pri.append(priorities[i].item())
 
-        request = self.replay_memory.addTransitionBatch_request()
+        request = self.client.get_rpc().addTransitionBatch_request()
         # request.batch = input
         request.batch.ids = ids
         request.batch.observations = pickle.dumps(
@@ -272,10 +277,38 @@ class TransitionPusher:
         request.batch.dones = dones
         request.batch.priorities = pri
 
-        promise = request.send()
-        promise.wait()
-        delta_t = time.time() - self.initial_time
-        logger.info(f"push_batch took: {delta_t} s")
+        return request
+
+    async def task(self):
+        logger.debug("task started.")
+        while self.client.running:
+            try:
+                t = self.queue.get()
+                if t is None:
+                    logger.info(
+                        "recieved finished signal, finishing task and triggering stop sequence"
+                    )
+                    self.client.stop()
+                    return True
+
+                self.initial_time = time.time()
+                request = self.prepare_request(self.id, t)
+
+                await asyncio.wait_for(request.send().a_wait(), timeout=5)
+
+                delta_t = time.time() - self.initial_time
+                logger.info(f"push_batch took: {delta_t}s")
+            except asyncio.TimeoutError:
+                logger.warn("push_batch timed out - batch dropped!")
+                continue
+            except Exception as e:
+                # unexpected error - immediately stop the client and finish the task
+
+                logger.exception(f"Error pushing batch: {e}")
+                self.client.stop()
+                return False
+
+        return True
 
 
 class DistributedActor(ActorBase):
@@ -291,18 +324,7 @@ class DistributedActor(ActorBase):
         return self.model.get_weights()
 
     def consume_transitions_queue(self):
-        thread = threading.Thread(target=self._consume_transitions_queue)
-        thread.start()
-
-    def _consume_transitions_queue(self):
-        pusher = TransitionPusher()
-        t = self.transitions_queue.get()
-
-        while t is not None:
-            try:
-                pusher.push_batch(self.id, t)
-
-            except Exception as e:
-                logging.exception(e)
-
-            t = self.transitions_queue.get()
+        # pusher must be created in the same thread as the event loop, which is where the capnp rpc objects are created
+        pusher = TransitionPusher(self.transitions_queue, self.id)
+        asyncio.run(pusher.client.start(), debug=True)
+        logger.debug("transitionPusher done.")
