@@ -474,3 +474,21 @@ class Network(tf.keras.Model):
     def __init__(self, config, input_shape, output_shape):
         super(Network, self).__init__()
         self.config = config
+        self.representation = Representation(config, input_shape)
+        self.dynamics = Dynamics(config, input_shape)
+        self.prediction = Prediction(
+            config, input_shape, output_shape, "glorot_uniform"
+        )
+
+    def initial_inference(self, x):
+        representation = self.representation(x)
+        value, policy = self.prediction(representation)
+        return value, policy, representation
+
+    def recurrent_inference(self, hidden_state, action):
+        dynamics = self.dynamics(tf.concat([hidden_state, action], axis=1))
+        reward, hidden_state = tf.split(
+            dynamics, [1, self.config["representation_size"]], axis=1
+        )
+        value, policy = self.prediction(hidden_state)
+        return reward, hidden_state, value, policy
