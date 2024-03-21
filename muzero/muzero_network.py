@@ -481,9 +481,9 @@ class Network(tf.keras.Model):
         )
 
     def initial_inference(self, x):
-        representation = self.representation(x)
-        value, policy = self.prediction(representation)
-        return value, policy, representation
+        hidden_state = self.representation(x)
+        value, policy = self.prediction(hidden_state)
+        return value, policy, hidden_state
 
     def recurrent_inference(self, hidden_state, action):
         dynamics = self.dynamics(tf.concat([hidden_state, action], axis=1))
