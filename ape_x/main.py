@@ -26,6 +26,9 @@ import sys
 
 sys.path.append("../")
 
+from learner import SingleMachineLearner
+from actor import SingleMachineActor
+
 
 class ClipReward(gym.RewardWrapper):
     def __init__(self, env, min_reward, max_reward):
@@ -139,26 +142,43 @@ def main():
         # 'search_max_depth': 5,
         # 'search_max_time': 10,
     }
-    # learner_config = copy.deepcopy(config)
-    # learner_config["num_training_steps"] = 100
-    # learner_config["remove_old_experiences_interval"] = 10
-    # learner = SingleMachineLearner(
-    #     env=make_cartpole_env(),
-    #     config=learner_config,
-    # )
+    learner_config = copy.deepcopy(config)
+    learner_config["num_training_steps"] = 100
+    learner_config["remove_old_experiences_interval"] = 10
+    learner = SingleMachineLearner(
+        env=make_cartpole_env(),
+        config=learner_config,
+    )
 
-    num_actors = 5
+    actor_config = copy.deepcopy(config)
+    actor_config["poll_params_interval"] = 150
+    actor_config["buffer_size"] = 100
+    actor_config["num_training_steps"] = 10000
+    actor = SingleMachineActor(
+        id="actor",
+        env=make_cartpole_env(),
+        config=actor_config,
+        single_machine_learner=learner,
+    )
 
-    processes = list()
-    for i in range(num_actors):
-        id = i
-        process = subprocess.Popen(
-            ["python", "main_actor.py", str(id)],
-        )
-        processes.append(process)
+    learner_thread = threading.Thread(target=learner.run, name="learner")
+    learner_thread.start()
 
-    for process in processes:
-        process.wait()
+    actor_thread = threading.Thread(target=actor.run, name="actor")
+    actor_thread.start()
+
+    # num_actors = 5
+
+    # processes = list()
+    # for i in range(num_actors):
+    #     id = i
+    #     process = subprocess.Popen(
+    #         ["python", "main_actor.py", str(id)],
+    #     )
+    #     processes.append(process)
+
+    # for process in processes:
+    #     process.wait()
 
     # learner_thread = threading.Thread(target=learner.run, name="learner")
     # learner_thread.start()
@@ -166,7 +186,7 @@ def main():
     # for actor_thread in actor_threads:
     #     actor_thread.start()
 
-    # learner_thread.join()
+    learner_thread.join()
 
     print("====FINISHED====")
     # logger.debug(f"learner weights: {learner.get_weights()}")

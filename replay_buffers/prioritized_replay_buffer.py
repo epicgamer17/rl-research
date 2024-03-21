@@ -95,6 +95,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         actions = self.action_buffer[indices]
         rewards = self.reward_buffer[indices]
         dones = self.done_buffer[indices]
+        ids = self.id_buffer[indices]
         weights = np.array([self._calculate_weight(i, beta) for i in indices])
         # print("Retrieving Data from PrioritizedReplayBuffer Data Arrays Time ", time() - time2)
 
@@ -107,6 +108,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             dones=dones,
             weights=weights,
             indices=indices,
+            ids=ids,
         )
 
     def update_priorities(self, indices, priorities, ids=None):
