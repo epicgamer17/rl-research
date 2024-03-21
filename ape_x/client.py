@@ -1,8 +1,9 @@
 import asyncio
 import logging
 import socket
-import capnp
 from abc import ABC
+
+import capnp
 
 capnp.remove_import_hook()
 replay_memory_capnp = capnp.load("./entities/replayMemory.capnp")
@@ -184,6 +185,7 @@ class RPCClient(ABC):
         return task_failed
 
     def stop(self):
+        logger.info("stopping...")
         self.running = False
 
     async def start(self):

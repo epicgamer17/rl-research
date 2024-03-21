@@ -82,6 +82,7 @@ class ReplayBuffer:
             actions=self.action_buffer[indices],
             rewards=self.reward_buffer[indices],
             dones=self.done_buffer[indices],
+            ids=self.id_buffer[indices],
         )
 
     def _get_n_step_info(self):

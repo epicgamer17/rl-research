@@ -282,14 +282,15 @@ class TransitionPusher:
     async def task(self):
         logger.debug("task started.")
         while self.client.running:
+            t = self.queue.get()
+            if t is None:
+                logger.info(
+                    "recieved finished signal, finishing task and triggering stop sequence"
+                )
+                self.client.stop()
+                return True
+
             try:
-                t = self.queue.get()
-                if t is None:
-                    logger.info(
-                        "recieved finished signal, finishing task and triggering stop sequence"
-                    )
-                    self.client.stop()
-                    return True
 
                 self.initial_time = time.time()
                 request = self.prepare_request(self.id, t)
