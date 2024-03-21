@@ -6,7 +6,7 @@ import capnp
 
 capnp.remove_import_hook()
 
-replay_buffer_capnp = capnp.load("./entities/replayMemory.capnp")
+replay_memory_capnp = capnp.load("./entities/replayMemory.capnp")
 
 import logging
 
@@ -30,8 +30,8 @@ sys.path.append("../")
 from replay_buffers.prioritized_replay_buffer import PrioritizedReplayBuffer
 
 
-class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
-    def __init__(self, replay_memory):
+class ReplayMemoryImpl(replay_memory_capnp.ReplayMemory.Server):
+    def __init__(self, replay_memory: PrioritizedReplayBuffer):
         self.replay_memory = replay_memory
 
         self.weights = bytes()
@@ -50,16 +50,15 @@ class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
         priorities = batch.priorities
 
         for i in range(len(ids)):
-            to_store = {
-                "observation": observations[i],
-                "action": actions[i],
-                "reward": rewards[i],
-                "next_observation": nextObservations[i],
-                "done": dones[i],
-                "priority": priorities[i],
-                "id": ids[i],
-            }
-            self.replay_memory.store_with_priority_exact(**to_store)
+            self.replay_memory.store_with_priority_exact(
+                observation=observations[i],
+                action=actions[i],
+                reward=rewards[i],
+                next_observation=nextObservations[i],
+                done=dones[i],
+                priority=priorities[i],
+                id=ids[i],
+            )
 
         delta_t = time.time() - initial_time
         logger.info(
@@ -67,23 +66,70 @@ class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
         )
 
     def sample(self, batchSize, _context):
-        logger.info("sample", _context)
-        return self.replay_memory.sample()
+        logger.info(f"sample, batchSize: {batchSize}")
+        try:
+            samples = self.replay_memory.sample()
+        except AssertionError as e:
+            # if the buffer does not have enough samples, return empty samples
+            return (
+                {
+                    "ids": [],
+                    "observations": bytes(),
+                    "actions": [],
+                    "rewards": [],
+                    "nextObservations": bytes(),
+                    "dones": [],
+                    "priorities": [],
+                },
+                list(),
+            )
+        print(f"samples: {samples}")
+
+        n = len(samples["ids"])
+
+        # convert to capnp types
+        ids = list()
+        actions = list()
+        rewards = list()
+        dones = list()
+        indices = list()
+
+        for i in range(n):
+            ids.append(int(samples["ids"][i]))
+            actions.append(int(samples["actions"][i]))
+            rewards.append(float(samples["rewards"][i]))
+            dones.append(bool(samples["dones"][i]))
+            indices.append(int(samples["indices"][i]))
+
+        ret = {
+            "ids": ids,
+            "observations": pickle.dumps(samples["observations"], protocol=5),
+            "actions": actions,
+            "rewards": rewards,
+            "nextObservations": pickle.dumps(samples["next_observations"], protocol=5),
+            "dones": dones,
+        }
+
+
+        logger.info(f"sample done: {ret}")
+        return (ret, indices)
 
     def updatePriorities(self, indices, ids, priorities, _context):
-        logger.info("updatePriorities", indices, ids, priorities, _context)
+        logger.info(
+            f"updatePriorities - indices: {indices}, ids: {ids}, priorities: {priorities}"
+        )
         self.replay_memory.update_priorities(indices, priorities, ids)
 
     def removeOldExperiences(self, _context):
         # not necessary as replay buffer has a fixed size
-        logger.info("removeOldExperiences", _context)
+        logger.info("removeOldExperiences")
 
     def getWeights(self, _context):
-        logger.info("getWeights", _context)
+        logger.info("getWeights")
         return self.weights
 
     def setWeights(self, weights, _context):
-        logger.info("setWeights", weights, _context)
+        logger.info(f"setWeights {weights}")
         self.weights = weights
 
     def ping(self, _context):
@@ -164,8 +210,8 @@ async def main():
     env = gym.make("CartPole-v1", render_mode="rgb_array")
     replay_memory = PrioritizedReplayBuffer(
         observation_dimensions=env.observation_space.shape,
-        max_size=10000,
-        batch_size=100,
+        max_size=100000,
+        batch_size=2**7,
         max_priority=1.0,
         alpha=0.5,  # config["per_alpha"],
         # epsilon=config["per_epsilon"],

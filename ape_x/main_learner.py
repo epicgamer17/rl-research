@@ -1,14 +1,13 @@
 import tensorflow as tf
 import copy
-from actor import DistributedActor
-import argparse
+from learner import DistributedLearner
 import gymnasium as gym
 
 import logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler("main_actor.log", mode="a")
+fh = logging.FileHandler("main_learner.log", mode="w")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
 
@@ -65,20 +64,14 @@ def make_cartpole_env():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run a distributed Ape-X actor")
-    parser.add_argument("id", type=str)
-    args = parser.parse_args()
-
-    actor_config = copy.deepcopy(base_config)
-    actor_config["poll_params_interval"] = 150
-    actor_config["buffer_size"] = 100
-    actor_config["num_training_steps"] = 1000
-    actor = DistributedActor(
-        id=args.id,
+    learner_config = copy.deepcopy(base_config)
+    learner_config["num_training_steps"] = 1000
+    learner_config["remove_old_experiences_interval"] = 1000
+    learner = DistributedLearner(
         env=make_cartpole_env(),
-        config=actor_config,
+        config=learner_config,
     )
-    actor.run()
+    learner.run()
 
 
 if __name__ == "__main__":

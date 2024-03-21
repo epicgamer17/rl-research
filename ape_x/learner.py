@@ -160,7 +160,7 @@ class LearnerBase(RainbowAgent):
         training_step = 0
 
         # push initial weights
-        self.weights_queue.put(self.model.get_weights())
+        self.weights_queue.put(self.model.get_weights(), False)
 
         while training_step <= self.num_training_steps:
             logger.info(
@@ -175,7 +175,7 @@ class LearnerBase(RainbowAgent):
             self.update_target_model(model_update_count)
 
             if training_step % graph_interval == 0 and training_step > 0:
-                # self.save_checkpoint(training_step)
+                self.save_checkpoint(training_step)
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
 
@@ -198,7 +198,7 @@ class LearnerBase(RainbowAgent):
         consume_priority_updates_thread.join()
 
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
-        # self.save_checkpoint(training_step)
+        self.save_checkpoint(training_step)
         self.env.close()
 
 
@@ -221,8 +221,9 @@ class SingleMachineLearner(LearnerBase):
         t = self.priority_updates_queue.get()
 
         while t is not None:
-            logger.debug("updating priorities")
+            logger.debug(f"updating priorities, {t}")
             ids, indices, prioritized_loss = t
+
             self.replay_buffer.update_priorities(indices, prioritized_loss, ids)
             t = self.priority_updates_queue.get()
 
@@ -259,25 +260,167 @@ class SingleMachineLearner(LearnerBase):
         return self.model.get_weights()
 
 
+import asyncio
+import pickle
+from client import ReplayMemoryClient
+
+
+class LearnerRPCClient:
+    def __init__(
+        self,
+        weights_queue: queue.Queue,
+        samples_queue: queue.Queue,
+        priority_updates_queue: queue.Queue,
+    ):
+        self.client = ReplayMemoryClient()
+
+        self.weights_queue = weights_queue
+        self.samples_queue = samples_queue
+        self.priority_updates_queue = priority_updates_queue
+
+        self.client.extra_coroutines.append(self.consume_weights())
+        self.client.extra_coroutines.append(self.produce_samples())
+        self.client.extra_coroutines.append(self.consume_priority_updates())
+
+    async def consume_weights(self):
+        logger.info("consume weights started")
+        while self.client.running:
+            try:
+                weights = self.weights_queue.get(block=False)
+                logger.debug(f"got weights from queue, {weights}")
+                if weights is None:
+                    logger.info(
+                        "got stop signal, stopping consume_weights and stopping client"
+                    )
+                    self.client.stop()
+                    return True
+
+                logger.debug("pushing weights to remote")
+                t_i = time.time()
+                pickled = pickle.dumps(weights, 5)
+                logger.info(f"pickeled: {pickled}")
+
+                request = self.client.get_rpc().setWeights_request()
+                request.weights = pickled
+
+                await asyncio.wait_for(request.send().a_wait(), 10)
+                logger.debug(f"setWeights_request took {time.time() - t_i} seconds")
+            except queue.Empty:
+                logger.debug("weights_queue empty, polling")
+                await asyncio.sleep(1)
+            except asyncio.TimeoutError:
+                logger.warning("timeout pushing weights to remote - dropping update")
+            except Exception as e:
+                logger.exception(
+                    f"error pushing weights to remote {e} - stopping consume_weights"
+                )
+                return False
+
+        return True
+
+    async def consume_priority_updates(self):
+        logger.info("consume priority updates started")
+        while self.client.running:
+            try:
+                t = self.priority_updates_queue.get(block=False)
+                logger.debug(f"got priorities from queue, {t}")
+                if t is None:
+                    logger.info(
+                        "got stop signal, stopping consume_priority_updates and stopping client"
+                    )
+                    self.client.stop()
+                    return True
+
+                ids, indices, prioritized_loss = t
+                logger.debug("updating priorities to remote")
+                t_i = time.time()
+
+                request = self.client.get_rpc().updatePriorities_request()
+                request.indices = indices
+                request.ids = ids
+                request.prioritized_loss = prioritized_loss
+                await asyncio.wait_for(request.send().a_wait(), 10)
+                logger.debug(
+                    f"updatePriorities_request took {time.time() - t_i} seconds"
+                )
+            except queue.Empty:
+                logger.debug("priority_updates_queue empty, polling")
+                await asyncio.sleep(1)
+            except asyncio.TimeoutError:
+                logger.warning("timeout updating priorities - dropping update")
+            except Exception as e:
+                logger.exception(
+                    f"error updating priorities {e} - stopping consume_priority_updates"
+                )
+                return False
+
+        return True
+
+    async def produce_samples(self):
+        logger.info("produce samples started")
+        while self.client.running:
+            try:
+                logger.info("getting samples from remote")
+                t_i = time.time()
+
+                request = self.client.get_rpc().sample_request()
+                request.batchSize = 0
+                res = await asyncio.wait_for(request.send().a_wait(), 10)
+
+                logger.debug(f"sample_request took {time.time() - t_i} seconds")
+
+                sample = {
+                    "ids": res.batch.ids,
+                }
+
+                if len(sample["ids"]) > 0:
+                    sample["indices"] = res.indices
+                    sample["actions"] = res.batch.actions
+                    sample["observations"] = pickle.loads(res.batch.observations)
+                    sample["rewards"] = res.rewards
+                    sample["next_observations"] = pickle.loads(
+                        res.batch.nextObservations
+                    )
+                    sample["dones"] = res.batch.dones
+                    logger.debug(f"got samples from remote, {sample}")
+
+                    self.samples_queue.put(sample)
+                else:
+                    logger.debug("no samples from remote, polling")
+                    await asyncio.sleep(1)
+            except asyncio.TimeoutError:
+                logger.warning("timeout getting samples from remote")
+            except Exception as e:
+                logger.exception(
+                    f"error getting samples {e} - stopping produce_samples"
+                )
+                return False
+
+        logger.info("produce samples finished successfully")
+        return True
+
+
 class DistributedLearner(LearnerBase):
     def __init__(self, env, config):
         super().__init__(env=env, config=config)
 
-    def sample_experiences_from_remote_replay_buffer(self):
-        print("Sampling experiences from remote replay buffer")
-        return self.replay_buffer.sample()
+    def consume_weights(self):
+        c = LearnerRPCClient(
+            weights_queue=self.weights_queue,
+            samples_queue=self.samples_queue,
+            priority_updates_queue=self.priority_updates_queue,
+        )
+        asyncio.run(c.client.start(), debug=True)
+        logger.info("consume weights finished")
 
-    def sample_n_step_experiences_from_remote_replay_buffer(self, indices):
-        print("Sampling n-step experiences from remote replay buffer")
-        return self.n_step_replay_buffer.sample_from_indices(indices)
+    def produce_samples(self):
+        # handled in consume_weights
+        logger.info("produced samples ignored")
 
-    def update_remote_replay_buffer_priorities(self, indices, priorities):
-        print("Updating remote replay buffer priorities")
-        return self.replay_buffer.update_priorities(indices, priorities)
+    def consume_priority_updates(self):
+        # handled in consume_weights
+        logger.info("consume priority updates ignored")
 
     def remove_old_experiences_from_remote_replay_buffer(self):
-        # done automatically in the replay buffer (old experiences overwritten)
+        # not needed
         pass
-
-    def get_weights(self):
-        return self.model.get_weights()
