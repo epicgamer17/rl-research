@@ -3,7 +3,7 @@ import copy
 
 
 class Game:
-    def __init__(self, num_players=2):
+    def __init__(self, num_players=2, num_actions=9, discount=1.0):
         self.length = 0
         self.observation_history = []
         self.rewards = []

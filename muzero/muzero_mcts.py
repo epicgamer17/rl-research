@@ -5,34 +5,25 @@ import numpy as np
 
 
 class Node:
-    def __init__(self, prior_policy, latent_state, legal_moves):
+    def __init__(self, prior_policy):
         self.visits = 0
         self.to_play = -1
         self.prior_policy = prior_policy
         self.value_sum = 0
         self.children = {}
-        self.latent_state = copy.deepcopy(latent_state)
-        self.legal_moves = legal_moves
+        self.hidden_state = None
+        self.reward = 0
 
-    def expand(self, policy, env):
-        # print("Expanding")
-        base_env = copy.deepcopy(env)
-        env = copy.deepcopy(base_env)
-        policy = {a: policy[a] for a in self.legal_moves}
+    def expand(self, legal_moves, to_play, policy, hidden_state, reward):
+        self.to_play = to_play
+        self.reward = reward
+        self.hidden_state = hidden_state
+
+        policy = {a: policy[a] for a in legal_moves}
         policy_sum = sum(policy.values())
 
         for action, p in policy.items():
-            child_latent_state, reward, terminated, truncated, info = env.step(action)
-            child_legal_moves = (
-                info["legal_moves"]
-                if "legal_moves" in info
-                else range(self.num_actions)
-            )
-            # Create Children Nodes (New Leaf Nodes)
-            self.children[action] = Node(
-                p / policy_sum, child_latent_state, child_legal_moves
-            )
-            env = copy.deepcopy(base_env)
+            self.children[action] = Node(p / policy_sum)
 
     def expanded(self):
         return len(self.children) > 0
@@ -50,3 +41,21 @@ class Node:
             self.children[a].prior_policy = (1 - frac) * self.children[
                 a
             ].prior_policy + frac * n
+
+    def select_child(self, min_max_stats):
+        # Select the child with the highest UCB
+        _, action, child = max(
+            [
+                (self.child_ucb_score(child, min_max_stats), action, child)
+                for action, child in self.children.items()
+            ]
+        )
+        return action, child
+
+    def child_ucb_score(self, child, min_max_stats):
+        pb_c = log((self.visits + self.pb_c_base + 1) / self.pb_c_base) + self.pb_c_init
+        pb_c *= sqrt(self.visits) / (child.visits + 1)
+
+        prior_score = pb_c * child.prior_policy * sqrt(self.visits) / (child.visits + 1)
+        value_score = min_max_stats.normalize(child.value())
+        return prior_score + value_score
