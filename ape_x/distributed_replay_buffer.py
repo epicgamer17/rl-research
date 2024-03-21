@@ -86,7 +86,7 @@ class ReplayMemoryImpl(replay_buffer_capnp.ReplayMemory.Server):
         logger.info("setWeights", weights, _context)
         self.weights = weights
 
-    def ping(self):
+    def ping(self, _context):
         logger.info("ping")
 
 

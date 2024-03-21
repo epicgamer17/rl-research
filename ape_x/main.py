@@ -26,9 +26,6 @@ import sys
 
 sys.path.append("../")
 
-from ape_x.actor import DistributedActor, SingleMachineActor
-from ape_x.learner import SingleMachineLearner
-
 
 class ClipReward(gym.RewardWrapper):
     def __init__(self, env, min_reward, max_reward):
@@ -150,7 +147,7 @@ def main():
     #     config=learner_config,
     # )
 
-    num_actors = 3
+    num_actors = 5
 
     processes = list()
     for i in range(num_actors):
