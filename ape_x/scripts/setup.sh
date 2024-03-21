@@ -51,7 +51,7 @@ echo "This script will delete your ~/.cache directory, install capnp from source
 echo
 echo "It is also recommended to run this script on one of the open-gpu-x servers as they are much faster than mimi."
 echo
-read "Continue? (y/n) " out
+read -p "Continue? (y/n) " out
 
 if [ $out != "y" ]; then
   echo "Exiting..."
@@ -71,7 +71,7 @@ setup_path
 
 echo "Are you sure you want to destroy default python environment and conda environments? This action is irreversible"
 echo
-read "Continue? (y/n) " out
+read -p "Continue? (y/n) " out
 
 if [ $out != "y" ]; then
   echo "Exiting..."
