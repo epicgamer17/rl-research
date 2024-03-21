@@ -48,3 +48,21 @@ class Node:
             self.children[a].prior_policy = (1 - frac) * self.children[
                 a
             ].prior_policy + frac * n
+
+    def select_child(self):
+        # Select the child with the highest UCB
+        _, action, child = max(
+            [
+                (self.child_ucb_score(child), action, child)
+                for action, child in self.children.items()
+            ]
+        )
+        return action, child
+
+    def child_ucb_score(self, child):
+        pb_c = log((self.visits + self.pb_c_base + 1) / self.pb_c_base) + self.pb_c_init
+        pb_c *= sqrt(self.visits) / (child.visits + 1)
+
+        prior_score = pb_c * child.prior_policy * sqrt(self.visits) / (child.visits + 1)
+        value_score = child.value()
+        return prior_score + value_score
