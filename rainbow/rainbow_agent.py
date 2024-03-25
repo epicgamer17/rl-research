@@ -140,6 +140,7 @@ class RainbowAgent:
                 gamma=config["discount_factor"],
             )
 
+        # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
         self.v_min = config["v_min"]
         self.v_max = config["v_max"]
 
