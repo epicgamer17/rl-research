@@ -31,7 +31,7 @@ def make_cartpole_env():
 def main():
 
     learner_process = subprocess.Popen(
-        ["python", "main_learner.py"],
+        ["python3", "main_learner.py"],
     )
 
     num_actors = 1
@@ -39,7 +39,7 @@ def main():
     for i in range(num_actors):
         id = i
         process = subprocess.Popen(
-            ["python", "main_actor.py", str(id)],
+            ["python3", "main_actor.py", str(id)],
         )
         processes.append(process)
 
