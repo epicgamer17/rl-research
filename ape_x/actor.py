@@ -37,15 +37,9 @@ class ActorBase(RainbowAgent):
         # max about of transition batches to queue before dropping
         self.max_transitions_queue_size = 16
         self.transitions_queue = queue.Queue(maxsize=self.max_transitions_queue_size)
+        self.params_queue = queue.Queue(maxsize=1)
 
-    def _fetch_latest_params(self):
-        t = time.time()
-        self.fetch_latest_params()
-        delta_t = time.time() - t
-        logger.info(f"fetch_latest_params took: {delta_t} s")
-
-    # to be implemented by subclasses
-    def fetch_latest_params(self):
+    def produce_weight_updates(self):
         pass
 
     # to be implemented by subclasses
@@ -113,10 +107,12 @@ class ActorBase(RainbowAgent):
 
     def run(self):
         consume_queue = threading.Thread(target=self.consume_transitions_queue)
+        produce_queue = threading.Thread(target=self.produce_weight_updates)
         consume_queue.start()
+        produce_queue.start()
 
         self.is_test = False
-        self.fetch_latest_params()
+        self.model.set_weights(self.params_queue.get())
         print("filling replay buffer...")
         self.fill_replay_buffer()
 
@@ -166,9 +162,11 @@ class ActorBase(RainbowAgent):
                 score = 0
 
             if (training_step % self.poll_params_interval) == 0:
-                # launch background thread to fetch latest params from learner
-                thread = threading.Thread(target=self._fetch_latest_params)
-                thread.start()
+                weights = self.model.get_weights()
+                if len(weights) == 0:
+                    logger.warn("model weights empty")
+                else:
+                    self.model.set_weights(weights)
 
             training_step += 1
 
@@ -193,9 +191,8 @@ class SingleMachineActor(ActorBase):
         super().__init__(id, env, config)
         self.learner = single_machine_learner
 
-    def fetch_latest_params(self):
-        logger.info(f" {self.model_name} fetching latest params from learner")
-        return self.learner.get_weights()
+    def produce_weight_updates(self):
+        pass
 
     def consume_transitions_queue(self):
         thread = threading.Thread(target=self._consume_transitions_queue)
@@ -236,14 +233,15 @@ import uuid
 from client import ReplayMemoryClient
 
 
-class TransitionPusher:
-    def __init__(self, queue: queue.Queue, actor_id: str):
-        self.initial_time = time.time()
-        self.queue = queue
+class ActorRPCClient:
+    def __init__(self, exp_q: queue.Queue, params_q: queue.Queue, actor_id: str):
+        self.exp_q = exp_q
+        self.params_q = params_q
         self.id = actor_id
 
         self.client = ReplayMemoryClient()
-        self.client.extra_coroutines.append(self.task())
+        self.client.extra_coroutines.append(self.produce_params())
+        self.client.extra_coroutines.append(self.consume_transitions())
 
     def prepare_request(self, id, batch):
         (experiences, priorities) = batch
@@ -279,29 +277,32 @@ class TransitionPusher:
 
         return request
 
-    async def task(self):
-        logger.debug("task started.")
+    async def consume_transitions(self):
+        logger.debug("push transitions started.")
         while self.client.running:
-            t = self.queue.get()
-            if t is None:
-                logger.info(
-                    "recieved finished signal, finishing task and triggering stop sequence"
-                )
-                self.client.stop()
-                return True
-
             try:
+                t = self.exp_q.get(block=False)
+                logger.debug(f"got batch from queue: {t}")
+                if t is None:
+                    logger.info(
+                        "recieved finished signal, finishing task and triggering stop sequence"
+                    )
+                    self.client.stop()
+                    return True
 
-                self.initial_time = time.time()
+                logger.debug("sending batch to learner")
+                t_i = time.time()
                 request = self.prepare_request(self.id, t)
 
                 await asyncio.wait_for(request.send().a_wait(), timeout=5)
 
-                delta_t = time.time() - self.initial_time
-                logger.info(f"push_batch took: {delta_t}s")
+                logger.info(f"push_batch took: {time.time() - t_i}s")
+            except queue.Empty:
+                logger.debug("no batch in queue, retrying...")
+                await asyncio.sleep(0.1)
             except asyncio.TimeoutError:
                 logger.warn("push_batch timed out - batch dropped!")
-                continue
+                await asyncio.sleep(0.1)
             except Exception as e:
                 # unexpected error - immediately stop the client and finish the task
 
@@ -309,6 +310,35 @@ class TransitionPusher:
                 self.client.stop()
                 return False
 
+        return True
+
+    async def produce_params(self):
+        logger.debug("get params started.")
+        while self.client.running:
+            try:
+                logger.info("getting latest network params from learner")
+                t_i = time.time()
+
+                request = self.client.get_rpc().getWeights_request()
+                res = await asyncio.wait_for(request.send().a_wait(), timeout=5)
+                unpickled_params = pickle.loads(res.weights)
+                print("got unpickeld params: ", unpickled_params)
+
+                if unpickled_params is not None:
+                    self.params_q.put(unpickled_params)
+                    logger.debug(f"produce_params took: {time.time() - t_i}s")
+                else:
+                    print("no params recieved, retrying after 0.1s ...")
+                    await asyncio.sleep(0.1)
+
+            except asyncio.TimeoutError:
+                logger.warning("getWeights timed out, retrying...")
+            except Exception as e:
+                logger.exception(f"Error getting params: {e}")
+                self.client.stop()
+                return False
+
+        logger.info("produce params finished sucessfully")
         return True
 
 
@@ -321,11 +351,12 @@ class DistributedActor(ActorBase):
     ):
         super().__init__(id, env, config)
 
-    def fetch_latest_params(self):
-        return self.model.get_weights()
+    def produce_weight_updates(self):
+        # included with consume_transitions_queue
+        pass
 
     def consume_transitions_queue(self):
         # pusher must be created in the same thread as the event loop, which is where the capnp rpc objects are created
-        pusher = TransitionPusher(self.transitions_queue, self.id)
+        pusher = ActorRPCClient(self.transitions_queue, self.params_queue, self.id)
         asyncio.run(pusher.client.start(), debug=True)
         logger.debug("transitionPusher done.")
