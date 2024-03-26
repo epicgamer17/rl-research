@@ -1,8 +1,10 @@
 import pickle
 import socket
 import asyncio
-import gym
+import gymnasium as gym
 import capnp
+from collections import namedtuple
+import numpy as np
 
 capnp.remove_import_hook()
 
@@ -27,17 +29,16 @@ import time
 import sys
 
 sys.path.append("../")
-from replay_buffers.prioritized_replay_buffer import PrioritizedReplayBuffer
+from refactored_replay_buffers.prioritized_nstep import ReplayBuffer
 
 
 class ReplayMemoryImpl(replay_memory_capnp.ReplayMemory.Server):
-    def __init__(self, replay_memory: PrioritizedReplayBuffer):
-        self.replay_memory = replay_memory
-
-        self.weights = bytes()
+    def __init__(self, replay_buffer: ReplayBuffer, shared_dict: dict):
+        self.replay_memory = replay_buffer
+        self.shared_dict = shared_dict
 
     def addTransitionBatch(self, batch, _context):
-        initial_time = time.time()
+        t_i = time.time()
         n = len(batch.ids)
         logger.info(f"adding {n} transitions to buffer")
 
@@ -50,42 +51,41 @@ class ReplayMemoryImpl(replay_memory_capnp.ReplayMemory.Server):
         priorities = batch.priorities
 
         for i in range(len(ids)):
-            self.replay_memory.store_with_priority_exact(
-                observation=observations[i],
-                action=actions[i],
-                reward=rewards[i],
-                next_observation=nextObservations[i],
-                done=dones[i],
-                priority=priorities[i],
+            self.replay_memory.store(
+                observations[i],
+                actions[i],
+                rewards[i],
+                nextObservations[i],
+                dones[i],
                 id=ids[i],
+                priority=priorities[i],
             )
 
-        delta_t = time.time() - initial_time
+        dt = time.time() - t_i
         logger.info(
-            f"adding transitions took {delta_t}. New buffer size: {self.replay_memory.size}",
+            f"adding transitions took {dt}. New buffer size: {self.replay_memory.size}",
         )
 
     def sample(self, batchSize, _context):
         logger.info(f"sample, batchSize: {batchSize}")
         try:
-            samples = self.replay_memory.sample()
+            samples = self.replay_memory.__sample__()
         except AssertionError as e:
             # if the buffer does not have enough samples, return empty samples
-            return (
-                {
-                    "ids": [],
-                    "observations": bytes(),
-                    "actions": [],
-                    "rewards": [],
-                    "nextObservations": bytes(),
-                    "dones": [],
-                    "priorities": [],
-                },
-                list(),
-            )
-        print(f"samples: {samples}")
+            return {
+                "ids": [],
+                "observations": bytes(),
+                "actions": [],
+                "rewards": [],
+                "nextObservations": bytes(),
+                "dones": [],
+                "indices": [],
+            }
+        except Exception as e:
+            logger.exception(f"sample error: {e}")
+            raise e
 
-        n = len(samples["ids"])
+        # logger.info(f"samples: {samples}")
 
         # convert to capnp types
         ids = list()
@@ -93,44 +93,46 @@ class ReplayMemoryImpl(replay_memory_capnp.ReplayMemory.Server):
         rewards = list()
         dones = list()
         indices = list()
+        weights = list()
 
+        n = len(samples.ids)
         for i in range(n):
-            ids.append(int(samples["ids"][i]))
-            actions.append(int(samples["actions"][i]))
-            rewards.append(float(samples["rewards"][i]))
-            dones.append(bool(samples["dones"][i]))
-            indices.append(int(samples["indices"][i]))
+            ids.append(samples.ids[i])
+            actions.append(int(samples.actions[i]))
+            rewards.append(float(samples.rewards[i]))
+            dones.append(bool(samples.dones[i]))
+            indices.append(int(samples.indices[i]))
+            weights.append(float(samples.weights[i]))
 
         ret = {
             "ids": ids,
-            "observations": pickle.dumps(samples["observations"], protocol=5),
-            "actions": actions,
+            "observations": pickle.dumps(samples.observations, protocol=5),
+            "nextObservations": pickle.dumps(samples.next_observations, protocol=5),
+            "actions": samples.actions.tolist(),
             "rewards": rewards,
-            "nextObservations": pickle.dumps(samples["next_observations"], protocol=5),
             "dones": dones,
+            "indices": indices,
+            "weights": weights,
         }
-
-
-        logger.info(f"sample done: {ret}")
-        return (ret, indices)
+        return ret
 
     def updatePriorities(self, indices, ids, priorities, _context):
-        logger.info(
-            f"updatePriorities - indices: {indices}, ids: {ids}, priorities: {priorities}"
+        # logger.info( f"updatePriorities - indices: {indices}, ids: {ids}, priorities: {priorities}")
+        self.replay_memory.update_priorities(
+            np.array(list(indices)), np.array(list(priorities)), list(ids)
         )
-        self.replay_memory.update_priorities(indices, priorities, ids)
 
     def removeOldExperiences(self, _context):
         # not necessary as replay buffer has a fixed size
         logger.info("removeOldExperiences")
 
     def getWeights(self, _context):
-        logger.info("getWeights")
-        return self.weights
+        logger.info(f"getWeights {self.shared_dict['weights']}")
+        return self.shared_dict["weights"]
 
-    def setWeights(self, weights, _context):
+    def setWeights(self, weights: bytes, _context):
         logger.info(f"setWeights {weights}")
-        self.weights = weights
+        self.shared_dict["weights"] = weights
 
     def ping(self, _context):
         logger.info("ping")
@@ -167,12 +169,13 @@ class Server:
         logger.debug("mywriter done.")
         return True
 
-    async def start(self, reader, writer, replay_memory):
+    async def start(self, reader, writer, replay_memory, shared_dict):
         # Start TwoPartyServer using TwoWayPipe (only requires bootstrap)
 
         self.server = capnp.TwoPartyServer(
             bootstrap=ReplayMemoryImpl(
-                replay_memory=replay_memory,
+                replay_buffer=replay_memory,
+                shared_dict=shared_dict,
             )
         )
         self.reader = reader
@@ -195,10 +198,10 @@ class Server:
         await tasks
 
 
-def new_connection_with_replay_memory(replay_memory):
+def new_connection_with_replay_memory(replay_memory, shared_dict):
     async def new_connection(reader, writer):
         server = Server()
-        await server.start(reader, writer, replay_memory)
+        await server.start(reader, writer, replay_memory, shared_dict)
 
     return new_connection
 
@@ -208,7 +211,7 @@ async def main():
     port = "60000"
 
     env = gym.make("CartPole-v1", render_mode="rgb_array")
-    replay_memory = PrioritizedReplayBuffer(
+    replay_memory = ReplayBuffer(
         observation_dimensions=env.observation_space.shape,
         max_size=100000,
         batch_size=2**7,
@@ -218,12 +221,15 @@ async def main():
         n_step=3,  # config["n_step"],
         gamma=0.01,  # config["discount_factor"],
     )
+    shared_dict = {
+        "weights": pickle.dumps(None, protocol=5),
+    }
 
     # Handle both IPv4 and IPv6 cases
     try:
         logger.info("Try IPv4")
         server = await asyncio.start_server(
-            new_connection_with_replay_memory(replay_memory),
+            new_connection_with_replay_memory(replay_memory, shared_dict),
             host,
             port,
             family=socket.AF_INET,
@@ -231,7 +237,7 @@ async def main():
     except Exception:
         logger.info("Try IPv6")
         server = await asyncio.start_server(
-            new_connection_with_replay_memory(replay_memory),
+            new_connection_with_replay_memory(replay_memory, shared_dict),
             host,
             port,
             family=socket.AF_INET6,

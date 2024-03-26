@@ -72,7 +72,7 @@ def main():
     actor_config = copy.deepcopy(base_config)
     actor_config["poll_params_interval"] = 150
     actor_config["buffer_size"] = 100
-    actor_config["num_training_steps"] = 1000
+    actor_config["num_training_steps"] = 25000
     actor = DistributedActor(
         id=args.id,
         env=make_cartpole_env(),

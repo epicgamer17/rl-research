@@ -54,14 +54,16 @@ class LearnerBase(RainbowAgent):
     def _experience_replay(self):
         with tf.GradientTape() as tape:
             elementwise_loss = 0
-            samples, n_step_samples = self.samples_queue.get()
+            logger.info("learner waiting for sample...")
+            samples = self.samples_queue.get()
+            logger.info("got sample")
 
             ids = samples["ids"]
             indices = samples["indices"]
             actions = samples["actions"]
             observations = samples["observations"]
             inputs = self.prepare_states(observations)
-            weights = samples["weights"].reshape(-1, 1)
+            weights = np.array(samples["weights"]).reshape(-1, 1)
             discount_factor = self.discount_factor
 
             target_ditributions = self.compute_target_distributions(
@@ -82,12 +84,12 @@ class LearnerBase(RainbowAgent):
 
             # if self.use_n_step:
             discount_factor = self.discount_factor**self.n_step
-            actions = n_step_samples["actions"]
-            n_step_observations = n_step_samples["observations"]
+            actions = samples["actions"]
+            n_step_observations = samples["observations"]
             observations = n_step_observations
             inputs = self.prepare_states(observations)
             target_ditributions = self.compute_target_distributions(
-                n_step_samples, discount_factor
+                samples, discount_factor
             )
             initial_distributions = self.model(inputs)
             distributions_to_train = tf.gather_nd(
@@ -106,6 +108,7 @@ class LearnerBase(RainbowAgent):
 
             loss = tf.reduce_mean(elementwise_loss * weights)
 
+        logger.info("tape done, training with gradient tape")
         # TRAINING WITH GRADIENT TAPE
         gradients = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer(
@@ -135,7 +138,7 @@ class LearnerBase(RainbowAgent):
         loss = loss.numpy()
         return loss
 
-    def run(self, graph_interval=2):
+    def run(self, graph_interval=1):
         consume_weights_thread = threading.Thread(target=self.consume_weights)
         produce_samples_thread = threading.Thread(target=self.produce_samples)
         consume_priority_updates_thread = threading.Thread(
@@ -170,12 +173,13 @@ class LearnerBase(RainbowAgent):
 
             model_update_count += 1
             loss = self._experience_replay()
+            logger.info(f"finished exp replay")
             training_step += 1
             stat_loss.append(loss)
             self.update_target_model(model_update_count)
 
             if training_step % graph_interval == 0 and training_step > 0:
-                self.save_checkpoint(training_step)
+                # self.save_checkpoint(training_step)
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
 
@@ -298,8 +302,6 @@ class LearnerRPCClient:
                 logger.debug("pushing weights to remote")
                 t_i = time.time()
                 pickled = pickle.dumps(weights, 5)
-                logger.info(f"pickeled: {pickled}")
-
                 request = self.client.get_rpc().setWeights_request()
                 request.weights = pickled
 
@@ -336,9 +338,9 @@ class LearnerRPCClient:
                 t_i = time.time()
 
                 request = self.client.get_rpc().updatePriorities_request()
-                request.indices = indices
-                request.ids = ids
-                request.prioritized_loss = prioritized_loss
+                request.ids = list(ids)
+                request.indices = indices.tolist()
+                request.priorities = prioritized_loss.tolist()
                 await asyncio.wait_for(request.send().a_wait(), 10)
                 logger.debug(
                     f"updatePriorities_request took {time.time() - t_i} seconds"
@@ -348,6 +350,7 @@ class LearnerRPCClient:
                 await asyncio.sleep(1)
             except asyncio.TimeoutError:
                 logger.warning("timeout updating priorities - dropping update")
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.exception(
                     f"error updating priorities {e} - stopping consume_priority_updates"
@@ -367,27 +370,31 @@ class LearnerRPCClient:
                 request.batchSize = 0
                 res = await asyncio.wait_for(request.send().a_wait(), 10)
 
-                logger.debug(f"sample_request took {time.time() - t_i} seconds")
+                logger.debug(f"produce_samples took {time.time() - t_i} seconds")
 
                 sample = {
                     "ids": res.batch.ids,
                 }
 
                 if len(sample["ids"]) > 0:
-                    sample["indices"] = res.indices
-                    sample["actions"] = res.batch.actions
+                    sample["ids"] = res.batch.ids
+                    sample["indices"] = np.array(res.batch.indices)
+                    sample["actions"] = np.array(res.batch.actions)
                     sample["observations"] = pickle.loads(res.batch.observations)
-                    sample["rewards"] = res.rewards
+                    sample["rewards"] = np.array(res.batch.rewards)
                     sample["next_observations"] = pickle.loads(
                         res.batch.nextObservations
                     )
-                    sample["dones"] = res.batch.dones
-                    logger.debug(f"got samples from remote, {sample}")
+                    sample["dones"] = np.array(res.batch.dones)
+                    sample["weights"] = np.array(res.batch.weights)
+                    logger.debug(
+                        f"got samples from remote. new queue size: {self.samples_queue.qsize()} "
+                    )
 
                     self.samples_queue.put(sample)
                 else:
                     logger.debug("no samples from remote, polling")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(11)
             except asyncio.TimeoutError:
                 logger.warning("timeout getting samples from remote")
             except Exception as e:
