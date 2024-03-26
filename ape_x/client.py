@@ -35,7 +35,7 @@ class RPCClient(ABC):
             logger.debug("socketreader running.")
             try:
                 data = await asyncio.wait_for(
-                    self.reader.read(16384), timeout=self._timeout
+                    self.reader.read(2**16), timeout=self._timeout
                 )
             except asyncio.TimeoutError:
                 # read timeout - either there is no data or the connection is lost
@@ -56,7 +56,7 @@ class RPCClient(ABC):
             logger.debug("socketwriter running.")
             try:
                 data = await asyncio.wait_for(
-                    self.client.read(16384), timeout=self._timeout
+                    self.client.read(2**16), timeout=self._timeout
                 )
                 self.writer.write(data.tobytes())
                 await self.writer.drain()

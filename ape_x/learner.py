@@ -5,6 +5,7 @@ import tensorflow as tf
 import numpy as np
 import queue
 import threading
+from compress_utils import compress
 
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
@@ -178,12 +179,12 @@ class LearnerBase(RainbowAgent):
             stat_loss.append(loss)
             self.update_target_model(model_update_count)
 
-            if training_step % graph_interval == 0 and training_step > 0:
+            if training_step % graph_interval == 0:
                 # self.save_checkpoint(training_step)
                 # stat_test_score.append(self.test())
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
 
-            if training_step % self.push_weights_interval and training_step > 0 == 0:
+            if training_step % self.push_weights_interval == 0:
                 try:
                     logger.debug("pushing weights to remote")
                     self.weights_queue.put(self.model.get_weights(), False)
@@ -291,7 +292,8 @@ class LearnerRPCClient:
         while self.client.running:
             try:
                 weights = self.weights_queue.get(block=False)
-                logger.debug(f"got weights from queue, {weights}")
+                # logger.debug(f"got weights from queue, {weights}")
+                logger.debug(f"got weights from queue")
                 if weights is None:
                     logger.info(
                         "got stop signal, stopping consume_weights and stopping client"
@@ -301,9 +303,9 @@ class LearnerRPCClient:
 
                 logger.debug("pushing weights to remote")
                 t_i = time.time()
-                pickled = pickle.dumps(weights, 5)
+                compressed = compress(weights)
                 request = self.client.get_rpc().setWeights_request()
-                request.weights = pickled
+                request.weights = compressed
 
                 await asyncio.wait_for(request.send().a_wait(), 10)
                 logger.debug(f"setWeights_request took {time.time() - t_i} seconds")

@@ -7,6 +7,7 @@ import logging
 import learner
 import gymnasium as gym
 import queue
+from compress_utils import compress, decompress
 
 sys.path.append("../")
 
@@ -162,7 +163,7 @@ class ActorBase(RainbowAgent):
                 score = 0
 
             if (training_step % self.poll_params_interval) == 0:
-                weights = self.model.get_weights()
+                weights = self.params_queue.get()
                 if len(weights) == 0:
                     logger.warn("model weights empty")
                 else:
@@ -321,8 +322,7 @@ class ActorRPCClient:
 
                 request = self.client.get_rpc().getWeights_request()
                 res = await asyncio.wait_for(request.send().a_wait(), timeout=5)
-                unpickled_params = pickle.loads(res.weights)
-                print("got unpickeld params: ", unpickled_params)
+                unpickled_params = decompress(res.weights)
 
                 if unpickled_params is not None:
                     self.params_q.put(unpickled_params)
