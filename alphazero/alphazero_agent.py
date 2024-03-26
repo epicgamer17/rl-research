@@ -6,13 +6,14 @@ sys.path.append("../")
 import os
 
 os.environ["OMP_NUM_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTEROP_THREADS"] = f"{1}"
-os.environ["TF_NUM_INTRAOP_THREADS"] = f"{1}"
+os.environ["MKL_NUM_THREADS"] = f"{8}"
+os.environ["TF_NUM_INTEROP_THREADS"] = f"{8}"
+os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
 
 import tensorflow as tf
 
-tf.config.threading.set_intra_op_parallelism_threads(1)
-tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(0)
+tf.config.threading.set_inter_op_parallelism_threads(0)
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -48,7 +49,7 @@ class AlphaZeroAgent:
 
         self.training_steps = config["training_steps"]
         self.games_per_generation = config["games_per_generation"]
-        self.checkpoint_interval = 5
+        self.checkpoint_interval = 1
 
         self.optimizer = config["optimizer"]
         self.min_learning_rate = config["min_learning_rate"]
@@ -208,7 +209,7 @@ class AlphaZeroAgent:
 
             # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
-                action, node = node.select_child()
+                action, node = node.select_child(self.pb_c_base, self.pb_c_init)
                 _, reward, terminated, truncated, info = mcts_env.step(action)
                 search_path.append(node)
                 legal_moves = (

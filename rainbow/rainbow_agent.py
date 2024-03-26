@@ -5,13 +5,14 @@ sys.path.append("../")
 import os
 
 os.environ["OMP_NUM_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTEROP_THREADS"] = f"{1}"
-os.environ["TF_NUM_INTRAOP_THREADS"] = f"{1}"
+os.environ["MKL_NUM_THREADS"] = f"{8}"
+os.environ["TF_NUM_INTEROP_THREADS"] = f"{8}"
+os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
 
 import tensorflow as tf
 
-tf.config.threading.set_intra_op_parallelism_threads(1)
-tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(0)
+tf.config.threading.set_inter_op_parallelism_threads(0)
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -139,6 +140,7 @@ class RainbowAgent:
                 gamma=config["discount_factor"],
             )
 
+        # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
         self.v_min = config["v_min"]
         self.v_max = config["v_max"]
 

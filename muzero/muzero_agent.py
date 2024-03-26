@@ -7,14 +7,15 @@ sys.path.append("../")
 
 import os
 
-# os.environ["OMP_NUM_THREADS"] = f"{1}"
-# os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
-# os.environ['TF_NUM_INTRAOP_THREADS'] = f"{1}"
+os.environ["OMP_NUM_THREADS"] = f"{8}"
+os.environ["MKL_NUM_THREADS"] = f"{8}"
+os.environ["TF_NUM_INTEROP_THREADS"] = f"{8}"
+os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
 
 import tensorflow as tf
 
-# tf.config.threading.set_intra_op_parallelism_threads(1)
-# tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(0)
+tf.config.threading.set_inter_op_parallelism_threads(0)
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -214,7 +215,9 @@ class MuZeroAgent:
 
             # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
-                action = node.select_child(min_max_stats)
+                action, node = node.select_child(
+                    min_max_stats, self.pb_c_base, self.pb_c_init
+                )
                 history.append(action)
                 to_play = to_play + 1 % self.num_players
                 search_path.append(node)
