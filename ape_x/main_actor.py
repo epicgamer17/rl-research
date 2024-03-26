@@ -8,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler("main_actor.log", mode="a")
+fh = logging.FileHandler("main_actor.log", mode="w")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
 

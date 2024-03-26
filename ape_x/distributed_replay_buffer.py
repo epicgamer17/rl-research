@@ -3,8 +3,8 @@ import socket
 import asyncio
 import gymnasium as gym
 import capnp
-from collections import namedtuple
 import numpy as np
+from compress_utils import compress, decompress
 
 capnp.remove_import_hook()
 
@@ -127,11 +127,12 @@ class ReplayMemoryImpl(replay_memory_capnp.ReplayMemory.Server):
         logger.info("removeOldExperiences")
 
     def getWeights(self, _context):
-        logger.info(f"getWeights {self.shared_dict['weights']}")
+        # logger.info(f"getWeights {self.shared_dict['weights']}")
+        logger.info(f"getWeights ")
         return self.shared_dict["weights"]
 
     def setWeights(self, weights: bytes, _context):
-        logger.info(f"setWeights {weights}")
+        logger.info(f"setWeights")
         self.shared_dict["weights"] = weights
 
     def ping(self, _context):
@@ -143,7 +144,7 @@ class Server:
         while self.retry:
             try:
                 # Must be a wait_for so we don't block on read()
-                data = await asyncio.wait_for(self.reader.read(4096), timeout=1)
+                data = await asyncio.wait_for(self.reader.read(2**16), timeout=1)
             except asyncio.TimeoutError:
                 logger.debug("myreader timeout.")
                 continue
@@ -158,7 +159,7 @@ class Server:
         while self.retry:
             try:
                 # Must be a wait_for so we don't block on read()
-                data = await asyncio.wait_for(self.server.read(4096), timeout=1)
+                data = await asyncio.wait_for(self.server.read(2**16), timeout=1)
                 self.writer.write(data.tobytes())
             except asyncio.TimeoutError:
                 logger.debug("mywriter timeout.")
@@ -222,7 +223,7 @@ async def main():
         gamma=0.01,  # config["discount_factor"],
     )
     shared_dict = {
-        "weights": pickle.dumps(None, protocol=5),
+        "weights": compress(None),
     }
 
     # Handle both IPv4 and IPv6 cases
