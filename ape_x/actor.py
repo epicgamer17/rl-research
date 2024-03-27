@@ -114,7 +114,7 @@ class ActorBase(RainbowAgent):
 
         self.is_test = False
         self.model.set_weights(self.params_queue.get())
-        print("filling replay buffer...")
+        logger.info("filling replay buffer...")
         self.fill_replay_buffer()
 
         state, _ = self.env.reset()
@@ -146,13 +146,15 @@ class ActorBase(RainbowAgent):
                     indices, prioritized_loss
                 )
 
-                # push to transitions queue. If queue is full and does not have space after 5 seconds, drop the batch
+                # push to transitions queue. If queue is full and does not have space after 5 seconds, drop the first batch to append the new one
                 try:
                     self.transitions_queue.put((n_step_samples, priorities), timeout=5)
                 except queue.Full:
                     logger.warn(
                         f"{self.model_name} transitions queue full, dropped batch"
                     )
+                    self.transitions_queue.get()
+                    self.transitions_queue.put((n_step_samples, priorities))
 
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 
@@ -235,12 +237,19 @@ from client import ReplayMemoryClient
 
 
 class ActorRPCClient:
-    def __init__(self, exp_q: queue.Queue, params_q: queue.Queue, actor_id: str):
+    def __init__(
+        self,
+        exp_q: queue.Queue,
+        params_q: queue.Queue,
+        actor_id: str,
+        addr="localhost",
+        port=60000,
+    ):
         self.exp_q = exp_q
         self.params_q = params_q
         self.id = actor_id
 
-        self.client = ReplayMemoryClient()
+        self.client = ReplayMemoryClient(addr, port)
         self.client.extra_coroutines.append(self.produce_params())
         self.client.extra_coroutines.append(self.consume_transitions())
 
@@ -283,7 +292,8 @@ class ActorRPCClient:
         while self.client.running:
             try:
                 t = self.exp_q.get(block=False)
-                logger.debug(f"got batch from queue: {t}")
+                # logger.debug(f"got batch from queue: {t}")
+                logger.debug(f"got batch from queue:")
                 if t is None:
                     logger.info(
                         "recieved finished signal, finishing task and triggering stop sequence"
@@ -350,6 +360,8 @@ class DistributedActor(ActorBase):
         config,
     ):
         super().__init__(id, env, config)
+        self.addr = config["capnp_conn"].split(":")[0]
+        self.port = config["capnp_conn"].split(":")[1]
 
     def produce_weight_updates(self):
         # included with consume_transitions_queue
@@ -357,6 +369,12 @@ class DistributedActor(ActorBase):
 
     def consume_transitions_queue(self):
         # pusher must be created in the same thread as the event loop, which is where the capnp rpc objects are created
-        pusher = ActorRPCClient(self.transitions_queue, self.params_queue, self.id)
+        pusher = ActorRPCClient(
+            self.transitions_queue,
+            self.params_queue,
+            self.id,
+            self.addr,
+            self.port,
+        )
         asyncio.run(pusher.client.start(), debug=True)
         logger.debug("transitionPusher done.")
