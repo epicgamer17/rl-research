@@ -7,7 +7,7 @@ import gymnasium as gym
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 fh = logging.FileHandler("main_actor.log", mode="w")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
@@ -16,7 +16,7 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     handlers=[fh, ch],
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
@@ -67,12 +67,14 @@ def make_cartpole_env():
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X actor")
     parser.add_argument("id", type=str)
+    parser.add_argument("capnp_conn", type=str, default="localhost:60000")
     args = parser.parse_args()
 
     actor_config = copy.deepcopy(base_config)
-    actor_config["poll_params_interval"] = 150
+    actor_config["poll_params_interval"] = 100
     actor_config["buffer_size"] = 100
-    actor_config["num_training_steps"] = 25000
+    actor_config["num_training_steps"] = 50000
+    actor_config["capnp_conn"] = args.capnp_conn
     actor = DistributedActor(
         id=args.id,
         env=make_cartpole_env(),

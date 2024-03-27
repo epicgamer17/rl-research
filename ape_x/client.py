@@ -213,5 +213,7 @@ class RPCClient(ABC):
 
 
 class ReplayMemoryClient(RPCClient):
-    def __init__(self):
-        super().__init__(bootstrap_as=replay_memory_capnp.ReplayMemory)
+    def __init__(self, addr="localhost", port=60000):
+        super().__init__(
+            bootstrap_as=replay_memory_capnp.ReplayMemory, addr=addr, port=port
+        )

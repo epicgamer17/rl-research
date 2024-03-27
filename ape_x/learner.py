@@ -28,8 +28,8 @@ class LearnerBase(RainbowAgent):
         self.graph_interval = 200
         self.remove_old_experiences_interval = config["remove_old_experiences_interval"]
 
-        self.push_weights_interval = 1
-        self.weights_queue = queue.Queue(16)
+        self.push_weights_interval = config["push_weights_interval"]
+        self.weights_queue = queue.Queue(1)
         self.priority_updates_queue = queue.Queue(
             16
         )  # contains tuples of (ids, indices, priorities)
@@ -127,9 +127,10 @@ class LearnerBase(RainbowAgent):
         )
 
         try:
-            logger.debug("pushing update")
-            self.priority_updates_queue.put(
-                (ids, indices, prioritized_loss), block=False
+            logger.info("pushing update")
+            self.priority_updates_queue.put((ids, indices, prioritized_loss))
+            logger.info(
+                f"new priority_updates_queue size: {self.priority_updates_queue.qsize()}"
             )
         except queue.Full:
             logger.warning(f"priority_updates_queue full, dropping priority update")
@@ -139,7 +140,7 @@ class LearnerBase(RainbowAgent):
         loss = loss.numpy()
         return loss
 
-    def run(self, graph_interval=1):
+    def run(self, graph_interval=20):
         consume_weights_thread = threading.Thread(target=self.consume_weights)
         produce_samples_thread = threading.Thread(target=self.produce_samples)
         consume_priority_updates_thread = threading.Thread(
@@ -181,7 +182,7 @@ class LearnerBase(RainbowAgent):
 
             if training_step % graph_interval == 0:
                 # self.save_checkpoint(training_step)
-                # stat_test_score.append(self.test())
+                stat_test_score.append(self.test(num_trials=5))
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
 
             if training_step % self.push_weights_interval == 0:
@@ -276,23 +277,27 @@ class LearnerRPCClient:
         weights_queue: queue.Queue,
         samples_queue: queue.Queue,
         priority_updates_queue: queue.Queue,
+        addr="localhost",
+        port=60000,
     ):
-        self.client = ReplayMemoryClient()
+        self.client = ReplayMemoryClient(addr=addr, port=port)
 
         self.weights_queue = weights_queue
         self.samples_queue = samples_queue
         self.priority_updates_queue = priority_updates_queue
 
         self.client.extra_coroutines.append(self.consume_weights())
-        self.client.extra_coroutines.append(self.produce_samples())
         self.client.extra_coroutines.append(self.consume_priority_updates())
+        self.client.extra_coroutines.append(self.produce_samples())
 
     async def consume_weights(self):
         logger.info("consume weights started")
         while self.client.running:
             try:
-                weights = self.weights_queue.get(block=False)
-                # logger.debug(f"got weights from queue, {weights}")
+                logger.info(
+                    f"getting weights from queue. queue size: {self.weights_queue.qsize()}"
+                )
+                weights = self.weights_queue.get(timeout=0.01)
                 logger.debug(f"got weights from queue")
                 if weights is None:
                     logger.info(
@@ -308,10 +313,10 @@ class LearnerRPCClient:
                 request.weights = compressed
 
                 await asyncio.wait_for(request.send().a_wait(), 10)
-                logger.debug(f"setWeights_request took {time.time() - t_i} seconds")
+                logger.info(f"setWeights_request took {time.time() - t_i} seconds")
             except queue.Empty:
                 logger.debug("weights_queue empty, polling")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
             except asyncio.TimeoutError:
                 logger.warning("timeout pushing weights to remote - dropping update")
             except Exception as e:
@@ -326,6 +331,9 @@ class LearnerRPCClient:
         logger.info("consume priority updates started")
         while self.client.running:
             try:
+                logger.info(
+                    f"getting batch. queue size: {self.priority_updates_queue.qsize()}"
+                )
                 t = self.priority_updates_queue.get(block=False)
                 logger.debug(f"got priorities from queue, {t}")
                 if t is None:
@@ -344,21 +352,22 @@ class LearnerRPCClient:
                 request.indices = indices.tolist()
                 request.priorities = prioritized_loss.tolist()
                 await asyncio.wait_for(request.send().a_wait(), 10)
-                logger.debug(
+                logger.info(
                     f"updatePriorities_request took {time.time() - t_i} seconds"
                 )
             except queue.Empty:
-                logger.debug("priority_updates_queue empty, polling")
-                await asyncio.sleep(1)
+                logger.info("priority_updates_queue empty, polling")
+                await asyncio.sleep(0.1)
             except asyncio.TimeoutError:
-                logger.warning("timeout updating priorities - dropping update")
-                await asyncio.sleep(1)
+                logger.info("timeout updating priorities - dropping update")
+                await asyncio.sleep(0.1)
             except Exception as e:
                 logger.exception(
                     f"error updating priorities {e} - stopping consume_priority_updates"
                 )
                 return False
 
+        logger.warning("comsume priority updates finished normally")
         return True
 
     async def produce_samples(self):
@@ -396,7 +405,7 @@ class LearnerRPCClient:
                     self.samples_queue.put(sample)
                 else:
                     logger.debug("no samples from remote, polling")
-                    await asyncio.sleep(11)
+                    await asyncio.sleep(0.1)
             except asyncio.TimeoutError:
                 logger.warning("timeout getting samples from remote")
             except Exception as e:
@@ -412,12 +421,16 @@ class LearnerRPCClient:
 class DistributedLearner(LearnerBase):
     def __init__(self, env, config):
         super().__init__(env=env, config=config)
+        self.addr = config["capnp_conn"].split(":")[0]
+        self.port = config["capnp_conn"].split(":")[1]
 
     def consume_weights(self):
         c = LearnerRPCClient(
             weights_queue=self.weights_queue,
             samples_queue=self.samples_queue,
             priority_updates_queue=self.priority_updates_queue,
+            addr=self.addr,
+            port=self.port,
         )
         asyncio.run(c.client.start(), debug=True)
         logger.info("consume weights finished")

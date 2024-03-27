@@ -118,6 +118,7 @@ class ReplayMemoryImpl(replay_memory_capnp.ReplayMemory.Server):
 
     def updatePriorities(self, indices, ids, priorities, _context):
         # logger.info( f"updatePriorities - indices: {indices}, ids: {ids}, priorities: {priorities}")
+        logger.info("updatePriorities")
         self.replay_memory.update_priorities(
             np.array(list(indices)), np.array(list(priorities)), list(ids)
         )
@@ -207,14 +208,14 @@ def new_connection_with_replay_memory(replay_memory, shared_dict):
     return new_connection
 
 
-async def main():
+async def main(addr="localhost", port=60000):
     host = "localhost"
     port = "60000"
 
     env = gym.make("CartPole-v1", render_mode="rgb_array")
     replay_memory = ReplayBuffer(
         observation_dimensions=env.observation_space.shape,
-        max_size=100000,
+        max_size=20000,
         batch_size=2**7,
         max_priority=1.0,
         alpha=0.5,  # config["per_alpha"],
@@ -248,5 +249,15 @@ async def main():
         await server.serve_forever()
 
 
+import argparse
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(
+        description="Run a distributed Ape-X replay buffer"
+    )
+    parser.add_argument("capnp_conn", type=str, default="localhost:60000")
+    args = parser.parse_args()
+
+    addr = args.capnp_conn.split(":")[0]
+    port = int(args.capnp_conn.split(":")[1])
+    asyncio.run(main(addr, port))

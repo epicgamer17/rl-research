@@ -2,11 +2,12 @@ import tensorflow as tf
 import copy
 from learner import DistributedLearner
 import gymnasium as gym
+import argparse
 
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 fh = logging.FileHandler("main_learner.log", mode="w")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
@@ -15,7 +16,7 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     handlers=[fh, ch],
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
@@ -64,9 +65,16 @@ def make_cartpole_env():
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
+    parser.add_argument("id", type=str)
+    parser.add_argument("capnp_conn", type=str, default="localhost:60000")
+    args = parser.parse_args()
+
     learner_config = copy.deepcopy(base_config)
     learner_config["num_training_steps"] = 1000
     learner_config["remove_old_experiences_interval"] = 1000
+    learner_config["push_weights_interval"] = 20
+    learner_config["capnp_conn"] = args.capnp_conn
     learner = DistributedLearner(
         env=make_cartpole_env(),
         config=learner_config,
