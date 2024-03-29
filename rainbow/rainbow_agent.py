@@ -31,6 +31,7 @@ import numpy as np
 import copy
 import matplotlib.pyplot as plt
 from IPython.display import clear_output
+from typing import NamedTuple
 
 # import search
 from typing import Deque, Dict, List, Tuple
@@ -44,6 +45,16 @@ from replay_buffers.prioritized_replay_buffer import (
     FastPrioritizedReplayBuffer,
 )
 from rainbow.rainbow_network import Network
+
+
+class Sample(NamedTuple):
+    ids: np.ndarray
+    indices: np.ndarray
+    actions: np.ndarray
+    observations: np.ndarray
+    weights: np.ndarray
+    rewards: np.ndarray
+    next_observations: np.ndarray
 
 
 class RainbowAgent:
@@ -298,6 +309,36 @@ class RainbowAgent:
         next_inputs = self.prepare_states(next_observations)
         rewards = samples["rewards"].reshape(-1, 1)
         dones = samples["dones"].reshape(-1, 1)
+
+        next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
+        target_network_distributions = self.target_model(next_inputs).numpy()
+
+        target_distributions = target_network_distributions[
+            range(self.replay_batch_size), next_actions
+        ]
+        target_z = rewards + (1 - dones) * (discount_factor) * self.support
+        target_z = np.clip(target_z, self.v_min, self.v_max)
+
+        b = ((target_z - self.v_min) / (self.v_max - self.v_min)) * (self.atom_size - 1)
+        l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
+        m = np.zeros_like(target_distributions)
+        assert m.shape == l.shape
+        lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
+        upper_distributions = target_distributions * (b - tf.cast(l, tf.float64))
+
+        for i in range(self.replay_batch_size):
+            np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
+            np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
+        target_distributions = m
+        return target_distributions
+
+    def compute_target_distributions_np(self, samples: Sample, discount_factor):
+        observations = samples.observations
+        inputs = self.prepare_states(observations)
+        next_observations = samples.next_observations
+        next_inputs = self.prepare_states(next_observations)
+        rewards = samples.rewards.reshape(-1, 1)
+        dones = samples.dones.reshape(-1, 1)
 
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
