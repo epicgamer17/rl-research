@@ -6,6 +6,9 @@ import numpy as np
 import queue
 import threading
 from compress_utils import compress
+from abc import ABC, abstractclassmethod
+from typing import NamedTuple
+from compress_utils import decompress
 
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
@@ -18,8 +21,21 @@ matplotlib.use("Agg")
 logger = logging.getLogger(__name__)
 
 
-# signals are sent into queues
-# queues are constantly read by the learner rpc thread
+class Sample(NamedTuple):
+    ids: np.ndarray
+    indices: np.ndarray
+    actions: np.ndarray
+    observations: np.ndarray
+    weights: np.ndarray
+    rewards: np.ndarray
+    next_observations: np.ndarray
+    dones: np.ndarray
+
+
+class Update(NamedTuple):
+    ids: np.ndarray
+    indices: np.ndarray
+    losses: np.ndarray
 
 
 class LearnerBase(RainbowAgent):
@@ -27,47 +43,37 @@ class LearnerBase(RainbowAgent):
         super().__init__(model_name="learner", env=env, config=config)
         self.graph_interval = 200
         self.remove_old_experiences_interval = config["remove_old_experiences_interval"]
-
         self.push_weights_interval = config["push_weights_interval"]
-        self.weights_queue = queue.Queue(1)
-        self.priority_updates_queue = queue.Queue(
-            16
-        )  # contains tuples of (ids, indices, priorities)
 
-        self.samples_queue_size = 64
-        self.samples_queue = queue.Queue(
-            self.samples_queue_size
-        )  # contains tuples of (sample, n_step_sample)
-        self.finished_event = threading.Event()
+        self.samples_queue_size = config["samples_queue_size"]
+        self.samples_queue: queue.Queue[Sample] = queue.Queue(
+            maxsize=self.samples_queue_size
+        )
+        self.updates_queue_size = config["updates_queue_size"]
+        self.updates_queue: queue.Queue[Update] = queue.Queue(
+            maxsize=self.updates_queue_size
+        )
 
-    def consume_weights(self):
+    def on_run(self):
         pass
 
-    def produce_samples(self):
-        pass
-
-    def consume_priority_updates(self):
-        pass
-
-    def remove_old_experiences_from_remote_replay_buffer(self):
+    def on_done(self):
         pass
 
     def _experience_replay(self):
         with tf.GradientTape() as tape:
             elementwise_loss = 0
-            logger.info("learner waiting for sample...")
             samples = self.samples_queue.get()
-            logger.info("got sample")
+            ids = samples.ids
+            indices = samples.indices
+            actions = samples.actions
+            observations = samples.observations
+            weights = samples.weights.reshape(-1, 1)
 
-            ids = samples["ids"]
-            indices = samples["indices"]
-            actions = samples["actions"]
-            observations = samples["observations"]
             inputs = self.prepare_states(observations)
-            weights = np.array(samples["weights"]).reshape(-1, 1)
             discount_factor = self.discount_factor
 
-            target_ditributions = self.compute_target_distributions(
+            target_ditributions = self.compute_target_distributions_np(
                 samples, discount_factor
             )
             initial_distributions = self.model(inputs)
@@ -85,11 +91,11 @@ class LearnerBase(RainbowAgent):
 
             # if self.use_n_step:
             discount_factor = self.discount_factor**self.n_step
-            actions = samples["actions"]
-            n_step_observations = samples["observations"]
+            actions = samples.actions
+            n_step_observations = samples.observations
             observations = n_step_observations
             inputs = self.prepare_states(observations)
-            target_ditributions = self.compute_target_distributions(
+            target_ditributions = self.compute_target_distributions_np(
                 samples, discount_factor
             )
             initial_distributions = self.model(inputs)
@@ -127,13 +133,12 @@ class LearnerBase(RainbowAgent):
         )
 
         try:
-            logger.info("pushing update")
-            self.priority_updates_queue.put((ids, indices, prioritized_loss))
-            logger.info(
-                f"new priority_updates_queue size: {self.priority_updates_queue.qsize()}"
+            self.updates_queue.put(
+                Update(ids=ids, indices=indices, losses=prioritized_loss), block=False
             )
         except queue.Full:
-            logger.warning(f"priority_updates_queue full, dropping priority update")
+            logger.warning("updates queue full, dropping update")
+            pass
 
         self.model.reset_noise()
         self.target_model.reset_noise()
@@ -141,15 +146,7 @@ class LearnerBase(RainbowAgent):
         return loss
 
     def run(self, graph_interval=20):
-        consume_weights_thread = threading.Thread(target=self.consume_weights)
-        produce_samples_thread = threading.Thread(target=self.produce_samples)
-        consume_priority_updates_thread = threading.Thread(
-            target=self.consume_priority_updates
-        )
-
-        consume_weights_thread.start()
-        produce_samples_thread.start()
-        consume_priority_updates_thread.start()
+        self.on_run()
 
         logger.info("learner running")
         self.is_test = False
@@ -163,9 +160,6 @@ class LearnerBase(RainbowAgent):
         model_update_count = 0
         score = 0
         training_step = 0
-
-        # push initial weights
-        self.weights_queue.put(self.model.get_weights(), False)
 
         while training_step <= self.num_training_steps:
             logger.info(
@@ -185,27 +179,12 @@ class LearnerBase(RainbowAgent):
                 stat_test_score.append(self.test(num_trials=5))
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
 
-            if training_step % self.push_weights_interval == 0:
-                try:
-                    logger.debug("pushing weights to remote")
-                    self.weights_queue.put(self.model.get_weights(), False)
-                except queue.Full:
-                    logger.warning(f"weights_queue full, dropping weight update")
-
         logger.info("loop done")
-
-        self.priority_updates_queue.put(None)
-        self.weights_queue.put(None)
-
-        self.finished_event.set()
-
-        produce_samples_thread.join()
-        consume_weights_thread.join()
-        consume_priority_updates_thread.join()
 
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
         self.save_checkpoint(training_step)
         self.env.close()
+        self.on_done()
 
 
 class SingleMachineLearner(LearnerBase):
@@ -266,183 +245,107 @@ class SingleMachineLearner(LearnerBase):
         return self.model.get_weights()
 
 
-import asyncio
-import pickle
-from client import ReplayMemoryClient
+import zmq
+import message_codes
 
-
-class LearnerRPCClient:
-    def __init__(
-        self,
-        weights_queue: queue.Queue,
-        samples_queue: queue.Queue,
-        priority_updates_queue: queue.Queue,
-        addr="localhost",
-        port=60000,
-    ):
-        self.client = ReplayMemoryClient(addr=addr, port=port)
-
-        self.weights_queue = weights_queue
-        self.samples_queue = samples_queue
-        self.priority_updates_queue = priority_updates_queue
-
-        self.client.extra_coroutines.append(self.consume_weights())
-        self.client.extra_coroutines.append(self.consume_priority_updates())
-        self.client.extra_coroutines.append(self.produce_samples())
-
-    async def consume_weights(self):
-        logger.info("consume weights started")
-        while self.client.running:
-            try:
-                logger.info(
-                    f"getting weights from queue. queue size: {self.weights_queue.qsize()}"
-                )
-                weights = self.weights_queue.get(timeout=0.01)
-                logger.debug(f"got weights from queue")
-                if weights is None:
-                    logger.info(
-                        "got stop signal, stopping consume_weights and stopping client"
-                    )
-                    self.client.stop()
-                    return True
-
-                logger.debug("pushing weights to remote")
-                t_i = time.time()
-                compressed = compress(weights)
-                request = self.client.get_rpc().setWeights_request()
-                request.weights = compressed
-
-                await asyncio.wait_for(request.send().a_wait(), 10)
-                logger.info(f"setWeights_request took {time.time() - t_i} seconds")
-            except queue.Empty:
-                logger.debug("weights_queue empty, polling")
-                await asyncio.sleep(0.1)
-            except asyncio.TimeoutError:
-                logger.warning("timeout pushing weights to remote - dropping update")
-            except Exception as e:
-                logger.exception(
-                    f"error pushing weights to remote {e} - stopping consume_weights"
-                )
-                return False
-
-        return True
-
-    async def consume_priority_updates(self):
-        logger.info("consume priority updates started")
-        while self.client.running:
-            try:
-                logger.info(
-                    f"getting batch. queue size: {self.priority_updates_queue.qsize()}"
-                )
-                t = self.priority_updates_queue.get(block=False)
-                logger.debug(f"got priorities from queue, {t}")
-                if t is None:
-                    logger.info(
-                        "got stop signal, stopping consume_priority_updates and stopping client"
-                    )
-                    self.client.stop()
-                    return True
-
-                ids, indices, prioritized_loss = t
-                logger.debug("updating priorities to remote")
-                t_i = time.time()
-
-                request = self.client.get_rpc().updatePriorities_request()
-                request.ids = list(ids)
-                request.indices = indices.tolist()
-                request.priorities = prioritized_loss.tolist()
-                await asyncio.wait_for(request.send().a_wait(), 10)
-                logger.info(
-                    f"updatePriorities_request took {time.time() - t_i} seconds"
-                )
-            except queue.Empty:
-                logger.info("priority_updates_queue empty, polling")
-                await asyncio.sleep(0.1)
-            except asyncio.TimeoutError:
-                logger.info("timeout updating priorities - dropping update")
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.exception(
-                    f"error updating priorities {e} - stopping consume_priority_updates"
-                )
-                return False
-
-        logger.warning("comsume priority updates finished normally")
-        return True
-
-    async def produce_samples(self):
-        logger.info("produce samples started")
-        while self.client.running:
-            try:
-                logger.info("getting samples from remote")
-                t_i = time.time()
-
-                request = self.client.get_rpc().sample_request()
-                request.batchSize = 0
-                res = await asyncio.wait_for(request.send().a_wait(), 10)
-
-                logger.debug(f"produce_samples took {time.time() - t_i} seconds")
-
-                sample = {
-                    "ids": res.batch.ids,
-                }
-
-                if len(sample["ids"]) > 0:
-                    sample["ids"] = res.batch.ids
-                    sample["indices"] = np.array(res.batch.indices)
-                    sample["actions"] = np.array(res.batch.actions)
-                    sample["observations"] = pickle.loads(res.batch.observations)
-                    sample["rewards"] = np.array(res.batch.rewards)
-                    sample["next_observations"] = pickle.loads(
-                        res.batch.nextObservations
-                    )
-                    sample["dones"] = np.array(res.batch.dones)
-                    sample["weights"] = np.array(res.batch.weights)
-                    logger.debug(
-                        f"got samples from remote. new queue size: {self.samples_queue.qsize()} "
-                    )
-
-                    self.samples_queue.put(sample)
-                else:
-                    logger.debug("no samples from remote, polling")
-                    await asyncio.sleep(0.1)
-            except asyncio.TimeoutError:
-                logger.warning("timeout getting samples from remote")
-            except Exception as e:
-                logger.exception(
-                    f"error getting samples {e} - stopping produce_samples"
-                )
-                return False
-
-        logger.info("produce samples finished successfully")
-        return True
+import entities.replayMemory_capnp as replayMemory_capnp
 
 
 class DistributedLearner(LearnerBase):
     def __init__(self, env, config):
         super().__init__(env=env, config=config)
-        self.addr = config["capnp_conn"].split(":")[0]
-        self.port = config["capnp_conn"].split(":")[1]
+        self.updates_queue = queue.Queue()
 
-    def consume_weights(self):
-        c = LearnerRPCClient(
-            weights_queue=self.weights_queue,
-            samples_queue=self.samples_queue,
-            priority_updates_queue=self.priority_updates_queue,
-            addr=self.addr,
-            port=self.port,
+    def handle_replay_socket(self, flag: threading.Event):
+        ctx = zmq.Context()
+
+        replay_socket = ctx.socket(zmq.REQ)
+        replay_addr = self.config["replay_addr"]
+        replay_port = self.config["replay_port"]
+        replay_url = f"tcp://{replay_addr}:{replay_port}"
+
+        logger.info(f"learner connecting to replay buffer at {replay_url}")
+        replay_socket.connect(replay_url)
+
+        # alternate between getting samples and updating priorities
+        i = 0
+        while not flag.is_set():
+            logger.info("poll")
+            if i == 0:
+                if self.samples_queue.qsize() < self.samples_queue_size:
+                    logger.info("requesting batch")
+                    replay_socket.send(message_codes.LEARNER_REQUESTS_BATCH)
+                    logger.info("wating for batch")
+                    res = replay_socket.recv()
+                    if res == b"":  # empty message
+                        logger.info("no batch recieved, continuing and waiting")
+                        time.sleep(1)
+                        continue
+                    logger.info("recieved batch")
+
+                    samples = replayMemory_capnp.TransitionBatch.from_bytes_packed(res)
+                    logger.info(f"recieved samples {samples}")
+
+                    self.samples_queue.put(
+                        Sample(
+                            ids=np.array(samples.ids),
+                            indices=np.array(samples.indices),
+                            actions=np.array(samples.actions),
+                            observations=decompress(samples.observations),
+                            next_observations=decompress(samples.nextObservations),
+                            weights=np.array(samples.weights),
+                            rewards=np.array(samples.rewards),
+                            dones=np.array(samples.dones),
+                        )
+                    )
+                i = 1
+            elif i == 1:
+                try:
+                    t = self.updates_queue.get(timeout=0.1)
+                except queue.Empty:
+                    logger.info("no updates to send, continuing")
+                    continue
+                ids, indices, losses = t
+                update = replayMemory_capnp.PriorityUpdate.new_message()
+                update.ids = ids.tolist()
+                update.indices = indices.tolist()
+                update.losses = losses.tolist()
+
+                replay_socket.send(message_codes.LEARNER_UPDATE_PRIORITIES, zmq.SNDMORE)
+                replay_socket.send(update.to_bytes())
+                replay_socket.recv()
+                i = 0
+
+    def handle_learner_requests(self, flag: threading.Event):
+        ctx = zmq.Context()
+        port = self.config["port"]
+
+        learner_socket = ctx.socket(zmq.REP)
+
+        learner_socket.bind(f"tcp://*:{port}")
+        logger.info(f"learner started on port {port}")
+
+        while not flag.is_set():
+            message = learner_socket.recv()
+            if message == message_codes.ACTOR_GET_PARAMS:
+                weights = self.model.get_weights()
+                learner_socket.send(compress(weights))
+            else:
+                learner_socket.send(b"")
+
+    def on_run(self):
+        self.flag = threading.Event()
+
+        self.replay_thread = threading.Thread(
+            target=self.handle_replay_socket, args=(self.flag,)
         )
-        asyncio.run(c.client.start(), debug=True)
-        logger.info("consume weights finished")
+        self.learner_thread = threading.Thread(
+            target=self.handle_learner_requests, args=(self.flag,)
+        )
+        self.replay_thread.start()
+        self.learner_thread.start()
 
-    def produce_samples(self):
-        # handled in consume_weights
-        logger.info("produced samples ignored")
-
-    def consume_priority_updates(self):
-        # handled in consume_weights
-        logger.info("consume priority updates ignored")
-
-    def remove_old_experiences_from_remote_replay_buffer(self):
-        # not needed
-        pass
+    def on_done(self):
+        self.flag.set()
+        self.replay_thread.join()
+        self.learner_thread.join()

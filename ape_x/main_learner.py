@@ -66,15 +66,22 @@ def make_cartpole_env():
 
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
-    parser.add_argument("id", type=str)
-    parser.add_argument("capnp_conn", type=str, default="localhost:60000")
+    parser.add_argument("port", type=str)
+    parser.add_argument("replay_addr", type=str)
+    parser.add_argument("replay_port", type=str)
     args = parser.parse_args()
 
     learner_config = copy.deepcopy(base_config)
     learner_config["num_training_steps"] = 1000
     learner_config["remove_old_experiences_interval"] = 1000
     learner_config["push_weights_interval"] = 20
-    learner_config["capnp_conn"] = args.capnp_conn
+
+    learner_config["samples_queue_size"] = 16
+    learner_config["updates_queue_size"] = 16
+
+    learner_config["port"] = args.port
+    learner_config["replay_addr"] = args.replay_addr
+    learner_config["replay_port"] = args.replay_port
     learner = DistributedLearner(
         env=make_cartpole_env(),
         config=learner_config,

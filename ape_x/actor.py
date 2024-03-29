@@ -1,13 +1,13 @@
 import sys
 import tensorflow as tf
 import numpy as np
-import threading
 import time
 import logging
 import learner
-import gymnasium as gym
-import queue
-from compress_utils import compress, decompress
+from abc import ABC, abstractclassmethod
+from compress_utils import decompress, compress
+import entities.replayMemory_capnp as replayMemory_capnp
+from typing import NamedTuple
 
 sys.path.append("../")
 
@@ -17,7 +17,17 @@ from rainbow.rainbow_agent import RainbowAgent
 logger = logging.getLogger(__name__)
 
 
-class ActorBase(RainbowAgent):
+class Batch(NamedTuple):
+    observations: np.ndarray
+    next_observations: np.ndarray
+    actions: np.ndarray
+    rewards: np.ndarray
+    dones: np.ndarray
+    ids: np.ndarray
+    priorities: np.ndarray
+
+
+class ActorBase(RainbowAgent, ABC):
     def __init__(
         self,
         id,
@@ -35,16 +45,14 @@ class ActorBase(RainbowAgent):
         self.poll_params_interval = config["poll_params_interval"]
         self.buffer_size = config["buffer_size"]
 
-        # max about of transition batches to queue before dropping
-        self.max_transitions_queue_size = 16
-        self.transitions_queue = queue.Queue(maxsize=self.max_transitions_queue_size)
-        self.params_queue = queue.Queue(maxsize=1)
-
-    def produce_weight_updates(self):
+    @abstractclassmethod
+    def update_params(self):
+        # get the latest weights from the learner
         pass
 
-    # to be implemented by subclasses
-    def consume_transitions_queue(self):
+    @abstractclassmethod
+    def push_experience_batch(self, batch: Batch):
+        # push the experience batch to the replay buffer
         pass
 
     def calculate_losses(self, indices):
@@ -107,13 +115,11 @@ class ActorBase(RainbowAgent):
         return prioritized_loss
 
     def run(self):
-        consume_queue = threading.Thread(target=self.consume_transitions_queue)
-        produce_queue = threading.Thread(target=self.produce_weight_updates)
-        consume_queue.start()
-        produce_queue.start()
-
         self.is_test = False
-        self.model.set_weights(self.params_queue.get())
+
+        logger.info("fetching initial network params from learner...")
+        self.update_params()
+
         logger.info("filling replay buffer...")
         self.fill_replay_buffer()
 
@@ -124,7 +130,9 @@ class ActorBase(RainbowAgent):
 
         training_step = 0
         while training_step <= self.num_training_steps:
-            # logger.info( f"{self.model_name} training step: {training_step}/{self.num_training_steps}")
+            logger.debug(
+                f"{self.model_name} training step: {training_step}/{self.num_training_steps}"
+            )
 
             state_input = self.prepare_states(state)
             action = self.select_action(state_input)
@@ -141,20 +149,31 @@ class ActorBase(RainbowAgent):
                 )
                 indices = list(range(self.replay_batch_size))
                 n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
+                # dict(
+                #     observations=self.observation_buffer[indices],
+                #     next_observations=self.next_observation_buffer[indices],
+                #     actions=self.action_buffer[indices],
+                #     rewards=self.reward_buffer[indices],
+                #     dones=self.done_buffer[indices],
+                #     ids=self.id_buffer[indices],
+                # )
+
                 prioritized_loss = self.calculate_losses(indices)
                 priorities = self.replay_buffer.update_priorities(
                     indices, prioritized_loss
                 )
 
-                # push to transitions queue. If queue is full and does not have space after 5 seconds, drop the first batch to append the new one
-                try:
-                    self.transitions_queue.put((n_step_samples, priorities), timeout=5)
-                except queue.Full:
-                    logger.warn(
-                        f"{self.model_name} transitions queue full, dropped batch"
-                    )
-                    self.transitions_queue.get()
-                    self.transitions_queue.put((n_step_samples, priorities))
+                batch = Batch(
+                    observations=n_step_samples["observations"],
+                    next_observations=n_step_samples["next_observations"],
+                    actions=n_step_samples["actions"],
+                    rewards=n_step_samples["rewards"],
+                    dones=n_step_samples["dones"],
+                    ids=n_step_samples["ids"],
+                    priorities=priorities,
+                )
+
+                self.push_experience_batch(batch)
 
             self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
 
@@ -165,20 +184,11 @@ class ActorBase(RainbowAgent):
                 score = 0
 
             if (training_step % self.poll_params_interval) == 0:
-                weights = self.params_queue.get()
-                if len(weights) == 0:
-                    logger.warn("model weights empty")
-                else:
-                    self.model.set_weights(weights)
+                self.update_params()
 
             training_step += 1
 
         self.env.close()
-        self.transitions_queue.put(None)
-
-        # wait for consume_transitions_queue to finish
-        logger.debug("Waiting for consume_transitions_queue to finish")
-        consume_queue.join()
 
         return num_trials_truncated / self.num_training_steps
 
@@ -194,19 +204,13 @@ class SingleMachineActor(ActorBase):
         super().__init__(id, env, config)
         self.learner = single_machine_learner
 
-    def produce_weight_updates(self):
+    def update_params(self):
+        # get the latest weights from the learner
         pass
 
-    def consume_transitions_queue(self):
-        thread = threading.Thread(target=self._consume_transitions_queue)
-        thread.start()
-
-    def _consume_transitions_queue(self):
-        i = self.transitions_queue.get()
-
-        while i is not None:
-            self.push_experiences_to_remote_replay_buffer(i[0], i[1])
-            i = self.transitions_queue.get()
+    def push_experience_batch(self, batch):
+        # push the experience batch to the replay buffer
+        pass
 
     def push_experiences_to_remote_replay_buffer(self, experiences, priorities):
         t = time.time()
@@ -230,126 +234,9 @@ class SingleMachineActor(ActorBase):
         logger.info(f"push_experiences_to_remote_replay_buffer took: {delta_t} s")
 
 
-import asyncio
-import pickle
-import uuid
-from client import ReplayMemoryClient
-
-
-class ActorRPCClient:
-    def __init__(
-        self,
-        exp_q: queue.Queue,
-        params_q: queue.Queue,
-        actor_id: str,
-        addr="localhost",
-        port=60000,
-    ):
-        self.exp_q = exp_q
-        self.params_q = params_q
-        self.id = actor_id
-
-        self.client = ReplayMemoryClient(addr, port)
-        self.client.extra_coroutines.append(self.produce_params())
-        self.client.extra_coroutines.append(self.consume_transitions())
-
-    def prepare_request(self, id, batch):
-        (experiences, priorities) = batch
-        n = len(experiences["dones"])
-        logger.info(f"pushing {n} experiences to remote replay buffer")
-
-        ids = list()
-        actions = list()
-        rewards = list()
-        dones = list()
-        pri = list()
-
-        for i in range(n):
-            ids.append(f"{id}-{uuid.uuid4()}")
-            actions.append(experiences["actions"][i].item())
-            rewards.append(experiences["rewards"][i].item())
-            dones.append(experiences["dones"][i].item() == 1)
-            pri.append(priorities[i].item())
-
-        request = self.client.get_rpc().addTransitionBatch_request()
-        # request.batch = input
-        request.batch.ids = ids
-        request.batch.observations = pickle.dumps(
-            experiences["observations"], protocol=5
-        )
-        request.batch.nextObservations = pickle.dumps(
-            experiences["next_observations"], protocol=5
-        )
-        request.batch.actions = actions
-        request.batch.rewards = rewards
-        request.batch.dones = dones
-        request.batch.priorities = pri
-
-        return request
-
-    async def consume_transitions(self):
-        logger.debug("push transitions started.")
-        while self.client.running:
-            try:
-                t = self.exp_q.get(block=False)
-                # logger.debug(f"got batch from queue: {t}")
-                logger.debug(f"got batch from queue:")
-                if t is None:
-                    logger.info(
-                        "recieved finished signal, finishing task and triggering stop sequence"
-                    )
-                    self.client.stop()
-                    return True
-
-                logger.debug("sending batch to learner")
-                t_i = time.time()
-                request = self.prepare_request(self.id, t)
-
-                await asyncio.wait_for(request.send().a_wait(), timeout=5)
-
-                logger.info(f"push_batch took: {time.time() - t_i}s")
-            except queue.Empty:
-                logger.debug("no batch in queue, retrying...")
-                await asyncio.sleep(0.1)
-            except asyncio.TimeoutError:
-                logger.warn("push_batch timed out - batch dropped!")
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                # unexpected error - immediately stop the client and finish the task
-
-                logger.exception(f"Error pushing batch: {e}")
-                self.client.stop()
-                return False
-
-        return True
-
-    async def produce_params(self):
-        logger.debug("get params started.")
-        while self.client.running:
-            try:
-                logger.info("getting latest network params from learner")
-                t_i = time.time()
-
-                request = self.client.get_rpc().getWeights_request()
-                res = await asyncio.wait_for(request.send().a_wait(), timeout=5)
-                unpickled_params = decompress(res.weights)
-
-                if unpickled_params is not None:
-                    self.params_q.put(unpickled_params)
-                    logger.debug(f"produce_params took: {time.time() - t_i}s")
-                else:
-                    print("no params recieved, retrying after 0.1s ...")
-                    await asyncio.sleep(0.1)
-
-            except asyncio.TimeoutError:
-                logger.warning("getWeights timed out, retrying...")
-            except Exception as e:
-                logger.exception(f"Error getting params: {e}")
-                self.client.stop()
-                return False
-
-        logger.info("produce params finished sucessfully")
-        return True
+import zmq
+import entities.replayMemory_capnp as replayMemory_capnp
+import message_codes
 
 
 class DistributedActor(ActorBase):
@@ -360,21 +247,44 @@ class DistributedActor(ActorBase):
         config,
     ):
         super().__init__(id, env, config)
-        self.addr = config["capnp_conn"].split(":")[0]
-        self.port = config["capnp_conn"].split(":")[1]
+        self.socket_ctx = zmq.Context()
 
-    def produce_weight_updates(self):
-        # included with consume_transitions_queue
-        pass
+        learner_address = config["learner_addr"]
+        learner_port = config["learner_port"]
+        learner_url = f"tcp://{learner_address}:{learner_port}"
 
-    def consume_transitions_queue(self):
-        # pusher must be created in the same thread as the event loop, which is where the capnp rpc objects are created
-        pusher = ActorRPCClient(
-            self.transitions_queue,
-            self.params_queue,
-            self.id,
-            self.addr,
-            self.port,
-        )
-        asyncio.run(pusher.client.start(), debug=True)
-        logger.debug("transitionPusher done.")
+        replay_address = config["replay_addr"]
+        replay_port = config["replay_port"]
+        replay_url = f"tcp://{replay_address}:{replay_port}"
+
+        self.learner_socket = self.socket_ctx.socket(zmq.REQ)
+        self.replay_socket = self.socket_ctx.socket(zmq.PUSH)
+
+        self.learner_socket.connect(learner_url)
+        logger.info(f"connected to learner at {learner_url}")
+        self.replay_socket.connect(replay_url)
+        logger.info(f"connected to replay buffer at {replay_url}")
+
+    def update_params(self):
+        self.learner_socket.send(message_codes.ACTOR_GET_PARAMS)
+        res = self.learner_socket.recv()
+        decompressed = decompress(res)
+
+        if len(decompressed) > 0:
+            print(decompressed)
+            self.model.set_weights(decompressed)
+
+    def push_experience_batch(self, batch):
+        builder = replayMemory_capnp.TransitionBatch.new_message()
+        builder.observations = compress(batch.observations)
+        builder.nextObservations = compress(batch.next_observations)
+        builder.rewards = batch.rewards.astype(np.float32).tolist()
+        builder.actions = batch.actions.astype(np.int32).tolist()
+        builder.dones = batch.dones.astype(bool).tolist()
+        builder.ids = batch.ids.astype(str).tolist()
+        builder.priorities = batch.priorities.astype(np.float32).tolist()
+
+        self.replay_socket.send(message_codes.ACTOR_SEND_BATCH, zmq.SNDMORE)
+
+        res = builder.to_bytes_packed()
+        self.replay_socket.send(res)
