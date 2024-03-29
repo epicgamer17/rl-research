@@ -110,12 +110,14 @@ class AlphaZeroAgent:
         )
         while training_step < self.training_steps:
             print("Training Step ", training_step + 1)
+            mcts_root = None
             for training_game in range(self.games_per_generation):
+                print("training:", training_game)
                 print("Game ", training_game + 1)
                 done = False
                 while not done:
-                    visit_counts = self.monte_carlo_tree_search(
-                        self.env, state, legal_moves
+                    visit_counts, mcts_root = self.monte_carlo_tree_search(
+                        self.env, state, legal_moves, mcts_root
                     )
                     actions = [action for _, action in visit_counts]
                     visit_counts = np.array(
@@ -130,6 +132,13 @@ class AlphaZeroAgent:
                     temperature_visit_counts /= np.sum(temperature_visit_counts)
                     action = np.random.choice(actions, p=temperature_visit_counts)
                     print("Action ", action)
+           
+                    if mcts_root != None:
+                        temp_root = mcts_root.children[action]
+                        mcts_root.children = {}
+                        temp_root.parent = None
+                        mcts_root = temp_root
+
                     next_state, reward, terminated, truncated, info = self.step(action)
                     done = terminated or truncated
                     legal_moves = (
@@ -187,8 +196,9 @@ class AlphaZeroAgent:
         self.save_checkpoint()
         # save model to shared storage @Ezra
 
-    def monte_carlo_tree_search(self, env, state, legal_moves):
-        root = Node(0, state, legal_moves)
+    def monte_carlo_tree_search(self, env, state, legal_moves, root):
+        if root == None:
+            root = Node(0, state, legal_moves)
         illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
         value, policy = self.predict_single(state, illegal_moves)
         print("Predicted Policy ", policy)
@@ -259,7 +269,7 @@ class AlphaZeroAgent:
         visit_counts = [
             (child.visits, action) for action, child in root.children.items()
         ]
-        return visit_counts
+        return visit_counts, root
 
     def experience_replay(self):
         samples = self.replay_buffer.sample()
