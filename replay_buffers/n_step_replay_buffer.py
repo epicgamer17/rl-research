@@ -17,7 +17,7 @@ class ReplayBuffer:
             observation_buffer_shape, dtype=np.float32
         )
 
-        self.id_buffer = np.zeros(max_size, dtype=np.str_)
+        self.id_buffer = np.zeros(max_size, dtype=np.object_)
         self.action_buffer = np.zeros(max_size, dtype=np.int32)
         self.reward_buffer = np.zeros(max_size, dtype=np.float32)
         self.done_buffer = np.zeros(max_size)

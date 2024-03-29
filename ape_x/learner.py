@@ -284,11 +284,10 @@ class DistributedLearner(LearnerBase):
                     logger.info("recieved batch")
 
                     samples = replayMemory_capnp.TransitionBatch.from_bytes_packed(res)
-                    logger.info(f"recieved samples {samples}")
 
                     self.samples_queue.put(
                         Sample(
-                            ids=np.array(samples.ids),
+                            ids=np.array(samples.ids, dtype=object),
                             indices=np.array(samples.indices),
                             actions=np.array(samples.actions),
                             observations=decompress(samples.observations),
@@ -307,12 +306,12 @@ class DistributedLearner(LearnerBase):
                     continue
                 ids, indices, losses = t
                 update = replayMemory_capnp.PriorityUpdate.new_message()
-                update.ids = ids.tolist()
-                update.indices = indices.tolist()
-                update.losses = losses.tolist()
+                update.ids = ids.astype(str).tolist()
+                update.indices = indices.astype(int).tolist()
+                update.losses = losses.astype(float).tolist()
 
                 replay_socket.send(message_codes.LEARNER_UPDATE_PRIORITIES, zmq.SNDMORE)
-                replay_socket.send(update.to_bytes())
+                replay_socket.send(update.to_bytes_packed())
                 replay_socket.recv()
                 i = 0
 

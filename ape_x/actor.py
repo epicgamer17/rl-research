@@ -9,6 +9,8 @@ from compress_utils import decompress, compress
 import entities.replayMemory_capnp as replayMemory_capnp
 from typing import NamedTuple
 
+import uuid
+
 sys.path.append("../")
 
 from rainbow.rainbow_agent import RainbowAgent
@@ -158,6 +160,11 @@ class ActorBase(RainbowAgent, ABC):
                 #     ids=self.id_buffer[indices],
                 # )
 
+                ids = list()
+
+                for i in range(len(indices)):
+                    ids.append(uuid.uuid4().hex)
+
                 prioritized_loss = self.calculate_losses(indices)
                 priorities = self.replay_buffer.update_priorities(
                     indices, prioritized_loss
@@ -169,7 +176,7 @@ class ActorBase(RainbowAgent, ABC):
                     actions=n_step_samples["actions"],
                     rewards=n_step_samples["rewards"],
                     dones=n_step_samples["dones"],
-                    ids=n_step_samples["ids"],
+                    ids=np.array(ids, dtype=np.object_),
                     priorities=priorities,
                 )
 
@@ -267,12 +274,17 @@ class DistributedActor(ActorBase):
 
     def update_params(self):
         self.learner_socket.send(message_codes.ACTOR_GET_PARAMS)
+        ti = time.time()
+        logger.info("fetching weights from learner...")
         res = self.learner_socket.recv()
         decompressed = decompress(res)
 
-        if len(decompressed) > 0:
-            print(decompressed)
+        # todo: fix issues with starting up the weights aren't full
+        if len(decompressed) < 24:
+            logger.info("not enough weights received from learner")
+        else:
             self.model.set_weights(decompressed)
+            logger.info(f"fetching weights took {time.time() - ti} s")
 
     def push_experience_batch(self, batch):
         builder = replayMemory_capnp.TransitionBatch.new_message()
