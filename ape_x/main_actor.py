@@ -75,7 +75,7 @@ def main():
 
     actor_config = copy.deepcopy(base_config)
     actor_config["poll_params_interval"] = 100
-    actor_config["buffer_size"] = 100
+    actor_config["buffer_size"] = 128
     actor_config["num_training_steps"] = 50000
     actor_config["learner_addr"] = args.learner_addr
     actor_config["learner_port"] = args.learner_port

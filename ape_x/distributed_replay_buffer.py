@@ -42,8 +42,6 @@ def make_sample(replay_memory: ReplayBuffer):
         logger.exception(f"sample error: {e}")
         raise e
 
-    # logger.info(f"samples: {samples}")
-
     # convert to capnp types
     ids = list()
 
@@ -97,14 +95,11 @@ def main(learner_port, actors_port):
 
         try:
             socks = dict(poller.poll())
-            logger.info(f"socks: {socks}")
         except KeyboardInterrupt:
             break
 
         if actors_socket in socks:
-            logger.info("actor request")
             msg = actors_socket.recv()
-            logger.info(f"received: {msg}")
             msg = actors_socket.recv()
             batch = replay_memory_capnp.TransitionBatch.from_bytes_packed(msg)
             t_i = time.time()
@@ -136,18 +131,16 @@ def main(learner_port, actors_port):
             )
 
         if learners_socket in socks:
-            logger.info("learner request")
             msg = learners_socket.recv()
-            logger.info(f"received: {msg}")
             if msg == message_codes.LEARNER_REQUESTS_BATCH:
                 batch = make_sample(replay_memory)
                 learners_socket.send(batch)
             elif msg == message_codes.LEARNER_UPDATE_PRIORITIES:
                 res = learners_socket.recv()
                 learners_socket.send(b"")
-                updates = replay_memory_capnp.PriorityUpdate.from_bytes(res)
+                updates = replay_memory_capnp.PriorityUpdate.from_bytes_packed(res)
                 replay_memory.update_priorities(
-                    np.array(updates.indices), np.array(updates.priorities), list(ids)
+                    np.array(updates.indices), np.array(updates.losses), list(ids)
                 )
 
 
