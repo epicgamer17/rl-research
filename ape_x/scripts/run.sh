@@ -1,5 +1,6 @@
 #!/bin/bash
 
+## currently non-functional, need to fix
 username=ehuang
 replay_server=open-gpu-32
 learner=open-gpu-1
@@ -38,16 +39,17 @@ start_actor() {
 EOF
 }
 
-start_replay
-start_learner
+start_actors() {
+  for i in {2..31}; do
+    if [ $i -eq 17 ]; then 
+      continue
+    fi
 
-# start actors
-for i in {2..31}; do
-  if [ $i -eq 17 ]; then 
-    continue
-  fi
+    actor="open-gpu-$i"
+    echo "Starting actor on $actor"
+    start_actor
+  done
+}
 
-  actor="open-gpu-$i"
-  echo "Starting actor on $actor"
-  start_actor
-done
+# run commands in subshell
+(trap 'kill 0' SIGINT; start_replay & start_learner & start_actors)
