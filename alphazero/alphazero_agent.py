@@ -136,7 +136,6 @@ class AlphaZeroAgent:
                     if mcts_root != None:
                         temp_root = mcts_root.children[action]
                         mcts_root.children = {}
-                        temp_root.parent = None
                         mcts_root = temp_root
 
                     next_state, reward, terminated, truncated, info = self.step(action)
