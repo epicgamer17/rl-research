@@ -338,9 +338,11 @@ class DistributedLearner(LearnerBase):
         self.replay_thread = threading.Thread(
             target=self.handle_replay_socket, args=(self.flag,)
         )
+        self.replay_thread.daemon = True
         self.learner_thread = threading.Thread(
             target=self.handle_learner_requests, args=(self.flag,)
         )
+        self.learner_thread.daemon = True
         self.replay_thread.start()
         self.learner_thread.start()
 
