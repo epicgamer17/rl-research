@@ -1,4 +1,4 @@
-from game_config import GameConfig
+from .game_config import GameConfig
 
 
 class AtariConfig(GameConfig):

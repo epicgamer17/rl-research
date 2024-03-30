@@ -1,5 +1,5 @@
 import tensorflow as tf
-from base_config import ConfigBase
+from .base_config import ConfigBase
 
 
 class PPOActorConfig(ConfigBase):

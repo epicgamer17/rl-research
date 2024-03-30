@@ -1,7 +1,7 @@
 import sys
 from time import time
 
-from configs.agent_configs.ppo_config import PPOConfig
+from agent_configs import PPOConfig
 
 sys.path.append("../")
 

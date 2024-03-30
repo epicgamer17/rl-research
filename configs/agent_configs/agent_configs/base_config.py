@@ -33,11 +33,11 @@ from tensorflow.nn import (
 )
 
 import numpy as np
-from configs.game_configs.game_config import GameConfig
+from game_configs import GameConfig
 
 
 class ConfigBase:
-    def parse_field(self, field_name, default, wrapper=None, required=True):
+    def parse_field(self, field_name, default=None, wrapper=None, required=True):
         if field_name in self.config_dict:
             val = self.config_dict[field_name]
             print(f"Using {field_name}: {val}")

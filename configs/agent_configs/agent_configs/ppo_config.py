@@ -1,7 +1,7 @@
 import numpy as np
-from base_config import Config
-from ppo_actor_config import PPOActorConfig
-from ppo_critic_config import PPOCriticConfig
+from .base_config import Config
+from .ppo_actor_config import PPOActorConfig
+from .ppo_critic_config import PPOCriticConfig
 import tensorflow as tf
 
 
