@@ -5,7 +5,7 @@ from .ape_x_config import (
     LearnerApeXMixin,
     ApeXConfig,
 )
-from .base_config import ConfigBase
+from .base_config import ConfigBase, Config
 from .muzero_config import MuZeroConfig
 from .ppo_actor_config import PPOActorConfig
 from .ppo_critic_config import PPOCriticConfig

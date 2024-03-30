@@ -54,12 +54,12 @@ class ConfigBase:
                 f"Missing required field without default value: {field_name}"
             )
 
-    def __init__(self, config_dict):
+    def __init__(self, config_dict: dict):
         self.config_dict = config_dict
 
 
 class Config(ConfigBase):
-    def __init__(self, config_dict, game_config: GameConfig) -> None:
+    def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         super().__init__(config_dict)
         # could take in a game config and set an action space and observation shape here
         # OR DO THAT IN BASE AGENT?

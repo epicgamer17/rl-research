@@ -10,7 +10,7 @@ class RainbowConfig(Config):
 
         self.width: int = self.parse_field("width", 128)
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
-        self.conv_layers: list | None = self.parse_field("conv_layers", required=False)
+        self.conv_layers: list = self.parse_field("conv_layers", [])
         self.conv_layers_noisy: bool = self.parse_field("conv_layers_noisy", False)
         self.dense_layers: int = self.parse_field("dense_layers", 1)
         self.dense_layers_noisy: bool = self.parse_field("dense_layers_noisy", False)
@@ -30,7 +30,7 @@ class RainbowConfig(Config):
         self.atom_size: int = self.parse_field("atom_size", 51)
 
         assert not (
-            self.game.is_image and self.conv_layers is not None
+            self.game.is_image and len(self.conv_layers) == 0
         ), "Convolutional layers must be defined for image based games"
 
         # maybe don't use a game config, since if tuning for multiple games this should be the same regardless of the game <- (it is really a hyper parameter if you are tuning for multiple games or a game with unknown bounds)
