@@ -9,9 +9,9 @@ from compress_utils import compress
 from abc import ABC, abstractclassmethod
 from typing import NamedTuple
 from compress_utils import decompress
+from agent_configs import ApeXConfig
 
 sys.path.append("../")
-from configs.agent_configs.ape_x_config import ApeXConfig
 from rainbow.rainbow_agent import RainbowAgent
 
 import matplotlib

@@ -1,6 +1,5 @@
-from base_config import ConfigBase
-from rainbow_config import RainbowConfig
-import tensorflow as tf
+from .base_config import ConfigBase
+from .rainbow_config import RainbowConfig
 
 
 class DistributedConfig(ConfigBase):

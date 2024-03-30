@@ -6,8 +6,8 @@ import gymnasium as gym
 
 import logging
 
-from configs.agent_configs.ape_x_config import ApeXConfig
-from configs.game_configs.cartpole_config import CartPoleConfig
+from agent_configs import ApeXConfig
+from game_configs import CartPoleConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

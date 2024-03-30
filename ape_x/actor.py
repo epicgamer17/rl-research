@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 import time
 import logging
-from configs.agent_configs.ape_x_config import ApeXConfig
+from agent_configs import ApeXConfig
 import learner
 from abc import ABC, abstractclassmethod
 from compress_utils import decompress, compress

@@ -1,7 +1,7 @@
 import sys
 
 from base_agent.agent import BaseAgent
-from configs.agent_configs.rainbow_config import RainbowConfig
+from agent_configs import RainbowConfig
 
 sys.path.append("../")
 

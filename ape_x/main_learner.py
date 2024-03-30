@@ -1,7 +1,7 @@
 import tensorflow as tf
 import copy
-from configs.agent_configs.ape_x_config import ApeXConfig
-from configs.game_configs.cartpole_config import CartPoleConfig
+from agent_configs import ApeXConfig
+from game_configs import CartPoleConfig
 from learner import DistributedLearner
 import gymnasium as gym
 import argparse

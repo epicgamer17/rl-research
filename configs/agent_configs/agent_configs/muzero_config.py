@@ -1,5 +1,4 @@
-from alphazero_config import AlphaZeroConfig
-import tensorflow as tf
+from .alphazero_config import AlphaZeroConfig
 
 
 class MuZeroConfig(AlphaZeroConfig):
