@@ -1,14 +1,14 @@
+import os
 import datetime
 import gc
-import sys
 from time import time
-
-from base_agent.agent import BaseAgent
 from agent_configs import AlphaZeroConfig
 
-sys.path.append("../")
+import sys
 
-import os
+sys.path.append("../")
+from base_agent.agent import BaseAgent
+
 
 os.environ["OMP_NUM_THREADS"] = f"{8}"
 os.environ["MKL_NUM_THREADS"] = f"{8}"

@@ -81,8 +81,8 @@ class Config(ConfigBase):
         self.min_replay_buffer_size: int = self.parse_field("min_replay_buffer_size", 0)
         self.training_steps: int = self.parse_field("training_steps", 10000)
 
-        self.activation = self._prepare_activations(
-            config_dict["activation"], wrapper=self._prepare_activations
+        self.activation = self.parse_field(
+            "activation", wrapper=self._prepare_activations
         )
         self.kernel_initializer = self.parse_field("kernel_initializer")
 
