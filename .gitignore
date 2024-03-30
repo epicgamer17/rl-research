@@ -2,3 +2,5 @@
 *.keras
 *.mp4
 *.png
+*.meta.json
+*/test_notebook.ipynb
