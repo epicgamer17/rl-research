@@ -41,7 +41,7 @@ class Update(NamedTuple):
 
 class LearnerBase(RainbowAgent):
     def __init__(self, env, config: ApeXConfig | LearnerApeXMixin):
-        super(RainbowAgent, self).__init__(name="learner", env=env, config=config)
+        super().__init__(name="learner", env=env, config=config)
         self.config = config
 
         self.samples_queue: queue.Queue[Sample] = queue.Queue(
@@ -58,6 +58,7 @@ class LearnerBase(RainbowAgent):
         pass
 
     def _experience_replay(self):
+        ti = time.time()
         with tf.GradientTape() as tape:
             elementwise_loss = 0
             samples = self.samples_queue.get()
@@ -115,7 +116,7 @@ class LearnerBase(RainbowAgent):
         logger.info("tape done, training with gradient tape")
         # TRAINING WITH GRADIENT TAPE
         gradients = tape.gradient(loss, self.model.trainable_variables)
-        self.optimizer(
+        self.config.optimizer(
             learning_rate=self.config.learning_rate,
             epsilon=self.config.adam_epsilon,
             clipnorm=self.config.clipnorm,
@@ -140,6 +141,8 @@ class LearnerBase(RainbowAgent):
         self.model.reset_noise()
         self.target_model.reset_noise()
         loss = loss.numpy()
+
+        logger.info(f"experience replay took {time.time()-ti} s")
         return loss
 
     def run(self, graph_interval=20):
@@ -181,6 +184,7 @@ class LearnerBase(RainbowAgent):
             self.update_target_model(model_update_count)
 
             if training_step % graph_interval == 0:
+                self.test(5, 0)
                 self.save_checkpoint(
                     stats,
                     targets,

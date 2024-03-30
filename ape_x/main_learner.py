@@ -32,18 +32,32 @@ distributed_config = {
 }
 
 rainbow_config = {
-    "loss_function": losses.Huber(),
+    "width": 1024,
+    "atom_size": 51,
+    "loss_function": losses.CategoricalCrossentropy(),
     "activation": "relu",
-    "kernel_initializer": "he_normal",
+    "kernel_initializer": "orthogonal",
+    "adam_epsilon": 0.0003125,
+    "ema_beta": 0.95,
+    "transfer_interval": 100,
+    "minibatch_size": 128,
+    "dense_layers": 2,
+    "dense_layers_noisy": True,
+    "dueling": True,
+    "per_epsilon": 0.001,
+    "per_alpha": 0.05 * 10,
+    "per_beta": 0.05 * 7,
+    "clipnorm": 0.5,
+    "replay_interval": 1,
 }
 
 
 learner_config = {
-    "num_training_steps": 1000,
+    "training_steps": 1000,
     "remove_old_experiences_interval": 1000,
-    "push_weights_interval": 20,
     "samples_queue_size": 16,
     "updates_queue_size": 16,
+    "push_params_interval": 1,
 }
 
 conf = {**rainbow_config, **distributed_config, **learner_config}
