@@ -1,6 +1,6 @@
 from setuptools import setup
 
 setup(
-    name="gym_envs",
+    name="custom_gym_envs",
     version="0.0.1",
 )
