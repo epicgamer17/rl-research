@@ -67,7 +67,7 @@ def main(learner_port, actors_port):
     replay_memory = ReplayBuffer(
         observation_dimensions=env.observation_space.shape,
         max_size=20000,
-        batch_size=2**7,
+        batch_size=128,
         max_priority=1.0,
         alpha=0.5,  # config["per_alpha"],
         # epsilon=config["per_epsilon"],

@@ -39,7 +39,7 @@ class ActorBase(RainbowAgent, ABC):
     ):
         self.config = config
 
-        super(RainbowAgent, self).__init__(name=f"actor_{id}", env=env, config=config)
+        super().__init__(name=f"actor_{id}", env=env, config=config)
 
     @abstractclassmethod
     def update_params(self):
@@ -131,7 +131,7 @@ class ActorBase(RainbowAgent, ABC):
 
             state_input = self.prepare_states(state)
             action = self.select_action(state_input)
-            next_state, reward, terminated, truncated = self.step(action)
+            next_state, reward, terminated, truncated, info = self.step(action)
             done = terminated or truncated
             state = next_state
             score += reward
@@ -169,7 +169,8 @@ class ActorBase(RainbowAgent, ABC):
 
                 self.push_experience_batch(batch)
 
-            self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
+            per_beta_increase = (1 - self.config.per_beta) / self.config.training_steps
+            self.config.per_beta = min(1.0, self.config.per_beta + per_beta_increase)
 
             if done:
                 state, _ = self.env.reset()

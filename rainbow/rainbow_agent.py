@@ -67,6 +67,7 @@ class RainbowAgent(BaseAgent):
         name=datetime.datetime.now().timestamp(),
     ):
         super(RainbowAgent, self).__init__(env, config, name)
+        self.config = config
         self.model = Network(
             config, self.num_actions, input_shape=self.observation_dimensions
         )
@@ -325,19 +326,21 @@ class RainbowAgent(BaseAgent):
         target_network_distributions = self.target_model(next_inputs).numpy()
 
         target_distributions = target_network_distributions[
-            range(self.replay_batch_size), next_actions
+            range(self.config.minibatch_size), next_actions
         ]
         target_z = rewards + (1 - dones) * (discount_factor) * self.support
-        target_z = np.clip(target_z, self.v_min, self.v_max)
+        target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
 
-        b = ((target_z - self.v_min) / (self.v_max - self.v_min)) * (self.atom_size - 1)
+        b = (
+            (target_z - self.config.v_min) / (self.config.v_max - self.config.v_min)
+        ) * (self.config.atom_size - 1)
         l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
         m = np.zeros_like(target_distributions)
         assert m.shape == l.shape
         lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
         upper_distributions = target_distributions * (b - tf.cast(l, tf.float64))
 
-        for i in range(self.replay_batch_size):
+        for i in range(self.config.minibatch_size):
             np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
             np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
         target_distributions = m
