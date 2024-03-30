@@ -1,12 +1,17 @@
 import tensorflow as tf
+from tensorflow import keras
+from keras import Model
 import numpy as np
 from layers.noisy_dense import NoisyDense
+from agent_configs import RainbowConfig
 
 # from noisy_conv2d import NoisyConv2D
 
 
-class Network(tf.keras.Model):
-    def __init__(self, config, output_size, input_shape, *args, **kwargs):
+class Network(Model):
+    def __init__(
+        self, config: RainbowConfig, output_size, input_shape, *args, **kwargs
+    ):
         super().__init__()
         self.config = config
 

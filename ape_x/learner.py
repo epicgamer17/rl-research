@@ -9,7 +9,7 @@ from compress_utils import compress
 from abc import ABC, abstractclassmethod
 from typing import NamedTuple
 from compress_utils import decompress
-from agent_configs import ApeXConfig
+from agent_configs import ApeXConfig, LearnerApeXMixin, DistributedConfig
 
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
@@ -40,8 +40,9 @@ class Update(NamedTuple):
 
 
 class LearnerBase(RainbowAgent):
-    def __init__(self, env, config: ApeXConfig):
-        super().__init__(model_name="learner", env=env, config=config)
+    def __init__(self, env, config: ApeXConfig | LearnerApeXMixin):
+        super(RainbowAgent, self).__init__(name="learner", env=env, config=config)
+        self.config = config
 
         self.samples_queue: queue.Queue[Sample] = queue.Queue(
             maxsize=self.config.samples_queue_size
@@ -77,7 +78,7 @@ class LearnerBase(RainbowAgent):
                 initial_distributions,
                 list(zip(range(initial_distributions.shape[0]), actions)),
             )
-            elementwise_loss = self.model.loss.call(
+            elementwise_loss = self.config.loss_function.call(
                 y_pred=distributions_to_train,
                 y_true=tf.convert_to_tensor(target_ditributions),
             )
@@ -99,7 +100,7 @@ class LearnerBase(RainbowAgent):
                 initial_distributions,
                 list(zip(range(initial_distributions.shape[0]), actions)),
             )
-            elementwise_loss_n_step = self.model.loss.call(
+            elementwise_loss_n_step = self.config.loss_function.call(
                 y_pred=distributions_to_train,
                 y_true=tf.convert_to_tensor(target_ditributions),
             )
@@ -142,7 +143,7 @@ class LearnerBase(RainbowAgent):
         return loss
 
     def run(self, graph_interval=20):
-        training_time = time()
+        training_time = time.time()
         self.on_run()
 
         logger.info("learner running")
@@ -162,9 +163,9 @@ class LearnerBase(RainbowAgent):
         score = 0
         training_step = 0
 
-        while training_step <= self.config.num_training_steps:
+        for training_step in range(self.config.training_steps + 1):
             logger.info(
-                f"learner training step: {training_step}/{self.config.num_training_steps}"
+                f"learner training step: {training_step}/{self.config.training_steps}"
             )
             self.config.per_beta = min(
                 1.0,
@@ -176,7 +177,6 @@ class LearnerBase(RainbowAgent):
             model_update_count += 1
             loss = self._experience_replay()
             logger.info(f"finished exp replay")
-            training_step += 1
             stats["loss"].append(loss)
             self.update_target_model(model_update_count)
 
@@ -187,7 +187,7 @@ class LearnerBase(RainbowAgent):
                     5,
                     training_step,
                     training_step * self.config.replay_interval,
-                    time() - training_time,
+                    time.time() - training_time,
                 )
         logger.info("loop done")
 
@@ -261,9 +261,10 @@ import entities.replayMemory_capnp as replayMemory_capnp
 
 
 class DistributedLearner(LearnerBase):
-    def __init__(self, env, config):
+    def __init__(self, env, config: ApeXConfig | LearnerApeXMixin | DistributedConfig):
         super().__init__(env=env, config=config)
         self.updates_queue = queue.Queue()
+        self.config = config
 
     def handle_replay_socket(self, flag: threading.Event):
         ctx = zmq.Context()
@@ -324,7 +325,7 @@ class DistributedLearner(LearnerBase):
 
     def handle_learner_requests(self, flag: threading.Event):
         ctx = zmq.Context()
-        port = self.config.port
+        port = self.config.learner_port
 
         learner_socket = ctx.socket(zmq.REP)
 

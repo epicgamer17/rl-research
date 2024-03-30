@@ -3,8 +3,8 @@ import tensorflow as tf
 import numpy as np
 import time
 import logging
-from agent_configs import ApeXConfig
-import learner
+from agent_configs import ApeXConfig, ActorApeXMixin, DistributedConfig
+
 from abc import ABC, abstractclassmethod
 from compress_utils import decompress, compress
 import entities.replayMemory_capnp as replayMemory_capnp
@@ -35,18 +35,11 @@ class ActorBase(RainbowAgent, ABC):
         self,
         id,
         env,
-        config: ApeXConfig,
+        config: ApeXConfig | ActorApeXMixin,
     ):
-        # override local replay config
-        config["min_replay_buffer_size"] = config["buffer_size"]
-        config["replay_buffer_size"] = config["buffer_size"]
-        config["n_step"] = config["buffer_size"]
-        config["replay_batch_size"] = config["buffer_size"]
+        self.config = config
 
-        super().__init__(model_name=f"actor_{id}", env=env, config=config)
-        self.id = id
-        self.poll_params_interval = config["poll_params_interval"]
-        self.buffer_size = config["buffer_size"]
+        super(RainbowAgent, self).__init__(name=f"actor_{id}", env=env, config=config)
 
     @abstractclassmethod
     def update_params(self):
@@ -66,7 +59,7 @@ class ActorBase(RainbowAgent, ABC):
         actions = samples["actions"]
         observations = samples["observations"]
         inputs = self.prepare_states(observations)
-        discount_factor = self.discount_factor
+        discount_factor = self.config.discount_factor
         target_distributions = self.compute_target_distributions(
             samples, discount_factor
         )
@@ -75,7 +68,7 @@ class ActorBase(RainbowAgent, ABC):
             initial_distributions,
             list(zip(range(initial_distributions.shape[0]), actions)),
         )
-        elementwise_loss = self.model.loss.call(
+        elementwise_loss = self.config.loss_function.call(
             y_pred=distributions_to_train,
             y_true=tf.convert_to_tensor(target_distributions),
         )
@@ -83,7 +76,7 @@ class ActorBase(RainbowAgent, ABC):
             elementwise_loss
         )
         # if self.use_n_step:
-        discount_factor = self.discount_factor**self.n_step
+        discount_factor = self.config.discount_factor**self.config.n_step
         n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
         actions = n_step_samples["actions"]
         observations = n_step_samples["observations"]
@@ -97,7 +90,7 @@ class ActorBase(RainbowAgent, ABC):
             initial_distributions,
             list(zip(range(initial_distributions.shape[0]), actions)),
         )
-        elementwise_loss_n_step = self.model.loss.call(
+        elementwise_loss_n_step = self.config.loss_function.call(
             y_pred=distributions_to_train,
             y_true=tf.convert_to_tensor(target_distributions),
         )
@@ -107,7 +100,7 @@ class ActorBase(RainbowAgent, ABC):
             elementwise_loss
         )
 
-        prioritized_loss = elementwise_loss + self.per_epsilon
+        prioritized_loss = elementwise_loss + self.config.per_epsilon
         # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
         prioritized_loss = np.clip(
             prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
@@ -129,12 +122,11 @@ class ActorBase(RainbowAgent, ABC):
         state, _ = self.env.reset()
         score = 0
         stat_score = []
-        num_trials_truncated = 0
 
         training_step = 0
-        while training_step <= self.num_training_steps:
+        for training_step in range(self.config.training_steps + 1):
             logger.debug(
-                f"{self.model_name} training step: {training_step}/{self.num_training_steps}"
+                f"{self.model_name} training step: {training_step}/{self.training_steps}"
             )
 
             state_input = self.prepare_states(state)
@@ -146,24 +138,18 @@ class ActorBase(RainbowAgent, ABC):
 
             self.replay_buffer.store(state, action, reward, next_state, done)
 
-            if training_step % self.replay_buffer_size == 0 and training_step > 0:
+            if (
+                training_step % self.config.replay_buffer_size == 0
+                and training_step > 0
+            ):
                 logger.info(
-                    f"{self.model_name} training step: {training_step}/{self.num_training_steps}"
+                    f"{self.model_name} training step: {training_step}/{self.training_steps}"
                 )
-                indices = list(range(self.replay_batch_size))
+                indices = np.arange(self.config.replay_buffer_size)
                 n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
-                # dict(
-                #     observations=self.observation_buffer[indices],
-                #     next_observations=self.next_observation_buffer[indices],
-                #     actions=self.action_buffer[indices],
-                #     rewards=self.reward_buffer[indices],
-                #     dones=self.done_buffer[indices],
-                #     ids=self.id_buffer[indices],
-                # )
-
                 ids = list()
 
-                for i in range(len(indices)):
+                for _ in range(len(indices)):
                     ids.append(uuid.uuid4().hex)
 
                 prioritized_loss = self.calculate_losses(indices)
@@ -191,26 +177,21 @@ class ActorBase(RainbowAgent, ABC):
                 stat_score.append(score)
                 score = 0
 
-            if (training_step % self.poll_params_interval) == 0:
+            if (training_step % self.config.poll_params_interval) == 0:
                 self.update_params()
-
-            training_step += 1
 
         self.env.close()
 
-        return num_trials_truncated / self.num_training_steps
-
-
-class SingleMachineActor(ActorBase):
-    def __init__(
-        self,
-        id,
-        env,
-        config,
-        single_machine_learner: learner.SingleMachineLearner = None,  # TODO: change this to single machine learner
-    ):
-        super().__init__(id, env, config)
-        self.learner = single_machine_learner
+    # class SingleMachineActor(ActorBase):
+    #     def __init__(
+    #         self,
+    #         id,
+    #         env,
+    #         config,
+    #         single_machine_learner: learner.SingleMachineLearner = None,  # TODO: change this to single machine learner
+    #     ):
+    #         super().__init__(id, env, config)
+    #         self.learner = single_machine_learner
 
     def update_params(self):
         # get the latest weights from the learner
@@ -252,17 +233,18 @@ class DistributedActor(ActorBase):
         self,
         id,
         env,
-        config,
+        config: ApeXConfig | ActorApeXMixin | DistributedConfig,
     ):
         super().__init__(id, env, config)
-        self.socket_ctx = zmq.Context()
+        self.config = config
 
+        self.socket_ctx = zmq.Context()
         learner_address = self.config.learner_addr
         learner_port = self.config.learner_port
         learner_url = f"tcp://{learner_address}:{learner_port}"
 
         replay_address = self.config.replay_addr
-        replay_port = self.configreplay_port
+        replay_port = self.config.replay_port
         replay_url = f"tcp://{replay_address}:{replay_port}"
 
         self.learner_socket = self.socket_ctx.socket(zmq.REQ)

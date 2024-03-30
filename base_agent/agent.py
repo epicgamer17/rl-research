@@ -1,23 +1,15 @@
-import gc
 import math
 import os
-import sys
-
-from uvicorn import Config
-
-sys.path.append("../")
-
-import copy
+import gymnasium as gym
+from agent_configs import Config
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
 import gymnasium as gym
-
-from typing import Optional
+import copy
 
 
 class BaseAgent:
-    def __init__(self, env, config: Config, name):
+    def __init__(self, env: gym.Env, config: Config, name):
         self.model_name = name
         self.config = config
 

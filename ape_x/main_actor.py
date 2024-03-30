@@ -1,12 +1,13 @@
 import tensorflow as tf
-import copy
+from tensorflow import keras
+from keras import losses
 from actor import DistributedActor
 import argparse
 import gymnasium as gym
 
 import logging
 
-from agent_configs import ApeXConfig
+from agent_configs import ApeXConfig, ActorApeXMixin, DistributedConfig
 from game_configs import CartPoleConfig
 
 logger = logging.getLogger(__name__)
@@ -24,20 +25,33 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
 
-actor_config = {
-    "poll_params_interval": 100,
-    "buffer_size": 100,
-    "num_training_steps": 50000,
-    "learner_addr": None,
-    "learner_port": None,
-    "replay_addr": None,
-    "replay_port": None,
+distributed_config = {
+    "learner_addr": "127.0.0.1",
+    "learner_port": 5556,
+    "replay_port": 5554,
+    "replay_addr": "127.0.0.1",
 }
+
+rainbow_config = {
+    "loss_function": losses.Huber(),
+    "activation": "relu",
+    "kernel_initializer": "he_normal",
+}
+
+
+actor_config = {}
+
+conf = {**rainbow_config, **distributed_config, **actor_config}
 
 
 def make_cartpole_env():
     env = gym.make("CartPole-v1", render_mode="rgb_array")
     return env
+
+
+class ActorConfig(ApeXConfig, ActorApeXMixin, DistributedConfig):
+    def __init__(self, actor_config, game_config):
+        super(ApeXConfig, self).__init__(actor_config, game_config)
 
 
 def main():
@@ -49,12 +63,12 @@ def main():
     parser.add_argument("replay_port", type=str)
     args = parser.parse_args()
 
-    actor_config["learner_addr"] = args.learner_addr
-    actor_config["learner_port"] = args.learner_port
-    actor_config["replay_addr"] = args.replay_addr
-    actor_config["replay_port"] = args.replay_port
+    conf["learner_addr"] = args.learner_addr
+    conf["learner_port"] = args.learner_port
+    conf["replay_addr"] = args.replay_addr
+    conf["replay_port"] = args.replay_port
 
-    config = ApeXConfig(actor_config, CartPoleConfig())
+    config = ActorConfig(conf, CartPoleConfig())
 
     actor = DistributedActor(
         id=args.id,

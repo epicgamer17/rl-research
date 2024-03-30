@@ -1,6 +1,7 @@
 import tensorflow as tf
-import copy
-from agent_configs import ApeXConfig
+from tensorflow import keras
+from keras import losses
+from agent_configs import ApeXConfig, LearnerApeXMixin, DistributedConfig
 from game_configs import CartPoleConfig
 from learner import DistributedLearner
 import gymnasium as gym
@@ -23,16 +24,29 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
 
+distributed_config = {
+    "learner_addr": "127.0.0.1",
+    "learner_port": 5556,
+    "replay_port": 5554,
+    "replay_addr": "127.0.0.1",
+}
+
+rainbow_config = {
+    "loss_function": losses.Huber(),
+    "activation": "relu",
+    "kernel_initializer": "he_normal",
+}
+
+
 learner_config = {
     "num_training_steps": 1000,
     "remove_old_experiences_interval": 1000,
     "push_weights_interval": 20,
     "samples_queue_size": 16,
     "updates_queue_size": 16,
-    "port": None,
-    "replay_addr": None,
-    "replay_port": None,
 }
+
+conf = {**rainbow_config, **distributed_config, **learner_config}
 
 
 def make_cartpole_env():
@@ -40,22 +54,33 @@ def make_cartpole_env():
     return env
 
 
+class LearnerConfig(ApeXConfig, LearnerApeXMixin, DistributedConfig):
+    def __init__(self, learner_config, game_config):
+        super().__init__(learner_config, game_config)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
-    parser.add_argument("port", type=str)
-    parser.add_argument("replay_addr", type=str)
-    parser.add_argument("replay_port", type=str)
+    parser.add_argument(
+        "port", type=str, help="Port that the learner zmq socket will bind to"
+    )
+    parser.add_argument("replay_addr", type=str, help="Address of the replay server")
+    parser.add_argument(
+        "replay_port",
+        type=str,
+        help="Port of the replay server that the learner will connect to. It is different than the port for actors.",
+    )
     args = parser.parse_args()
 
-    learner_config["port"] = args.port
-    learner_config["replay_addr"] = args.replay_addr
-    learner_config["replay_port"] = args.replay_port
+    conf["learner_port"] = args.port
+    conf["replay_addr"] = args.replay_addr
+    conf["replay_port"] = args.replay_port
 
-    config = ApeXConfig(learner_config, CartPoleConfig())
+    config = LearnerConfig(conf, CartPoleConfig())
 
     learner = DistributedLearner(
         env=make_cartpole_env(),
-        config=learner_config,
+        config=config,
     )
     learner.run()
 
