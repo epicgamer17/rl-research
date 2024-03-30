@@ -4,7 +4,7 @@ import sys
 from time import time
 
 from base_agent.agent import BaseAgent
-from configs.agent_configs.alphazero_config import AlphaZeroConfig
+from agent_configs import AlphaZeroConfig
 
 sys.path.append("../")
 
