@@ -217,6 +217,7 @@ class PPOAgent(BaseAgent):
 
         state, _ = self.env.reset()
         for training_step in range(self.config.training_steps):
+            print("Training Step: ", training_step)
             num_episodes = 0
             total_score = 0
             score = 0

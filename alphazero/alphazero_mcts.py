@@ -23,11 +23,7 @@ class Node:
 
         for action, p in policy.items():
             child_state, reward, terminated, truncated, info = env.step(action)
-            child_legal_moves = (
-                info["legal_moves"]
-                if "legal_moves" in info
-                else range(self.num_actions)
-            )
+            child_legal_moves = info["legal_moves"] if "legal_moves" in info else None
             # Create Children Nodes (New Leaf Nodes)
             self.children[action] = Node(p / policy_sum, child_state, child_legal_moves)
             env = copy.deepcopy(base_env)
