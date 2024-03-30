@@ -1,5 +1,5 @@
-from configs.agent_configs.base_config import ConfigBase
-from configs.agent_configs.rainbow_config import RainbowConfig
+from base_config import ConfigBase
+from rainbow_config import RainbowConfig
 import tensorflow as tf
 
 
