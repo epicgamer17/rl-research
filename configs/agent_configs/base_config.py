@@ -1,5 +1,6 @@
 import tensorflow as tf
-from tensorflow.keras.initializers import (
+from tensorflow import keras
+from keras.initializers import (
     VarianceScaling,
     Orthogonal,
     GlorotUniform,
@@ -8,9 +9,10 @@ from tensorflow.keras.initializers import (
     HeUniform,
     LecunNormal,
     LecunUniform,
+    Initializer,
 )
 
-from tensorflow.keras.activations import (
+from keras.activations import (
     relu,
     sigmoid,
     softplus,
@@ -19,6 +21,10 @@ from tensorflow.keras.activations import (
     elu,
     selu,
 )
+
+from keras.optimizers import Optimizer, Adam
+
+from keras.losses import Loss
 
 from tensorflow.nn import (
     silu,
@@ -30,8 +36,31 @@ import numpy as np
 from configs.game_configs.game_config import GameConfig
 
 
-class Config:
+class ConfigBase:
+    def parse_field(self, field_name, default, wrapper=None, required=True):
+        if field_name in self.config_dict:
+            val = self.config_dict[field_name]
+            print(f"Using {field_name}: {val}")
+            if wrapper is not None:
+                return wrapper(val)
+            return self.config_dict[field_name]
+
+        if default is not None:
+            print(f"Using default {field_name}: {default}")
+            return default
+
+        if required:
+            raise ValueError(
+                f"Missing required field without default value: {field_name}"
+            )
+
+    def __init__(self, config_dict):
+        self.config_dict = config_dict
+
+
+class Config(ConfigBase):
     def __init__(self, config_dict, game_config: GameConfig) -> None:
+        super().__init__(config_dict)
         # could take in a game config and set an action space and observation shape here
         # OR DO THAT IN BASE AGENT?
         self.game = game_config
@@ -40,75 +69,22 @@ class Config:
 
         # ADD LEARNING RATE SCHEDULES
 
-        if "optimizer" in config_dict:
-            self.optimizer = config_dict["optimizer"]
-        else:
-            self.optimizer = tf.keras.optimizers.legacy.Adam
-            print("Using default optimizer: Adam")
+        self.optimizer: Optimizer = self.parse_field("optimizer", Adam)
+        self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
+        self.learning_rate: float = self.parse_field("learning_rate", 0.01)
+        self.clipnorm: int | None = self.parse_field("clipnorm", required=False)
+        self.loss_function: Loss = self.parse_field("loss_function")
+        self.training_iterations: int = self.parse_field("training_iterations", 1)
+        self.num_minibatches: int = self.parse_field("num_minibatches", 1)
+        self.minibatch_size: int = self.parse_field("minibatch_size", 32)
+        self.replay_buffer_size: int = self.parse_field("replay_buffer_size", 1024)
+        self.min_replay_buffer_size: int = self.parse_field("min_replay_buffer_size", 0)
+        self.training_steps: int = self.parse_field("training_steps", 10000)
 
-        if "adam_epsilon" in config_dict:
-            self.adam_epsilon = config_dict["adam_epsilon"]
-        else:
-            self.adam_epsilon = 1e-6
-            print("Using default Adam epsilon: 1e-6")
-
-        if "learning_rate" in config_dict:
-            self.learning_rate = config_dict["learning_rate"]
-        else:
-            self.learning_rate = 0.01
-            print("Using default learning rate: 0.01")
-
-        if "clipnorm" in config_dict:
-            self.clipnorm = config_dict["clipnorm"]
-        else:
-            self.clipnorm = None
-            print("No clipping norm set")
-
-        if "loss_function" in config_dict:
-            self.loss_function = config_dict["loss_function"]
-        else:
-            self.loss_function = None
-            print("No loss function set")
-            # assert self.loss_function is not None, "Loss function must be defined"
-
-        if "training_iterations" in config_dict:
-            self.training_iterations = config_dict["training_iterations"]
-        else:
-            self.training_iterations = 1
-            print("Using default training iterations: 1")
-
-        if "num_minibatches" in config_dict:
-            self.num_minibatches = config_dict["num_minibatches"]
-        else:
-            self.num_minibatches = 1
-            print("Using default number of minibatches: 1")
-
-        if "minibatch_size" in config_dict:
-            self.minibatch_size = config_dict["minibatch_size"]
-        else:
-            self.minibatch_size = 32
-            print("Using default minibatch size: 32")
-
-        if "replay_buffer_size" in config_dict:
-            self.replay_buffer_size = config_dict["replay_buffer_size"]
-        else:
-            self.replay_buffer_size = 1024
-            print("Using default replay buffer size: 1024")
-
-        if "min_replay_buffer_size" in config_dict:
-            self.min_replay_buffer_size = config_dict["min_replay_buffer_size"]
-        else:
-            self.min_replay_buffer_size = 0
-            print("Using default min replay buffer size: 0")
-
-        if "training_steps" in config_dict:
-            self.training_steps = config_dict["training_steps"]
-        else:
-            self.training_steps = 10000
-            print("Using default training steps: 10000")
-
-        self.activation = self._prepare_activations(config_dict["activation"])
-        self.kernel_initializer = config_dict["kernel_initializer"]
+        self.activation = self._prepare_activations(
+            config_dict["activation"], wrapper=self._prepare_activations
+        )
+        self.kernel_initializer = self.parse_field("kernel_initializer")
 
     def _verify_game(self):
         raise NotImplementedError
