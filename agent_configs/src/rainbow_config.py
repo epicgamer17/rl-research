@@ -1,4 +1,4 @@
-from configs.agent_configs.base_config import Config
+from base_config import Config
 import tensorflow as tf
 
 
