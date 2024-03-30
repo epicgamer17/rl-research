@@ -47,26 +47,12 @@ def main():
     parser.add_argument("replay_port", type=str)
     args = parser.parse_args()
 
-<<<<<<< Updated upstream
-    learner_config = copy.deepcopy(base_config)
-    learner_config["num_training_steps"] = 1000
-    learner_config["remove_old_experiences_interval"] = 1000
-    learner_config["push_weights_interval"] = 20
-
-    learner_config["samples_queue_size"] = 16
-    learner_config["updates_queue_size"] = 16
-
-    learner_config["port"] = args.port
-    learner_config["replay_addr"] = args.replay_addr
-    learner_config["replay_port"] = args.replay_port
-=======
     learner_config["port"] = args.port
     learner_config["replay_addr"] = args.replay_addr
     learner_config["replay_port"] = args.replay_port
 
     config = ApeXConfig(learner_config, CartPoleConfig())
 
->>>>>>> Stashed changes
     learner = DistributedLearner(
         env=make_cartpole_env(),
         config=learner_config,

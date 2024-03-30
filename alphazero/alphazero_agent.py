@@ -178,7 +178,7 @@ class AlphaZeroAgent(BaseAgent):
         visit_counts = [
             (child.visits, action) for action, child in root.children.items()
         ]
-        return visit_counts, root
+        return visit_counts
 
     def experience_replay(self):
         samples = self.replay_buffer.sample()

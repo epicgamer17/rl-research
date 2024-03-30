@@ -60,11 +60,7 @@ class Sample(NamedTuple):
     next_observations: np.ndarray
 
 
-<<<<<<< Updated upstream
-class RainbowAgent:
-=======
 class RainbowAgent(BaseAgent):
->>>>>>> Stashed changes
     def __init__(
         self,
         env,

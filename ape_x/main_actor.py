@@ -49,23 +49,13 @@ def main():
     parser.add_argument("replay_port", type=str)
     args = parser.parse_args()
 
-<<<<<<< Updated upstream
-    actor_config = copy.deepcopy(base_config)
-    actor_config["poll_params_interval"] = 100
-    actor_config["buffer_size"] = 128
-    actor_config["num_training_steps"] = 50000
-=======
->>>>>>> Stashed changes
     actor_config["learner_addr"] = args.learner_addr
     actor_config["learner_port"] = args.learner_port
     actor_config["replay_addr"] = args.replay_addr
     actor_config["replay_port"] = args.replay_port
 
-<<<<<<< Updated upstream
-=======
     config = ApeXConfig(actor_config, CartPoleConfig())
 
->>>>>>> Stashed changes
     actor = DistributedActor(
         id=args.id,
         env=make_cartpole_env(),
