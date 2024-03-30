@@ -91,65 +91,10 @@ class AlphaZeroAgent(BaseAgent):
 
         for training_step in range(self.config.training_steps):
             print("Training Step ", training_step + 1)
-<<<<<<< Updated upstream
-            mcts_root = None
-            for training_game in range(self.games_per_generation):
-                print("training:", training_game)
-                print("Game ", training_game + 1)
-                done = False
-                while not done:
-                    visit_counts, mcts_root = self.monte_carlo_tree_search(
-                        self.env, state, legal_moves, mcts_root
-                    )
-                    actions = [action for _, action in visit_counts]
-                    visit_counts = np.array(
-                        [count for count, _ in visit_counts], dtype=np.float32
-                    )
-                    if game.length < self.num_sampling_moves:
-                        temperature = self.initial_temperature
-                    else:
-                        temperature = self.exploitation_temperature
-
-                    temperature_visit_counts = np.power(visit_counts, 1 / temperature)
-                    temperature_visit_counts /= np.sum(temperature_visit_counts)
-                    action = np.random.choice(actions, p=temperature_visit_counts)
-                    print("Action ", action)
-           
-                    if mcts_root != None:
-                        temp_root = mcts_root.children[action]
-                        mcts_root.children = {}
-                        mcts_root = temp_root
-
-                    next_state, reward, terminated, truncated, info = self.step(action)
-                    done = terminated or truncated
-                    legal_moves = (
-                        info["legal_moves"]
-                        if "legal_moves" in info
-                        else range(self.num_actions)
-                    )
-                    # Target Policy doesn't use temperature
-                    policy = np.zeros(self.num_actions)
-                    policy[actions] = visit_counts / np.sum(visit_counts)
-                    print("Target Policy", policy)
-                    game.append(state, reward, policy)
-                    state = next_state
-                    gc.collect()
-                game.set_rewards()
-                self.replay_buffer.store(game)
-                stat_score.append(game.rewards[0])
-                game = Game()
-                state, info = self.env.reset()
-                legal_moves = (
-                    info["legal_moves"]
-                    if "legal_moves" in info
-                    else range(self.num_actions)
-                )
-=======
             for training_game in range(self.config.games_per_generation):
                 score, num_steps = self.play_game()
                 total_environment_steps += num_steps
                 stats["score"].append(score)  # score for player one
->>>>>>> Stashed changes
 
             # STAT TRACKING
             for minibatch in range(self.config.num_minibatches):
@@ -180,17 +125,9 @@ class AlphaZeroAgent(BaseAgent):
         )
         # save model to shared storage @Ezra
 
-<<<<<<< Updated upstream
-    def monte_carlo_tree_search(self, env, state, legal_moves, root):
-        if root == None:
-            root = Node(0, state, legal_moves)
-        illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
-        value, policy = self.predict_single(state, illegal_moves)
-=======
     def monte_carlo_tree_search(self, env, state, legal_moves):
         root = Node(0, state, legal_moves)
         value, policy = self.predict_single(state, legal_moves)
->>>>>>> Stashed changes
         print("Predicted Policy ", policy)
         print("Predicted Value ", value)
         root.to_play = int(
