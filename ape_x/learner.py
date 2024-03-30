@@ -11,6 +11,7 @@ from typing import NamedTuple
 from compress_utils import decompress
 
 sys.path.append("../")
+from configs.agent_configs.ape_x_config import ApeXConfig
 from rainbow.rainbow_agent import RainbowAgent
 
 import matplotlib
@@ -39,8 +40,9 @@ class Update(NamedTuple):
 
 
 class LearnerBase(RainbowAgent):
-    def __init__(self, env, config):
+    def __init__(self, env, config: ApeXConfig):
         super().__init__(model_name="learner", env=env, config=config)
+<<<<<<< Updated upstream
         self.graph_interval = 200
         self.remove_old_experiences_interval = config["remove_old_experiences_interval"]
         self.push_weights_interval = config["push_weights_interval"]
@@ -54,6 +56,16 @@ class LearnerBase(RainbowAgent):
             maxsize=self.updates_queue_size
         )
 
+=======
+
+        self.samples_queue: queue.Queue[Sample] = queue.Queue(
+            maxsize=self.config.samples_queue_size
+        )
+        self.updates_queue: queue.Queue[Update] = queue.Queue(
+            maxsize=self.config.updates_queue_size
+        )
+
+>>>>>>> Stashed changes
     def on_run(self):
         pass
 
@@ -71,7 +83,11 @@ class LearnerBase(RainbowAgent):
             weights = samples.weights.reshape(-1, 1)
 
             inputs = self.prepare_states(observations)
+<<<<<<< Updated upstream
             discount_factor = self.discount_factor
+=======
+            discount_factor = self.config.discount_factor
+>>>>>>> Stashed changes
 
             target_ditributions = self.compute_target_distributions_np(
                 samples, discount_factor
@@ -90,7 +106,11 @@ class LearnerBase(RainbowAgent):
             )
 
             # if self.use_n_step:
+<<<<<<< Updated upstream
             discount_factor = self.discount_factor**self.n_step
+=======
+            discount_factor = self.config.discount_factor**self.config.n_step
+>>>>>>> Stashed changes
             actions = samples.actions
             n_step_observations = samples.observations
             observations = n_step_observations
@@ -119,14 +139,14 @@ class LearnerBase(RainbowAgent):
         # TRAINING WITH GRADIENT TAPE
         gradients = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer(
-            learning_rate=self.learning_rate,
-            epsilon=self.adam_epsilon,
-            clipnorm=self.clipnorm,
+            learning_rate=self.config.learning_rate,
+            epsilon=self.config.adam_epsilon,
+            clipnorm=self.config.clipnorm,
         ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
         # TRAINING WITH tf.train_on_batch
         # loss = self.model.train_on_batch(samples["observations"], target_ditributions, sample_weight=weights)
 
-        prioritized_loss = elementwise_loss + self.per_epsilon
+        prioritized_loss = elementwise_loss + self.config.per_epsilon
         # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
         prioritized_loss = np.clip(
             prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
@@ -146,35 +166,53 @@ class LearnerBase(RainbowAgent):
         return loss
 
     def run(self, graph_interval=20):
+<<<<<<< Updated upstream
+=======
+        training_time = time()
+>>>>>>> Stashed changes
         self.on_run()
 
         logger.info("learner running")
         self.is_test = False
-        stat_score = (
-            []
-        )  # make these num trials divided by graph interval so i dont need to append (to make it faster?)
-        stat_test_score = []
-        stat_loss = []
+        stats = {
+            "score": [],
+            "loss": [],
+            "test_score": [],
+        }
+        targets = {
+            "score": self.env.spec.reward_threshold,
+            "test_score": self.env.spec.reward_threshold,
+        }
         # self.fill_replay_buffer()
         state, _ = self.env.reset()
         model_update_count = 0
         score = 0
         training_step = 0
 
+<<<<<<< Updated upstream
         while training_step <= self.num_training_steps:
+=======
+        while training_step <= self.config.num_training_steps:
+>>>>>>> Stashed changes
             logger.info(
-                f"learner training step: {training_step}/{self.num_training_steps}"
+                f"learner training step: {training_step}/{self.config.num_training_steps}"
             )
-            self.per_beta = min(1.0, self.per_beta + self.per_beta_increase)
+            self.config.per_beta = min(
+                1.0,
+                self.config.per_beta
+                + (1 - self.config.per_beta)
+                / self.config.training_steps,  # per beta increase
+            )
 
             model_update_count += 1
             loss = self._experience_replay()
             logger.info(f"finished exp replay")
             training_step += 1
-            stat_loss.append(loss)
+            stats["loss"].append(loss)
             self.update_target_model(model_update_count)
 
             if training_step % graph_interval == 0:
+<<<<<<< Updated upstream
                 # self.save_checkpoint(training_step)
                 stat_test_score.append(self.test(num_trials=5))
                 self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
@@ -182,6 +220,18 @@ class LearnerBase(RainbowAgent):
         logger.info("loop done")
 
         self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
+=======
+                self.save_checkpoint(
+                    stats,
+                    targets,
+                    5,
+                    training_step,
+                    training_step * self.config.replay_interval,
+                    time() - training_time,
+                )
+        logger.info("loop done")
+
+>>>>>>> Stashed changes
         self.save_checkpoint(training_step)
         self.env.close()
         self.on_done()
@@ -220,7 +270,7 @@ class SingleMachineLearner(LearnerBase):
         while not self.finished_event.isSet():
             logger.debug("polling for flag")
             if self.samples_queue.qsize() < target_size:
-                if self.replay_buffer.size < self.min_replay_buffer_size:
+                if self.replay_buffer.size < self.config.min_replay_buffer_size:
                     logger.debug(
                         "replay buffer not large enough to sample from, polling"
                     )
@@ -260,9 +310,13 @@ class DistributedLearner(LearnerBase):
         ctx = zmq.Context()
 
         replay_socket = ctx.socket(zmq.REQ)
+<<<<<<< Updated upstream
         replay_addr = self.config["replay_addr"]
         replay_port = self.config["replay_port"]
         replay_url = f"tcp://{replay_addr}:{replay_port}"
+=======
+        replay_url = f"tcp://{self.config.replay_addr}:{self.config.replay_port}"
+>>>>>>> Stashed changes
 
         logger.info(f"learner connecting to replay buffer at {replay_url}")
         replay_socket.connect(replay_url)
@@ -272,7 +326,11 @@ class DistributedLearner(LearnerBase):
         while not flag.is_set():
             logger.info("poll")
             if i == 0:
+<<<<<<< Updated upstream
                 if self.samples_queue.qsize() < self.samples_queue_size:
+=======
+                if self.samples_queue.qsize() < self.config.samples_queue_size:
+>>>>>>> Stashed changes
                     logger.info("requesting batch")
                     replay_socket.send(message_codes.LEARNER_REQUESTS_BATCH)
                     logger.info("wating for batch")
@@ -317,7 +375,11 @@ class DistributedLearner(LearnerBase):
 
     def handle_learner_requests(self, flag: threading.Event):
         ctx = zmq.Context()
+<<<<<<< Updated upstream
         port = self.config["port"]
+=======
+        port = self.config.port
+>>>>>>> Stashed changes
 
         learner_socket = ctx.socket(zmq.REP)
 

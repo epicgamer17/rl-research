@@ -1,6 +1,8 @@
 import gc
 import sys
+from time import time
 
+from alphazero.alphazero_agent import AlphaZeroAgent
 from muzero.muzero_minmax_stats import MinMaxStats
 
 sys.path.append("../")
@@ -40,56 +42,9 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 
 
-class MuZeroAgent:
-    def __init__(self, env, name, config):
-        self.model_name = name
-
-        self.env = env
-        self.test_env = copy.deepcopy(env)
-        self.num_actions = env.action_space.n
-        self.observation_dimensions = env.observation_space.shape
-
-        self.training_steps = config["training_steps"]
-        self.games_per_generation = config["games_per_generation"]
-        self.checkpoint_interval = 5
-
-        self.optimizer = config["optimizer"]
-        self.min_learning_rate = config["min_learning_rate"]
-        self.max_learning_rate = config["max_learning_rate"]
-        self.learning_rate = self.min_learning_rate
-
-        number_of_lr_cycles = config["number_of_lr_cycles"]
-        self.cycle_length = self.training_steps // number_of_lr_cycles
-        self.learning_rate_step = (self.max_learning_rate - self.min_learning_rate) / (
-            self.cycle_length / 2
-        )  # could do like a dictionairy with episode numbers as update points and then values as new learning rates instead of doing a stepwise system
-
-        self.adam_epsilon = config["adam_epsilon"]
-        self.clipnorm = config["clipnorm"]
-        self.value_loss_factor = config["value_loss_factor"]
-        self.weight_decay = config["weight_decay"]
-
-        self.model = Network(config, self.observation_dimensions, self.num_actions)
-
-        self.replay_batch_size = config["replay_batch_size"]
-        self.replay_buffer = ReplayBuffer(
-            config["replay_buffer_size"], self.replay_batch_size
-        )
-
-        self.root_dirichlet_alpha = config["root_dirichlet_alpha"]
-        self.root_exploration_fraction = config["root_exploration_fraction"]
-        self.num_simulations = config["num_simulations"]
-        self.num_sampling_moves = config["num_sampling_moves"]
-        self.initial_temperature = config["initial_temperature"]
-        self.exploitation_temperature = config["exploitation_temperature"]
-
-        self.pb_c_base = config["pb_c_base"]
-        self.pb_c_init = config["pb_c_init"]
-
-        self.known_bounds = config["known_bounds"]
-        self.num_players = config["num_players"]
-
-        self.is_test = False
+class MuZeroAgent(AlphaZeroAgent):
+    def __init__(self, env, config, name):
+        super(MuZeroAgent, self).__init__(env, config, name)
 
     def step(self, action):
         if not self.is_test:
@@ -100,101 +55,63 @@ class MuZeroAgent:
         return next_state, reward, terminated, truncated, info
 
     def train(self):
-        stat_score = []
-        stat_policy_loss = []
-        stat_value_loss = []
-        stat_l2_loss = []
-        stat_loss = []
-        stat_test_score = []
+        training_time = time()
+        total_environment_steps = 0
+        stats = {
+            "score": [],
+            "policy_loss": [],
+            "value_loss": [],
+            "l2_loss": [],
+            "reward_loss": [],
+            "loss": [],
+            "test_score": [],
+        }
+        targets = {
+            "score": self.env.spec.reward_threshold,
+            "value_loss": 0,
+            "reward_loss": 0,
+            "policy_loss": 0,
+            "l2_loss": 0,
+            "loss": 0,
+            "test_score": self.env.spec.reward_threshold,
+        }
 
-        state, info = self.env.reset()
-        game = Game()
-        training_step = 0
-        legal_moves = (
-            info["legal_moves"] if "legal_moves" in info else range(self.num_actions)
-        )
-        while training_step < self.training_steps:
+        for training_step in range(self.config.training_steps):
             print("Training Step ", training_step + 1)
             for training_game in range(self.games_per_generation):
-                print("Game ", training_game + 1)
-                done = False
-                while not done:
-                    value, visit_counts = self.monte_carlo_tree_search(
-                        self.env, state, legal_moves, game.action_history
-                    )
-                    actions = [action for _, action in visit_counts]
-                    visit_counts = np.array(
-                        [count for count, _ in visit_counts], dtype=np.float32
-                    )
-                    if game.length < self.num_sampling_moves:
-                        temperature = self.initial_temperature
-                    else:
-                        temperature = self.exploitation_temperature
-
-                    temperature_visit_counts = np.power(visit_counts, 1 / temperature)
-                    temperature_visit_counts /= np.sum(temperature_visit_counts)
-                    action = np.random.choice(actions, p=temperature_visit_counts)
-                    print("Action ", action)
-
-                    next_state, reward, terminated, truncated, info = self.step(action)
-
-                    done = terminated or truncated
-                    legal_moves = (
-                        info["legal_moves"]
-                        if "legal_moves" in info
-                        else range(self.num_actions)
-                    )
-
-                    # Target Policy doesn't use temperature
-                    policy = np.zeros(self.num_actions)
-                    policy[actions] = visit_counts / np.sum(visit_counts)
-                    print("Target Policy", policy)
-
-                    game.append(state, reward, policy, value, action)
-                    state = next_state
-                    gc.collect()
-                self.replay_buffer.store(game)
-                stat_score.append(game.rewards[0])
-                game = Game()
-                state, info = self.env.reset()
-                legal_moves = (
-                    info["legal_moves"]
-                    if "legal_moves" in info
-                    else range(self.num_actions)
-                )
+                score, num_steps = self.play_game()
+                total_environment_steps += num_steps
+                stats["score"].append(score)
 
             # STAT TRACKING
-            value_loss, reward_loss, policy_loss, l2_loss, loss = (
-                self.experience_replay()
-            )
-            stat_policy_loss.append(policy_loss)
-            stat_value_loss.append(value_loss)
-            stat_l2_loss.append(l2_loss)
-            stat_loss.append(loss)
-
-            training_step += 1
-            # CYCLICAL LEARNING RATE
-            if training_step % self.cycle_length == 0:
-                self.learning_rate_step *= -1
-            self.learning_rate += self.learning_rate_step
+            for minibatch in range(self.config.num_minibatches):
+                value_loss, reward_loss, policy_loss, l2_loss, loss = (
+                    self.experience_replay()
+                )
+                stats["value_loss"].append(value_loss)
+                stats["reward_loss"].append(reward_loss)
+                stats["policy_loss"].append(policy_loss)
+                stats["l2_loss"].append(l2_loss)
+                stats["loss"].append(loss)
 
             # CHECKPOINTING
-            if training_step % self.checkpoint_interval == 0:
-                test_score = self.test(num_trials=1)
-                stat_test_score.append(test_score)
-                self.save_checkpoint()
-
-            # GRAPHING
-            self.plot_graph(
-                stat_score,
-                stat_policy_loss,
-                stat_value_loss,
-                stat_l2_loss,
-                stat_loss,
-                stat_test_score,
-                training_step,
-            )
-        self.save_checkpoint()
+            if training_step % self.checkpoint_interval == 0 and training_step > 0:
+                self.save_checkpoint(
+                    stats,
+                    targets,
+                    5,
+                    training_step,
+                    total_environment_steps,
+                    time() - training_time,
+                )
+        self.save_checkpoint(
+            stats,
+            targets,
+            5,
+            training_step,
+            total_environment_steps,
+            time() - training_time,
+        )
         # save model to shared storage @Ezra
 
     def monte_carlo_tree_search(self, env, state, legal_moves, action_history):
@@ -204,11 +121,13 @@ class MuZeroAgent:
         root.expand(legal_moves, to_play, value, policy, hidden_state, reward)
 
         if not self.is_test:
-            root.add_noise(self.root_dirichlet_alpha, self.root_exploration_fraction)
+            root.add_noise(
+                self.config.root_dirichlet_alpha, self.config.root_exploration_fraction
+            )
 
-        min_max_stats = MinMaxStats(self.known_bounds)
+        min_max_stats = MinMaxStats(self.config.known_bounds)
 
-        for _ in range(self.num_simulations):
+        for _ in range(self.config.num_simulations):
             history = copy.deepcopy(action_history)
             node = root
             search_path = [node]
@@ -216,10 +135,10 @@ class MuZeroAgent:
             # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
                 action, node = node.select_child(
-                    min_max_stats, self.pb_c_base, self.pb_c_init
+                    min_max_stats, self.config.pb_c_base, self.config.pb_c_init
                 )
                 history.append(action)
-                to_play = to_play + 1 % self.num_players
+                to_play = to_play + 1 % self.config.num_players
                 search_path.append(node)
 
             # Turn of the leaf node
@@ -237,7 +156,7 @@ class MuZeroAgent:
                 node.visits += 1
                 min_max_stats.update(node.value())
 
-                value = node.reward + self.discount_factor * value
+                value = node.reward + self.config.discount_factor * value
 
         visit_counts = [
             (child.visits, action) for action, child in root.children.items()
@@ -245,70 +164,83 @@ class MuZeroAgent:
         return root.value(), visit_counts
 
     def experience_replay(self):
-        samples = self.replay_buffer.sample(self.unroll_steps, self.n_step)
+        samples = self.replay_buffer.sample(
+            self.config.unroll_steps, self.config.n_step
+        )
         observations = samples["observations"]
         target_policies = samples["policy"]
         target_values = samples["values"]
         target_rewards = samples["rewards"]
         actions = samples["actions"]
         inputs = self.prepare_states(observations)
-        with tf.GradientTape() as tape:
-            loss = 0
-            for item in range(len(observations)):
-                value, policy, hidden_state = self.predict_single_initial_inference(
-                    inputs[item]
-                )
-
-                # NORMALIZE POLICIES WITH ILLEGAL MOVES (DO WE DO THIS FOR MUZERO???)
-                # legal_moves_mask = (np.array(target_policies) > 0).astype(int)
-                # policies = tf.math.multiply(policies, legal_moves_mask)
-                # policies = tf.math.divide(
-                #     policies, tf.reduce_sum(policies, axis=1, keepdims=True)
-                # )
-
-                gradient_scales = [1.0]
-                values = [value]
-                policies = [policy]
-                rewards = [0]  # maybe this is from initial inference
-                for action in actions[item]:
-                    reward, hidden_state, value, policy = (
-                        self.predict_single_recurrent_inference(hidden_state, action)
+        for training_iteration in range(self.config.training_iterations):
+            with tf.GradientTape() as tape:
+                loss = 0
+                for item in range(len(observations)):
+                    value, policy, hidden_state = self.predict_single_initial_inference(
+                        inputs[item]
                     )
-                    gradient_scales.append(1.0 / len(actions[item]))
-                    values.append(value)
-                    policies.append(policy)
-                    rewards.append(reward)
 
-                    hidden_state = tf.scale_gradient(hidden_state, 0.5)
+                    # NORMALIZE POLICIES WITH ILLEGAL MOVES (DO WE DO THIS FOR MUZERO???)
+                    # legal_moves_mask = (np.array(target_policies) > 0).astype(int)
+                    # policies = tf.math.multiply(policies, legal_moves_mask)
+                    # policies = tf.math.divide(
+                    #     policies, tf.reduce_sum(policies, axis=1, keepdims=True)
+                    # )
 
-                value_loss = self.value_loss_factor * self.value_loss_function(
-                    target_values, values
-                )
-                reward_loss = self.reward_loss_function(target_rewards, rewards)
-                policy_loss = self.policy_loss_function(target_policies, policies)
-                scaled_loss = tf.math.multiply(
-                    value_loss + reward_loss + policy_loss, gradient_scales
-                )
-                print("Scaled Loss Shape ", scaled_loss.shape)
-                loss += tf.reduce_sum(scaled_loss)
+                    gradient_scales = [1.0]
+                    values = [value]
+                    policies = [policy]
+                    rewards = [0]  # maybe this is from initial inference
+                    for action in actions[item]:
+                        reward, hidden_state, value, policy = (
+                            self.predict_single_recurrent_inference(
+                                hidden_state, action
+                            )
+                        )
+                        gradient_scales.append(1.0 / len(actions[item]))
+                        values.append(value)
+                        policies.append(policy)
+                        rewards.append(reward)
 
-            # compute losses
-            loss = tf.divide(loss, self.replay_batch_size)
-            l2_loss = sum(self.model.losses)
-            loss += l2_loss
-            # loss = tf.reduce_mean(loss)
+                        hidden_state = tf.scale_gradient(hidden_state, 0.5)
 
-        # print("Value Loss ", value_loss)
-        # print("Policy Loss ", policy_loss)
-        # print("L2 Loss ", l2_loss)
-        # print("Loss ", loss)
+                    value_loss = (
+                        self.config.value_loss_factor
+                        * self.config.value_loss_function(target_values, values)
+                    )
+                    reward_loss = self.config.reward_loss_function(
+                        target_rewards, rewards
+                    )
+                    policy_loss = self.config.policy_loss_function(
+                        target_policies, policies
+                    )
+                    scaled_loss = tf.math.multiply(
+                        value_loss + reward_loss + policy_loss, gradient_scales
+                    )
+                    print("Scaled Loss Shape ", scaled_loss.shape)
+                    loss += tf.reduce_sum(scaled_loss)
 
-        gradients = tape.gradient(loss, self.model.trainable_variables)
-        self.optimizer(
-            learning_rate=self.learning_rate,
-            epsilon=self.adam_epsilon,
-            clipnorm=self.clipnorm,
-        ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
+                # compute losses
+                loss = tf.divide(loss, self.config.replay_batch_size)
+                l2_loss = sum(self.model.losses)
+                loss += l2_loss
+                # loss = tf.reduce_mean(loss)
+
+            # print("Value Loss ", value_loss)
+            # print("Policy Loss ", policy_loss)
+            # print("L2 Loss ", l2_loss)
+            # print("Loss ", loss)
+
+            gradients = tape.gradient(loss, self.model.trainable_variables)
+            self.optimizer(
+                learning_rate=self.config.learning_rate,
+                epsilon=self.config.adam_epsilon,
+                clipnorm=self.config.clipnorm,
+            ).apply_gradients(
+                grads_and_vars=zip(gradients, self.model.trainable_variables)
+            )
+        # RIGHT NOW THIS RETURNS ONE BUT SHOULD PROBABLY RETURN A VALUE FOR EACH ITERATION
         return (
             tf.reduce_mean(value_loss),
             tf.reduce_mean(reward_loss),
@@ -316,15 +248,6 @@ class MuZeroAgent:
             tf.reduce_mean(l2_loss),
             loss,
         )
-
-    def prepare_states(self, state):
-        state = np.array(state)
-        if state.shape == self.observation_dimensions:
-            new_shape = (1,) + state.shape
-            state_input = state.reshape(new_shape)
-        else:
-            state_input = state
-        return state_input
 
     def predict_single_initial_inference(self, state):
         state_input = self.prepare_states(state)
@@ -340,94 +263,43 @@ class MuZeroAgent:
         value = value.numpy().item()
         return reward, hidden_state, value, policy
 
-    def save_checkpoint(self, episode=-1, best_model=False):
-        if episode != -1:
-            path = "./{}_{}_episodes.keras".format(
-                self.model_name, episode + self.start_episode
-            )
+    def select_action(self, state, legal_moves=None, game=None):
+        value, visit_counts = self.monte_carlo_tree_search(self.env, state, legal_moves)
+        actions = [action for _, action in visit_counts]
+        visit_counts = np.array([count for count, _ in visit_counts], dtype=np.float32)
+        if (not self.is_test) and game.length < self.config.num_sampling_moves:
+            temperature = self.config.exploration_temperature
         else:
-            path = "./{}.keras".format(self.model_name)
+            temperature = self.config.exploitation_temperature
 
-        if best_model:
-            path = "./best_model.keras"
+        temperature_visit_counts = np.power(visit_counts, 1 / temperature)
+        temperature_visit_counts /= np.sum(temperature_visit_counts)
+        action = np.random.choice(actions, p=temperature_visit_counts)
 
-        self.model.save(path)
+        target_policy = np.zeros(self.num_actions)
+        target_policy[actions] = visit_counts / np.sum(visit_counts)
+        print("Target Policy", target_policy)
+        if self.is_test:
+            return action
+        else:
+            return action, target_policy, value
 
-    def plot_graph(
-        self, score, policy_loss, value_loss, l2_loss, loss, test_score, step
-    ):
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
-        ax1.plot(score, linestyle="solid")
-        ax1.set_title("Frame {}. Score: {}".format(step, np.mean(score[-10:])))
-        ax2.plot(policy_loss, linestyle="solid")
-        ax2.set_title(
-            "Frame {}. Policy Loss: {}".format(step, np.mean(policy_loss[-10:]))
-        )
-        ax3.plot(value_loss, linestyle="solid")
-        ax3.set_title(
-            "Frame {}. Value Loss: {}".format(step, np.mean(value_loss[-10:]))
-        )
-        ax4.plot(test_score, linestyle="solid")
-        # ax3.axhline(y=self.env.spec.reward_threshold, color="r", linestyle="-")
-        ax4.set_title(
-            "Frame {}. Test Score: {}".format(step, np.mean(test_score[-10:]))
-        )
-        plt.savefig("./{}.png".format(self.model_name))
-        plt.close(fig)
+    def play_game(self):
+        state, info = self.env.reset()
+        game = Game()
+        legal_moves = info["legal_moves"] if self.config.game.has_legal_moves else None
 
-    def test(self, num_trials=100, video_folder="") -> None:
-        """Test the agent."""
-        self.is_test = True
-        average_score = 0
-
-        state, info = self.test_env.reset()
-        legal_moves = (
-            info["legal_moves"] if "legal_moves" in info else range(self.num_actions)
-        )
-        for trials in range(num_trials):
-            done = False
-            score = 0
-            test_game_moves = []
-            while not done:
-                visit_counts = self.monte_carlo_tree_search(
-                    self.test_env, state, legal_moves
-                )
-                actions = [action for _, action in visit_counts]
-                visit_counts = np.array(
-                    [count for count, _ in visit_counts], dtype=np.float32
-                )
-                print("MCTS Policy ", visit_counts / np.sum(visit_counts))
-                action = actions[np.argmax(visit_counts)]
-                test_game_moves.append(action)
-                next_state, reward, terminated, truncated, info = self.step(action)
-                done = terminated or truncated
-                legal_moves = (
-                    info["legal_moves"]
-                    if "legal_moves" in info
-                    else range(self.num_actions)
-                )
-                state = next_state
-                score += reward
-            state, info = self.test_env.reset()
+        done = False
+        while not done:
+            action, target_policy = self.select_action(state, legal_moves, game=game)
+            print("Action ", action)
+            next_state, reward, terminated, truncated, info = self.step(action)
+            done = terminated or truncated
             legal_moves = (
-                info["legal_moves"]
-                if "legal_moves" in info
-                else range(self.num_actions)
+                info["legal_moves"] if self.config.game.has_legal_moves else None
             )
-            average_score += score
-            print("score: ", score)
-
-        if video_folder == "":
-            video_folder = "./videos/{}".format(self.model_name)
-
-        video_test_env = copy.deepcopy(self.test_env)
-        video_test_env.reset()
-        video_test_env = gym.wrappers.RecordVideo(video_test_env, video_folder)
-        for move in test_game_moves:
-            video_test_env.step(move)
-        video_test_env.close()
-
-        # reset
-        self.is_test = False
-        average_score /= num_trials
-        return average_score
+            game.append(state, reward, target_policy)
+            state = next_state
+            game.set_rewards()
+            self.replay_buffer.store(game)
+        return game.rewards[0], game.length

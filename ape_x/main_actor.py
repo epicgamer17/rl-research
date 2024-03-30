@@ -6,6 +6,9 @@ import gymnasium as gym
 
 import logging
 
+from configs.agent_configs.ape_x_config import ApeXConfig
+from configs.game_configs.cartpole_config import CartPoleConfig
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 fh = logging.FileHandler("main_actor.log", mode="w")
@@ -21,41 +24,14 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
 
-base_config = {
-    "activation": "relu",
-    "kernel_initializer": "orthogonal",
-    "optimizer": tf.keras.optimizers.legacy.Adam,
-    "learning_rate": 0.01,
-    "adam_epsilon": 0.0003125,
-    "soft_update": False,
-    "ema_beta": 0.95,
-    "transfer_frequency": 100,
-    "replay_period": 2,
-    "replay_batch_size": 2**7,
-    "replay_buffer_size": 50000,
-    "min_replay_buffer_size": 625,
-    "n_step": 3,
-    "discount_factor": 0.995,
-    "atom_size": 51,
-    "conv_layers": [],
-    "conv_layers_noisy": False,
-    "width": 1024,
-    "dense_layers": 2,
-    "dense_layers_noisy": True,
-    "noisy_sigma": 0.5,
-    "loss_function": tf.keras.losses.CategoricalCrossentropy(),
-    "dueling": True,
-    "advantage_hidden_layers": 0,
-    "value_hidden_layers": 0,
-    "num_training_steps": 1000,
-    "per_epsilon": 0.001,
-    "per_alpha": 0.05 * 10,
-    "per_beta": 0.05 * 7,
-    "clipnorm": 0.5,
-    "v_min": -500.0,  # MIN GAME SCORE
-    "v_max": 500.0,  # MAX GAME SCORE
-    # 'search_max_depth': 5,
-    # 'search_max_time': 10,
+actor_config = {
+    "poll_params_interval": 100,
+    "buffer_size": 100,
+    "num_training_steps": 50000,
+    "learner_addr": None,
+    "learner_port": None,
+    "replay_addr": None,
+    "replay_port": None,
 }
 
 
@@ -73,19 +49,27 @@ def main():
     parser.add_argument("replay_port", type=str)
     args = parser.parse_args()
 
+<<<<<<< Updated upstream
     actor_config = copy.deepcopy(base_config)
     actor_config["poll_params_interval"] = 100
     actor_config["buffer_size"] = 128
     actor_config["num_training_steps"] = 50000
+=======
+>>>>>>> Stashed changes
     actor_config["learner_addr"] = args.learner_addr
     actor_config["learner_port"] = args.learner_port
     actor_config["replay_addr"] = args.replay_addr
     actor_config["replay_port"] = args.replay_port
 
+<<<<<<< Updated upstream
+=======
+    config = ApeXConfig(actor_config, CartPoleConfig())
+
+>>>>>>> Stashed changes
     actor = DistributedActor(
         id=args.id,
         env=make_cartpole_env(),
-        config=actor_config,
+        config=config,
     )
     actor.run()
 

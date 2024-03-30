@@ -178,12 +178,12 @@ def create_search_space():
             "soft_update", [False]
         ),  # seems to always be false, we can try it with tru
         "ema_beta": hp.uniform("ema_beta", 0.95, 0.999),
-        "transfer_frequency": hp.choice(
-            "transfer_frequency", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
+        "transfer_interval": hp.choice(
+            "transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
         ),
         "replay_period": hp.choice("replay_period", [1, 2, 3, 4, 5, 8, 10, 12]),
-        "replay_batch_size": hp.choice(
-            "replay_batch_size", [2**i for i in range(0, 8)]
+        "minibatch_size": hp.choice(
+            "minibatch_size", [2**i for i in range(0, 8)]
         ),  ###########
         "replay_buffer_size": hp.choice(
             "replay_buffer_size",
@@ -238,9 +238,9 @@ def create_search_space():
             # NORMALIZATION?
             "soft_update": 0,  # seems to always be false, we can try it with tru
             "ema_beta": 0.95,
-            "transfer_frequency": 3,
+            "transfer_interval": 3,
             "replay_period": 1,
-            "replay_batch_size": 7,
+            "minibatch_size": 7,
             "replay_buffer_size": 8,
             "min_replay_buffer_size": 4,
             "n_step": 2,

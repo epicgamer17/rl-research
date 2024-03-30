@@ -6,7 +6,9 @@ KnownBounds = collections.namedtuple("KnownBounds", ["min", "max"])
 
 
 class MinMaxStats(object):
-    def __init__(self, known_bounds: Optional[KnownBounds]):
+    def __init__(
+        self, known_bounds: Optional[KnownBounds]
+    ):  # might need to say known_bounds=None
         self.max = known_bounds.max if known_bounds else MAXIMUM_FLOAT_VALUE
         self.min = known_bounds.min if known_bounds else -MAXIMUM_FLOAT_VALUE
 
