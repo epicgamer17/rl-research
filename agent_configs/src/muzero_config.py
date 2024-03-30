@@ -1,4 +1,4 @@
-from configs.agent_configs.alphazero_config import AlphaZeroConfig
+from alphazero_config import AlphaZeroConfig
 import tensorflow as tf
 
 
