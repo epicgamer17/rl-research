@@ -1,11 +1,10 @@
-import sys
-
-from base_agent.agent import BaseAgent
+import os
 from agent_configs import RainbowConfig
 
-sys.path.append("../")
+import sys
 
-import os
+sys.path.append("../")
+from base_agent.agent import BaseAgent
 
 os.environ["OMP_NUM_THREADS"] = f"{8}"
 os.environ["MKL_NUM_THREADS"] = f"{8}"
