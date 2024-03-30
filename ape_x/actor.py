@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 import time
 import logging
+from configs.agent_configs.ape_x_config import ApeXConfig
 import learner
 from abc import ABC, abstractclassmethod
 from compress_utils import decompress, compress
@@ -34,7 +35,7 @@ class ActorBase(RainbowAgent, ABC):
         self,
         id,
         env,
-        config,
+        config: ApeXConfig,
     ):
         # override local replay config
         config["min_replay_buffer_size"] = config["buffer_size"]
@@ -256,12 +257,21 @@ class DistributedActor(ActorBase):
         super().__init__(id, env, config)
         self.socket_ctx = zmq.Context()
 
+<<<<<<< Updated upstream
         learner_address = config["learner_addr"]
         learner_port = config["learner_port"]
         learner_url = f"tcp://{learner_address}:{learner_port}"
 
         replay_address = config["replay_addr"]
         replay_port = config["replay_port"]
+=======
+        learner_address = self.config.learner_addr
+        learner_port = self.config.learner_port
+        learner_url = f"tcp://{learner_address}:{learner_port}"
+
+        replay_address = self.config.replay_addr
+        replay_port = self.configreplay_port
+>>>>>>> Stashed changes
         replay_url = f"tcp://{replay_address}:{replay_port}"
 
         self.learner_socket = self.socket_ctx.socket(zmq.REQ)
