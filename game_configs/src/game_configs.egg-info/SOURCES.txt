@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/__init__.py
+src/atari_config.py
+src/cartpole_config.py
+src/connect4_config.py
+src/game_config.py
+src/tictactoe_config.py
+src/game_configs.egg-info/PKG-INFO
+src/game_configs.egg-info/SOURCES.txt
+src/game_configs.egg-info/dependency_links.txt
+src/game_configs.egg-info/top_level.txt
