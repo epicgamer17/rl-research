@@ -257,21 +257,12 @@ class DistributedActor(ActorBase):
         super().__init__(id, env, config)
         self.socket_ctx = zmq.Context()
 
-<<<<<<< Updated upstream
-        learner_address = config["learner_addr"]
-        learner_port = config["learner_port"]
-        learner_url = f"tcp://{learner_address}:{learner_port}"
-
-        replay_address = config["replay_addr"]
-        replay_port = config["replay_port"]
-=======
         learner_address = self.config.learner_addr
         learner_port = self.config.learner_port
         learner_url = f"tcp://{learner_address}:{learner_port}"
 
         replay_address = self.config.replay_addr
         replay_port = self.configreplay_port
->>>>>>> Stashed changes
         replay_url = f"tcp://{replay_address}:{replay_port}"
 
         self.learner_socket = self.socket_ctx.socket(zmq.REQ)
