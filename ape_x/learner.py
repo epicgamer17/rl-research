@@ -42,21 +42,6 @@ class Update(NamedTuple):
 class LearnerBase(RainbowAgent):
     def __init__(self, env, config: ApeXConfig):
         super().__init__(model_name="learner", env=env, config=config)
-<<<<<<< Updated upstream
-        self.graph_interval = 200
-        self.remove_old_experiences_interval = config["remove_old_experiences_interval"]
-        self.push_weights_interval = config["push_weights_interval"]
-
-        self.samples_queue_size = config["samples_queue_size"]
-        self.samples_queue: queue.Queue[Sample] = queue.Queue(
-            maxsize=self.samples_queue_size
-        )
-        self.updates_queue_size = config["updates_queue_size"]
-        self.updates_queue: queue.Queue[Update] = queue.Queue(
-            maxsize=self.updates_queue_size
-        )
-
-=======
 
         self.samples_queue: queue.Queue[Sample] = queue.Queue(
             maxsize=self.config.samples_queue_size
@@ -65,7 +50,6 @@ class LearnerBase(RainbowAgent):
             maxsize=self.config.updates_queue_size
         )
 
->>>>>>> Stashed changes
     def on_run(self):
         pass
 
@@ -83,11 +67,7 @@ class LearnerBase(RainbowAgent):
             weights = samples.weights.reshape(-1, 1)
 
             inputs = self.prepare_states(observations)
-<<<<<<< Updated upstream
-            discount_factor = self.discount_factor
-=======
             discount_factor = self.config.discount_factor
->>>>>>> Stashed changes
 
             target_ditributions = self.compute_target_distributions_np(
                 samples, discount_factor
@@ -106,11 +86,7 @@ class LearnerBase(RainbowAgent):
             )
 
             # if self.use_n_step:
-<<<<<<< Updated upstream
-            discount_factor = self.discount_factor**self.n_step
-=======
             discount_factor = self.config.discount_factor**self.config.n_step
->>>>>>> Stashed changes
             actions = samples.actions
             n_step_observations = samples.observations
             observations = n_step_observations
@@ -166,10 +142,7 @@ class LearnerBase(RainbowAgent):
         return loss
 
     def run(self, graph_interval=20):
-<<<<<<< Updated upstream
-=======
         training_time = time()
->>>>>>> Stashed changes
         self.on_run()
 
         logger.info("learner running")
@@ -189,11 +162,7 @@ class LearnerBase(RainbowAgent):
         score = 0
         training_step = 0
 
-<<<<<<< Updated upstream
-        while training_step <= self.num_training_steps:
-=======
         while training_step <= self.config.num_training_steps:
->>>>>>> Stashed changes
             logger.info(
                 f"learner training step: {training_step}/{self.config.num_training_steps}"
             )
@@ -212,15 +181,6 @@ class LearnerBase(RainbowAgent):
             self.update_target_model(model_update_count)
 
             if training_step % graph_interval == 0:
-<<<<<<< Updated upstream
-                # self.save_checkpoint(training_step)
-                stat_test_score.append(self.test(num_trials=5))
-                self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
-
-        logger.info("loop done")
-
-        self.plot_graph(stat_score, stat_loss, stat_test_score, training_step)
-=======
                 self.save_checkpoint(
                     stats,
                     targets,
@@ -231,7 +191,6 @@ class LearnerBase(RainbowAgent):
                 )
         logger.info("loop done")
 
->>>>>>> Stashed changes
         self.save_checkpoint(training_step)
         self.env.close()
         self.on_done()
@@ -310,13 +269,7 @@ class DistributedLearner(LearnerBase):
         ctx = zmq.Context()
 
         replay_socket = ctx.socket(zmq.REQ)
-<<<<<<< Updated upstream
-        replay_addr = self.config["replay_addr"]
-        replay_port = self.config["replay_port"]
-        replay_url = f"tcp://{replay_addr}:{replay_port}"
-=======
         replay_url = f"tcp://{self.config.replay_addr}:{self.config.replay_port}"
->>>>>>> Stashed changes
 
         logger.info(f"learner connecting to replay buffer at {replay_url}")
         replay_socket.connect(replay_url)
@@ -326,11 +279,7 @@ class DistributedLearner(LearnerBase):
         while not flag.is_set():
             logger.info("poll")
             if i == 0:
-<<<<<<< Updated upstream
-                if self.samples_queue.qsize() < self.samples_queue_size:
-=======
                 if self.samples_queue.qsize() < self.config.samples_queue_size:
->>>>>>> Stashed changes
                     logger.info("requesting batch")
                     replay_socket.send(message_codes.LEARNER_REQUESTS_BATCH)
                     logger.info("wating for batch")
@@ -375,11 +324,7 @@ class DistributedLearner(LearnerBase):
 
     def handle_learner_requests(self, flag: threading.Event):
         ctx = zmq.Context()
-<<<<<<< Updated upstream
-        port = self.config["port"]
-=======
         port = self.config.port
->>>>>>> Stashed changes
 
         learner_socket = ctx.socket(zmq.REP)
 
