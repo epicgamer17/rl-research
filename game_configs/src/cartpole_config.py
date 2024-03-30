@@ -1,4 +1,4 @@
-from configs.game_configs.game_config import GameConfig
+from game_config import GameConfig
 
 
 class CartPoleConfig(GameConfig):
