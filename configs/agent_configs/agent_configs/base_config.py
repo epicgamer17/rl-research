@@ -72,8 +72,10 @@ class Config(ConfigBase):
         self.optimizer: Optimizer = self.parse_field("optimizer", Adam)
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
         self.learning_rate: float = self.parse_field("learning_rate", 0.01)
-        self.clipnorm: int | None = self.parse_field("clipnorm", required=False)
-        self.loss_function: Loss = self.parse_field("loss_function")
+        self.clipnorm: int | None = self.parse_field("clipnorm", None, required=False)
+        self.loss_function: Loss = self.parse_field(
+            "loss_function", None, required=False
+        )
         self.training_iterations: int = self.parse_field("training_iterations", 1)
         self.num_minibatches: int = self.parse_field("num_minibatches", 1)
         self.minibatch_size: int = self.parse_field("minibatch_size", 32)
