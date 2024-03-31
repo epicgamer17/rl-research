@@ -166,15 +166,12 @@ class LearnerBase(RainbowAgent):
         score = 0
         training_step = 0
 
-        for training_step in range(self.config.training_steps + 1):
-            logger.info(
-                f"learner training step: {training_step}/{self.config.training_steps}"
-            )
+        for training_step in range(self.training_steps + 1):
+            logger.info(f"learner training step: {training_step}/{self.training_steps}")
             self.config.per_beta = min(
                 1.0,
                 self.config.per_beta
-                + (1 - self.config.per_beta)
-                / self.config.training_steps,  # per beta increase
+                + (1 - self.config.per_beta) / self.training_steps,  # per beta increase
             )
 
             model_update_count += 1
