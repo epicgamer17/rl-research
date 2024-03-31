@@ -124,7 +124,7 @@ class ActorBase(RainbowAgent, ABC):
         stat_score = []
 
         training_step = 0
-        for training_step in range(self.config.training_steps + 1):
+        for training_step in range(self.training_steps + 1):
             logger.debug(
                 f"{self.model_name} training step: {training_step}/{self.training_steps}"
             )
@@ -169,7 +169,7 @@ class ActorBase(RainbowAgent, ABC):
 
                 self.push_experience_batch(batch)
 
-            per_beta_increase = (1 - self.config.per_beta) / self.config.training_steps
+            per_beta_increase = (1 - self.config.per_beta) / self.training_steps
             self.config.per_beta = min(1.0, self.config.per_beta + per_beta_increase)
 
             if done:
