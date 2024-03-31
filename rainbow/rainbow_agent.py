@@ -418,7 +418,7 @@ class RainbowAgent(BaseAgent):
         self.fill_replay_buffer()
         state, _ = self.env.reset()
         score = 0
-        for training_step in range(self.config.training_steps):
+        for training_step in range(self.training_steps):
             for _ in range(self.config.replay_interval):
                 action = self.select_action(state)
 
@@ -430,7 +430,7 @@ class RainbowAgent(BaseAgent):
                     1.0,
                     self.config.per_beta
                     + (1 - self.config.per_beta)
-                    / self.config.training_steps,  # per beta increase
+                    / self.training_steps,  # per beta increase
                 )
 
                 if done:
