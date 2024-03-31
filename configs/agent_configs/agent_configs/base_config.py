@@ -69,10 +69,13 @@ class Config(ConfigBase):
 
         # ADD LEARNING RATE SCHEDULES
 
-        self.optimizer: Optimizer = self.parse_field("optimizer", Adam)
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
         self.learning_rate: float = self.parse_field("learning_rate", 0.01)
         self.clipnorm: int | None = self.parse_field("clipnorm", None, required=False)
+        self.optimizer: Optimizer = self.parse_field(
+            "optimizer",
+            Adam(self.learning_rate, epsilon=self.adam_epsilon, clipnorm=self.clipnorm),
+        )
         self.loss_function: Loss = self.parse_field(
             "loss_function", None, required=False
         )

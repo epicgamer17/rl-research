@@ -183,46 +183,6 @@ class ActorBase(RainbowAgent, ABC):
 
         self.env.close()
 
-    # class SingleMachineActor(ActorBase):
-    #     def __init__(
-    #         self,
-    #         id,
-    #         env,
-    #         config,
-    #         single_machine_learner: learner.SingleMachineLearner = None,  # TODO: change this to single machine learner
-    #     ):
-    #         super().__init__(id, env, config)
-    #         self.learner = single_machine_learner
-
-    def update_params(self):
-        # get the latest weights from the learner
-        pass
-
-    def push_experience_batch(self, batch):
-        # push the experience batch to the replay buffer
-        pass
-
-    def push_experiences_to_remote_replay_buffer(self, experiences, priorities):
-        t = time.time()
-        n = len(experiences["observations"])
-        logger.info(
-            f" {self.model_name} pushing {n} experiences to remote replay buffer"
-        )
-
-        for i in range(n):
-            self.learner.replay_buffer.store_with_priority_exact(
-                experiences["observations"][i],
-                experiences["actions"][i],
-                experiences["rewards"][i],
-                experiences["next_observations"][i],
-                experiences["dones"][i],
-                priorities[i],
-            )
-
-        delta_t = time.time() - t
-        print("learner replay buffer size: ", self.learner.replay_buffer.size)
-        logger.info(f"push_experiences_to_remote_replay_buffer took: {delta_t} s")
-
 
 import zmq
 import entities.replayMemory_capnp as replayMemory_capnp
