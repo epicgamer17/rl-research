@@ -89,7 +89,7 @@ class AlphaZeroAgent(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
-        for training_step in range(self.config.training_steps):
+        for training_step in range(self.training_steps):
             print("Training Step ", training_step + 1)
             for training_game in range(self.config.games_per_generation):
                 score, num_steps = self.play_game()

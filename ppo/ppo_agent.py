@@ -216,7 +216,7 @@ class PPOAgent(BaseAgent):
         }
 
         state, _ = self.env.reset()
-        for training_step in range(self.config.training_steps):
+        for training_step in range(self.training_steps):
             print("Training Step: ", training_step)
             num_episodes = 0
             total_score = 0
@@ -257,7 +257,7 @@ class PPOAgent(BaseAgent):
             for _ in range(self.config.train_policy_iterations):
 
                 learning_rate = self.config.actor.learning_rate * (
-                    1 - ((training_step - 1) / self.config.training_steps)
+                    1 - ((training_step - 1) / self.training_steps)
                 )
                 # print(learning_rate)
                 learning_rate = max(learning_rate, 0)
@@ -291,7 +291,7 @@ class PPOAgent(BaseAgent):
             for _ in range(self.config.train_value_iterations):
                 # COULD BREAK UP INTO MINI BATCHES
                 learning_rate = self.config.critic.learning_rate * (
-                    1 - ((training_step - 1) / self.config.training_steps)
+                    1 - ((training_step - 1) / self.training_steps)
                 )
 
                 # print(learning_rate)
