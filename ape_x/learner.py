@@ -181,7 +181,6 @@ class LearnerBase(RainbowAgent):
             self.update_target_model(model_update_count)
 
             if training_step % self.checkpoint_interval == 0:
-                self.test(5, 0)
                 self.save_checkpoint(
                     stats,
                     targets,
