@@ -208,11 +208,7 @@ class AlphaZeroAgent(BaseAgent):
                 loss = tf.reduce_mean(loss)
 
             gradients = tape.gradient(loss, self.model.trainable_variables)
-            self.config.optimizer(
-                learning_rate=self.config.learning_rate,
-                epsilon=self.config.adam_epsilon,
-                clipnorm=self.config.clipnorm,
-            ).apply_gradients(
+            self.config.optimizer.apply_gradients(
                 grads_and_vars=zip(gradients, self.model.trainable_variables)
             )
         # RIGHT NOW THIS RETURNS THE LAST ITERATION OF THE LOSSES BUT SHOULD RETURN ONE FOR EACH ITERATION

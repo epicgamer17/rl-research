@@ -57,6 +57,7 @@ class Sample(NamedTuple):
     weights: np.ndarray
     rewards: np.ndarray
     next_observations: np.ndarray
+    dones: np.ndarray
 
 
 class RainbowAgent(BaseAgent):
@@ -77,20 +78,12 @@ class RainbowAgent(BaseAgent):
         )
 
         self.model.compile(
-            optimizer=self.config.optimizer(
-                learning_rate=self.config.learning_rate,
-                epsilon=self.config.adam_epsilon,
-                clipnorm=self.config.clipnorm,
-            ),
+            optimizer=self.config.optimizer,
             loss=self.config.loss_function,
         )
 
         self.target_model.compile(
-            optimizer=self.config.optimizer(
-                learning_rate=self.config.learning_rate,
-                epsilon=self.config.adam_epsilon,
-                clipnorm=self.config.clipnorm,
-            ),
+            optimizer=self.config.optimizer,
             loss=self.config.loss_function,
         )
 
@@ -228,11 +221,7 @@ class RainbowAgent(BaseAgent):
 
             # TRAINING WITH GRADIENT TAPE
             gradients = tape.gradient(loss, self.model.trainable_variables)
-            self.config.optimizer(
-                learning_rate=self.config.learning_rate,
-                epsilon=self.config.adam_epsilon,
-                clipnorm=self.config.clipnorm,
-            ).apply_gradients(
+            self.config.optimizer.apply_gradients(
                 grads_and_vars=zip(gradients, self.model.trainable_variables)
             )
             # TRAINING WITH tf.train_on_batch
@@ -257,38 +246,6 @@ class RainbowAgent(BaseAgent):
         next_inputs = self.prepare_states(next_observations)
         rewards = samples["rewards"].reshape(-1, 1)
         dones = samples["dones"].reshape(-1, 1)
-
-        next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
-        target_network_distributions = self.target_model(next_inputs).numpy()
-
-        target_distributions = target_network_distributions[
-            range(self.config.minibatch_size), next_actions
-        ]
-        target_z = rewards + (1 - dones) * (discount_factor) * self.support
-        target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
-
-        b = (
-            (target_z - self.config.v_min) / (self.config.v_max - self.config.v_min)
-        ) * (self.config.atom_size - 1)
-        l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
-        m = np.zeros_like(target_distributions)
-        assert m.shape == l.shape
-        lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
-        upper_distributions = target_distributions * (b - tf.cast(l, tf.float64))
-
-        for i in range(self.config.minibatch_size):
-            np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
-            np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
-        target_distributions = m
-        return target_distributions
-
-    def compute_target_distributions_np(self, samples, discount_factor):
-        observations = samples.observations
-        inputs = self.prepare_states(observations)
-        next_observations = samples.next_observations
-        next_inputs = self.prepare_states(next_observations)
-        rewards = samples.rewards.reshape(-1, 1)
-        dones = samples.dones.reshape(-1, 1)
 
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()

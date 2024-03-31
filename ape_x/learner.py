@@ -116,11 +116,9 @@ class LearnerBase(RainbowAgent):
         logger.info("tape done, training with gradient tape")
         # TRAINING WITH GRADIENT TAPE
         gradients = tape.gradient(loss, self.model.trainable_variables)
-        self.config.optimizer(
-            learning_rate=self.config.learning_rate,
-            epsilon=self.config.adam_epsilon,
-            clipnorm=self.config.clipnorm,
-        ).apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
+        self.config.optimizer.apply_gradients(
+            grads_and_vars=zip(gradients, self.model.trainable_variables)
+        )
         # TRAINING WITH tf.train_on_batch
         # loss = self.model.train_on_batch(samples["observations"], target_ditributions, sample_weight=weights)
 
@@ -194,64 +192,6 @@ class LearnerBase(RainbowAgent):
         self.save_checkpoint(training_step)
         self.env.close()
         self.on_done()
-
-
-class SingleMachineLearner(LearnerBase):
-    def __init__(self, env, config):
-        super().__init__(env=env, config=config)
-
-    def consume_weights(self):
-        weights = self.weights_queue.get()
-
-        while weights is not None:
-            print("push weights to remote here")
-            weights = self.weights_queue.get()
-
-            # push sample
-
-        logger.info("consume weights finished")
-
-    def consume_priority_updates(self):
-        t = self.priority_updates_queue.get()
-
-        while t is not None:
-            logger.debug(f"updating priorities, {t}")
-            ids, indices, prioritized_loss = t
-
-            self.replay_buffer.update_priorities(indices, prioritized_loss, ids)
-            t = self.priority_updates_queue.get()
-
-        logger.info("consume priority finished")
-
-    def produce_samples(self):
-        target_size = self.samples_queue_size / 2
-
-        while not self.finished_event.isSet():
-            logger.debug("polling for flag")
-            if self.samples_queue.qsize() < target_size:
-                if self.replay_buffer.size < self.config.min_replay_buffer_size:
-                    logger.debug(
-                        "replay buffer not large enough to sample from, polling"
-                    )
-                    time.sleep(1)
-                    continue
-                logger.debug("sampling")
-                samples = self.replay_buffer.sample()
-                indicies = samples["indices"]
-                n_step_samples = self.n_step_replay_buffer.sample_from_indices(indicies)
-                self.samples_queue.put((samples, n_step_samples))
-            else:
-                time.sleep(1)
-
-        logger.info("produce samples finished")
-
-    def remove_old_experiences_from_remote_replay_buffer(self):
-        # done atomatically in the replay buffer (old experiences overwritten)
-        pass
-
-    def get_weights(self):
-        # helper for single machine
-        return self.model.get_weights()
 
 
 import zmq
