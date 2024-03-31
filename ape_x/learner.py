@@ -145,7 +145,7 @@ class LearnerBase(RainbowAgent):
         logger.info(f"experience replay took {time.time()-ti} s")
         return loss
 
-    def run(self, graph_interval=20):
+    def run(self):
         training_time = time.time()
         self.on_run()
 
@@ -180,7 +180,7 @@ class LearnerBase(RainbowAgent):
             stats["loss"].append(loss)
             self.update_target_model(model_update_count)
 
-            if training_step % graph_interval == 0:
+            if training_step % self.checkpoint_interval == 0:
                 self.test(5, 0)
                 self.save_checkpoint(
                     stats,
