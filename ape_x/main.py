@@ -1,6 +1,6 @@
 import subprocess
 import tensorflow as tf
-import gym
+import gymnasium as gym
 import numpy as np
 import threading
 import copy
