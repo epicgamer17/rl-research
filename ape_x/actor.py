@@ -1,202 +1,141 @@
-import sys
+import time
 import tensorflow as tf
 import numpy as np
-import time
-import logging
-from agent_configs import ApeXConfig, ActorApeXMixin, DistributedConfig
-
-from abc import ABC, abstractclassmethod
-from compress_utils import decompress, compress
-import entities.replayMemory_capnp as replayMemory_capnp
 from typing import NamedTuple
+from uuid import uuid4
+import zmq
+from gymnasium import Env
+from base_agent.distributed_agents import ActorAgent, PollingActor
+from agent_configs import (
+    Config,
+    ActorApeXMixin,
+    DistributedConfig,
+    RainbowConfig,
+)
+import entities.replayMemory_capnp as replayMemory_capnp
+import message_codes
+from compress_utils import compress, decompress
 
-import uuid
-
-sys.path.append("../")
-
-from rainbow.rainbow_agent import RainbowAgent
-
+import logging
 
 logger = logging.getLogger(__name__)
 
+import sys
 
-class Batch(NamedTuple):
+sys.path.append("..")
+from rainbow.rainbow_agent import RainbowAgent
+
+
+class TransitionBuffer(NamedTuple):
     observations: np.ndarray
     next_observations: np.ndarray
     actions: np.ndarray
     rewards: np.ndarray
     dones: np.ndarray
+
+
+class Batch(NamedTuple):
+    observations: np.ndarray
+    actions: np.ndarray
+    rewards: np.ndarray
+    next_observations: np.ndarray
+    dones: np.ndarray
     ids: np.ndarray
     priorities: np.ndarray
 
 
-class ActorBase(RainbowAgent, ABC):
+class ApexActor(ActorAgent, PollingActor):
+    """
+    Apex Actor base class
+    """
+
     def __init__(
         self,
-        id,
-        env,
-        config: ApeXConfig | ActorApeXMixin,
+        env: Env,
+        config: Config | ActorApeXMixin,
+        name,
     ):
+        super().__init__(env, config, name)
         self.config = config
+        self.score = 0
+        self.stats = dict(score=list())
 
-        super().__init__(name=f"actor_{id}", env=env, config=config)
+        self.env_state = None
 
-    @abstractclassmethod
-    def update_params(self):
-        # get the latest weights from the learner
-        pass
+        observation_buffer_shape = []
+        observation_buffer_shape += [self.config.replay_buffer_size]
+        observation_buffer_shape += list(self.env.observation_space.shape)
+        observation_buffer_shape = list(observation_buffer_shape)
+        self.transitions_buffer: TransitionBuffer = TransitionBuffer(
+            observations=np.zeros(observation_buffer_shape, dtype=np.float32),
+            next_observations=np.zeros(observation_buffer_shape, dtype=np.float32),
+            actions=np.zeros(self.config.replay_buffer_size, dtype=np.int32),
+            rewards=np.zeros(self.config.replay_buffer_size, dtype=np.float32),
+            dones=np.zeros(self.config.replay_buffer_size, dtype=np.bool_),
+        )
+        self.transitions_buffer_index = 0
 
-    @abstractclassmethod
-    def push_experience_batch(self, batch: Batch):
-        # push the experience batch to the replay buffer
-        pass
+    def reset_transitions_buffer(self):
+        self.transitions_buffer = TransitionBuffer(
+            observations=np.zeros_like(self.transitions_buffer.observations),
+            next_observations=np.zeros_like(self.transitions_buffer.next_observations),
+            actions=np.zeros_like(self.transitions_buffer.actions),
+            rewards=np.zeros_like(self.transitions_buffer.rewards),
+            dones=np.zeros_like(self.transitions_buffer.dones),
+        )
+        self.transitions_buffer_index = 0
 
-    def calculate_losses(self, indices):
-        print("calculating losses...")
-        t = time.time()
-        elementwise_loss = 0
-        samples = self.replay_buffer.sample_from_indices(indices)
-        actions = samples["actions"]
-        observations = samples["observations"]
-        inputs = self.prepare_states(observations)
-        discount_factor = self.config.discount_factor
-        target_distributions = self.compute_target_distributions(
-            samples, discount_factor
-        )
-        initial_distributions = self.model(inputs)
-        distributions_to_train = tf.gather_nd(
-            initial_distributions,
-            list(zip(range(initial_distributions.shape[0]), actions)),
-        )
-        elementwise_loss = self.config.loss_function.call(
-            y_pred=distributions_to_train,
-            y_true=tf.convert_to_tensor(target_distributions),
-        )
-        assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-            elementwise_loss
-        )
-        # if self.use_n_step:
-        discount_factor = self.config.discount_factor**self.config.n_step
-        n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
-        actions = n_step_samples["actions"]
-        observations = n_step_samples["observations"]
-        # observations = n_step_observations
-        inputs = self.prepare_states(observations)
-        target_distributions = self.compute_target_distributions(
-            n_step_samples, discount_factor
-        )
-        initial_distributions = self.model(inputs)
-        distributions_to_train = tf.gather_nd(
-            initial_distributions,
-            list(zip(range(initial_distributions.shape[0]), actions)),
-        )
-        elementwise_loss_n_step = self.config.loss_function.call(
-            y_pred=distributions_to_train,
-            y_true=tf.convert_to_tensor(target_distributions),
-        )
-        # add the losses together to reduce variance (original paper just uses n_step loss)
-        elementwise_loss += elementwise_loss_n_step
-        assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-            elementwise_loss
-        )
+    def on_run_start(self):
+        super().on_run_start()
+        self.env_state, _ = self.env.reset()
 
-        prioritized_loss = elementwise_loss + self.config.per_epsilon
-        # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
-        prioritized_loss = np.clip(
-            prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
+    def collect_experience(self):
+        state_input = self.prepare_states(self.env_state)
+        action = self.select_action(state_input)
+
+        next_state, reward, terminated, truncated, info = super(ActorAgent, self).step(
+            action
+        )
+        done = terminated or truncated
+        self.score += reward
+
+        self.transitions_buffer.observations[self.transitions_buffer_index] = (
+            self.env_state
+        )
+        self.transitions_buffer.next_observations[self.transitions_buffer_index] = (
+            next_state
+        )
+        self.transitions_buffer.actions[self.transitions_buffer_index] = action
+        self.transitions_buffer.rewards[self.transitions_buffer_index] = reward
+        self.transitions_buffer.dones[self.transitions_buffer_index] = done
+        self.transitions_buffer_index += 1
+
+        self.env_state = next_state
+
+        if done:
+            self.env_state, _ = self.env.reset()
+            self.stats["score"].append(self.score)
+            self.score = 0
+
+    def should_send_experience_batch(self, training_step: int):
+        return (
+            training_step % self.config.replay_buffer_size == 0 and training_step != 0
         )
 
-        delta_t = time.time() - t
-        logger.info(f"calculate_losses took: {delta_t} s")
-        return prioritized_loss
-
-    def run(self):
-        self.is_test = False
-
-        logger.info("fetching initial network params from learner...")
-        self.update_params()
-
-        logger.info("filling replay buffer...")
-        self.fill_replay_buffer()
-
-        state, _ = self.env.reset()
-        score = 0
-        stat_score = []
-
-        training_step = 0
-        for training_step in range(self.training_steps + 1):
-            logger.debug(
-                f"{self.model_name} training step: {training_step}/{self.training_steps}"
-            )
-
-            state_input = self.prepare_states(state)
-            action = self.select_action(state_input)
-            next_state, reward, terminated, truncated, info = self.step(action)
-            done = terminated or truncated
-            state = next_state
-            score += reward
-
-            self.replay_buffer.store(state, action, reward, next_state, done)
-
-            if (
-                training_step % self.config.replay_buffer_size == 0
-                and training_step > 0
-            ):
-                logger.info(
-                    f"{self.model_name} training step: {training_step}/{self.training_steps}"
-                )
-                indices = np.arange(self.config.replay_buffer_size)
-                n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
-                ids = list()
-
-                for _ in range(len(indices)):
-                    ids.append(uuid.uuid4().hex)
-
-                prioritized_loss = self.calculate_losses(indices)
-                priorities = self.replay_buffer.update_priorities(
-                    indices, prioritized_loss
-                )
-
-                batch = Batch(
-                    observations=n_step_samples["observations"],
-                    next_observations=n_step_samples["next_observations"],
-                    actions=n_step_samples["actions"],
-                    rewards=n_step_samples["rewards"],
-                    dones=n_step_samples["dones"],
-                    ids=np.array(ids, dtype=np.object_),
-                    priorities=priorities,
-                )
-
-                self.push_experience_batch(batch)
-
-            per_beta_increase = (1 - self.config.per_beta) / self.training_steps
-            self.config.per_beta = min(1.0, self.config.per_beta + per_beta_increase)
-
-            if done:
-                state, _ = self.env.reset()
-                state = state
-                stat_score.append(score)
-                score = 0
-
-            if (training_step % self.config.poll_params_interval) == 0:
-                self.update_params()
-
-        self.env.close()
+    def should_update_params(self, training_step: int):
+        return (
+            training_step % self.config.poll_params_interval == 0 and training_step != 0
+        )
 
 
-import zmq
-import entities.replayMemory_capnp as replayMemory_capnp
-import message_codes
-
-
-class DistributedActor(ActorBase):
+class DistributedApex(ApexActor, RainbowAgent):
     def __init__(
         self,
-        id,
-        env,
-        config: ApeXConfig | ActorApeXMixin | DistributedConfig,
+        env: Env,
+        config: Config | ActorApeXMixin | DistributedConfig | RainbowConfig,
+        name,
     ):
-        super().__init__(id, env, config)
+        super().__init__(env, config, name)
         self.config = config
 
         self.socket_ctx = zmq.Context()
@@ -216,21 +155,23 @@ class DistributedActor(ActorBase):
         self.replay_socket.connect(replay_url)
         logger.info(f"connected to replay buffer at {replay_url}")
 
-    def update_params(self):
-        self.learner_socket.send(message_codes.ACTOR_GET_PARAMS)
-        ti = time.time()
-        logger.info("fetching weights from learner...")
-        res = self.learner_socket.recv()
-        decompressed = decompress(res)
+    def send_experience_batch(self):
+        ids = np.zeros(self.config.replay_buffer_size, dtype=str)
 
-        # todo: fix issues with starting up the weights aren't full
-        if len(decompressed) < 24:
-            logger.info("not enough weights received from learner")
-        else:
-            self.model.set_weights(decompressed)
-            logger.info(f"fetching weights took {time.time() - ti} s")
+        for i in range(self.config.replay_buffer_size):
+            ids[i] = uuid4().hex
 
-    def push_experience_batch(self, batch):
+        batch = Batch(
+            observations=self.transitions_buffer.observations,
+            actions=self.transitions_buffer.actions,
+            rewards=self.transitions_buffer.rewards,
+            next_observations=self.transitions_buffer.next_observations,
+            dones=self.transitions_buffer.dones,
+            ids=ids,
+            priorities=self.calculate_loss(self.transitions_buffer)
+            ** self.replay_buffer.alpha,
+        )
+
         builder = replayMemory_capnp.TransitionBatch.new_message()
         builder.observations = compress(batch.observations)
         builder.nextObservations = compress(batch.next_observations)
@@ -244,3 +185,60 @@ class DistributedActor(ActorBase):
 
         res = builder.to_bytes_packed()
         self.replay_socket.send(res)
+
+        self.reset_transitions_buffer()
+
+    def update_params(self):
+        self.learner_socket.send(message_codes.ACTOR_GET_PARAMS)
+        ti = time.time()
+        logger.info("fetching weights from learner...")
+        res = self.learner_socket.recv()
+        decompressed = decompress(res)
+
+        # todo: fix issues with starting up the weights aren't full
+        # if len(decompressed) < 24:
+        #     logger.info("not enough weights received from learner")
+        # else:
+        try:
+            self.model.set_weights(decompressed)
+        except Exception as e:
+            print(e)
+            logger.info("not enough weights received from learner")
+        logger.info(f"fetching weights took {time.time() - ti} s")
+
+    def on_run_start(self):
+        logger.info("fetching initial network params from learner...")
+        self.update_params()
+        self.env_state, _ = self.env.reset()
+
+    def on_training_step_end(self):
+        per_beta_increase = (1 - self.config.per_beta) / self.training_steps
+        self.config.per_beta = min(1.0, self.config.per_beta + per_beta_increase)
+
+    def calculate_loss(self, batch: TransitionBuffer):
+        print("calculating losses...")
+        t = time.time()
+        discount_factor = self.config.discount_factor**self.config.n_step
+        inputs = self.prepare_states(batch.observations)
+        initial_distributions = self.model(inputs)
+        target_distributions = self.compute_target_distributions_np(
+            batch, discount_factor
+        )
+        distributions_to_train = tf.gather_nd(
+            initial_distributions,
+            list(zip(range(initial_distributions.shape[0]), batch.actions)),
+        )
+        elementwise_loss = self.config.loss_function.call(
+            y_pred=distributions_to_train,
+            y_true=tf.convert_to_tensor(target_distributions),
+        )
+
+        prioritized_loss = elementwise_loss + self.config.per_epsilon
+        # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
+        prioritized_loss = np.clip(
+            prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
+        )
+
+        delta_t = time.time() - t
+        logger.info(f"calculate_losses took: {delta_t} s")
+        return prioritized_loss

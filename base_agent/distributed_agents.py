@@ -39,11 +39,11 @@ class ActorAgent(BaseAgent):
         pass
 
     def run(self):
+        self.is_test = False
         self.on_run_start()
 
         for training_step in range(self.config.training_steps + 1):
             self.on_training_step_start()
-            self.collect_experience()
 
             if self.should_send_experience_batch(training_step):
                 self.send_experience_batch()
@@ -51,9 +51,11 @@ class ActorAgent(BaseAgent):
             if self.should_update_params(training_step):
                 self.update_params()
 
+            self.collect_experience()
             self.on_training_step_end()
 
         self.on_run_end()
+        self.env.close()
 
 
 # Config class for PollingActor

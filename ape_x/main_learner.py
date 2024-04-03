@@ -40,7 +40,7 @@ rainbow_config = {
     "adam_epsilon": 0.0003125,
     "ema_beta": 0.95,
     "transfer_interval": 100,
-    "minibatch_size": 128,
+    "minibatch_size": 256,
     "dense_layers": 2,
     "dense_layers_noisy": True,
     "dueling": True,
@@ -49,13 +49,14 @@ rainbow_config = {
     "per_beta": 0.05 * 7,
     "clipnorm": 0.5,
     "replay_interval": 1,
+    "learning_rate": 0.02,
 }
 
 
 learner_config = {
     "training_steps": 1000,
     "remove_old_experiences_interval": 1000,
-    "samples_queue_size": 16,
+    "samples_queue_size": 4,
     "updates_queue_size": 16,
     "push_params_interval": 1,
 }
