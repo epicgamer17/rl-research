@@ -47,6 +47,8 @@ class ConfigBase:
 
         if default is not None:
             print(f"Using default {field_name}: {default}")
+            if wrapper is not None:
+                return wrapper(default)
             return default
 
         if required:
