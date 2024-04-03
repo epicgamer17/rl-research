@@ -156,10 +156,12 @@ class DistributedApex(ApexActor, RainbowAgent):
         logger.info(f"connected to replay buffer at {replay_url}")
 
     def send_experience_batch(self):
-        ids = np.zeros(self.config.replay_buffer_size, dtype=str)
+        ids = np.zeros(self.config.replay_buffer_size, dtype=np.object_)
 
         for i in range(self.config.replay_buffer_size):
             ids[i] = uuid4().hex
+
+        print(ids)
 
         batch = Batch(
             observations=self.transitions_buffer.observations,
@@ -240,5 +242,7 @@ class DistributedApex(ApexActor, RainbowAgent):
         )
 
         delta_t = time.time() - t
-        logger.info(f"calculate_losses took: {delta_t} s")
+        logger.info(
+            f"calculate_losses took: {delta_t} s. Elementwise loss: {elementwise_loss} Losses: {prioritized_loss}"
+        )
         return prioritized_loss

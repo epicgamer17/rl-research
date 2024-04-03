@@ -132,7 +132,6 @@ class ReplayBuffer(
         self.sum_tree[self.tree_pointer] = priority
         self.min_tree[self.tree_pointer] = priority
 
-        # Q: should this be self.tree_capacity?
         self.tree_pointer = (self.tree_pointer + 1) % self.max_size
         return t
 
@@ -221,11 +220,12 @@ class ReplayBuffer(
                 assert 0 <= index < len(self)
 
                 if self.id_buffer[index] != id:
+                    print("Skipped", id, self.id_buffer[index])
                     ids_skipped += 1
                     continue
 
-                self.sum_tree[index] = priority**self.alpha
-                self.min_tree[index] = priority**self.alpha
+                self.sum_tree[index] = priority
+                self.min_tree[index] = priority
                 self.max_priority = max(self.max_priority, priority)
                 ids_updated += 1
 
@@ -239,10 +239,10 @@ class ReplayBuffer(
                 assert priority > 0, "Negative priority: {}".format(priority)
                 assert 0 <= index < len(self)
 
-                self.sum_tree[index] = priority**self.alpha
-                self.min_tree[index] = priority**self.alpha
-                self.max_priority = max(
-                    self.max_priority, priority
-                )  # could remove and clip priorities in experience replay isntead
+                new_priority = min(priority**self.alpha, self.max_priority)
 
-        return priorities**self.alpha
+                self.sum_tree[index] = new_priority
+                self.min_tree[index] = new_priority
+                # self.max_priority = max(
+                #     self.max_priority, priority
+                # )  # could remove and clip priorities in experience replay isntead

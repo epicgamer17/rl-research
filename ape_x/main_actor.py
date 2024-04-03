@@ -37,8 +37,8 @@ distributed_config = {
 }
 
 rainbow_config = {
-    "width": 1024,
-    "loss_function": losses.CategoricalCrossentropy(),
+    "width": 512,
+    "loss_function": losses.KLDivergence(),
     "activation": "relu",
     "kernel_initializer": "orthogonal",
     "adam_epsilon": 0.0003125,
@@ -51,12 +51,12 @@ rainbow_config = {
     "per_alpha": 0.05 * 10,
     "per_beta": 0.05 * 7,
     "clipnorm": 0.5,
-    "replay_buffer_size": 256,
+    "replay_buffer_size": 128,
 }
 
 
 actor_config = {
-    "minibatch_size": 256,
+    "minibatch_size": 128,
     "training_steps": 100000,
     "poll_params_interval": 1000,
 }
