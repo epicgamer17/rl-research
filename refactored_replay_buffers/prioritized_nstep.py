@@ -220,7 +220,6 @@ class ReplayBuffer(
                 assert 0 <= index < len(self)
 
                 if self.id_buffer[index] != id:
-                    print("Skipped", id, self.id_buffer[index])
                     ids_skipped += 1
                     continue
 
@@ -228,8 +227,6 @@ class ReplayBuffer(
                 self.min_tree[index] = priority
                 self.max_priority = max(self.max_priority, priority)
                 ids_updated += 1
-
-            print("Updated", ids_updated, "Skipped", ids_skipped)
 
         else:
             assert len(indices) == len(priorities)
