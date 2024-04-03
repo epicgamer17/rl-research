@@ -159,11 +159,7 @@ class PPOAgent(BaseAgent):
         actor_gradients = tape.gradient(
             actor_loss, self.model.actor.trainable_variables
         )
-        self.config.actor.optimizer(
-            learning_rate=learning_rate,
-            epsilon=self.config.actor.adam_epsilon,
-            clipnorm=self.config.actor.clipnorm,
-        ).apply_gradients(
+        self.config.actor.optimizer.apply_gradients(
             grads_and_vars=zip(actor_gradients, self.model.actor.trainable_variables)
         )
         if self.discrete_action_space:
