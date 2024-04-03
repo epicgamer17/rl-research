@@ -32,24 +32,26 @@ distributed_config = {
 }
 
 rainbow_config = {
-    "width": 1024,
     "atom_size": 51,
-    "loss_function": losses.CategoricalCrossentropy(),
     "activation": "relu",
     "kernel_initializer": "orthogonal",
-    "adam_epsilon": 0.0003125,
     "ema_beta": 0.95,
     "transfer_interval": 100,
-    "minibatch_size": 256,
-    "dense_layers": 2,
-    "dense_layers_noisy": True,
+    "minibatch_size": 128,
     "dueling": True,
     "per_epsilon": 0.001,
     "per_alpha": 0.05 * 10,
     "per_beta": 0.05 * 7,
     "clipnorm": 0.5,
-    "replay_interval": 1,
-    "learning_rate": 0.02,
+    # "discount_factor": 0.99,
+    # "n_step": 3,
+    "transfer_interval": 100,
+    "dense_layers": 2,
+    "dense_layers_noisy": True,
+    "width": 512,
+    "learning_rate": 0.001,
+    "loss_function": losses.KLDivergence(),
+    "adam_epsilon": 0.0003125,
 }
 
 

@@ -34,13 +34,13 @@ class SaveableReplayBuffer:
                 raise ValueError("env must be provided if load is False")
             self.replay_memory = ReplayBuffer(
                 observation_dimensions=env.observation_space.shape,
-                max_size=20000,
-                batch_size=256,
+                max_size=50000,
+                batch_size=128,
                 max_priority=1.0,
                 alpha=0.5,  # config["per_alpha"],
                 # epsilon=config["per_epsilon"],
                 n_step=1,  # config["n_step"],   # we don't need n-step because the actors give n-step transitions already
-                gamma=0.01,  # config["discount_factor"],
+                gamma=0.99,  # config["discount_factor"],
             )
 
     def load(self, path):
