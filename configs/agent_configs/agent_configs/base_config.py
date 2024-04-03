@@ -74,7 +74,10 @@ class Config(ConfigBase):
         self.clipnorm: int | None = self.parse_field("clipnorm", None, required=False)
         self.optimizer: Optimizer = self.parse_field(
             "optimizer",
-            Adam(self.learning_rate, epsilon=self.adam_epsilon, clipnorm=self.clipnorm),
+            Adam,
+            wrapper=lambda optimizer: optimizer(
+                self.learning_rate, epsilon=self.adam_epsilon, clipnorm=self.clipnorm
+            ),
         )
         self.loss_function: Loss = self.parse_field(
             "loss_function", None, required=False
