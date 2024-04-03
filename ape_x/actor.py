@@ -161,8 +161,6 @@ class DistributedApex(ApexActor, RainbowAgent):
         for i in range(self.config.replay_buffer_size):
             ids[i] = uuid4().hex
 
-        print(ids)
-
         batch = Batch(
             observations=self.transitions_buffer.observations,
             actions=self.transitions_buffer.actions,

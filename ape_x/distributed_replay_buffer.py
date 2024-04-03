@@ -149,8 +149,12 @@ class ReplayServer:
                     res = self.learners_socket.recv()
                     self.learners_socket.send(b"")
                     updates = replay_memory_capnp.PriorityUpdate.from_bytes_packed(res)
+                    indices = np.array(updates.indices)
+                    ids = list(updates.ids)
+                    losses = np.array(updates.losses)
+
                     self.replay_memory.replay_memory.update_priorities(
-                        np.array(updates.indices), np.array(updates.losses), list(ids)
+                        indices=indices, priorities=losses, ids=ids
                     )
         self.replay_memory.save("replay_memory.xz")
 

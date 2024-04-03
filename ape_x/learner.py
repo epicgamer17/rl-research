@@ -214,7 +214,7 @@ class DistributedLearner(LearnerBase):
 
                     self.samples_queue.put(
                         Sample(
-                            ids=np.array(samples.ids, dtype=object),
+                            ids=np.array(samples.ids, dtype=np.object_),
                             indices=np.array(samples.indices),
                             actions=np.array(samples.actions),
                             observations=decompress(samples.observations),
@@ -233,7 +233,7 @@ class DistributedLearner(LearnerBase):
                     continue
                 ids, indices, losses = t
                 update = replayMemory_capnp.PriorityUpdate.new_message()
-                update.ids = ids.astype(str).tolist()
+                update.ids = ids.tolist()
                 update.indices = indices.astype(int).tolist()
                 update.losses = losses.astype(float).tolist()
 
