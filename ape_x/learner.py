@@ -60,33 +60,10 @@ class LearnerBase(RainbowAgent):
     def _experience_replay(self):
         ti = time.time()
         with tf.GradientTape() as tape:
-            elementwise_loss = 0
             samples = self.samples_queue.get()
             ids = samples.ids
             indices = samples.indices
-            actions = samples.actions
-            observations = samples.observations
             weights = samples.weights.reshape(-1, 1)
-
-            inputs = self.prepare_states(observations)
-            discount_factor = self.config.discount_factor
-
-            target_ditributions = self.compute_target_distributions_np(
-                samples, discount_factor
-            )
-            initial_distributions = self.model(inputs)
-            distributions_to_train = tf.gather_nd(
-                initial_distributions,
-                list(zip(range(initial_distributions.shape[0]), actions)),
-            )
-            elementwise_loss = self.config.loss_function.call(
-                y_pred=distributions_to_train,
-                y_true=tf.convert_to_tensor(target_ditributions),
-            )
-            assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-                elementwise_loss
-            )
-
             # if self.use_n_step:
             discount_factor = self.config.discount_factor**self.config.n_step
             actions = samples.actions
@@ -101,12 +78,11 @@ class LearnerBase(RainbowAgent):
                 initial_distributions,
                 list(zip(range(initial_distributions.shape[0]), actions)),
             )
-            elementwise_loss_n_step = self.config.loss_function.call(
+            elementwise_loss = self.config.loss_function.call(
                 y_pred=distributions_to_train,
                 y_true=tf.convert_to_tensor(target_ditributions),
             )
             # add the losses together to reduce variance (original paper just uses n_step loss)
-            elementwise_loss += elementwise_loss_n_step
             assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                 elementwise_loss
             )
@@ -150,18 +126,15 @@ class LearnerBase(RainbowAgent):
         logger.info("learner running")
         self.is_test = False
         stats = {
-            "score": [],
             "loss": [],
             "test_score": [],
         }
         targets = {
-            "score": self.env.spec.reward_threshold,
             "test_score": self.env.spec.reward_threshold,
         }
         # self.fill_replay_buffer()
         state, _ = self.env.reset()
         model_update_count = 0
-        score = 0
         training_step = 0
 
         for training_step in range(self.training_steps + 1):
@@ -189,7 +162,14 @@ class LearnerBase(RainbowAgent):
                 )
         logger.info("loop done")
 
-        self.save_checkpoint(training_step)
+        self.save_checkpoint(
+            stats,
+            targets,
+            5,
+            self.training_steps,
+            training_step * self.config.replay_interval,
+            time.time() - training_time,
+        )
         self.env.close()
         self.on_done()
 
@@ -218,7 +198,6 @@ class DistributedLearner(LearnerBase):
         # alternate between getting samples and updating priorities
         i = 0
         while not flag.is_set():
-            logger.info("poll")
             if i == 0:
                 if self.samples_queue.qsize() < self.config.samples_queue_size:
                     logger.info("requesting batch")

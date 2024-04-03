@@ -48,14 +48,14 @@ class BaseAgent:
         raise NotImplementedError
 
     def prepare_states(self, state):
-        state = np.array(state)
+        state_copy = np.array(state)
         if self.config.game.is_image:
-            state = state / 255.0
-        if state.shape == self.observation_dimensions:
-            new_shape = (1,) + state.shape
-            state_input = state.reshape(new_shape)
+            state_copy = state_copy / 255.0
+        if state_copy.shape == self.observation_dimensions:
+            new_shape = (1,) + state_copy.shape
+            state_input = state_copy.reshape(new_shape)
         else:
-            state_input = state
+            state_input = state_copy
         return state_input
 
     def predict_single(self, state):
@@ -67,6 +67,9 @@ class BaseAgent:
     def action_mask(self, legal_moves):
         # TO DO FOR EACH MODEL
         # raise NotImplementedError
+        pass
+
+    def calculate_loss(self, batch):
         pass
 
     def learn(self):

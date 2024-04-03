@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tensorflow import keras
 from keras import losses
-from actor import DistributedActor
 import argparse
 import gymnasium as gym
 
@@ -25,6 +24,11 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
 
+import sys
+
+sys.path.append("..")
+from actor import DistributedApex
+
 distributed_config = {
     "learner_addr": "127.0.0.1",
     "learner_port": 5556,
@@ -40,7 +44,6 @@ rainbow_config = {
     "adam_epsilon": 0.0003125,
     "ema_beta": 0.95,
     "transfer_interval": 100,
-    "minibatch_size": 128,
     "dense_layers": 2,
     "dense_layers_noisy": True,
     "dueling": True,
@@ -48,12 +51,14 @@ rainbow_config = {
     "per_alpha": 0.05 * 10,
     "per_beta": 0.05 * 7,
     "clipnorm": 0.5,
-    "replay_buffer_size": 128,
+    "replay_buffer_size": 256,
 }
 
 
 actor_config = {
-    "minibatch_size": 128,
+    "minibatch_size": 256,
+    "training_steps": 100000,
+    "poll_params_interval": 1000,
 }
 
 conf = {**rainbow_config, **distributed_config, **actor_config}
@@ -85,11 +90,7 @@ def main():
 
     config = ActorConfig(conf, CartPoleConfig())
 
-    actor = DistributedActor(
-        id=args.id,
-        env=make_cartpole_env(),
-        config=config,
-    )
+    actor = DistributedApex(env=make_cartpole_env(), config=config, name="0")
     actor.run()
 
 

@@ -212,6 +212,8 @@ class ReplayBuffer(
     def update_priorities(self, indices, priorities, ids=None):
         # necessary for shared replay buffer
         if ids is not None:
+            ids_updated = 0
+            ids_skipped = 0
             assert len(priorities) == len(ids) == len(indices)
 
             for index, id, priority in zip(indices, ids, priorities):
@@ -219,11 +221,15 @@ class ReplayBuffer(
                 assert 0 <= index < len(self)
 
                 if self.id_buffer[index] != id:
+                    ids_skipped += 1
                     continue
 
                 self.sum_tree[index] = priority**self.alpha
                 self.min_tree[index] = priority**self.alpha
                 self.max_priority = max(self.max_priority, priority)
+                ids_updated += 1
+
+            print("Updated", ids_updated, "Skipped", ids_skipped)
 
         else:
             assert len(indices) == len(priorities)
