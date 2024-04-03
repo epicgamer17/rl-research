@@ -36,6 +36,6 @@ def sample_tree_proportional(
         h = priority_segment * (i + 1)
         upperbound = np.random.uniform(l, h)
         indices[i] = tree.retrieve(upperbound)
-        print(tree[indices[i]])
+        # print(tree[indices[i]])
 
     return indices

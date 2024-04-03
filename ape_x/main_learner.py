@@ -40,17 +40,17 @@ rainbow_config = {
     "minibatch_size": 128,
     "dueling": True,
     "per_epsilon": 0.001,
-    "per_alpha": 0.05 * 10,
-    "per_beta": 0.05 * 7,
-    "clipnorm": 0.5,
+    "per_alpha": 0.5,
+    "per_beta": 0.4,
+    "clipnorm": None,
     # "discount_factor": 0.99,
     # "n_step": 3,
     "transfer_interval": 100,
     "dense_layers": 2,
     "dense_layers_noisy": True,
     "width": 512,
-    "learning_rate": 0.001,
-    "loss_function": losses.KLDivergence(),
+    "learning_rate": 0.01,
+    "loss_function": losses.CategoricalCrossentropy(),
     "adam_epsilon": 0.0003125,
 }
 
@@ -58,7 +58,7 @@ rainbow_config = {
 learner_config = {
     "training_steps": 1000,
     "remove_old_experiences_interval": 1000,
-    "samples_queue_size": 4,
+    "samples_queue_size": 2,
     "updates_queue_size": 16,
     "push_params_interval": 1,
 }

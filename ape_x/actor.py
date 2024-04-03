@@ -240,7 +240,5 @@ class DistributedApex(ApexActor, RainbowAgent):
         )
 
         delta_t = time.time() - t
-        logger.info(
-            f"calculate_losses took: {delta_t} s. Elementwise loss: {elementwise_loss} Losses: {prioritized_loss}"
-        )
+        logger.info(f"calculate_losses took: {delta_t} s.")
         return prioritized_loss
