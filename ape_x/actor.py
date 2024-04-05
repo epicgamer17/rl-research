@@ -15,6 +15,7 @@ from agent_configs import (
 import entities.replayMemory_capnp as replayMemory_capnp
 import message_codes
 from compress_utils import compress, decompress
+from storage import Storage, StorageConfig
 
 import logging
 
@@ -139,19 +140,22 @@ class DistributedApex(ApexActor, RainbowAgent):
         self.config = config
 
         self.socket_ctx = zmq.Context()
-        learner_address = self.config.learner_addr
-        learner_port = self.config.learner_port
-        learner_url = f"tcp://{learner_address}:{learner_port}"
+
+        storage_config = StorageConfig(
+            hostname=self.config.storage_hostname,
+            port=self.config.storage_port,
+            username=self.config.storage_username,
+            password=self.config.storage_password,
+        )
+
+        self.storage = Storage(storage_config)
 
         replay_address = self.config.replay_addr
         replay_port = self.config.replay_port
         replay_url = f"tcp://{replay_address}:{replay_port}"
 
-        self.learner_socket = self.socket_ctx.socket(zmq.REQ)
         self.replay_socket = self.socket_ctx.socket(zmq.PUSH)
 
-        self.learner_socket.connect(learner_url)
-        logger.info(f"connected to learner at {learner_url}")
         self.replay_socket.connect(replay_url)
         logger.info(f"connected to replay buffer at {replay_url}")
 
@@ -189,16 +193,20 @@ class DistributedApex(ApexActor, RainbowAgent):
         self.reset_transitions_buffer()
 
     def update_params(self):
-        self.learner_socket.send(message_codes.ACTOR_GET_PARAMS)
         ti = time.time()
-        logger.info("fetching weights from learner...")
-        res = self.learner_socket.recv()
-        decompressed = decompress(res)
+        logger.info("fetching weights from storage...")
+        res = self.storage.get_weights()
+
+        if res == None:
+            logger.info("no weights recieved from learner")
+            return
 
         # todo: fix issues with starting up the weights aren't full
         # if len(decompressed) < 24:
         #     logger.info("not enough weights received from learner")
         # else:
+        decompressed = decompress(res)
+        print(decompressed)
         try:
             self.model.set_weights(decompressed)
         except Exception as e:

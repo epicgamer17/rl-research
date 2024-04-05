@@ -6,10 +6,11 @@ import numpy as np
 import queue
 import threading
 from compress_utils import compress
-from abc import ABC, abstractclassmethod
 from typing import NamedTuple
 from compress_utils import decompress
 from agent_configs import ApeXConfig, LearnerApeXMixin, DistributedConfig
+
+from storage import Storage, StorageConfig
 
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
@@ -50,6 +51,9 @@ class LearnerBase(RainbowAgent):
         self.updates_queue: queue.Queue[Update] = queue.Queue(
             maxsize=self.config.updates_queue_size
         )
+
+    def store_weights(self, weights):
+        pass
 
     def on_run(self):
         pass
@@ -139,6 +143,11 @@ class LearnerBase(RainbowAgent):
 
         for training_step in range(self.training_steps + 1):
             logger.info(f"learner training step: {training_step}/{self.training_steps}")
+
+            if training_step % self.config.push_params_interval == 0:
+                self.store_weights()
+                logger.info("pushed params")
+
             self.config.per_beta = min(
                 1.0,
                 self.config.per_beta
@@ -160,6 +169,7 @@ class LearnerBase(RainbowAgent):
                     training_step * self.config.replay_interval,
                     time.time() - training_time,
                 )
+
         logger.info("loop done")
 
         self.save_checkpoint(
@@ -185,6 +195,16 @@ class DistributedLearner(LearnerBase):
         super().__init__(env=env, config=config)
         self.updates_queue = queue.Queue()
         self.config = config
+
+        storage_config = StorageConfig(
+            hostname=self.config.storage_hostname,
+            port=self.config.storage_port,
+            username=self.config.storage_username,
+            password=self.config.storage_password,
+        )
+
+        # the learner will reset the storage for model weights on initialization
+        self.storage = Storage(storage_config, reset=True)
 
     def handle_replay_socket(self, flag: threading.Event):
         ctx = zmq.Context()
@@ -242,22 +262,10 @@ class DistributedLearner(LearnerBase):
                 replay_socket.recv()
                 i = 0
 
-    def handle_learner_requests(self, flag: threading.Event):
-        ctx = zmq.Context()
-        port = self.config.learner_port
-
-        learner_socket = ctx.socket(zmq.REP)
-
-        learner_socket.bind(f"tcp://*:{port}")
-        logger.info(f"learner started on port {port}")
-
-        while not flag.is_set():
-            message = learner_socket.recv()
-            if message == message_codes.ACTOR_GET_PARAMS:
-                weights = self.model.get_weights()
-                learner_socket.send(compress(weights))
-            else:
-                learner_socket.send(b"")
+    def store_weights(self):
+        print(self.model.get_weights())
+        compressed = compress(self.model.get_weights())
+        self.storage.store_weights(compressed)
 
     def on_run(self):
         self.flag = threading.Event()
@@ -266,14 +274,8 @@ class DistributedLearner(LearnerBase):
             target=self.handle_replay_socket, args=(self.flag,)
         )
         self.replay_thread.daemon = True
-        self.learner_thread = threading.Thread(
-            target=self.handle_learner_requests, args=(self.flag,)
-        )
-        self.learner_thread.daemon = True
         self.replay_thread.start()
-        self.learner_thread.start()
 
     def on_done(self):
         self.flag.set()
         self.replay_thread.join()
-        self.learner_thread.join()

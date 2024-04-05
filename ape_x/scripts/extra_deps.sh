@@ -5,3 +5,4 @@ conda activate ml
 pip install zmq
 pip install gymnasium[classic-control]
 pip install moviepy
+pip install pymango
