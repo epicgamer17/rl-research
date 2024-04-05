@@ -6,10 +6,13 @@ class DistributedConfig(ConfigBase):
     def __init__(self, config_dict):
         super().__init__(config_dict)
 
-        self.learner_addr: str = self.parse_field("learner_addr", required=True)
-        self.learner_port: int = self.parse_field("learner_port", required=True)
         self.replay_addr: str = self.parse_field("replay_addr", required=True)
         self.replay_port: int = self.parse_field("replay_port", required=True)
+
+        self.storage_hostname: str = self.parse_field("storage_hostname", required=True)
+        self.storage_port: int = self.parse_field("storage_port", required=True)
+        self.storage_username: str = self.parse_field("storage_username", required=True)
+        self.storage_password: str = self.parse_field("storage_password", required=True)
 
 
 class LearnerApeXMixin(ConfigBase):

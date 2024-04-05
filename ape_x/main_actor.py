@@ -58,7 +58,7 @@ rainbow_config = {
 actor_config = {
     "minibatch_size": 128,
     "training_steps": 100000,
-    "poll_params_interval": 1000,
+    "poll_params_interval": 128,
 }
 
 conf = {**rainbow_config, **distributed_config, **actor_config}
@@ -77,16 +77,22 @@ class ActorConfig(ApeXConfig, ActorApeXMixin, DistributedConfig):
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X actor")
     parser.add_argument("id", type=str)
-    parser.add_argument("learner_addr", type=str)
-    parser.add_argument("learner_port", type=str)
+
     parser.add_argument("replay_addr", type=str)
     parser.add_argument("replay_port", type=str)
+    parser.add_argument("storage_hostname", type=str)
+    parser.add_argument("storage_port", type=int)
+    parser.add_argument("storage_username", type=str)
+    parser.add_argument("storage_password", type=str)
+
     args = parser.parse_args()
 
-    conf["learner_addr"] = args.learner_addr
-    conf["learner_port"] = args.learner_port
     conf["replay_addr"] = args.replay_addr
     conf["replay_port"] = args.replay_port
+    conf["storage_hostname"] = args.storage_hostname
+    conf["storage_port"] = args.storage_port
+    conf["storage_username"] = args.storage_username
+    conf["storage_password"] = args.storage_password
 
     config = ActorConfig(conf, CartPoleConfig())
 

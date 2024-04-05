@@ -78,20 +78,21 @@ class LearnerConfig(ApeXConfig, LearnerApeXMixin, DistributedConfig):
 
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
-    parser.add_argument(
-        "port", type=str, help="Port that the learner zmq socket will bind to"
-    )
-    parser.add_argument("replay_addr", type=str, help="Address of the replay server")
-    parser.add_argument(
-        "replay_port",
-        type=str,
-        help="Port of the replay server that the learner will connect to. It is different than the port for actors.",
-    )
+    parser.add_argument("replay_addr", type=str)
+    parser.add_argument("replay_port", type=str)
+    parser.add_argument("storage_hostname", type=str)
+    parser.add_argument("storage_port", type=int)
+    parser.add_argument("storage_username", type=str)
+    parser.add_argument("storage_password", type=str)
+
     args = parser.parse_args()
 
-    conf["learner_port"] = args.port
     conf["replay_addr"] = args.replay_addr
     conf["replay_port"] = args.replay_port
+    conf["storage_hostname"] = args.storage_hostname
+    conf["storage_port"] = args.storage_port
+    conf["storage_username"] = args.storage_username
+    conf["storage_password"] = args.storage_password
 
     config = LearnerConfig(conf, CartPoleConfig())
 
