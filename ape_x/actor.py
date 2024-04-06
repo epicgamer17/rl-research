@@ -206,7 +206,7 @@ class DistributedApex(ApexActor, RainbowAgent):
         #     logger.info("not enough weights received from learner")
         # else:
         decompressed = decompress(res)
-        print(decompressed)
+        # print(decompressed)
         try:
             self.model.set_weights(decompressed)
         except Exception as e:
@@ -224,7 +224,6 @@ class DistributedApex(ApexActor, RainbowAgent):
         self.config.per_beta = min(1.0, self.config.per_beta + per_beta_increase)
 
     def calculate_loss(self, batch: TransitionBuffer):
-        print("calculating losses...")
         t = time.time()
         discount_factor = self.config.discount_factor**self.config.n_step
         inputs = self.prepare_states(batch.observations)
