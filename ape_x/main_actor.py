@@ -11,7 +11,7 @@ from game_configs import CartPoleConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-fh = logging.FileHandler("main_actor.log", mode="w")
+fh = logging.FileHandler("main_actor.log", mode="a")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
 

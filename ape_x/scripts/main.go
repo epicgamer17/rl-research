@@ -20,9 +20,13 @@ import (
 )
 
 const SSH_ARGS = "-oStrictHostKeyChecking=no -oConnectTimeout=5"
-
 const USERNAME = "ehuang"
 const FQDN = "cs.mcgill.ca"
+const MongoPort = 5553
+const ReplayLearnerPort = 5554
+const ReplayActorPort = 5555
+const MongoUsername = "ezra"
+const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
 
 func GenerateHosts(username string) <-chan string {
 	c := make(chan string)
@@ -104,12 +108,6 @@ func NewConfig(username string) *ssh.ClientConfig {
 
 	return config
 }
-
-const MongoPort = 5553
-const ReplayLearnerPort = 5554
-const ReplayActorPort = 5555
-const MongoUsername = "ezra"
-const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
 
 func Reader(reader io.Reader) <-chan string {
 	ch := make(chan string)
@@ -284,6 +282,21 @@ func killMongo(client *ssh.Client) {
 	}
 }
 
+func copyTrainingGraphToStaticSite(client *ssh.Client) {
+	cmd := "cp ~/rl-research/ape_x/training_graphs/learner/learner.png ~/public_html/training/learner.png"
+	session, err := client.NewSession()
+	if err != nil {
+		fmt.Println("failed to create session: ", err)
+	}
+
+	fmt.Println("Running command: ", cmd)
+
+	if err := session.Run(cmd); err != nil {
+		fmt.Println("Failed to copy training graphs: ", err)
+	}
+
+}
+
 func main() {
 	availableHosts := FindFreeServers(GenerateHosts(USERNAME))
 
@@ -383,6 +396,22 @@ func main() {
 		}(host)
 	}
 
+	updaterClient := NewClient(fmt.Sprintf("mimi.%s", FQDN))
+
+	ticker := time.NewTicker(10 * time.Second)
+	flag := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				copyTrainingGraphToStaticSite(updaterClient)
+			case <-flag:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
 
@@ -413,6 +442,9 @@ func main() {
 			wg.Done()
 		}(client)
 	}
+
+	flag <- true
+	close(flag)
 
 	wg.Wait()
 }

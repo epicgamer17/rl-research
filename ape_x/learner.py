@@ -263,7 +263,6 @@ class DistributedLearner(LearnerBase):
                 i = 0
 
     def store_weights(self):
-        print(self.model.get_weights())
         compressed = compress(self.model.get_weights())
         self.storage.store_weights(compressed)
 
