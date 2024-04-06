@@ -174,7 +174,6 @@ class BaseAgent:
 
             while not done:
                 action = self.select_action(state, legal_moves)
-                print("Action: ", action)
                 next_state, reward, terminated, truncated, info = self.step(action)
                 # self.test_env.render()
                 done = terminated or truncated
