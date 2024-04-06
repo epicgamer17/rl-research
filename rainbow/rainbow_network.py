@@ -51,7 +51,7 @@ class Network(Model):
                                 padding="same",
                             )
                         )
-            self.conv_layers.append(tf.keras.layers.Flatten())
+            # self.conv_layers.append(tf.keras.layers.Flatten())
 
         if self.has_dense_layers:
             self.dense_layers = []
@@ -115,15 +115,15 @@ class Network(Model):
             activation="linear",
             name="A",
         )
-        self.advantage_reduced_mean = tf.keras.layers.Lambda(
-            lambda a: a - tf.reduce_mean(a, axis=1, keepdims=True), name="Ao"
-        )
 
         self.advantage_reshaped = tf.keras.layers.Reshape(
             (output_size, config.atom_size), name="ReshapeAo"
         )
         self.value_reshaped = tf.keras.layers.Reshape(
             (1, config.atom_size), name="ReshapeV"
+        )
+        self.advantage_reduced_mean = tf.keras.layers.Lambda(
+            lambda a: a - tf.reduce_mean(a, axis=1, keepdims=True), name="Ao"
         )
         self.add = tf.keras.layers.Add()
         # self.softmax = tf.keras.activations.softmax(self.add, axis=-1)
@@ -135,32 +135,41 @@ class Network(Model):
             lambda q: tf.reduce_sum(q * config.support, axis=2), name="Q"
         )
 
+        self.flatten = tf.keras.layers.Flatten()
+
     def call(self, inputs, training=False):
         x = inputs
+        # print("Input Shape ", x.shape)
         if self.has_conv_layers:
             for layer in self.conv_layers:
                 x = layer(x)
+        x = self.flatten(x)
         if self.has_dense_layers:
             for layer in self.dense_layers:
                 x = layer(x)
         if self.has_value_hidden_layers:
             for layer in self.value_hidden_layers:
                 x = layer(x)
+        # print("Last Dense Layer Shape ", x.shape)
         value = self.value(x)
+        # print("Value Shape ", value.shape)
         value = self.value_reshaped(value)
+        # print("Reshaped Value Shape ", value.shape)
 
         if self.has_advantage_hidden_layers:
             for layer in self.advantage_hidden_layers:
                 x = layer(x)
         advantage = self.advantage(x)
-        advantage = self.advantage_reduced_mean(advantage)
         advantage = self.advantage_reshaped(advantage)
+        advantage = self.advantage_reduced_mean(advantage)
+        # print("Reduced Mean Advantage Shape ", advantage.shape)
 
         q = self.add([value, advantage])
         q = tf.keras.activations.softmax(q, axis=-1)
         # MIGHT BE ABLE TO REMOVE CLIPPING ENTIRELY SINCE I DONT THINK THE TENSORFLOW LOSSES CAN RETURN NaN
         # q = self.clip_qs(q)
         # q = self.outputs(q)
+        # print(q.shape)
         return q
 
     def reset_noise(self):

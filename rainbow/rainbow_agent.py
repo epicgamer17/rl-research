@@ -135,6 +135,7 @@ class RainbowAgent(BaseAgent):
     def predict_single(self, state):
         state_input = self.prepare_states(state)
         q_values = self.model(inputs=state_input).numpy()
+        # print(q_values.shape)
         return q_values
 
     def select_action(self, state, legal_moves=None):
@@ -250,6 +251,9 @@ class RainbowAgent(BaseAgent):
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
 
+        # print(next_actions.shape)
+        # print(target_distributions.shape)
+
         target_distributions = target_network_distributions[
             range(self.config.minibatch_size), next_actions
         ]
@@ -282,9 +286,21 @@ class RainbowAgent(BaseAgent):
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
 
+        # offset = (
+        #     np.linspace(
+        #         0,
+        #         (self.config.minibatch_size - 1) * self.config.atom_size,
+        #         self.config.minibatch_size,
+        #     )
+        #     .astype(int)
+        #     .expand_dims(1)
+        #     .broadcast_to(self.config.minibatch_size, self.config.atom_size)
+        # )
+
         target_distributions = target_network_distributions[
             range(self.config.minibatch_size), next_actions
         ]
+        print(target_distributions.shape)
         target_z = rewards + (1 - dones) * (discount_factor) * self.support
         target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
 

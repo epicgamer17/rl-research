@@ -15,21 +15,24 @@ class BaseAgent:
 
         self.env = env
         # self.test_env = copy.deepcopy(env)
-        self.test_env = gym.wrappers.RecordVideo(
-            copy.deepcopy(env),
-            "./videos/{}".format(self.model_name),
-            name_prefix="{}".format(self.model_name),
-        )
-        print(self.test_env.video_folder)
-        print(self.test_env.name_prefix)
+        if self.env.render_mode == "rgb_array":
+            self.test_env = gym.wrappers.RecordVideo(
+                copy.deepcopy(env),
+                "./videos/{}".format(self.model_name),
+                name_prefix="{}".format(self.model_name),
+            )
+        else:
+            self.test_env = copy.deepcopy(env)
         self.observation_dimensions = env.observation_space.shape
-
+        print("observation_dimensions: ", self.observation_dimensions)
         if isinstance(env.action_space, gym.spaces.Discrete):
             self.num_actions = env.action_space.n
             self.discrete_action_space = True
         else:
             self.num_actions = env.action_space.shape[0]
             self.discrete_action_space = False
+
+        print("num_actions: ", self.num_actions)
 
         self.training_steps = self.config.training_steps
         self.checkpoint_interval = 10
@@ -131,7 +134,7 @@ class BaseAgent:
             axs[row, col].set_title(
                 "{} | rolling average: {}".format(key, np.mean(value[-10:]))
             )
-            if key in targets:
+            if key in targets and targets[key] is not None:
                 axs[row, col].axhline(y=targets[key], color="r", linestyle="--")
 
         for i in range(num_plots, sqrt_num_plots**2):
@@ -154,29 +157,26 @@ class BaseAgent:
         """Test the agent."""
         self.is_test = True
         average_score = 0
-        self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
-        self.test_env.video_folder = "./videos/{}/{}".format(self.model_name, step)
-        if not os.path.exists(self.test_env.video_folder):
-            os.makedirs(self.test_env.video_folder)
-        print(step)
-        print(self.test_env.video_folder)
+        if self.test_env.render_mode == "rgb_array":
+            self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
+            self.test_env.video_folder = "./videos/{}/{}".format(self.model_name, step)
+            if not os.path.exists(self.test_env.video_folder):
+                os.makedirs(self.test_env.video_folder)
         for trials in range(num_trials):
             state, info = self.test_env.reset()
+            # self.test_env.render()
             legal_moves = (
                 info["legal_moves"] if self.config.game.has_legal_moves else None
             )
 
             done = False
             score = 0
-            test_game_moves = []
-            legal_moves = (
-                info["legal_moves"] if self.config.game.has_legal_moves else None
-            )
 
             while not done:
                 action = self.select_action(state, legal_moves)
-                test_game_moves.append(action)
+                print("Action: ", action)
                 next_state, reward, terminated, truncated, info = self.step(action)
+                # self.test_env.render()
                 done = terminated or truncated
                 legal_moves = (
                     info["legal_moves"] if self.config.game.has_legal_moves else None
@@ -188,6 +188,8 @@ class BaseAgent:
             print("score: ", score)
 
         # reset
+        if self.test_env.render_mode != "rgb_array":
+            self.test_env.render()
         self.test_env.close()
         self.is_test = False
         average_score /= num_trials
