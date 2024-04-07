@@ -114,6 +114,7 @@ class BaseAgent:
             sqrt_num_plots,
             sqrt_num_plots,
             figsize=(10 * sqrt_num_plots, 5 * sqrt_num_plots),
+            squeeze=False,
         )
 
         hours = int(time_taken // 3600)

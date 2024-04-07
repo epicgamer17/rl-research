@@ -32,10 +32,10 @@ class ActorAgent(BaseAgent):
     def on_run_end(self):
         pass
 
-    def on_training_step_start(self):
+    def on_training_step_start(self, training_step: int):
         pass
 
-    def on_training_step_end(self):
+    def on_training_step_end(self, training_step: int):
         pass
 
     def run(self):
@@ -43,7 +43,7 @@ class ActorAgent(BaseAgent):
         self.on_run_start()
 
         for training_step in range(self.config.training_steps + 1):
-            self.on_training_step_start()
+            self.on_training_step_start(training_step)
 
             if self.should_send_experience_batch(training_step):
                 self.send_experience_batch()
@@ -52,7 +52,7 @@ class ActorAgent(BaseAgent):
                 self.update_params()
 
             self.collect_experience()
-            self.on_training_step_end()
+            self.on_training_step_end(training_step)
 
         self.on_run_end()
         self.env.close()
