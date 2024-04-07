@@ -49,7 +49,7 @@ rainbow_config = {
     "dense_layers": 2,
     "dense_layers_noisy": True,
     "width": 512,
-    "learning_rate": 0.01,
+    "learning_rate": 0.0001,
     "loss_function": losses.CategoricalCrossentropy(),
     "adam_epsilon": 0.0003125,
 }

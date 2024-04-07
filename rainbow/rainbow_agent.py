@@ -280,8 +280,12 @@ class RainbowAgent(BaseAgent):
         inputs = self.prepare_states(observations)
         next_observations = samples.next_observations
         next_inputs = self.prepare_states(next_observations)
+        # print("rewards", samples.rewards)
         rewards = samples.rewards.reshape(-1, 1)
         dones = samples.dones.reshape(-1, 1)
+
+        # print("R", rewards)
+        # print("d", dones)
 
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
@@ -300,23 +304,33 @@ class RainbowAgent(BaseAgent):
         target_distributions = target_network_distributions[
             range(self.config.minibatch_size), next_actions
         ]
-        print(target_distributions.shape)
         target_z = rewards + (1 - dones) * (discount_factor) * self.support
+        # print("tz b4 clib", target_z)
         target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
+        # print("tz", target_z)
 
         b = (
             (target_z - self.config.v_min) / (self.config.v_max - self.config.v_min)
         ) * (self.config.atom_size - 1)
+
+        # print("B", b)
         l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
+        # print("L", l)
+        # print("U", u)
         m = np.zeros_like(target_distributions)
+        # print("S", self.support)
         assert m.shape == l.shape
         lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
         upper_distributions = target_distributions * (b - tf.cast(l, tf.float64))
+
+        # print("LD", lower_distributions)
+        # print("HD", upper_distributions)
 
         for i in range(self.config.minibatch_size):
             np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
             np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
         target_distributions = m
+        # print("M", m)
         return target_distributions
 
     # def score_state(self, state, turn):

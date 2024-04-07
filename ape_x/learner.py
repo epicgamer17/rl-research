@@ -68,6 +68,7 @@ class LearnerBase(RainbowAgent):
             ids = samples.ids
             indices = samples.indices
             weights = samples.weights.reshape(-1, 1)
+            # print(weights)
             # if self.use_n_step:
             discount_factor = self.config.discount_factor**self.config.n_step
             actions = samples.actions
@@ -104,13 +105,14 @@ class LearnerBase(RainbowAgent):
 
         prioritized_loss = elementwise_loss + self.config.per_epsilon
         # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
-        prioritized_loss = np.clip(
-            prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
-        )
+        # prioritized_loss = np.clip(
+        #     prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
+        # )
 
         try:
             self.updates_queue.put(
-                Update(ids=ids, indices=indices, losses=prioritized_loss), block=False
+                Update(ids=ids, indices=indices, losses=prioritized_loss.numpy()),
+                block=False,
             )
         except queue.Full:
             logger.warning("updates queue full, dropping update")
@@ -221,7 +223,11 @@ class DistributedLearner(LearnerBase):
             if i == 0:
                 if self.samples_queue.qsize() < self.config.samples_queue_size:
                     logger.info("requesting batch")
-                    replay_socket.send(message_codes.LEARNER_REQUESTS_BATCH)
+                    replay_socket.send(
+                        message_codes.LEARNER_REQUESTS_BATCH, zmq.SNDMORE
+                    )
+                    replay_socket.send_string(str(self.config.per_beta))
+
                     logger.info("wating for batch")
                     res = replay_socket.recv()
                     if res == b"":  # empty message
@@ -255,6 +261,7 @@ class DistributedLearner(LearnerBase):
                 update = replayMemory_capnp.PriorityUpdate.new_message()
                 update.ids = ids.tolist()
                 update.indices = indices.astype(int).tolist()
+
                 update.losses = losses.astype(float).tolist()
 
                 replay_socket.send(message_codes.LEARNER_UPDATE_PRIORITIES, zmq.SNDMORE)
@@ -263,12 +270,16 @@ class DistributedLearner(LearnerBase):
                 i = 0
 
     def store_weights(self):
-        compressed = compress(self.model.get_weights())
+        weights = self.model.get_weights()
+        # print(weights)
+        compressed = compress(weights)
         self.storage.store_weights(compressed)
 
     def on_run(self):
         self.flag = threading.Event()
 
+        state, _ = self.env.reset()
+        self.select_action(state)
         self.replay_thread = threading.Thread(
             target=self.handle_replay_socket, args=(self.flag,)
         )
