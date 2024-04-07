@@ -134,8 +134,8 @@ class ReplayBuffer(
         if priority is None:
             priority = self.max_priority**self.alpha
 
-        self.sum_tree[self.tree_pointer] = priority
-        self.min_tree[self.tree_pointer] = priority
+        self.sum_tree[self.tree_pointer] = priority**self.alpha
+        self.min_tree[self.tree_pointer] = priority**self.alpha
 
         self.tree_pointer = (self.tree_pointer + 1) % self.max_size
         return t
@@ -218,8 +218,8 @@ class ReplayBuffer(
     def update_priorities(self, indices, priorities, ids=None):
         # necessary for shared replay buffer
         if ids is not None:
-            ids_updated = 0
-            ids_skipped = 0
+            # ids_updated = 0
+            # ids_skipped = 0
             assert len(priorities) == len(ids) == len(indices)
 
             for index, id, priority in zip(indices, ids, priorities):
@@ -227,13 +227,16 @@ class ReplayBuffer(
                 assert 0 <= index < len(self)
 
                 if self.id_buffer[index] != id:
-                    ids_skipped += 1
+                    # ids_skipped += 1
                     continue
 
-                self.sum_tree[index] = priority
-                self.min_tree[index] = priority
+                new_priority = priority**self.alpha
+                self.sum_tree[index] = new_priority
+                self.min_tree[index] = new_priority
                 self.max_priority = max(self.max_priority, priority)
-                ids_updated += 1
+                # ids_updated += 1
+
+            # print("updated: ", ids_updated, "skipped:", ids_skipped)
 
         else:
             assert len(indices) == len(priorities)
@@ -243,10 +246,10 @@ class ReplayBuffer(
                 assert priority > 0, "Negative priority: {}".format(priority)
                 assert 0 <= index < len(self)
 
-                new_priority = min(priority**self.alpha, self.max_priority)
-
+                new_priority = priority**self.alpha
                 self.sum_tree[index] = new_priority
                 self.min_tree[index] = new_priority
+                self.max_priority = max(self.max_priority, priority)
                 # self.max_priority = max(
                 #     self.max_priority, priority
                 # )  # could remove and clip priorities in experience replay isntead

@@ -27,7 +27,7 @@ sys.path.append("..")
 from rainbow.rainbow_agent import RainbowAgent
 
 # from refactored_replay_buffers.prioritized_nstep import ReplayBuffer
-from replay_buffers.n_step_replay_buffer import ReplayBuffer as NStepReplayBuffer
+from replay_buffers.n_step_replay_buffer import ReplayBuffer
 
 
 class TransitionBuffer(NamedTuple):
@@ -63,7 +63,7 @@ class ApexActor(ActorAgent, PollingActor):
         self.config = config
         self.score = 0
         self.stats = dict(score=list())
-        self.replay_buffer = NStepReplayBuffer(
+        self.rb = ReplayBuffer(
             observation_dimensions=env.observation_space.shape,
             batch_size=self.config.replay_buffer_size,
             max_size=self.config.replay_buffer_size,
@@ -86,7 +86,7 @@ class ApexActor(ActorAgent, PollingActor):
         done = terminated or truncated
         self.score += reward
 
-        self.replay_buffer.store(self.env_state, action, reward, next_state, done)
+        self.rb.store(self.env_state, action, reward, next_state, done)
 
         if done:
             self.env_state, _ = self.env.reset()
@@ -96,7 +96,7 @@ class ApexActor(ActorAgent, PollingActor):
             self.env_state = next_state
 
     def should_send_experience_batch(self, training_step: int):
-        return self.replay_buffer.size == self.replay_buffer.max_size
+        return self.rb.size == self.rb.max_size
 
     def should_update_params(self, training_step: int):
         return (
@@ -140,26 +140,24 @@ class DistributedApex(ApexActor, RainbowAgent):
         for i in range(self.config.replay_buffer_size):
             ids[i] = uuid4().hex
 
-        losses = self.calculate_loss(
+        prioritized_losses = self.calculate_loss(
             TransitionBuffer(
-                observations=self.replay_buffer.observation_buffer,
-                actions=self.replay_buffer.action_buffer,
-                rewards=self.replay_buffer.reward_buffer,
-                next_observations=self.replay_buffer.next_observation_buffer,
-                dones=self.replay_buffer.done_buffer,
+                observations=self.rb.observation_buffer,
+                actions=self.rb.action_buffer,
+                rewards=self.rb.reward_buffer,
+                next_observations=self.rb.next_observation_buffer,
+                dones=self.rb.done_buffer,
             )
         )
 
-        priorities = losses**self.alpha
-
         batch = Batch(
-            observations=self.replay_buffer.observation_buffer,
-            actions=self.replay_buffer.action_buffer,
-            rewards=self.replay_buffer.reward_buffer,
-            next_observations=self.replay_buffer.next_observation_buffer,
-            dones=self.replay_buffer.done_buffer,
+            observations=self.rb.observation_buffer,
+            actions=self.rb.action_buffer,
+            rewards=self.rb.reward_buffer,
+            next_observations=self.rb.next_observation_buffer,
+            dones=self.rb.done_buffer,
             ids=ids,
-            priorities=priorities,
+            priorities=prioritized_losses,
         )
         # print(batch.actions)
 
@@ -179,7 +177,7 @@ class DistributedApex(ApexActor, RainbowAgent):
         res = builder.to_bytes_packed()
         self.replay_socket.send(res)
 
-        self.replay_buffer.clear()
+        self.rb.clear()
 
     def update_params(self):
         ti = time.time()
@@ -217,19 +215,21 @@ class DistributedApex(ApexActor, RainbowAgent):
     def calculate_loss(self, batch: TransitionBuffer):
         t = time.time()
         discount_factor = self.config.discount_factor**self.config.n_step
-        inputs = self.prepare_states(batch.observations)
-        initial_distributions = self.model(inputs)
-        target_distributions = self.compute_target_distributions_np(
-            batch, discount_factor
-        )
+        inputs, actions = self.prepare_states(batch.observations), batch.actions
 
-        l = list(zip(range(initial_distributions.shape[0]), batch.actions))
-        distributions_to_train = tf.gather_nd(initial_distributions, l)
+        initial_distributions = self.model(inputs)
+        distributions_to_train = tf.gather_nd(
+            initial_distributions,
+            list(zip(range(initial_distributions.shape[0]), actions)),
+        )
 
         # print(distributions_to_train)
         # print(tf.convert_to_tensor(target_distributions))
         # print()
 
+        target_distributions = self.compute_target_distributions_np(
+            batch, discount_factor
+        )
         elementwise_loss = self.config.loss_function.call(
             y_pred=distributions_to_train,
             y_true=tf.convert_to_tensor(target_distributions),
@@ -239,13 +239,6 @@ class DistributedApex(ApexActor, RainbowAgent):
         )
 
         prioritized_loss = elementwise_loss + self.config.per_epsilon
-        # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
-        # prioritized_loss = np.clip(
-        #     prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
-        # )
-
-        i = np.argmin(prioritized_loss)
-        # print(np.min(prioritized_loss), target_distributions[i])
 
         delta_t = time.time() - t
         logger.info(f"calculate_losses took: {delta_t} s.")
