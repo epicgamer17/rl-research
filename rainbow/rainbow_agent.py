@@ -159,6 +159,12 @@ class RainbowAgent(BaseAgent):
 
             if one_step_transition:
                 self.replay_buffer.store(*one_step_transition)
+
+            # fix?
+            # # if one_step_transition:
+            # #     self.replay_buffer.store(*one_step_transition)
+            # self.replay_buffer.store(*one_step_transition)
+
         else:
             next_state, reward, terminated, truncated, info = self.test_env.step(action)
 
@@ -276,30 +282,18 @@ class RainbowAgent(BaseAgent):
         return target_distributions
 
     def compute_target_distributions_np(self, samples: Sample, discount_factor):
-        observations = samples.observations
-        inputs = self.prepare_states(observations)
-        next_observations = samples.next_observations
-        next_inputs = self.prepare_states(next_observations)
-        # print("rewards", samples.rewards)
-        rewards = samples.rewards.reshape(-1, 1)
-        dones = samples.dones.reshape(-1, 1)
+        inputs, next_inputs, rewards, dones = (
+            self.prepare_states(samples.observations),
+            self.prepare_states(samples.next_observations),
+            samples.rewards.reshape(-1, 1),
+            samples.dones.reshape(-1, 1),
+        )
 
         # print("R", rewards)
         # print("d", dones)
 
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
-
-        # offset = (
-        #     np.linspace(
-        #         0,
-        #         (self.config.minibatch_size - 1) * self.config.atom_size,
-        #         self.config.minibatch_size,
-        #     )
-        #     .astype(int)
-        #     .expand_dims(1)
-        #     .broadcast_to(self.config.minibatch_size, self.config.atom_size)
-        # )
 
         target_distributions = target_network_distributions[
             range(self.config.minibatch_size), next_actions
