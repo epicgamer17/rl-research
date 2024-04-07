@@ -3,6 +3,7 @@ import time
 import logging
 from pymongo import MongoClient
 import gridfs
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,12 @@ class Storage:
             password=config.password,
         )
 
+        print("storage connected.")
         if reset:
             db = self.client["model_weights"]
             db.drop_collection(db["ids"])
             db.drop_collection(db["fs.files"])
+            print("dropped existing collections")
 
     def get_latest_weights_id(self):
         db = self.client["model_weights"]
@@ -46,10 +49,11 @@ class Storage:
             upsert=True,
         )
 
-    def store_weights(self, bytes):
+    def store_weights(self, bytes: bytes):
         db = self.client["model_weights"]
         fs = gridfs.GridFS(db)
         id = fs.put(bytes)
+        print("weights hash: ", hashlib.md5(bytes).hexdigest())
 
         # delete previous weights if they exist
         prev_id = self.get_latest_weights_id()
@@ -60,11 +64,17 @@ class Storage:
         self.update_weights_id(id)
 
     def get_weights(self):
-        id = self.get_latest_weights_id()
-        if not id:
-            return None
+        while True:
+            try:
+                id = self.get_latest_weights_id()
+                if not id:
+                    return None
 
-        db = self.client["model_weights"]
-        fs = gridfs.GridFS(db)
+                db = self.client["model_weights"]
+                fs = gridfs.GridFS(db)
 
-        return fs.get(id).read()
+                weights = fs.get(id).read()
+                print("weights hash: ", hashlib.md5(weights).hexdigest())
+                return weights
+            except Exception as e:
+                logger.warning("error getting weights: ", e)

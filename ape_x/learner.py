@@ -255,7 +255,7 @@ class DistributedLearner(LearnerBase):
                 try:
                     t = self.updates_queue.get(timeout=0.1)
                 except queue.Empty:
-                    logger.info("no updates to send, continuing")
+                    logger.debug("no updates to send, continuing")
                     continue
                 ids, indices, losses = t
                 update = replayMemory_capnp.PriorityUpdate.new_message()

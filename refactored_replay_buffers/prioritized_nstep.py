@@ -211,8 +211,8 @@ class ReplayBuffer(
         weight = (priority_sample * len(self)) ** (-beta)
         weight = weight / max_weight
 
-        print(beta, len(self), self.min_tree.min(), min_priority)
-        print(max_weight)
+        # print(beta, len(self), self.min_tree.min(), min_priority)
+        # print(max_weight)
         return weight
 
     def update_priorities(self, indices, priorities, ids=None):
