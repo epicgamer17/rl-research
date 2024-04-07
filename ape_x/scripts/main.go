@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -44,9 +45,10 @@ func GenerateHosts(username string) <-chan string {
 	return c
 }
 
-func FindFreeServers(hosts <-chan string) <-chan string {
+func FindFreeServers(hosts <-chan string) (<-chan string, <-chan bool) {
 	wg := sync.WaitGroup{}
-	c := make(chan string)
+	c := make(chan string, 100)
+	done := make(chan bool)
 
 	for host := range hosts {
 		wg.Add(1)
@@ -56,6 +58,7 @@ func FindFreeServers(hosts <-chan string) <-chan string {
 		cmd := exec.Command("ssh", args...)
 
 		go func(h string) {
+			defer fmt.Printf("%v done", h)
 			defer wg.Done()
 			output, err := cmd.Output()
 			if err == nil {
@@ -78,11 +81,13 @@ func FindFreeServers(hosts <-chan string) <-chan string {
 
 	go func() {
 		wg.Wait()
-		close(c)
 		fmt.Println("done")
+		done <- true
+		close(c)
+		close(done)
 	}()
 
-	return c
+	return c, done
 }
 
 func NewConfig(username string) *ssh.ClientConfig {
@@ -227,12 +232,25 @@ func StartLearner(session *ssh.Session, conf *DistributedConfig) (<-chan string,
 	return stdoutCh, stderrCh
 }
 
-func StartActor(session *ssh.Session, conf *DistributedConfig, id string) (<-chan string, <-chan string) {
+func StartActor(session *ssh.Session, conf *DistributedConfig, id string, epsilon float64) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_actor.py %s %s %d %s %d %s $(cat %s)", id, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+		fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s)", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+	}
+
+	cmd := strings.Join(commands, "; ")
+	session.Start(cmd)
+	return stdoutCh, stderrCh
+}
+
+func StartSpectator(session *ssh.Session, conf *DistributedConfig, id string, epsilon float64) (<-chan string, <-chan string) {
+	stdoutCh, stderrCh := createChannels(session)
+	commands := []string{
+		"cd ~/rl-research/ape_x",
+		"conda activate ml",
+		fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s) --spectator", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -282,12 +300,13 @@ func killMongo(client *ssh.Client) {
 	}
 }
 
-func copyTrainingGraphToStaticSite(client *ssh.Client) {
-	cmd := "cp ~/rl-research/ape_x/training_graphs/learner/learner.png ~/public_html/training/learner.png"
+func copyTrainingGraphsToStaticSite(client *ssh.Client) {
+	cmd := "cp ~/rl-research/ape_x/training_graphs/learner/learner.png ~/public_html/training/learner.png; cp ~/rl-research/ape_x/training_graphs/spectator/spectator.png ~/public_html/training/spectator.png"
 	session, err := client.NewSession()
 	if err != nil {
 		fmt.Println("failed to create session: ", err)
 	}
+	defer session.Close()
 
 	fmt.Println("Running command: ", cmd)
 
@@ -297,24 +316,40 @@ func copyTrainingGraphToStaticSite(client *ssh.Client) {
 
 }
 
+const baseEpsilon = 0.4
+
 func main() {
-	availableHosts := FindFreeServers(GenerateHosts(USERNAME))
+	availableHosts, done := FindFreeServers(GenerateHosts(USERNAME))
+	<-done
 
 	replayClientHost := <-availableHosts
 	mongoClientHost := <-availableHosts
 	learnerClientHost := <-availableHosts
+	spectatorClientHost := <-availableHosts
+
+	totalActors := len(availableHosts)
 
 	fmt.Println("Replay client: ", replayClientHost)
 	fmt.Println("Mongo client: ", mongoClientHost)
 	fmt.Println("Learner client: ", learnerClientHost)
+	fmt.Println("Num actors: ", totalActors)
+
+	epsilons := make([]float64, totalActors)
+
+	for i := 0; i < totalActors; i++ {
+		e_i := math.Pow(baseEpsilon, 1+(float64(i)/float64(totalActors))*7)
+		epsilons[i] = e_i
+	}
 
 	replayClient := NewClient(replayClientHost)
 	mongoClient := NewClient(mongoClientHost)
 	learnerClient := NewClient(learnerClientHost)
+	spectatorClient := NewClient(spectatorClientHost)
 
 	defer replayClient.Close()
 	defer mongoClient.Close()
 	defer learnerClient.Close()
+	defer spectatorClient.Close()
 
 	replaySession, err := replayClient.NewSession()
 	if err != nil {
@@ -333,6 +368,12 @@ func main() {
 		panic("failed to create session: " + err.Error())
 	}
 	defer learnerSession.Close()
+
+	spectatorSession, err := spectatorClient.NewSession()
+	if err != nil {
+		panic("failed to create session: " + err.Error())
+	}
+	defer spectatorSession.Close()
 
 	replayStdout, replayStderr := StartReplay(replaySession)
 	mongoStdout, mongoStderr := StartMongo(mongoSession, MongoPort)
@@ -357,6 +398,8 @@ func main() {
 
 	learnerStdout, learnerStderr := StartLearner(learnerSession, learnerDistributedConfig)
 
+	spectatorStdout, spectatorStderr := StartSpectator(spectatorSession, actorDistributedConfig, "spectator", 0.4)
+
 	go func() {
 		for msg := range merge(replayStdout, replayStderr) {
 			fmt.Printf("[replay] %s\n", msg)
@@ -372,13 +415,18 @@ func main() {
 			fmt.Printf("[learner] %s\n", msg)
 		}
 	}()
+	go func() {
+		for msg := range merge(spectatorStdout, spectatorStderr) {
+			fmt.Printf("[learner] %s\n", msg)
+		}
+	}()
 
-	actorClients := make(map[string]*ssh.Client)
+	actorClients := []*ssh.Client{}
 	for host := range availableHosts {
-		actorClients[host] = NewClient(host)
+		actorClients = append(actorClients, NewClient(host))
 	}
 
-	for host, client := range actorClients {
+	for i, client := range actorClients {
 		defer client.Close()
 
 		session, err := client.NewSession()
@@ -387,13 +435,13 @@ func main() {
 		}
 		defer session.Close()
 
-		stdout, stderr := StartActor(session, actorDistributedConfig, uuid.New().String())
+		stdout, stderr := StartActor(session, actorDistributedConfig, uuid.New().String(), epsilons[i])
 
-		go func(host string) {
+		go func(client *ssh.Client) {
 			for msg := range merge(stdout, stderr) {
-				fmt.Printf("[actor %s] %s\n", host, msg)
+				fmt.Printf("[actor %s] %s\n", client.RemoteAddr().String(), msg)
 			}
-		}(host)
+		}(client)
 	}
 
 	updaterClient := NewClient(fmt.Sprintf("mimi.%s", FQDN))
@@ -404,7 +452,7 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				copyTrainingGraphToStaticSite(updaterClient)
+				copyTrainingGraphsToStaticSite(updaterClient)
 			case <-flag:
 				ticker.Stop()
 				return
@@ -432,6 +480,12 @@ func main() {
 	wg.Add(1)
 	go func() {
 		killLearner(learnerClient)
+		wg.Done()
+	}()
+
+	wg.Add(1)
+	go func() {
+		killActor(spectatorClient)
 		wg.Done()
 	}()
 
