@@ -62,6 +62,7 @@ class ReplayBuffer(
         gamma=0.99,
         alpha=0.6,
         max_priority=1.0,
+        min_size=None,
     ):
 
         assert n_step > 0
@@ -69,6 +70,9 @@ class ReplayBuffer(
         assert max_size > 0
         assert batch_size >= 0
         assert alpha >= 0
+        if min_size == None:
+            min_size = batch_size
+        assert min_size >= batch_size
 
         # self.observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         # self.next_observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
@@ -90,6 +94,7 @@ class ReplayBuffer(
         self.id_buffer = np.zeros(max_size, dtype=np.object_)
 
         self.max_size = max_size
+        self.min_size = min_size
         self.batch_size = batch_size if batch_size > 0 else max_size
         self.pointer = 0
         self.size = 0
@@ -164,7 +169,7 @@ class ReplayBuffer(
         return t
 
     def __sample__(self, beta=0.4) -> TransitionBatch:
-        assert self.__len__() >= self.batch_size
+        assert self.__len__() >= self.min_size
         assert beta > 0
 
         indices = sample_tree_proportional(self.sum_tree, self.batch_size, self.size)
@@ -206,6 +211,8 @@ class ReplayBuffer(
         weight = (priority_sample * len(self)) ** (-beta)
         weight = weight / max_weight
 
+        print(beta, len(self), self.min_tree.min(), min_priority)
+        print(max_weight)
         return weight
 
     def update_priorities(self, indices, priorities, ids=None):

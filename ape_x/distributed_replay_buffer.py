@@ -35,6 +35,7 @@ class SaveableReplayBuffer:
             self.replay_memory = ReplayBuffer(
                 observation_dimensions=env.observation_space.shape,
                 max_size=50000,
+                min_size=500,
                 batch_size=128,
                 max_priority=1.0,
                 alpha=0.5,  # config["per_alpha"],
@@ -51,8 +52,8 @@ class SaveableReplayBuffer:
         with open(path, "wb") as file:
             file.write(compress(self.replay_memory))
 
-    def sample(self):
-        return self.replay_memory.__sample__()
+    def sample(self, beta):
+        return self.replay_memory.__sample__(beta)
 
     def store(self, *args, **kwargs):
         self.replay_memory.store(*args, **kwargs)
@@ -72,9 +73,9 @@ class ReplayServer:
         self.poller.register(self.actors_socket, zmq.POLLIN)
         self.poller.register(self.learners_socket, zmq.POLLIN)
 
-    def make_sample(self):
+    def make_sample(self, beta):
         try:
-            samples = self.replay_memory.sample()
+            samples = self.replay_memory.sample(beta)
         except AssertionError as e:
             # if the buffer does not have enough samples, return empty samples
             return b""
@@ -143,7 +144,8 @@ class ReplayServer:
             if self.learners_socket in socks:
                 msg = self.learners_socket.recv()
                 if msg == message_codes.LEARNER_REQUESTS_BATCH:
-                    batch = self.make_sample()
+                    beta = float(self.learners_socket.recv_string())
+                    batch = self.make_sample(beta)
                     self.learners_socket.send(batch)
                 elif msg == message_codes.LEARNER_UPDATE_PRIORITIES:
                     res = self.learners_socket.recv()

@@ -8,30 +8,15 @@ class ReplayBuffer:
     ):
         # self.observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         # self.next_observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
-        observation_buffer_shape = []
-        observation_buffer_shape += [max_size]
-        observation_buffer_shape += list(observation_dimensions)
-        observation_buffer_shape = list(observation_buffer_shape)
-        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
-        self.next_observation_buffer = np.zeros(
-            observation_buffer_shape, dtype=np.float32
-        )
-
-        self.id_buffer = np.zeros(max_size, dtype=np.object_)
-        self.action_buffer = np.zeros(max_size, dtype=np.int32)
-        self.reward_buffer = np.zeros(max_size, dtype=np.float32)
-        self.done_buffer = np.zeros(max_size)
-        self.pointer, self.trajectory_start_index = 0, 0
-
-        self.max_size = max_size
-        self.batch_size = batch_size if batch_size > 0 else max_size
-        self.pointer = 0
-        self.size = 0
-
-        # n-step learning
-        self.n_step_buffer = deque(maxlen=n_step)
         self.n_step = n_step
         self.gamma = gamma
+        self.observation_dimensions = observation_dimensions
+        self.max_size = max_size
+        self.batch_size = batch_size if batch_size > 0 else max_size
+
+        self.clear()
+
+        # n-step learning
 
     def store(self, observation, action, reward, next_observation, done, id=None):
         # print("Storing in Buffer")
@@ -59,6 +44,26 @@ class ReplayBuffer:
 
         # print("Buffer Storage Time ", time() - time1)
         return self.n_step_buffer[0]
+
+    def clear(self):
+        observation_buffer_shape = []
+        observation_buffer_shape += [self.max_size]
+        observation_buffer_shape += list(self.observation_dimensions)
+        observation_buffer_shape = list(observation_buffer_shape)
+        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
+        self.next_observation_buffer = np.zeros(
+            observation_buffer_shape, dtype=np.float32
+        )
+
+        self.id_buffer = np.zeros(self.max_size, dtype=np.object_)
+        self.action_buffer = np.zeros(self.max_size, dtype=np.int32)
+        self.reward_buffer = np.zeros(self.max_size, dtype=np.float32)
+        self.done_buffer = np.zeros(self.max_size)
+        self.pointer, self.trajectory_start_index = 0, 0
+
+        self.pointer = 0
+        self.size = 0
+        self.n_step_buffer = deque(maxlen=self.n_step)
 
     def sample(self):
         # print("Sampling From Buffer")

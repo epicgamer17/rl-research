@@ -34,6 +34,8 @@ class ActorApeXMixin(ConfigBase):
         super().__init__(config_dict)
 
         self.poll_params_interval: int = self.parse_field("poll_params_interval", 100)
+        self.n_step: int = self.parse_field("n_step", 3)
+        self.alpha: float = self.parse_field("alpha", 0.5)
 
 
 class ApeXConfig(RainbowConfig):
