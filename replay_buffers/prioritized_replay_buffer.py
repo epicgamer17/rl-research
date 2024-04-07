@@ -126,7 +126,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
                 self.sum_tree[index] = priority**self.alpha
                 self.min_tree[index] = priority**self.alpha
                 self.max_priority = max(self.max_priority, priority)
-
         else:
             assert len(indices) == len(priorities)
             # priorities += self.self.epsilon
@@ -168,6 +167,10 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         weight = (priority_sample * len(self)) ** (-beta)
         weight = weight / max_weight
 
+        # print("Min Tree Min ", self.min_tree.min())
+        # print("Max Weight ", max_weight)
+        # print("Min Priority ", min_priority)
+        # print("Length Self ", len(self))
         return weight
 
 
