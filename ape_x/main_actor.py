@@ -77,6 +77,7 @@ class ActorConfig(ApeXConfig, ActorApeXMixin, DistributedConfig):
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X actor")
     parser.add_argument("id", type=str)
+    parser.add_argument("epsilon", type=float)
 
     parser.add_argument("replay_addr", type=str)
     parser.add_argument("replay_port", type=str)
@@ -84,6 +85,8 @@ def main():
     parser.add_argument("storage_port", type=int)
     parser.add_argument("storage_username", type=str)
     parser.add_argument("storage_password", type=str)
+
+    parser.add_argument("--spectator", default=False, action="store_true")
 
     args = parser.parse_args()
 
@@ -93,10 +96,16 @@ def main():
     conf["storage_port"] = args.storage_port
     conf["storage_username"] = args.storage_username
     conf["storage_password"] = args.storage_password
+    # do something with epsilon
 
     config = ActorConfig(conf, CartPoleConfig())
 
-    actor = DistributedApex(env=make_cartpole_env(), config=config, name="0")
+    actor = DistributedApex(
+        env=make_cartpole_env(),
+        config=config,
+        name=id,
+        spectator=args.spectator,
+    )
     actor.run()
 
 

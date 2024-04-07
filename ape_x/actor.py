@@ -17,6 +17,9 @@ import message_codes
 from compress_utils import compress, decompress
 from storage import Storage, StorageConfig
 
+import matplotlib
+
+matplotlib.use("Agg")
 import logging
 
 logger = logging.getLogger(__name__)
@@ -110,6 +113,7 @@ class DistributedApex(ApexActor, RainbowAgent):
         env: Env,
         config: Config | ActorApeXMixin | DistributedConfig | RainbowConfig,
         name,
+        spectator=False,
     ):
         super().__init__(env, config, name)
         self.config = config
@@ -134,7 +138,15 @@ class DistributedApex(ApexActor, RainbowAgent):
         self.replay_socket.connect(replay_url)
         logger.info(f"connected to replay buffer at {replay_url}")
 
+        self.spectator = spectator
+        if spectator:
+            self.model_name = "spectator"
+            self.t_i = None
+            self.stats = {"score": []}
+
     def send_experience_batch(self):
+        if self.spectator:
+            return
         ids = np.zeros(self.config.replay_buffer_size, dtype=np.object_)
 
         for i in range(self.config.replay_buffer_size):
@@ -208,9 +220,24 @@ class DistributedApex(ApexActor, RainbowAgent):
         self.update_params()
         self.env_state, _ = self.env.reset()
 
-    def on_training_step_end(self):
+        if self.spectator:
+            self.t_i = time.time()
+
+    def on_training_step_end(self, training_step):
         per_beta_increase = (1 - self.config.per_beta) / self.training_steps
         self.config.per_beta = min(1.0, self.config.per_beta + per_beta_increase)
+
+        if self.spectator:
+            targets = {
+                "score": self.env.spec.reward_threshold,
+            }
+            self.plot_graph(
+                self.stats,
+                targets,
+                training_step,
+                training_step,
+                time_taken=time.time() - self.t_i,
+            )
 
     def calculate_loss(self, batch: TransitionBuffer):
         t = time.time()
