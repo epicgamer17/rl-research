@@ -4,7 +4,7 @@ from collections import deque
 
 class ReplayBuffer:
     def __init__(
-        self, observation_dimensions, max_size: int, batch_size=0, n_step=1, gamma=0.99
+        self, observation_dimensions, max_size: int, batch_size=32, n_step=1, gamma=0.99
     ):
         # self.observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         # self.next_observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
