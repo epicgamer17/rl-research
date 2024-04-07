@@ -148,6 +148,7 @@ class RainbowAgent(BaseAgent):
         return selected_action
 
     def step(self, action):
+        print("Action ", action)
         if not self.is_test:
             next_state, reward, terminated, truncated, info = self.env.step(action)
             done = terminated or truncated
@@ -212,6 +213,7 @@ class RainbowAgent(BaseAgent):
                     initial_distributions,
                     list(zip(range(initial_distributions.shape[0]), actions)),
                 )
+                # print("Distributions to Train", distributions_to_train)
                 # changed this from self.model.loss.call to self.config.loss_function.call
                 elementwise_loss_n_step = self.config.loss_function.call(
                     y_pred=distributions_to_train,
@@ -223,7 +225,6 @@ class RainbowAgent(BaseAgent):
                 assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                     elementwise_loss
                 )
-
                 loss = tf.reduce_mean(elementwise_loss * weights)
 
             # TRAINING WITH GRADIENT TAPE
@@ -236,10 +237,10 @@ class RainbowAgent(BaseAgent):
 
             prioritized_loss = elementwise_loss + self.config.per_epsilon
             # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
-            prioritized_loss = np.clip(
-                prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
-            )
-            self.replay_buffer.update_priorities(indices, prioritized_loss)
+            # prioritized_loss = np.clip(
+            #     prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
+            # )
+            self.replay_buffer.update_priorities(indices, prioritized_loss.numpy())
             self.model.reset_noise()
             self.target_model.reset_noise()
             loss = loss.numpy()
@@ -253,10 +254,11 @@ class RainbowAgent(BaseAgent):
         next_inputs = self.prepare_states(next_observations)
         rewards = samples["rewards"].reshape(-1, 1)
         dones = samples["dones"].reshape(-1, 1)
+        # print("Rewards ", rewards)
+        # print("Dones ", dones)
 
         next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
-
         # print(next_actions.shape)
         # print(target_distributions.shape)
 
@@ -265,20 +267,42 @@ class RainbowAgent(BaseAgent):
         ]
         target_z = rewards + (1 - dones) * (discount_factor) * self.support
         target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
-
+        # print("Target Z ", target_z)
         b = (
             (target_z - self.config.v_min) / (self.config.v_max - self.config.v_min)
         ) * (self.config.atom_size - 1)
         l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
+
+        # offset = np.broadcast_to(
+        #     np.expand_dims(
+        #         np.linspace(
+        #             0,
+        #             (self.config.minibatch_size - 1) * self.config.atom_size,
+        #             self.config.minibatch_size,
+        #         ).astype(int),
+        #         1,
+        #     ),
+        #     (self.config.minibatch_size, self.config.atom_size),
+        # )
+
+        # print("Offset ", offset)
+
         m = np.zeros_like(target_distributions)
         assert m.shape == l.shape
         lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
         upper_distributions = target_distributions * (b - tf.cast(l, tf.float64))
 
+        # print("Lower Distributions ", lower_distributions[0])
+        # print("Upper Distributions ", upper_distributions[0])
+        # print("B ", b)
+        # print("L ", l)
+        # print("U ", u)
+        # print("M ", m)
         for i in range(self.config.minibatch_size):
             np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
             np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
         target_distributions = m
+        # print("Target Distributions ", target_distributions)
         return target_distributions
 
     def compute_target_distributions_np(self, samples: Sample, discount_factor):
