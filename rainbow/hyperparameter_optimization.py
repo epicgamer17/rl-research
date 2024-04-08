@@ -181,7 +181,7 @@ def create_search_space():
         "transfer_interval": hp.choice(
             "transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
         ),
-        "replay_period": hp.choice("replay_period", [1, 2, 3, 4, 5, 8, 10, 12]),
+        "replay_interval": hp.choice("replay_interval", [1, 2, 3, 4, 5, 8, 10, 12]),
         "minibatch_size": hp.choice(
             "minibatch_size", [2**i for i in range(0, 8)]
         ),  ###########

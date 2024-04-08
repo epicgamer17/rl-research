@@ -6,7 +6,7 @@ import gymnasium as gym
 
 import logging
 
-from agent_configs import ApeXConfig, ActorApeXMixin, DistributedConfig
+from agent_configs import ApeXActorConfig
 from game_configs import CartPoleConfig
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logging.basicConfig(
 import sys
 
 sys.path.append("..")
-from actor import DistributedApex
+from actor import ApeXActor
 
 distributed_config = {
     "learner_addr": "127.0.0.1",
@@ -42,22 +42,17 @@ rainbow_config = {
     "activation": "relu",
     "kernel_initializer": "orthogonal",
     "adam_epsilon": 0.0003125,
-    "ema_beta": 0.95,
     "transfer_interval": 100,
     "dense_layers": 2,
-    "dense_layers_noisy": True,
-    "dueling": True,
     "per_epsilon": 0.001,
     "per_alpha": 0.5,
     "per_beta": 0.4,
     "clipnorm": None,
-    "replay_buffer_size": 128,
 }
 
 
 actor_config = {
-    "minibatch_size": 128,
-    "training_steps": 100000,
+    "actor_buffer_size": 128,
     "poll_params_interval": 128,
 }
 
@@ -67,11 +62,6 @@ conf = {**rainbow_config, **distributed_config, **actor_config}
 def make_cartpole_env():
     env = gym.make("CartPole-v1", render_mode="rgb_array")
     return env
-
-
-class ActorConfig(ApeXConfig, ActorApeXMixin, DistributedConfig):
-    def __init__(self, actor_config, game_config):
-        super(ApeXConfig, self).__init__(actor_config, game_config)
 
 
 def main():
@@ -98,9 +88,9 @@ def main():
     conf["storage_password"] = args.storage_password
     # do something with epsilon
 
-    config = ActorConfig(conf, CartPoleConfig())
+    config = ApeXActorConfig(conf, CartPoleConfig())
 
-    actor = DistributedApex(
+    actor = ApeXActor(
         env=make_cartpole_env(),
         config=config,
         name=id,

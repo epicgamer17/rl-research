@@ -40,7 +40,7 @@ class Update(NamedTuple):
     losses: np.ndarray
 
 
-class LearnerBase(RainbowAgent):
+class ApeXLearnerBase(RainbowAgent):
     def __init__(self, env, config: ApeXConfig | LearnerApeXMixin):
         super().__init__(name="learner", env=env, config=config)
         self.config = config
@@ -192,7 +192,7 @@ import message_codes
 import entities.replayMemory_capnp as replayMemory_capnp
 
 
-class DistributedLearner(LearnerBase):
+class ApeXLearner(ApeXLearnerBase):
     def __init__(self, env, config: ApeXConfig | LearnerApeXMixin | DistributedConfig):
         super().__init__(env=env, config=config)
         self.updates_queue = queue.Queue()
