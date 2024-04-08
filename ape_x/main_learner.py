@@ -1,9 +1,9 @@
 import tensorflow as tf
 from tensorflow import keras
 from keras import losses
-from agent_configs import ApeXConfig, LearnerApeXMixin, DistributedConfig
+from agent_configs import ApeXLearnerConfig
 from game_configs import CartPoleConfig
-from learner import DistributedLearner
+from learner import ApeXLearner
 import gymnasium as gym
 import argparse
 
@@ -38,7 +38,6 @@ rainbow_config = {
     "ema_beta": 0.95,
     "transfer_interval": 100,
     "minibatch_size": 128,
-    "dueling": True,
     "per_epsilon": 0.001,
     "per_alpha": 0.5,
     "per_beta": 0.4,
@@ -47,7 +46,6 @@ rainbow_config = {
     # "n_step": 3,
     "transfer_interval": 100,
     "dense_layers": 2,
-    "dense_layers_noisy": True,
     "width": 512,
     "learning_rate": 0.0001,
     "loss_function": losses.CategoricalCrossentropy(),
@@ -71,11 +69,6 @@ def make_cartpole_env():
     return env
 
 
-class LearnerConfig(ApeXConfig, LearnerApeXMixin, DistributedConfig):
-    def __init__(self, learner_config, game_config):
-        super().__init__(learner_config, game_config)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
     parser.add_argument("replay_addr", type=str)
@@ -94,9 +87,9 @@ def main():
     conf["storage_username"] = args.storage_username
     conf["storage_password"] = args.storage_password
 
-    config = LearnerConfig(conf, CartPoleConfig())
+    config = ApeXLearnerConfig(conf, CartPoleConfig())
 
-    learner = DistributedLearner(
+    learner = ApeXLearner(
         env=make_cartpole_env(),
         config=config,
     )

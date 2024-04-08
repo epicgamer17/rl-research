@@ -51,7 +51,7 @@ class Batch(NamedTuple):
     priorities: np.ndarray
 
 
-class ApexActor(ActorAgent, PollingActor):
+class ApeXActorBase(ActorAgent, PollingActor):
     """
     Apex Actor base class
     """
@@ -107,7 +107,7 @@ class ApexActor(ActorAgent, PollingActor):
         )
 
 
-class DistributedApex(ApexActor, RainbowAgent):
+class ApeXActor(ApeXActorBase, RainbowAgent):
     def __init__(
         self,
         env: Env,

@@ -15,7 +15,7 @@ class DistributedConfig(ConfigBase):
         self.storage_password: str = self.parse_field("storage_password", required=True)
 
 
-class LearnerApeXMixin(ConfigBase):
+class DistributedLearnerConfig(ConfigBase):
     def __init__(self, config_dict):
         super().__init__(config_dict)
 
@@ -29,13 +29,11 @@ class LearnerApeXMixin(ConfigBase):
         self.push_params_interval: int = self.parse_field("push_params_interval", 100)
 
 
-class ActorApeXMixin(ConfigBase):
+class DistributedActorConfig(ConfigBase):
     def __init__(self, config_dict):
         super().__init__(config_dict)
 
         self.poll_params_interval: int = self.parse_field("poll_params_interval", 100)
-        self.n_step: int = self.parse_field("n_step", 3)
-        self.alpha: float = self.parse_field("alpha", 0.5)
 
 
 class ApeXConfig(RainbowConfig):
@@ -45,3 +43,19 @@ class ApeXConfig(RainbowConfig):
         # CHANGE CONFIGS TO WORK FOR APE-X AGENT
         # SHOULD BE ONE CONFIG BUT CAN HAVE CHILD CONFIGS (LOOK AT PPO)
         # so could just be like num actors etc <- since i think the others can just use the rainbow parameters from this config
+
+
+class ApeXLearnerConfig(ApeXConfig, DistributedLearnerConfig):
+    def __init__(self, config_dict, game_config):
+        super(ApeXLearnerConfig, self).__init__(config_dict, game_config)
+        DistributedLearnerConfig.__init__(self, config_dict)
+
+
+class ApeXActorConfig(ApeXConfig, DistributedActorConfig):
+    def __init__(self, config_dict, game_config):
+        super(ApeXActorConfig, self).__init__(config_dict, game_config)
+        DistributedActorConfig.__init__(self, config_dict)
+        # DIFFERENT EPSILONS PER ACTOR
+        self.actor_buffer_size: int = self.parse_field("actor_buffer_size", 128)
+        self.replay_buffer_size = self.actor_buffer_size
+        self.training_steps = 10000000000  # just a big number
