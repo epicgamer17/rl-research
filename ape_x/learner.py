@@ -8,7 +8,7 @@ import threading
 from compress_utils import compress
 from typing import NamedTuple
 from compress_utils import decompress
-from agent_configs import ApeXConfig, LearnerApeXMixin, DistributedConfig
+from agent_configs import ApeXConfig, ApeXLearnerConfig, DistributedConfig
 
 from storage import Storage, StorageConfig
 
@@ -41,7 +41,7 @@ class Update(NamedTuple):
 
 
 class ApeXLearnerBase(RainbowAgent):
-    def __init__(self, env, config: ApeXConfig | LearnerApeXMixin):
+    def __init__(self, env, config: ApeXLearnerConfig):
         super().__init__(name="learner", env=env, config=config)
         self.config = config
 
@@ -193,7 +193,7 @@ import entities.replayMemory_capnp as replayMemory_capnp
 
 
 class ApeXLearner(ApeXLearnerBase):
-    def __init__(self, env, config: ApeXConfig | LearnerApeXMixin | DistributedConfig):
+    def __init__(self, env, config: ApeXLearnerConfig):
         super().__init__(env=env, config=config)
         self.updates_queue = queue.Queue()
         self.config = config

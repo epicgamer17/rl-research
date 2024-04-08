@@ -8,7 +8,7 @@ from gymnasium import Env
 from base_agent.distributed_agents import ActorAgent, PollingActor
 from agent_configs import (
     Config,
-    ActorApeXMixin,
+    ApeXActorConfig,
     DistributedConfig,
     RainbowConfig,
 )
@@ -59,7 +59,7 @@ class ApeXActorBase(ActorAgent, PollingActor):
     def __init__(
         self,
         env: Env,
-        config: Config | ActorApeXMixin,
+        config: ApeXActorConfig,
         name,
     ):
         super().__init__(env, config, name)
@@ -111,7 +111,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
     def __init__(
         self,
         env: Env,
-        config: Config | ActorApeXMixin | DistributedConfig | RainbowConfig,
+        config: ApeXActorConfig,
         name,
         spectator=False,
     ):
