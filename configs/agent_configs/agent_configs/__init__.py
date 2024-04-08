@@ -1,9 +1,13 @@
 from .alphazero_config import AlphaZeroConfig
 from .ape_x_config import (
-    DistributedConfig,
-    ActorApeXMixin,
-    LearnerApeXMixin,
+    ApeXLearnerConfig,
+    ApeXActorConfig,
     ApeXConfig,
+)
+from .distributed_configs import (
+    DistributedLearnerConfig,
+    DistributedActorConfig,
+    DistributedConfig,
 )
 from .base_config import ConfigBase, Config
 from .muzero_config import MuZeroConfig
