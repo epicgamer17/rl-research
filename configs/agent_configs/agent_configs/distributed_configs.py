@@ -24,7 +24,6 @@ class DistributedLearnerConfig(DistributedConfig):
             "remove_old_experiences_interval", 1000
         )
 
-        # not used
         self.push_params_interval: int = self.parse_field("push_params_interval", 100)
 
 

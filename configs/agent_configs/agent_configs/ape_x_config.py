@@ -18,13 +18,13 @@ class ApeXConfig(RainbowConfig):
 class ApeXLearnerConfig(ApeXConfig, DistributedLearnerConfig):
     def __init__(self, config_dict, game_config):
         super(ApeXLearnerConfig, self).__init__(config_dict, game_config)
-        DistributedLearnerConfig.__init__(self, config_dict)
+        super(DistributedLearnerConfig, self).__init__(config_dict)
 
 
 class ApeXActorConfig(ApeXConfig, DistributedActorConfig):
     def __init__(self, config_dict, game_config):
         super(ApeXActorConfig, self).__init__(config_dict, game_config)
-        DistributedActorConfig.__init__(self, config_dict)
+        super(DistributedActorConfig, self).__init__(config_dict)
         # DIFFERENT EPSILONS PER ACTOR
         self.actor_buffer_size: int = self.parse_field("actor_buffer_size", 128)
         self.replay_buffer_size = self.actor_buffer_size
