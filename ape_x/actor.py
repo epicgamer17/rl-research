@@ -73,7 +73,6 @@ class ApeXActorBase(ActorAgent, PollingActor):
             n_step=self.config.n_step,
             gamma=0.99,  # self.config.gamma,
         )
-        self.alpha = self.config.alpha
 
     def on_run_start(self):
         super().on_run_start()
