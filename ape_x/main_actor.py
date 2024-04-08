@@ -52,7 +52,7 @@ rainbow_config = {
 
 
 actor_config = {
-    "actor_buffer_size": 128,
+    "actor_buffer_size": 128,  # sets minibatch size and replay buffer size
     "poll_params_interval": 128,
 }
 

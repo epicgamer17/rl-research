@@ -26,6 +26,6 @@ class ApeXActorConfig(ApeXConfig, DistributedActorConfig):
         super(ApeXActorConfig, self).__init__(config_dict, game_config)
         super(DistributedActorConfig, self).__init__(config_dict)
         # DIFFERENT EPSILONS PER ACTOR
-        self.actor_buffer_size: int = self.parse_field("actor_buffer_size", 128)
-        self.replay_buffer_size = self.actor_buffer_size
+        self.replay_buffer_size: int = self.parse_field("actor_buffer_size", 128)
+        self.minibatch_size = self.replay_buffer_size
         self.training_steps = 10000000000  # just a big number
