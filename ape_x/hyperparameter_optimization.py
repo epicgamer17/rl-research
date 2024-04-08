@@ -56,6 +56,7 @@ def globalize(func):
 
 def make_func():
     def run_training(args):
+        args["training_steps"] = 1000
         learner_config = ApeXLearnerConfig(args, game_config=CartPoleConfig())
         learner = ApeXLearner(learner_config)
         actor_config = ApeXActorConfig(args, game_config=CartPoleConfig())
