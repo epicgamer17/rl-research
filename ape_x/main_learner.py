@@ -71,23 +71,11 @@ def make_cartpole_env():
 
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
-    parser.add_argument("replay_addr", type=str)
-    parser.add_argument("replay_port", type=str)
-    parser.add_argument("storage_hostname", type=str)
-    parser.add_argument("storage_port", type=int)
-    parser.add_argument("storage_username", type=str)
-    parser.add_argument("storage_password", type=str)
+    parser.add_argument("--config_file", type=str)
 
     args = parser.parse_args()
 
-    conf["replay_addr"] = args.replay_addr
-    conf["replay_port"] = args.replay_port
-    conf["storage_hostname"] = args.storage_hostname
-    conf["storage_port"] = args.storage_port
-    conf["storage_username"] = args.storage_username
-    conf["storage_password"] = args.storage_password
-
-    config = ApeXLearnerConfig(conf, CartPoleConfig())
+    config = ApeXLearnerConfig.load(args.config_file)
 
     learner = ApeXLearner(
         env=make_cartpole_env(),

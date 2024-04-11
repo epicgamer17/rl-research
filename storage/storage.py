@@ -17,6 +17,13 @@ class StorageConfig(NamedTuple):
 
 class Storage:
     def __init__(self, config: StorageConfig, reset: bool = False):
+        print(
+            "aAAAAAAAAAAAAAAAAAAAal",
+            config.hostname,
+            config.port,
+            config.username,
+            config.password,
+        )
         self.client = MongoClient(
             host=config.hostname,
             port=config.port,
