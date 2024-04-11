@@ -1,10 +1,15 @@
-import numpy as np
-from storage import Storage, StorageConfig
-from compress_utils import compress, decompress
-
+# not named _test to avoid getting autotested by pytest
 storage_config = StorageConfig(
     "127.0.0.1", 5553, "ezra", "EA00E05EC7592F8A4B41FED9B30A3D26"
 )
+
+import numpy as np
+
+import sys
+
+sys.path.append("..")
+from storage.storage import Storage, StorageConfig
+from storage.compress_utils import compress, decompress
 
 
 def test_storage():

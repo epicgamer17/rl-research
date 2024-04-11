@@ -35,6 +35,8 @@ from tensorflow.nn import (
 import numpy as np
 from game_configs import GameConfig
 
+import yaml
+
 
 class ConfigBase:
     def parse_field(self, field_name, default=None, wrapper=None, required=True):
@@ -61,6 +63,21 @@ class ConfigBase:
 
 
 class Config(ConfigBase):
+    @classmethod
+    def load(cls, filepath: str):
+        with open(filepath, "r") as f:
+            o = yaml.load(f, yaml.Loader)
+            print(o)
+            a = cls(config_dict=o["config_dict"], game_config=o["game"])
+
+        return a
+
+    def dump(self, filepath: str):
+        to_dump = dict(config_dict=self.config_dict, game=self.game)
+
+        with open(filepath, "w") as f:
+            yaml.dump(to_dump, f, yaml.Dumper)
+
     def __init__(self, config_dict: dict, game_config: GameConfig) -> None:
         super().__init__(config_dict)
         # could take in a game config and set an action space and observation shape here

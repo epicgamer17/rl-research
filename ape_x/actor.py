@@ -5,17 +5,9 @@ from typing import NamedTuple
 from uuid import uuid4
 import zmq
 from gymnasium import Env
-from base_agent.distributed_agents import ActorAgent, PollingActor
-from agent_configs import (
-    Config,
-    ApeXActorConfig,
-    DistributedConfig,
-    RainbowConfig,
-)
+from agent_configs import ApeXActorConfig
 import entities.replayMemory_capnp as replayMemory_capnp
 import message_codes
-from compress_utils import compress, decompress
-from storage import Storage, StorageConfig
 
 import matplotlib
 
@@ -28,6 +20,9 @@ import sys
 
 sys.path.append("..")
 from rainbow.rainbow_agent import RainbowAgent
+from base_agent.distributed_agents import ActorAgent, PollingActor
+from storage.compress_utils import compress, decompress
+from storage.storage import Storage, StorageConfig
 
 # from refactored_replay_buffers.prioritized_nstep import ReplayBuffer
 from replay_buffers.n_step_replay_buffer import ReplayBuffer
@@ -107,13 +102,7 @@ class ApeXActorBase(ActorAgent, PollingActor):
 
 
 class ApeXActor(ApeXActorBase, RainbowAgent):
-    def __init__(
-        self,
-        env: Env,
-        config: ApeXActorConfig,
-        name,
-        spectator=False,
-    ):
+    def __init__(self, env: Env, config: ApeXActorConfig, name, spectator=False):
         super().__init__(env, config, name)
         self.config = config
 

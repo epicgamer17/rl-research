@@ -6,7 +6,6 @@ class DistributedConfig(ConfigBase):
         super().__init__(config_dict)
 
         self.replay_addr: str = self.parse_field("replay_addr", required=True)
-        self.replay_port: int = self.parse_field("replay_port", required=True)
 
         self.storage_hostname: str = self.parse_field("storage_hostname", required=True)
         self.storage_port: int = self.parse_field("storage_port", required=True)
@@ -25,6 +24,7 @@ class DistributedLearnerConfig(DistributedConfig):
         )
 
         self.push_params_interval: int = self.parse_field("push_params_interval", 100)
+        self.replay_port: int = self.parse_field("learner_replay_port", required=True)
 
 
 class DistributedActorConfig(DistributedConfig):
@@ -32,3 +32,4 @@ class DistributedActorConfig(DistributedConfig):
         super().__init__(config_dict)
 
         self.poll_params_interval: int = self.parse_field("poll_params_interval", 100)
+        self.replay_port: int = self.parse_field("actor_replay_port", required=True)

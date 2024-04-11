@@ -1,5 +1,4 @@
 from .base_config import Config
-import tensorflow as tf
 
 
 class RainbowConfig(Config):
