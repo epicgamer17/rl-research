@@ -1,3 +1,4 @@
+import argparse
 import gymnasium as gym
 import numpy as np
 import entities.replayMemory_capnp as replay_memory_capnp
@@ -161,24 +162,24 @@ class ReplayServer:
         self.replay_memory.save("replay_memory.xz")
 
 
-def main(learner_port, actors_port, load=False):
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run a distributed Ape-X replay buffer"
+    )
+    parser.add_argument("--learner_port", type=str, default="5554")
+    parser.add_argument("--actors_port", type=str, default="5555")
+    parser.add_argument("--load", default=False, action="store_true")
+    args = parser.parse_args()
+
     env = gym.make("CartPole-v1", render_mode="rgb_array")
-    replay_memory = SaveableReplayBuffer(load=load, env=env)
-    server = ReplayServer(replay_memory, learner_port, actors_port)
+    replay_memory = SaveableReplayBuffer(load=args.load, env=env)
+    server = ReplayServer(replay_memory, args.learner_port, args.actors_port)
     logger.info(
-        f"replay buffer started on ports {actors_port} (actors) and {learner_port} (learner)"
+        f"replay buffer started on ports {args.actors_port} (actors) and {args.learner_port} (learner)"
     )
 
     server.run()
 
 
-import argparse
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run a distributed Ape-X replay buffer"
-    )
-    parser.add_argument("learner_port", type=str, default="5554")
-    parser.add_argument("actors_port", type=str, default="5555")
-    args = parser.parse_args()
-    main(args.learner_port, args.actors_port)
+    main()
