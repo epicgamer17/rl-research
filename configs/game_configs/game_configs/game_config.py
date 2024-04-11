@@ -17,3 +17,16 @@ class GameConfig:
         self.is_deterministic = is_deterministic
         # self.num_players = num_players (might not need this idk) <- it would likely be for muzero but could also be for rainbow and stuff when they play multiplayer games (like connect 4)
         self.has_legal_moves = has_legal_moves
+
+    def __eq__(self, o: object) -> bool:
+        if not isinstance(o, GameConfig):
+            return False
+
+        return (
+            self.max_score == o.max_score
+            and self.min_score == o.min_score
+            and self.is_discrete == o.is_discrete
+            and self.is_image == o.is_image
+            and self.is_deterministic == o.is_deterministic
+            and self.has_legal_moves == o.has_legal_moves
+        )

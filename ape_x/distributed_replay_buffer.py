@@ -1,6 +1,5 @@
 import gymnasium as gym
 import numpy as np
-from compress_utils import compress, decompress
 import entities.replayMemory_capnp as replay_memory_capnp
 import zmq
 import message_codes
@@ -23,6 +22,7 @@ import sys
 
 sys.path.append("../")
 from refactored_replay_buffers.prioritized_nstep import ReplayBuffer
+from storage.compress_utils import compress, decompress
 
 
 class SaveableReplayBuffer:

@@ -5,15 +5,15 @@ import tensorflow as tf
 import numpy as np
 import queue
 import threading
-from compress_utils import compress
 from typing import NamedTuple
-from compress_utils import decompress
-from agent_configs import ApeXConfig, ApeXLearnerConfig, DistributedConfig
+from agent_configs import ApeXLearnerConfig
 
-from storage import Storage, StorageConfig
 
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
+from storage.storage import Storage, StorageConfig
+from storage.compress_utils import decompress
+from storage.compress_utils import compress
 
 import matplotlib
 
@@ -41,8 +41,12 @@ class Update(NamedTuple):
 
 
 class ApeXLearnerBase(RainbowAgent):
-    def __init__(self, env, config: ApeXLearnerConfig):
-        super().__init__(name="learner", env=env, config=config)
+    def __init__(self, env, config: ApeXLearnerConfig, name):
+        super().__init__(
+            env,
+            config,
+            name,
+        )
         self.config = config
 
         self.samples_queue: queue.Queue[Sample] = queue.Queue(
@@ -193,8 +197,8 @@ import entities.replayMemory_capnp as replayMemory_capnp
 
 
 class ApeXLearner(ApeXLearnerBase):
-    def __init__(self, env, config: ApeXLearnerConfig):
-        super().__init__(env=env, config=config)
+    def __init__(self, env, config: ApeXLearnerConfig, name: str):
+        super().__init__(env, config, name)
         self.updates_queue = queue.Queue()
         self.config = config
 
