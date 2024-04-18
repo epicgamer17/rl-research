@@ -6,9 +6,10 @@ import zmq
 import message_codes
 import time
 import logging
+from agent_configs import ReplayBufferConfig
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 fh = logging.FileHandler("replay_buffer.log", mode="w")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
@@ -27,22 +28,19 @@ from storage.compress_utils import compress, decompress
 
 
 class SaveableReplayBuffer:
-    def __init__(self, load=False, env: gym.Env = None):
+    def __init__(self, config: ReplayBufferConfig, load=False):
         if load:
             self.load("replay_memory.xz")
         else:
-            if env is None:
-                raise ValueError("env must be provided if load is False")
             self.replay_memory = ReplayBuffer(
-                observation_dimensions=env.observation_space.shape,
-                max_size=50000,
-                min_size=500,
-                batch_size=128,
-                max_priority=1.0,
-                alpha=0.5,  # config["per_alpha"],
-                # epsilon=config["per_epsilon"],
-                n_step=1,  # config["n_step"],   # we don't need n-step because the actors give n-step transitions already
-                gamma=0.99,  # config["discount_factor"],
+                observation_dimensions=config.observation_dimensions,
+                max_size=config.max_size,
+                min_size=config.min_size,
+                batch_size=config.batch_size,
+                max_priority=config.max_priority,
+                alpha=config.per_alpha,  # config["per_alpha"],
+                n_step=config.n_step,
+                gamma=config.discount_factor,
             )
 
     def load(self, path):
@@ -61,7 +59,12 @@ class SaveableReplayBuffer:
 
 
 class ReplayServer:
-    def __init__(self, replay_memory: SaveableReplayBuffer, learner_port, actors_port):
+    def __init__(
+        self,
+        replay_memory: SaveableReplayBuffer,
+        learner_port,
+        actors_port,
+    ):
         self.replay_memory = replay_memory
         self.ctx = zmq.Context()
 
@@ -169,10 +172,11 @@ def main():
     parser.add_argument("--learner_port", type=str, default="5554")
     parser.add_argument("--actors_port", type=str, default="5555")
     parser.add_argument("--load", default=False, action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--config_file", type=str)
 
-    env = gym.make("CartPole-v1", render_mode="rgb_array")
-    replay_memory = SaveableReplayBuffer(load=args.load, env=env)
+    args = parser.parse_args()
+    config = ReplayBufferConfig.load(args.config_file)
+    replay_memory = SaveableReplayBuffer(config, args.load)
     server = ReplayServer(replay_memory, args.learner_port, args.actors_port)
     logger.info(
         f"replay buffer started on ports {args.actors_port} (actors) and {args.learner_port} (learner)"

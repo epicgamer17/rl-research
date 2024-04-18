@@ -15,3 +15,4 @@ from .ppo_actor_config import PPOActorConfig
 from .ppo_critic_config import PPOCriticConfig
 from .ppo_config import PPOConfig
 from .rainbow_config import RainbowConfig
+from .replay_config import ReplayBufferConfig

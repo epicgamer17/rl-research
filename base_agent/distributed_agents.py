@@ -39,6 +39,7 @@ class ActorAgent(BaseAgent):
         pass
 
     def run(self):
+        print("ACTOR RUN")
         self.is_test = False
         self.on_run_start()
 

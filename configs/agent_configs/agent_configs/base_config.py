@@ -61,6 +61,21 @@ class ConfigBase:
     def __init__(self, config_dict: dict):
         self.config_dict = config_dict
 
+    @classmethod
+    def load(cls, filepath: str):
+        with open(filepath, "r") as f:
+            o = yaml.load(f, yaml.Loader)
+            print(o)
+            a = cls(config_dict=o["config_dict"])
+
+        return a
+
+    def dump(self, filepath: str):
+        to_dump = dict(config_dict=self.config_dict)
+
+        with open(filepath, "w") as f:
+            yaml.dump(to_dump, f, yaml.Dumper)
+
 
 class Config(ConfigBase):
     @classmethod
