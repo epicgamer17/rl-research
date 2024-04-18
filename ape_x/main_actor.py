@@ -1,4 +1,3 @@
-import tensorflow as tf
 from tensorflow import keras
 from keras import losses
 import argparse
@@ -7,10 +6,9 @@ import gymnasium as gym
 import logging
 
 from agent_configs import ApeXActorConfig
-from game_configs import CartPoleConfig
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 fh = logging.FileHandler("main_actor.log", mode="a")
 ch = logging.StreamHandler()
 ch.setFormatter(logging.Formatter("%(message)s"))
@@ -19,7 +17,7 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     handlers=[fh, ch],
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )

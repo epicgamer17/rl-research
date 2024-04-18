@@ -1,10 +1,12 @@
 import os
+import time
 
 # os.environ["OMP_NUM_THREADS"] = f"{1}"
 # os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
 # os.environ['TF_NUM_INTRAOP_THREADS'] = f"{1}"
 
-from agent_configs.ape_x_config import ApeXActorConfig, ApeXLearnerConfig
+from agent_configs import ApeXActorConfig, ApeXLearnerConfig
+from agent_configs import ReplayBufferConfig
 from game_configs.cartpole_config import CartPoleConfig
 import tensorflow as tf
 
@@ -13,8 +15,7 @@ import tensorflow as tf
 
 import gc
 
-from ape_x.actor import ApeXActor
-from ape_x.learner import ApeXLearner
+from learner import ApeXLearner
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -28,52 +29,136 @@ if gpus:
         # Memory growth must be set before GPUs have been initialized
         print(e)
 
-import concurrent.futures
 import multiprocessing
-from multiprocessing import Pool
 import sys
-import numpy as np
 import pandas
 import pickle
 import gymnasium as gym
 from hyperopt import tpe, hp, fmin, space_eval
+import subprocess
+from subprocess import Popen
+import pathlib
 import contextlib
+import numpy as np
+
+ctx = multiprocessing.get_context("fork")
+
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+fh = logging.FileHandler("hyperopt.log", mode="w")
+ch = logging.StreamHandler()
+ch.setFormatter(logging.Formatter("%(message)s"))
+
+logger.addHandler(fh)
+logger.addHandler(ch)
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    handlers=[fh, ch],
+    format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
+)
 
 
-# MAGIC CODE DO NOT TOUCH
-def globalize(func):
-    def result(*args, **kwargs):
-        return func(*args, **kwargs)
+def run_training(config, env: gym.Env, name):
+    print("=================== Run Training ======================")
+    with open(f"{pathlib.Path.home()}/mongodb/mongodb_admin_password", "r") as f:
+        password = f.read()
 
-    result.__name__ = result.__qualname__ = (
-        os.path.abspath(func.__code__.co_filename).replace(".", "")
-        + "\0"
-        + str(func.__code__.co_firstlineno)
+    distributed_config = {
+        "actor_replay_port": 5554,
+        "learner_replay_port": 5555,
+        "replay_addr": "127.0.0.1",
+        "storage_hostname": "127.0.0.1",
+        "storage_port": 5553,
+        "storage_username": "ezra",
+        "storage_password": password.strip(),
+    }
+
+    conf = {
+        **config,
+        **distributed_config,
+        "num_actors": 1,
+        "training_steps": 100,
+    }
+
+    replay_conf = dict(
+        observation_dimensions=env.observation_space.shape,
+        max_size=conf["replay_buffer_size"],
+        min_size=conf["min_replay_buffer_size"],
+        batch_size=conf["minibatch_size"],
+        max_priority=1.0,
+        per_alpha=config["per_alpha"],
+        n_step=1,  # we don't need n-step because the actors give n-step transitions already
+        gamma=config["discount_factor"],
     )
-    setattr(sys.modules[result.__module__], result.__name__, result)
-    return result
 
+    learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
+    actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
 
-def make_func():
-    def run_training(args):
-        args["training_steps"] = 1000
-        learner_config = ApeXLearnerConfig(args, game_config=CartPoleConfig())
-        learner = ApeXLearner(learner_config)
-        actor_config = ApeXActorConfig(args, game_config=CartPoleConfig())
-        actor = ApeXActor(actor_config)
+    print(replay_conf)
+    replay_conf = ReplayBufferConfig(replay_conf)
 
-        for actors in range(num_actors):
-            actor.run()
+    actor_config_filename = "apex_actor_config.yaml"
+    actor_config.dump(actor_config_filename)
 
+    replay_config_filename = "replay_config.yaml"
+    replay_conf.dump(replay_config_filename)
+
+    def make_replay_args():
+        learner_port = distributed_config["learner_replay_port"]
+        actors_port = distributed_config["actor_replay_port"]
+        args = f"distributed_replay_buffer.py --learner_port {learner_port} --actors_port {actors_port} --config_file {replay_config_filename}".split(
+            " "
+        )
+        return [sys.executable, *args]
+
+    def make_mongo_args():
+        mongo_executable = subprocess.check_output(["which", "mongod"]).rstrip(b"\n")
+        mongo_port = distributed_config["storage_port"]
+        args = f"--dbpath /home/ezrahuang/mongodb/data --logpath /home/ezrahuang/mongodb/logs/mongod.log --port {mongo_port} --auth".split(
+            " "
+        )
+        return [mongo_executable, *args]
+
+    def make_actor_i_args(i):
+        epsilon = 0  # not used yet
+        args = f"main_actor.py --name {i} --config_file {actor_config_filename}".split(
+            " "
+        )
+        return [sys.executable, *args]
+
+    def make_spectator_actor():
+        args = f"main_actor.py --name spectator --config_file {actor_config_filename} --spectator".split(
+            " "
+        )
+        p = Popen([sys.executable, *args])
+        return p
+
+    with contextlib.closing(ctx.Pool()) as pool:
+        # pool.apply(Popen, (make_mongo_args(),))
+        Popen(make_mongo_args())
+        replay_proc = Popen(make_replay_args())
+        time.sleep(5)
+
+        actor_procs: list[Popen] = list()
+        for i in range(conf["num_actors"]):
+            actor_procs.append(Popen(make_actor_i_args(i)))
+
+        learner = ApeXLearner(env, learner_config, name=name)
+        logger.info("        === Running learner")
         learner.run()
-        # EZRA TRAINING PART AND TESTING PART
-        print("Training complete")
-        return -learner.test(num_trials=10)
+        logger.info("        === Learner done")
 
-    return run_training
+        logger.info("        === Terminiating pool")
+        replay_proc.terminate()
+        for proc in actor_procs:
+            proc.terminate()
+        pool.terminate()
 
-
-globalized_training_func = globalize(make_func())
+    logger.info("Training complete")
+    return -learner.test(num_trials=10, step=0)
 
 
 def objective(params):
@@ -104,7 +189,6 @@ def objective(params):
         header=False,
     )
 
-    num_workers = len(environments_list)
     args_list = np.array(
         [
             [params for env in environments_list],
@@ -112,16 +196,16 @@ def objective(params):
             [name for env in environments_list],
         ]
     ).T
-    with contextlib.closing(multiprocessing.Pool()) as pool:
-        scores_list = pool.map_async(
-            globalized_training_func, (args for args in args_list)
-        ).get()
-        print(scores_list)
-    print("parallel programs done")
+
+    scores_list = list()
+    for args in args_list:
+        score = run_training(args[0], args[1], args[2])
+        print("score: ", score)
+        scores_list.append(score)
+
+    print("programs done")
     return np.sum(scores_list)
 
-
-globalized_objective = globalize(objective)
 
 from hyperopt import hp
 import tensorflow as tf
@@ -133,23 +217,23 @@ def create_search_space():
         "activation": hp.choice(
             "activation",
             [
-                "linear",
+                # "linear",
                 "relu",
                 # 'relu6',
-                "sigmoid",
-                "softplus",
-                "soft_sign",
-                "silu",
-                "swish",
-                "log_sigmoid",
-                "hard_sigmoid",
+                # "sigmoid",
+                # "softplus",
+                # "soft_sign",
+                # "silu",
+                # "swish",
+                # "log_sigmoid",
+                # "hard_sigmoid",
                 # 'hard_silu',
                 # 'hard_swish',
                 # 'hard_tanh',
-                "elu",
+                # "elu",
                 # 'celu',
-                "selu",
-                "gelu",
+                # "selu",
+                # "gelu",
                 # 'glu'
             ],
         ),
@@ -160,8 +244,8 @@ def create_search_space():
                 "he_normal",
                 "glorot_uniform",
                 "glorot_normal",
-                "lecun_uniform",
-                "lecun_normal",
+                # "lecun_uniform",
+                # "lecun_normal",
                 "orthogonal",
                 "variance_baseline",
                 "variance_0.1",
@@ -234,9 +318,7 @@ def create_search_space():
         # "remove_old_experiences_interval": hp.choice(
         #     "remove_old_experiences_interval", [1000, 2000, 3000, 4000, 5000, 8000, 10000]
         # ),
-        "poll_params_interval": hp.choice(
-            "poll_params_interval", [1, 2, 3, 4, 5, 8, 10, 12]
-        ),
+        "poll_params_interval": hp.choice("poll_params_interval", [50]),
         # 'per_beta_increase': hp.uniform('per_beta_increase', 0, 0.015),
         # 'search_max_depth': 5,
         # 'search_max_time': 10,
@@ -246,7 +328,7 @@ def create_search_space():
     return search_space, initial_best_config
 
 
-if __name__ == "__main__":
+def main():
     search_space, initial_best_config = create_search_space()
     max_trials = 2
     trials_step = 2  # how many additional trials to do after loading the last ones
@@ -265,7 +347,7 @@ if __name__ == "__main__":
         trials = None
 
     best = fmin(
-        fn=globalized_objective,  # Objective Function to optimize
+        fn=objective,  # Objective Function to optimize
         space=search_space,  # Hyperparameter's Search Space
         algo=tpe.suggest,  # Optimization algorithm (representative TPE)
         max_evals=max_trials,  # Number of optimization attempts
@@ -279,3 +361,7 @@ if __name__ == "__main__":
     print(best)
     best_trial = space_eval(search_space, best)
     gc.collect()
+
+
+if __name__ == "__main__":
+    main()

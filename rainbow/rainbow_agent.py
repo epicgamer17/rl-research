@@ -148,7 +148,7 @@ class RainbowAgent(BaseAgent):
         return selected_action
 
     def step(self, action):
-        print("Action ", action)
+        # print("Action ", action)
         if not self.is_test:
             next_state, reward, terminated, truncated, info = self.env.step(action)
             done = terminated or truncated
