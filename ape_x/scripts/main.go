@@ -1,7 +1,5 @@
 package main
 
-// translate the run.sh script to Go
-
 import (
 	"bufio"
 	"fmt"
@@ -28,6 +26,9 @@ const ReplayLearnerPort = 5554
 const ReplayActorPort = 5555
 const MongoUsername = "ezra"
 const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
+const ActorConfigFile = "actor_config_example.yaml"
+const LearnerConfigFile = "learner_config_example.yaml"
+const ReplayConfigFile = "replay_config_example.yaml"
 
 func GenerateHosts(username string) <-chan string {
 	c := make(chan string)
@@ -90,7 +91,7 @@ func FindFreeServers(hosts <-chan string) (<-chan string, <-chan bool) {
 	return c, done
 }
 
-func NewConfig(username string) *ssh.ClientConfig {
+func NewSSHConfig(username string) *ssh.ClientConfig {
 	path := os.ExpandEnv("$HOME/.ssh/id_ed25519")
 	bytes, err := os.ReadFile(path)
 	if err != nil {
@@ -160,7 +161,7 @@ func merge(channels ...<-chan string) <-chan string {
 }
 
 func NewClient(host string) *ssh.Client {
-	config := NewConfig(USERNAME)
+	config := NewSSHConfig(USERNAME)
 	address := net.JoinHostPort(host, "22")
 	client, err := ssh.Dial("tcp", address, config)
 	if err != nil {
@@ -191,7 +192,7 @@ func StartReplay(session *ssh.Session) (<-chan string, <-chan string) {
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 distributed_replay_buffer.py %d %d", ReplayLearnerPort, ReplayActorPort),
+		fmt.Sprintf("python3 distributed_replay_buffer.py --learner_port %d --actors_port %d --config_file %s", ReplayLearnerPort, ReplayActorPort, ReplayConfigFile),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -224,7 +225,8 @@ func StartLearner(session *ssh.Session, conf *DistributedConfig) (<-chan string,
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_learner.py %s %d %s %d %s $(cat %s)", conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+		// fmt.Sprintf("python3 main_learner.py %s %d %s %d %s $(cat %s)", conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+		fmt.Sprintf("python3 main_learner.py --config_file %s", LearnerConfigFile),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -237,7 +239,8 @@ func StartActor(session *ssh.Session, conf *DistributedConfig, id string, epsilo
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s)", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+		// fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s)", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s", ActorConfigFile, id),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -250,7 +253,8 @@ func StartSpectator(session *ssh.Session, conf *DistributedConfig, id string, ep
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s) --spectator", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+		// fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s) --spectator", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
+		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --spectator", ActorConfigFile, id),
 	}
 
 	cmd := strings.Join(commands, "; ")
