@@ -70,7 +70,9 @@ def make_cartpole_env():
 
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
-    parser.add_argument("--config_file", type=str)
+    parser.add_argument(
+        "--config_file", type=str, default="learner_config_example.yaml"
+    )
 
     args = parser.parse_args()
 

@@ -172,7 +172,7 @@ def main():
     parser.add_argument("--learner_port", type=str, default="5554")
     parser.add_argument("--actors_port", type=str, default="5555")
     parser.add_argument("--load", default=False, action="store_true")
-    parser.add_argument("--config_file", type=str)
+    parser.add_argument("--config_file", type=str, default="replay_config_example.yaml")
 
     args = parser.parse_args()
     config = ReplayBufferConfig.load(args.config_file)
