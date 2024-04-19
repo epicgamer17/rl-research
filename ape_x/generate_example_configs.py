@@ -33,7 +33,7 @@ learner_dict = dict(learner_replay_port="")
 
 replay_dict = dict(
     observation_dimensions=env.observation_space.shape,
-    batch_size=128,
+    batch_size=32,
 )
 
 
