@@ -28,8 +28,8 @@ const ReplayLearnerPort = 5554
 const ReplayActorPort = 5555
 const MongoUsername = "ezra"
 const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
-const ActorConfigFile = "actor_config_example.yaml"
-const LearnerConfigFile = "learner_config_example.yaml"
+const ActorConfigFile = "configs/actor_config_example.yaml"
+const LearnerConfigFile = "configs/learner_config_example.yaml"
 
 func GenerateHosts(username string) <-chan string {
 	c := make(chan string)
@@ -216,8 +216,8 @@ func CreateConfigs(client *ssh.Client, config DistributedConfig, rainbowBaseFile
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("echo '%s' > %s", string(rainbowBase), rainbowBaseFilename),
-		fmt.Sprintf("echo '%s' > %s", string(replay), replayFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(rainbowBase), rainbowBaseFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(replay), replayFilename),
 		fmt.Sprintf("python3 generate_example_configs.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_rainbow_base %s --learner_rainbow_base %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, rainbowBaseFilename, rainbowBaseFilename),
 	}
 
@@ -362,7 +362,8 @@ func main() {
 	replayFilenameFlag := flag.String("replay_config_file", "configs/replay_config_example.yaml", "")
 	flag.Parse()
 
-	fmt.Println("Using base config file", rainbowBaseFilenameFlag)
+	fmt.Println("Using rainbow base config file", *rainbowBaseFilenameFlag)
+	fmt.Println("Using replay config file", *replayFilenameFlag)
 
 	if _, err := os.Stat(*rainbowBaseFilenameFlag); errors.Is(err, os.ErrNotExist) {
 		panic("Base rainbow config file does not exist")
