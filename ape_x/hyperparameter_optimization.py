@@ -257,11 +257,11 @@ def create_search_space():
             ],
         ),
         "learning_rate": hp.choice(
-            "learning_rate", [10, 5, 2, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001]
+            "learning_rate", [1, 0.1, 0.01, 0.001, 0.0001, 0.00001]
         ),  #
         "adam_epsilon": hp.choice(
             "adam_epsilon",
-            [1, 0.5, 0.3125, 0.03125, 0.003125, 0.0003125, 0.00003125, 0.000003125],
+            [0.5, 0.3125, 0.03125, 0.003125, 0.0003125, 0.00003125, 0.000003125],
         ),
         "clipnorm": hp.choice(
             "clipnorm", [None, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]
@@ -272,11 +272,11 @@ def create_search_space():
         ),
         "replay_interval": hp.choice("replay_interval", [1, 2, 3, 4, 5, 8, 10, 12]),
         "minibatch_size": hp.choice(
-            "minibatch_size", [2**i for i in range(0, 8)]
+            "minibatch_size", [2**i for i in range(3, 8)]
         ),  ###########
         "replay_buffer_size": hp.choice(
             "replay_buffer_size",
-            [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000],
+            [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000, 100000],
         ),  #############
         "actor_buffer_size": hp.choice(
             "actor_buffer_size", [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
@@ -307,7 +307,7 @@ def create_search_space():
         "per_alpha": hp.choice("per_alpha", [0.05 * i for i in range(0, 21)]),
         "per_beta": hp.choice("per_beta", [0.05 * i for i in range(1, 21)]),
         "push_params_interval": hp.choice(
-            "push_params_interval", [1, 2, 3, 4, 5, 8, 10, 12]
+            "push_params_interval", [2, 3, 4, 5, 8, 10, 12]
         ),
         "updates_queue_size": hp.choice(
             "updates_queue_size", [1, 2, 3, 4, 5, 8, 10, 12]
@@ -318,7 +318,7 @@ def create_search_space():
         # "remove_old_experiences_interval": hp.choice(
         #     "remove_old_experiences_interval", [1000, 2000, 3000, 4000, 5000, 8000, 10000]
         # ),
-        "poll_params_interval": hp.choice("poll_params_interval", [50]),
+        "poll_params_interval": hp.choice("poll_params_interval", [50, 100, 200, 300]),
         # 'per_beta_increase': hp.uniform('per_beta_increase', 0, 0.015),
         # 'search_max_depth': 5,
         # 'search_max_time': 10,
@@ -330,8 +330,8 @@ def create_search_space():
 
 def main():
     search_space, initial_best_config = create_search_space()
-    max_trials = 2
-    trials_step = 2  # how many additional trials to do after loading the last ones
+    max_trials = 16
+    trials_step = 1  # how many additional trials to do after loading the last ones
 
     try:  # try to load an already saved trials object, and increase the max
         trials = pickle.load(open("./classiccontrol_trials.p", "rb"))
@@ -362,6 +362,8 @@ def main():
     best_trial = space_eval(search_space, best)
     gc.collect()
 
+
+# objective function - needs to launch
 
 if __name__ == "__main__":
     main()
