@@ -1,12 +1,22 @@
 config_dict:
   activation: relu
   kernel_initializer: glorot_uniform
-  learner_replay_port: '5554'
+  learner_replay_port: 5554
+  loss_function: !!python/object:keras.src.losses.CategoricalCrossentropy
+    _allow_sum_over_batch_size: false
+    _fn_kwargs:
+      axis: -1
+      from_logits: false
+      label_smoothing: 0.0
+    _name_scope: categorical_crossentropy
+    fn: !!python/name:keras.src.losses.categorical_crossentropy ''
+    name: categorical_crossentropy
+    reduction: auto
   replay_addr: 127.0.0.1
   storage_hostname: 127.0.0.1
   storage_password: EA00E05EC7592F8A4B41FED9B30A3D26
-  storage_port: '5553'
-  storage_username: ehuang
+  storage_port: 5553
+  storage_username: ezra
 game: !!python/object:game_configs.cartpole_config.CartPoleConfig
   has_legal_moves: false
   is_deterministic: true
