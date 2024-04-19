@@ -64,7 +64,9 @@ def make_cartpole_env():
 
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X actor")
-    parser.add_argument("--config_file", type=str, default="actor_config_example.yaml")
+    parser.add_argument(
+        "--config_file", type=str, default="configs/actor_config_example.yaml"
+    )
     parser.add_argument("--name", type=str, default="actor_0")
     parser.add_argument("--spectator", default=False, action="store_true")
     # parser.add_argument("--epsilon", type=float)
