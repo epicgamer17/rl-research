@@ -59,7 +59,6 @@ func FindFreeServers(hosts <-chan string) (<-chan string, <-chan bool) {
 		cmd := exec.Command("ssh", args...)
 
 		go func(h string) {
-			defer fmt.Printf("%v done", h)
 			defer wg.Done()
 			output, err := cmd.Output()
 			if err == nil {
@@ -82,7 +81,6 @@ func FindFreeServers(hosts <-chan string) (<-chan string, <-chan bool) {
 
 	go func() {
 		wg.Wait()
-		fmt.Println("done")
 		done <- true
 		close(c)
 		close(done)
@@ -187,6 +185,40 @@ func createChannels(session *ssh.Session) (<-chan string, <-chan string) {
 	return stdoutCh, stderrCh
 }
 
+type DistributedConfig struct {
+	ReplayHost            string
+	ReplayLearnerPort     int
+	ReplayActorsPort      int
+	MongoHost             string
+	MongoPort             int
+	MongoUsername         string
+	MongoPasswordLocation string
+}
+
+func CreateConfigs(client *ssh.Client, config DistributedConfig) {
+	fmt.Println("Creating configs: ")
+	session, err := client.NewSession()
+	if err != nil {
+		panic("failed to create session: " + err.Error())
+	}
+	defer session.Close()
+
+	commands := []string{
+		"cd ~/rl-research/ape_x",
+		"conda activate ml",
+		fmt.Sprintf("python3 generate_example_configs.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername),
+	}
+
+	cmd := strings.Join(commands, "; ")
+	fmt.Println("Running ", cmd)
+	output, err := session.Output(cmd)
+	fmt.Println("Output ", string(output))
+	if err != nil {
+		fmt.Println(err)
+		panic(err)
+	}
+}
+
 func StartReplay(session *ssh.Session) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
@@ -200,15 +232,6 @@ func StartReplay(session *ssh.Session) (<-chan string, <-chan string) {
 	return stdoutCh, stderrCh
 }
 
-type DistributedConfig struct {
-	ReplayHost            string
-	ReplayPort            int
-	MongoHost             string
-	MongoPort             int
-	MongoUsername         string
-	MongoPasswordLocation string
-}
-
 func StartMongo(session *ssh.Session, port int) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
@@ -220,7 +243,7 @@ func StartMongo(session *ssh.Session, port int) (<-chan string, <-chan string) {
 	return stdoutCh, stderrCh
 }
 
-func StartLearner(session *ssh.Session, conf *DistributedConfig) (<-chan string, <-chan string) {
+func StartLearner(session *ssh.Session) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
@@ -234,7 +257,7 @@ func StartLearner(session *ssh.Session, conf *DistributedConfig) (<-chan string,
 	return stdoutCh, stderrCh
 }
 
-func StartActor(session *ssh.Session, conf *DistributedConfig, id string, epsilon float64) (<-chan string, <-chan string) {
+func StartActor(session *ssh.Session, id string, epsilon float64) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
@@ -248,7 +271,7 @@ func StartActor(session *ssh.Session, conf *DistributedConfig, id string, epsilo
 	return stdoutCh, stderrCh
 }
 
-func StartSpectator(session *ssh.Session, conf *DistributedConfig, id string, epsilon float64) (<-chan string, <-chan string) {
+func StartSpectator(session *ssh.Session, id string, epsilon float64) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
@@ -355,6 +378,18 @@ func main() {
 	defer learnerClient.Close()
 	defer spectatorClient.Close()
 
+	distributedConfig := &DistributedConfig{
+		ReplayHost:            replayClientHost,
+		ReplayLearnerPort:     ReplayLearnerPort,
+		ReplayActorsPort:      ReplayActorPort,
+		MongoHost:             mongoClientHost,
+		MongoPort:             MongoPort,
+		MongoUsername:         MongoUsername,
+		MongoPasswordLocation: MongoPasswordLocation,
+	}
+
+	CreateConfigs(spectatorClient, *distributedConfig)
+
 	replaySession, err := replayClient.NewSession()
 	if err != nil {
 		panic("failed to create session: " + err.Error())
@@ -382,27 +417,9 @@ func main() {
 	replayStdout, replayStderr := StartReplay(replaySession)
 	mongoStdout, mongoStderr := StartMongo(mongoSession, MongoPort)
 
-	learnerDistributedConfig := &DistributedConfig{
-		ReplayHost:            replayClientHost,
-		ReplayPort:            ReplayLearnerPort,
-		MongoHost:             mongoClientHost,
-		MongoPort:             MongoPort,
-		MongoUsername:         MongoUsername,
-		MongoPasswordLocation: MongoPasswordLocation,
-	}
+	learnerStdout, learnerStderr := StartLearner(learnerSession)
 
-	actorDistributedConfig := &DistributedConfig{
-		ReplayHost:            replayClientHost,
-		ReplayPort:            ReplayActorPort,
-		MongoHost:             mongoClientHost,
-		MongoPort:             MongoPort,
-		MongoUsername:         MongoUsername,
-		MongoPasswordLocation: MongoPasswordLocation,
-	}
-
-	learnerStdout, learnerStderr := StartLearner(learnerSession, learnerDistributedConfig)
-
-	spectatorStdout, spectatorStderr := StartSpectator(spectatorSession, actorDistributedConfig, "spectator", 0.4)
+	spectatorStdout, spectatorStderr := StartSpectator(spectatorSession, "spectator", 0.4)
 
 	go func() {
 		for msg := range merge(replayStdout, replayStderr) {
@@ -439,7 +456,7 @@ func main() {
 		}
 		defer session.Close()
 
-		stdout, stderr := StartActor(session, actorDistributedConfig, uuid.New().String(), epsilons[i])
+		stdout, stderr := StartActor(session, uuid.New().String(), epsilons[i])
 
 		go func(client *ssh.Client) {
 			for msg := range merge(stdout, stderr) {

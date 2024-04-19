@@ -78,10 +78,7 @@ def main():
 
     config = ApeXLearnerConfig.load(args.config_file)
 
-    learner = ApeXLearner(
-        env=make_cartpole_env(),
-        config=config,
-    )
+    learner = ApeXLearner(env=make_cartpole_env(), config=config, name="learner")
     learner.run()
 
 

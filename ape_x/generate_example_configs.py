@@ -1,3 +1,4 @@
+import tensorflow as tf
 import pathlib
 import argparse
 import gymnasium as gym
@@ -15,7 +16,11 @@ storage_dict = dict(
     storage_password="",
 )
 
-rainbow_dict = dict(activation="relu", kernel_initializer="glorot_uniform")
+rainbow_dict = dict(
+    activation="relu",
+    kernel_initializer="glorot_uniform",
+    loss_function=tf.keras.losses.CategoricalCrossentropy(),
+)
 
 actor_dict = dict(actor_replay_port="")
 
@@ -30,12 +35,12 @@ replay_dict = dict(
 def main():
     parser = argparse.ArgumentParser(description="generate configs")
     parser.add_argument("--replay_addr", type=str, default="127.0.0.1")
-    parser.add_argument("--replay_learner_port", type=str, default="5554")
-    parser.add_argument("--replay_actors_port", type=str, default="5555")
+    parser.add_argument("--replay_learner_port", type=int, default=5554)
+    parser.add_argument("--replay_actors_port", type=int, default=5555)
 
     parser.add_argument("--storage_hostname", type=str, default="127.0.0.1")
-    parser.add_argument("--storage_port", type=str, default="5553")
-    parser.add_argument("--storage_username", type=str, default="ehuang")
+    parser.add_argument("--storage_port", type=int, default=5553)
+    parser.add_argument("--storage_username", type=str, default="ezra")
 
     args = parser.parse_args()
 
