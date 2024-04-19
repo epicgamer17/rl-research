@@ -222,45 +222,42 @@ class ApeXLearner(ApeXLearnerBase):
         replay_socket.connect(replay_url)
 
         # alternate between getting samples and updating priorities
-        i = 0
         while not flag.is_set():
-            if i == 0:
-                if self.samples_queue.qsize() < self.config.samples_queue_size:
-                    logger.info("requesting batch")
-                    replay_socket.send(
-                        message_codes.LEARNER_REQUESTS_BATCH, zmq.SNDMORE
-                    )
-                    replay_socket.send_string(str(self.config.per_beta))
+            active = False
+            if self.samples_queue.qsize() < self.config.samples_queue_size:
+                logger.info("requesting batch")
+                replay_socket.send(message_codes.LEARNER_REQUESTS_BATCH, zmq.SNDMORE)
+                replay_socket.send_string(str(self.config.per_beta))
 
-                    logger.info("wating for batch")
-                    res = replay_socket.recv()
-                    if res == b"":  # empty message
-                        logger.info("no batch recieved, continuing and waiting")
-                        time.sleep(1)
-                        continue
-                    logger.info("recieved batch")
-
-                    samples = replayMemory_capnp.TransitionBatch.from_bytes_packed(res)
-
-                    self.samples_queue.put(
-                        Sample(
-                            ids=np.array(samples.ids, dtype=np.object_),
-                            indices=np.array(samples.indices),
-                            actions=np.array(samples.actions),
-                            observations=decompress(samples.observations),
-                            next_observations=decompress(samples.nextObservations),
-                            weights=np.array(samples.weights),
-                            rewards=np.array(samples.rewards),
-                            dones=np.array(samples.dones),
-                        )
-                    )
-                i = 1
-            elif i == 1:
-                try:
-                    t = self.updates_queue.get(timeout=0.1)
-                except queue.Empty:
-                    logger.debug("no updates to send, continuing")
+                logger.info("wating for batch")
+                res = replay_socket.recv()
+                if res == b"":  # empty message
+                    logger.info("no batch recieved, continuing and waiting")
+                    time.sleep(1)
                     continue
+                logger.info("recieved batch")
+
+                samples = replayMemory_capnp.TransitionBatch.from_bytes_packed(res)
+
+                self.samples_queue.put(
+                    Sample(
+                        ids=np.array(samples.ids, dtype=np.object_),
+                        indices=np.array(samples.indices),
+                        actions=np.array(samples.actions),
+                        observations=decompress(samples.observations),
+                        next_observations=decompress(samples.nextObservations),
+                        weights=np.array(samples.weights),
+                        rewards=np.array(samples.rewards),
+                        dones=np.array(samples.dones),
+                    )
+                )
+                active = True
+            else:
+                logger.debug("queue full")
+
+            try:
+                t = self.updates_queue.get(block=False)
+                active = True
                 ids, indices, losses = t
                 update = replayMemory_capnp.PriorityUpdate.new_message()
                 update.ids = ids.tolist()
@@ -271,12 +268,17 @@ class ApeXLearner(ApeXLearnerBase):
                 replay_socket.send(message_codes.LEARNER_UPDATE_PRIORITIES, zmq.SNDMORE)
                 replay_socket.send(update.to_bytes_packed())
                 replay_socket.recv()
-                i = 0
+            except queue.Empty:
+                logger.debug("no updates to send, continuing")
+
+            if not active:
+                time.sleep(1)
 
     def store_weights(self):
         weights = self.model.get_weights()
         # print(weights)
         compressed = compress(weights)
+        logger.info("storing weights")
         self.storage.store_weights(compressed)
 
     def on_run(self):

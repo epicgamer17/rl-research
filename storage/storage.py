@@ -17,19 +17,15 @@ class StorageConfig(NamedTuple):
 
 class Storage:
     def __init__(self, config: StorageConfig, reset: bool = False):
-        print(
-            "aAAAAAAAAAAAAAAAAAAAal",
-            config.hostname,
-            config.port,
-            config.username,
-            config.password,
-        )
         self.client = MongoClient(
             host=config.hostname,
             port=config.port,
             username=config.username,
             password=config.password,
         )
+
+        self.latest_id = ""
+        self.same_latest = 0
 
         print("storage connected.")
         if reset:
@@ -60,7 +56,8 @@ class Storage:
         db = self.client["model_weights"]
         fs = gridfs.GridFS(db)
         id = fs.put(bytes)
-        print("weights hash: ", hashlib.md5(bytes).hexdigest())
+        hash = hashlib.md5(bytes).hexdigest()
+        print("weights hash: ", hash)
 
         # delete previous weights if they exist
         prev_id = self.get_latest_weights_id()
@@ -74,8 +71,10 @@ class Storage:
         while True:
             try:
                 id = self.get_latest_weights_id()
-                if not id:
+                if not id or id == self.latest_id:
                     return None
+
+                self.latest_id = id
 
                 db = self.client["model_weights"]
                 fs = gridfs.GridFS(db)
