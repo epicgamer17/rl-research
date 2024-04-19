@@ -1,5 +1,4 @@
 from typing import NamedTuple
-import time
 import logging
 from pymongo import MongoClient
 import gridfs
