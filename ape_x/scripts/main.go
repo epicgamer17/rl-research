@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"math"
@@ -28,7 +30,6 @@ const MongoUsername = "ezra"
 const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
 const ActorConfigFile = "actor_config_example.yaml"
 const LearnerConfigFile = "learner_config_example.yaml"
-const ReplayConfigFile = "replay_config_example.yaml"
 
 func GenerateHosts(username string) <-chan string {
 	c := make(chan string)
@@ -195,7 +196,16 @@ type DistributedConfig struct {
 	MongoPasswordLocation string
 }
 
-func CreateConfigs(client *ssh.Client, config DistributedConfig) {
+func CreateConfigs(client *ssh.Client, config DistributedConfig, rainbowBaseFilename string, replayFilename string) {
+	rainbowBase, err := os.ReadFile(rainbowBaseFilename)
+	if err != nil {
+		panic(err)
+	}
+	replay, err := os.ReadFile(replayFilename)
+	if err != nil {
+		panic(err)
+	}
+
 	fmt.Println("Creating configs: ")
 	session, err := client.NewSession()
 	if err != nil {
@@ -206,7 +216,9 @@ func CreateConfigs(client *ssh.Client, config DistributedConfig) {
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 generate_example_configs.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername),
+		fmt.Sprintf("echo '%s' > %s", string(rainbowBase), rainbowBaseFilename),
+		fmt.Sprintf("echo '%s' > %s", string(replay), replayFilename),
+		fmt.Sprintf("python3 generate_example_configs.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_rainbow_base %s --learner_rainbow_base %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, rainbowBaseFilename, rainbowBaseFilename),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -219,12 +231,12 @@ func CreateConfigs(client *ssh.Client, config DistributedConfig) {
 	}
 }
 
-func StartReplay(session *ssh.Session) (<-chan string, <-chan string) {
+func StartReplay(session *ssh.Session, replayConfigFilename string) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 distributed_replay_buffer.py --learner_port %d --actors_port %d --config_file %s", ReplayLearnerPort, ReplayActorPort, ReplayConfigFile),
+		fmt.Sprintf("python3 distributed_replay_buffer.py --learner_port %d --actors_port %d --config_file %s", ReplayLearnerPort, ReplayActorPort, replayConfigFilename),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -346,6 +358,19 @@ func copyTrainingGraphsToStaticSite(client *ssh.Client) {
 const baseEpsilon = 0.4
 
 func main() {
+	rainbowBaseFilenameFlag := flag.String("rainbow_base_config_file", "configs/rainbow_base_example.yaml", "")
+	replayFilenameFlag := flag.String("replay_config_file", "configs/replay_config_example.yaml", "")
+	flag.Parse()
+
+	fmt.Println("Using base config file", rainbowBaseFilenameFlag)
+
+	if _, err := os.Stat(*rainbowBaseFilenameFlag); errors.Is(err, os.ErrNotExist) {
+		panic("Base rainbow config file does not exist")
+	}
+	if _, err := os.Stat(*replayFilenameFlag); errors.Is(err, os.ErrNotExist) {
+		panic("Replay config file does not exist")
+	}
+
 	availableHosts, done := FindFreeServers(GenerateHosts(USERNAME))
 	<-done
 
@@ -388,7 +413,7 @@ func main() {
 		MongoPasswordLocation: MongoPasswordLocation,
 	}
 
-	CreateConfigs(spectatorClient, *distributedConfig)
+	CreateConfigs(spectatorClient, *distributedConfig, *rainbowBaseFilenameFlag, *replayFilenameFlag)
 
 	replaySession, err := replayClient.NewSession()
 	if err != nil {
@@ -414,7 +439,7 @@ func main() {
 	}
 	defer spectatorSession.Close()
 
-	replayStdout, replayStderr := StartReplay(replaySession)
+	replayStdout, replayStderr := StartReplay(replaySession, *replayFilenameFlag)
 	mongoStdout, mongoStderr := StartMongo(mongoSession, MongoPort)
 
 	learnerStdout, learnerStderr := StartLearner(learnerSession)
@@ -468,13 +493,13 @@ func main() {
 	updaterClient := NewClient(fmt.Sprintf("mimi.%s", FQDN))
 
 	ticker := time.NewTicker(10 * time.Second)
-	flag := make(chan bool)
+	doneChannel := make(chan bool)
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
 				copyTrainingGraphsToStaticSite(updaterClient)
-			case <-flag:
+			case <-doneChannel:
 				ticker.Stop()
 				return
 			}
@@ -518,8 +543,8 @@ func main() {
 		}(client)
 	}
 
-	flag <- true
-	close(flag)
+	doneChannel <- true
+	close(doneChannel)
 
 	wg.Wait()
 }
