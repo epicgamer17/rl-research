@@ -67,12 +67,16 @@ def main():
     parser.add_argument(
         "--config_file", type=str, default="configs/actor_config_example.yaml"
     )
+    parser.add_argument("--noisy_sigma", type=float)
     parser.add_argument("--name", type=str, default="actor_0")
     parser.add_argument("--spectator", default=False, action="store_true")
     # parser.add_argument("--epsilon", type=float)
 
     args = parser.parse_args()
     config = ApeXActorConfig.load(args.config_file)
+
+    if args.noisy_sigma is not None:
+        config.noisy_sigma = args.noisy_sigma  # noisy_sigma override
 
     actor = ApeXActor(
         env=make_cartpole_env(),

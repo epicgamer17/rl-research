@@ -223,9 +223,7 @@ func CreateConfigs(client *ssh.Client, config DistributedConfig, rainbowBaseFile
 	}
 
 	cmd := strings.Join(commands, "; ")
-	fmt.Println("Running ", cmd)
-	output, err := session.Output(cmd)
-	fmt.Println("Output ", string(output))
+	_, err = session.Output(cmd)
 	if err != nil {
 		fmt.Println(err)
 		panic(err)
@@ -261,7 +259,6 @@ func StartLearner(session *ssh.Session) (<-chan string, <-chan string) {
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		// fmt.Sprintf("python3 main_learner.py %s %d %s %d %s $(cat %s)", conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
 		fmt.Sprintf("python3 main_learner.py --config_file %s", LearnerConfigFile),
 	}
 
@@ -270,13 +267,12 @@ func StartLearner(session *ssh.Session) (<-chan string, <-chan string) {
 	return stdoutCh, stderrCh
 }
 
-func StartActor(session *ssh.Session, id string, epsilon float64) (<-chan string, <-chan string) {
+func StartActor(session *ssh.Session, id string, noisySigma float64) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		// fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s)", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
-		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s", ActorConfigFile, id),
+		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --noisy_sigma %.8f", ActorConfigFile, id, noisySigma),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -289,7 +285,6 @@ func StartSpectator(session *ssh.Session, id string, epsilon float64) (<-chan st
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		// fmt.Sprintf("python3 main_actor.py %s %.8f %s %d %s %d %s $(cat %s) --spectator", id, epsilon, conf.ReplayHost, conf.ReplayPort, conf.MongoHost, conf.MongoPort, conf.MongoUsername, conf.MongoPasswordLocation),
 		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --spectator", ActorConfigFile, id),
 	}
 
@@ -356,7 +351,8 @@ func copyTrainingGraphsToStaticSite(client *ssh.Client) {
 
 }
 
-const baseEpsilon = 0.4
+const baseNoisySigma = 0.4
+const alpha = 7
 
 func main() {
 	rainbowBaseFilenameFlag := flag.String("rainbow_base_config_file", "configs/rainbow_base_example.yaml", "")
@@ -388,11 +384,11 @@ func main() {
 	fmt.Println("Learner client: ", learnerClientHost)
 	fmt.Println("Num actors: ", totalActors)
 
-	epsilons := make([]float64, totalActors)
+	noisySigmas := make([]float64, totalActors)
 
 	for i := 0; i < totalActors; i++ {
-		e_i := math.Pow(baseEpsilon, 1+(float64(i)/float64(totalActors))*7)
-		epsilons[i] = e_i
+		e_i := math.Pow(baseNoisySigma, 1+(float64(i)/float64(totalActors))*alpha)
+		noisySigmas[i] = e_i
 	}
 
 	replayClient := NewClient(replayClientHost)
@@ -483,7 +479,7 @@ func main() {
 		}
 		defer session.Close()
 
-		stdout, stderr := StartActor(session, uuid.New().String(), epsilons[i])
+		stdout, stderr := StartActor(session, uuid.New().String(), noisySigmas[i])
 
 		go func(client *ssh.Client) {
 			for msg := range merge(stdout, stderr) {
