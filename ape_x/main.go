@@ -35,9 +35,10 @@ func GenerateHosts(username string) <-chan string {
 	c := make(chan string)
 	go func() {
 		for i := 1; i <= 33; i++ {
-			if i == 17 || i == 5 || i == 7 || i == 24 {
+			if i == 17 || i == 5 || i == 7 || i == 24 || i == 13 {
 				continue
 				// open-gpu-17 doesn't exist, open-gpu-5/7/24 have cuda driver issues
+				// open-gpu-13 throws tensorflow.python.framework.errors_impl.InternalError: cudaSetDevice() on GPU:0 failed. Status: CUDA-capable device(s) is/are busy or unavailable
 			}
 
 			host := fmt.Sprintf("open-gpu-%d.%s", i, FQDN)
@@ -356,7 +357,7 @@ func copyTrainingGraphsToStaticSite(client *ssh.Client) {
 
 }
 
-const baseNoisySigma = 0.7
+const baseNoisySigma = 0.4
 const alpha = 7
 
 func main() {
@@ -467,7 +468,7 @@ func main() {
 	}()
 	go func() {
 		for msg := range merge(spectatorStdout, spectatorStderr) {
-			fmt.Printf("[learner] %s\n", msg)
+			fmt.Printf("[spectator] %s\n", msg)
 		}
 	}()
 

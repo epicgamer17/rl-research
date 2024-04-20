@@ -1,6 +1,7 @@
 config_dict:
   activation: relu
   actor_replay_port: 5555
+  dense_layers_noisy: true
   kernel_initializer: glorot_uniform
   loss_function: !!python/object:keras.src.losses.CategoricalCrossentropy
     _allow_sum_over_batch_size: false

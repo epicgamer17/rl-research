@@ -1,4 +1,4 @@
 config_dict:
   batch_size: 32
   observation_dimensions: !!python/tuple
-    - 4
+  - 4
