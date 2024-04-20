@@ -197,8 +197,12 @@ type DistributedConfig struct {
 	MongoPasswordLocation string
 }
 
-func CreateConfigs(client *ssh.Client, config DistributedConfig, rainbowBaseFilename string, replayFilename string) {
-	rainbowBase, err := os.ReadFile(rainbowBaseFilename)
+func CreateConfigs(client *ssh.Client, config DistributedConfig, learnerRainbowBaseFilename string, actorRainbowBaseFilename string, replayFilename string) {
+	learnerRainbowBase, err := os.ReadFile(learnerRainbowBaseFilename)
+	if err != nil {
+		panic(err)
+	}
+	actorRainbowBase, err := os.ReadFile(actorRainbowBaseFilename)
 	if err != nil {
 		panic(err)
 	}
@@ -217,9 +221,10 @@ func CreateConfigs(client *ssh.Client, config DistributedConfig, rainbowBaseFile
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("echo '%s' > \"%s\"", string(rainbowBase), rainbowBaseFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerRainbowBase), learnerRainbowBaseFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(actorRainbowBase), actorRainbowBaseFilename),
 		fmt.Sprintf("echo '%s' > \"%s\"", string(replay), replayFilename),
-		fmt.Sprintf("python3 generate_example_configs.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_rainbow_base %s --learner_rainbow_base %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, rainbowBaseFilename, rainbowBaseFilename),
+		fmt.Sprintf("python3 generate_example_configs.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_rainbow_base %s --learner_rainbow_base %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, actorRainbowBaseFilename, learnerRainbowBaseFilename),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -285,7 +290,7 @@ func StartSpectator(session *ssh.Session, id string, epsilon float64) (<-chan st
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --spectator", ActorConfigFile, id),
+		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --spectator --noisy_sigma 0", ActorConfigFile, id),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -351,18 +356,19 @@ func copyTrainingGraphsToStaticSite(client *ssh.Client) {
 
 }
 
-const baseNoisySigma = 0.4
+const baseNoisySigma = 0.7
 const alpha = 7
 
 func main() {
-	rainbowBaseFilenameFlag := flag.String("rainbow_base_config_file", "configs/rainbow_base_example.yaml", "")
+	learnerRainbowBaseFilenameFlag := flag.String("rainbow_base_learner_config_file", "configs/rainbow_base_learner_example.yaml", "")
+	actorRainbowBaseFilenameFlag := flag.String("rainbow_base_actor_config_file", "configs/rainbow_base_actor_example.yaml", "")
 	replayFilenameFlag := flag.String("replay_config_file", "configs/replay_config_example.yaml", "")
 	flag.Parse()
 
-	fmt.Println("Using rainbow base config file", *rainbowBaseFilenameFlag)
+	fmt.Println("Using rainbow base config file", *learnerRainbowBaseFilenameFlag)
 	fmt.Println("Using replay config file", *replayFilenameFlag)
 
-	if _, err := os.Stat(*rainbowBaseFilenameFlag); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(*learnerRainbowBaseFilenameFlag); errors.Is(err, os.ErrNotExist) {
 		panic("Base rainbow config file does not exist")
 	}
 	if _, err := os.Stat(*replayFilenameFlag); errors.Is(err, os.ErrNotExist) {
@@ -411,7 +417,7 @@ func main() {
 		MongoPasswordLocation: MongoPasswordLocation,
 	}
 
-	CreateConfigs(spectatorClient, *distributedConfig, *rainbowBaseFilenameFlag, *replayFilenameFlag)
+	CreateConfigs(spectatorClient, *distributedConfig, *learnerRainbowBaseFilenameFlag, *actorRainbowBaseFilenameFlag, *replayFilenameFlag)
 
 	replaySession, err := replayClient.NewSession()
 	if err != nil {

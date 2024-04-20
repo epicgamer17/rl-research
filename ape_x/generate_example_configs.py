@@ -21,12 +21,6 @@ storage_dict = dict(
     storage_password="",
 )
 
-rainbow_dict = dict(
-    activation="relu",
-    kernel_initializer="glorot_uniform",
-    loss_function=tf.keras.losses.CategoricalCrossentropy(),
-)
-
 actor_dict = dict(actor_replay_port="")
 
 learner_dict = dict(learner_replay_port="")
@@ -48,10 +42,14 @@ def main():
     parser.add_argument("--storage_username", type=str, default="ezra")
 
     parser.add_argument(
-        "--actor_rainbow_base", type=str, default="configs/rainbow_base_example.yaml"
+        "--actor_rainbow_base",
+        type=str,
+        default="configs/rainbow_base_actor_example.yaml",
     )
     parser.add_argument(
-        "--learner_rainbow_base", type=str, default="configs/rainbow_base_example.yaml"
+        "--learner_rainbow_base",
+        type=str,
+        default="configs/rainbow_base_learner_example.yaml",
     )
 
     args = parser.parse_args()
