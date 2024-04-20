@@ -35,8 +35,9 @@ func GenerateHosts(username string) <-chan string {
 	c := make(chan string)
 	go func() {
 		for i := 1; i <= 33; i++ {
-			if i == 17 {
+			if i == 17 || i == 5 || i == 7 || i == 24 {
 				continue
+				// open-gpu-17 doesn't exist, open-gpu-5/7/24 have cuda driver issues
 			}
 
 			host := fmt.Sprintf("open-gpu-%d.%s", i, FQDN)
