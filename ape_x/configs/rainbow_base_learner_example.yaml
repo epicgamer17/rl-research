@@ -1,6 +1,7 @@
 config_dict:
   activation: relu
   kernel_initializer: glorot_uniform
+  dense_layers_noisy: true
   loss_function: !!python/object:keras.src.losses.CategoricalCrossentropy
     _allow_sum_over_batch_size: false
     _fn_kwargs:

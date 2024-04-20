@@ -1,6 +1,3 @@
-import tensorflow as tf
-from tensorflow import keras
-from keras import losses
 from agent_configs import ApeXLearnerConfig
 from learner import ApeXLearner
 import gymnasium as gym
@@ -22,45 +19,6 @@ logging.basicConfig(
     handlers=[fh, ch],
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
-
-# distributed_config = {
-#     "learner_addr": "127.0.0.1",
-#     "learner_port": 5556,
-#     "replay_port": 5554,
-#     "replay_addr": "127.0.0.1",
-# }
-
-# rainbow_config = {
-#     "atom_size": 51,
-#     "activation": "relu",
-#     "kernel_initializer": "orthogonal",
-#     "ema_beta": 0.95,
-#     "transfer_interval": 100,
-#     "minibatch_size": 128,
-#     "per_epsilon": 0.001,
-#     "per_alpha": 0.5,
-#     "per_beta": 0.4,
-#     "clipnorm": None,
-#     # "discount_factor": 0.99,
-#     # "n_step": 3,
-#     "transfer_interval": 100,
-#     "dense_layers": 2,
-#     "width": 512,
-#     "learning_rate": 0.0001,
-#     "loss_function": losses.CategoricalCrossentropy(),
-#     "adam_epsilon": 0.0003125,
-# }
-
-
-# learner_config = {
-#     "training_steps": 1000,
-#     "remove_old_experiences_interval": 1000,
-#     "samples_queue_size": 2,
-#     "updates_queue_size": 16,
-#     "push_params_interval": 1,
-# }
-
-# conf = {**rainbow_config, **distributed_config, **learner_config}
 
 
 def make_cartpole_env():

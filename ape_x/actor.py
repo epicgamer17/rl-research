@@ -188,12 +188,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             logger.info("no weights recieved from learner")
             return
 
-        # todo: fix issues with starting up the weights aren't full
-        # if len(decompressed) < 24:
-        #     logger.info("not enough weights received from learner")
-        # else:
         decompressed = decompress(res)
-        # print(decompressed)
         try:
             self.model.set_weights(decompressed)
         except Exception as e:

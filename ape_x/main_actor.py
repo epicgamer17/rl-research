@@ -1,5 +1,3 @@
-from tensorflow import keras
-from keras import losses
 import argparse
 import gymnasium as gym
 
@@ -27,35 +25,6 @@ import sys
 sys.path.append("..")
 from actor import ApeXActor
 
-distributed_config = {
-    "learner_addr": "127.0.0.1",
-    "learner_port": 5556,
-    "replay_port": 5554,
-    "replay_addr": "127.0.0.1",
-}
-
-rainbow_config = {
-    "width": 512,
-    "loss_function": losses.CategoricalCrossentropy(),
-    "activation": "relu",
-    "kernel_initializer": "orthogonal",
-    "adam_epsilon": 0.0003125,
-    "transfer_interval": 100,
-    "dense_layers": 2,
-    "per_epsilon": 0.001,
-    "per_alpha": 0.5,
-    "per_beta": 0.4,
-    "clipnorm": None,
-}
-
-
-actor_config = {
-    "actor_buffer_size": 128,  # sets minibatch size and replay buffer size
-    "poll_params_interval": 128,
-}
-
-conf = {**rainbow_config, **distributed_config, **actor_config}
-
 
 def make_cartpole_env():
     env = gym.make("CartPole-v1", render_mode="rgb_array")
@@ -70,13 +39,16 @@ def main():
     parser.add_argument("--noisy_sigma", type=float)
     parser.add_argument("--name", type=str, default="actor_0")
     parser.add_argument("--spectator", default=False, action="store_true")
-    # parser.add_argument("--epsilon", type=float)
 
     args = parser.parse_args()
     config = ApeXActorConfig.load(args.config_file)
 
     if args.noisy_sigma is not None:
         config.noisy_sigma = args.noisy_sigma  # noisy_sigma override
+    else:
+        # for spectators
+        config.conv_layers_noisy = False
+        config.dense_layers_noisy = False
 
     actor = ApeXActor(
         env=make_cartpole_env(),

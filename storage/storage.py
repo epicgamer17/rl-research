@@ -55,8 +55,9 @@ class Storage:
         db = self.client["model_weights"]
         fs = gridfs.GridFS(db)
         id = fs.put(bytes)
+        logger.info(f"weights id: {id}")
         hash = hashlib.md5(bytes).hexdigest()
-        print("weights hash: ", hash)
+        logger.info(f"weights hash: {hash}")
 
         # delete previous weights if they exist
         prev_id = self.get_latest_weights_id()
@@ -70,6 +71,7 @@ class Storage:
         while True:
             try:
                 id = self.get_latest_weights_id()
+                logger.info(f"weights id: {id}")
                 if not id or id == self.latest_id:
                     return None
 
@@ -79,7 +81,7 @@ class Storage:
                 fs = gridfs.GridFS(db)
 
                 weights = fs.get(id).read()
-                print("weights hash: ", hashlib.md5(weights).hexdigest())
+                logger.info(f"weights hash: {hashlib.md5(weights).hexdigest()}")
                 return weights
             except Exception as e:
                 logger.warning("error getting weights: ", e)
