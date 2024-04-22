@@ -1,0 +1,99 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+
+	"internal/pkg/ssh_util"
+
+	"gopkg.in/yaml.v3"
+)
+
+type DistributedConfig struct {
+	ReplayHost            string
+	ReplayLearnerPort     int
+	ReplayActorsPort      int
+	MongoHost             string
+	MongoPort             int
+	MongoUsername         string
+	MongoPasswordLocation string
+}
+
+var OutputDir = "generated"
+
+func CreateConfigs(client *ssh_util.Client, config DistributedConfig, learnerConfigFilename string, actorConfigFilename string, replayConfigFilename string) {
+	learnerConfig, err := os.ReadFile(learnerConfigFilename)
+	if err != nil {
+		panic(err)
+	}
+	actorConfig, err := os.ReadFile(actorConfigFilename)
+	if err != nil {
+		panic(err)
+	}
+	replayConfig, err := os.ReadFile(replayConfigFilename)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Creating configs: ")
+
+	// write config files to remote, then run the config_generator.py script to inject the necessary info
+	commands := []string{
+		"cd ~/rl-research/ape_x/go",
+		"conda activate ml",
+		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerConfig), learnerConfigFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(actorConfig), actorConfigFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(replayConfig), replayConfigFilename),
+		fmt.Sprintf("python3 ../config_generator.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_base %s --learner_base %s --output %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, actorConfigFilename, learnerConfigFilename, fmt.Sprintf("../%s", OutputDir)),
+	}
+
+	cmd := strings.Join(commands, "; ")
+	_, err = client.Run(cmd)
+	if err != nil {
+		fmt.Println(err)
+		panic(err)
+	}
+}
+
+const USERNAME = "ehuang"
+const ReplayLearnerPort = 5554
+const ReplayActorPort = 5555
+const MongoPort = 5553
+const MongoUsername = "ezra"
+const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
+
+func main() {
+	learnerBaseFilenameFlag := flag.String("learner_config", "../configs/actor_config_example.yaml", "")
+	actorBaseFilenameFlag := flag.String("actor_config", "../configs/learner_config_example.yaml", "")
+	replayFilenameFlag := flag.String("replay_config_file", "../configs/replay_config_example.yaml", "")
+	hostsFilenameFlag := flag.String("hosts_file", "../generated/hosts.yaml", "")
+	hostsFileContent, err := os.ReadFile(*hostsFilenameFlag)
+	if err != nil {
+		panic(err)
+	}
+	hosts := []string{}
+
+	yaml.Unmarshal(hostsFileContent, &hosts)
+
+	fmt.Printf("%-30s | %v\n", "Using hosts", hosts)
+
+	replayHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+	mongoHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+
+	distributedConfig := &DistributedConfig{
+		ReplayHost:            replayHost,
+		ReplayLearnerPort:     ReplayLearnerPort,
+		ReplayActorsPort:      ReplayActorPort,
+		MongoHost:             mongoHost,
+		MongoPort:             MongoPort,
+		MongoUsername:         MongoUsername,
+		MongoPasswordLocation: MongoPasswordLocation,
+	}
+
+	client := ssh_util.NewClient(replayHost, USERNAME, "")
+	CreateConfigs(client, *distributedConfig, *learnerBaseFilenameFlag, *actorBaseFilenameFlag, *replayFilenameFlag)
+	client.Close()
+
+}
