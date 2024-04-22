@@ -16,3 +16,7 @@ require (
 require internal/pkg/ssh_util v1.0.0
 
 replace internal/pkg/ssh_util => ./internal/pkg/ssh_util
+
+require internal/pkg/configs v1.0.0
+
+replace internal/pkg/configs => ./internal/pkg/configs
