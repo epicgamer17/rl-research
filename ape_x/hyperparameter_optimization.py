@@ -97,13 +97,12 @@ def run_training(config, env: gym.Env, name):
     learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
     actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
 
-    print(replay_conf)
     replay_conf = ReplayBufferConfig(replay_conf)
 
-    actor_config_filename = "apex_actor_config.yaml"
+    actor_config_filename = "configs/apex_actor_config.yaml"
     actor_config.dump(actor_config_filename)
 
-    replay_config_filename = "replay_config.yaml"
+    replay_config_filename = "configs/replay_config.yaml"
     replay_conf.dump(replay_config_filename)
 
     def make_replay_args():
@@ -319,6 +318,13 @@ def create_search_space():
         #     "remove_old_experiences_interval", [1000, 2000, 3000, 4000, 5000, 8000, 10000]
         # ),
         "poll_params_interval": hp.choice("poll_params_interval", [50, 100, 200, 300]),
+        "actors_initial_sigma": hp.choice(
+            "actors_initial_sigma", [0.1 * i for i in range(1, 10)]
+        ),
+        "actors_sigma_alpha": hp.choice("actors_sigma_alpha", [range(1, 20)]),
+        "learner_noisy_sigma": hp.choice(
+            "learner_noisy_sigma", [0.1 * i for i in range(1, 10)]
+        ),
         # 'per_beta_increase': hp.uniform('per_beta_increase', 0, 0.015),
         # 'search_max_depth': 5,
         # 'search_max_time': 10,

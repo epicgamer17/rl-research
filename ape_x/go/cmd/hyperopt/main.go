@@ -9,15 +9,13 @@ import (
 	"math"
 	"net"
 	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v3"
 )
 
 const SSH_ARGS = "-oStrictHostKeyChecking=no -oConnectTimeout=5"
@@ -28,69 +26,7 @@ const ReplayLearnerPort = 5554
 const ReplayActorPort = 5555
 const MongoUsername = "ezra"
 const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
-const ActorConfigFile = "configs/actor_config_example.yaml"
-const LearnerConfigFile = "configs/learner_config_example.yaml"
-
-func GenerateHosts(username string) <-chan string {
-	c := make(chan string)
-	go func() {
-		for i := 1; i <= 33; i++ {
-			if i == 17 || i == 5 || i == 7 || i == 24 || i == 13 {
-				continue
-				// open-gpu-17 doesn't exist, open-gpu-5/7/24 have cuda driver issues
-				// open-gpu-13 throws tensorflow.python.framework.errors_impl.InternalError: cudaSetDevice() on GPU:0 failed. Status: CUDA-capable device(s) is/are busy or unavailable
-			}
-
-			host := fmt.Sprintf("open-gpu-%d.%s", i, FQDN)
-			c <- host
-		}
-		close(c)
-	}()
-	return c
-}
-
-func FindFreeServers(hosts <-chan string) (<-chan string, <-chan bool) {
-	wg := sync.WaitGroup{}
-	c := make(chan string, 100)
-	done := make(chan bool)
-
-	for host := range hosts {
-		wg.Add(1)
-		connectionString := fmt.Sprintf("%s@%s", USERNAME, host)
-		// fmt.Println("checking", connectionString)
-		args := append(strings.Split(SSH_ARGS, " "), connectionString, "who | cut -d \" \" -f1 | sort -n | uniq -c | wc -l")
-		cmd := exec.Command("ssh", args...)
-
-		go func(h string) {
-			defer wg.Done()
-			output, err := cmd.Output()
-			if err == nil {
-				o := strings.Trim(string(output), "\n")
-				numUsersOnline, err := strconv.Atoi(o)
-				if err != nil {
-					panic(err)
-				}
-				if numUsersOnline <= 1 {
-					color.Green("  %s is free", h)
-					c <- h
-				} else {
-					color.Yellow("  %s has other users online", h)
-				}
-			} else {
-				color.Red("  %s is not online", h)
-			}
-		}(host)
-	}
-
-	go func() {
-		wg.Wait()
-		done <- true
-		close(c)
-		close(done)
-	}()
-
-	return c, done
-}
+const OutputDir = "generated"
 
 func NewSSHConfig(username string) *ssh.ClientConfig {
 	path := os.ExpandEnv("$HOME/.ssh/id_ed25519")
@@ -198,16 +134,16 @@ type DistributedConfig struct {
 	MongoPasswordLocation string
 }
 
-func CreateConfigs(client *ssh.Client, config DistributedConfig, learnerRainbowBaseFilename string, actorRainbowBaseFilename string, replayFilename string) {
-	learnerRainbowBase, err := os.ReadFile(learnerRainbowBaseFilename)
+func CreateConfigs(client *ssh.Client, config DistributedConfig, learnerConfigFilename string, actorConfigFilename string, replayConfigFilename string) {
+	learnerConfig, err := os.ReadFile(learnerConfigFilename)
 	if err != nil {
 		panic(err)
 	}
-	actorRainbowBase, err := os.ReadFile(actorRainbowBaseFilename)
+	actorConfig, err := os.ReadFile(actorConfigFilename)
 	if err != nil {
 		panic(err)
 	}
-	replay, err := os.ReadFile(replayFilename)
+	replayConfig, err := os.ReadFile(replayConfigFilename)
 	if err != nil {
 		panic(err)
 	}
@@ -219,13 +155,14 @@ func CreateConfigs(client *ssh.Client, config DistributedConfig, learnerRainbowB
 	}
 	defer session.Close()
 
+	// write config files to remote, then run the config_generator.py script to inject the necessary info
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerRainbowBase), learnerRainbowBaseFilename),
-		fmt.Sprintf("echo '%s' > \"%s\"", string(actorRainbowBase), actorRainbowBaseFilename),
-		fmt.Sprintf("echo '%s' > \"%s\"", string(replay), replayFilename),
-		fmt.Sprintf("python3 generate_example_configs.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_rainbow_base %s --learner_rainbow_base %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, actorRainbowBaseFilename, learnerRainbowBaseFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerConfig), learnerConfigFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(actorConfig), actorConfigFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(replayConfig), replayConfigFilename),
+		fmt.Sprintf("python3 config_generator.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_base %s --learner_base %s --output %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, actorConfigFilename, learnerConfigFilename, OutputDir),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -260,12 +197,12 @@ func StartMongo(session *ssh.Session, port int) (<-chan string, <-chan string) {
 	return stdoutCh, stderrCh
 }
 
-func StartLearner(session *ssh.Session) (<-chan string, <-chan string) {
+func StartLearner(session *ssh.Session, learnerConfigFilename string) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_learner.py --config_file %s", LearnerConfigFile),
+		fmt.Sprintf("python3 main_learner.py --config_file %s", learnerConfigFilename),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -273,12 +210,12 @@ func StartLearner(session *ssh.Session) (<-chan string, <-chan string) {
 	return stdoutCh, stderrCh
 }
 
-func StartActor(session *ssh.Session, id string, noisySigma float64) (<-chan string, <-chan string) {
+func StartActor(session *ssh.Session, id string, noisySigma float64, actorConfigFilename string) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --noisy_sigma %.8f", ActorConfigFile, id, noisySigma),
+		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --noisy_sigma %.8f", actorConfigFilename, id, noisySigma),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -286,12 +223,12 @@ func StartActor(session *ssh.Session, id string, noisySigma float64) (<-chan str
 	return stdoutCh, stderrCh
 }
 
-func StartSpectator(session *ssh.Session, id string, epsilon float64) (<-chan string, <-chan string) {
+func StartSpectator(session *ssh.Session, id string, actorConfigFilename string) (<-chan string, <-chan string) {
 	stdoutCh, stderrCh := createChannels(session)
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --spectator --noisy_sigma 0", ActorConfigFile, id),
+		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --spectator --noisy_sigma 0", actorConfigFilename, id),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -357,34 +294,176 @@ func copyTrainingGraphsToStaticSite(client *ssh.Client) {
 
 }
 
-const baseNoisySigma = 0.4
-const alpha = 7
+const baseNoisySigma = 0.9
+const alpha = 20
 
-func main() {
-	learnerRainbowBaseFilenameFlag := flag.String("rainbow_base_learner_config_file", "configs/rainbow_base_learner_example.yaml", "")
-	actorRainbowBaseFilenameFlag := flag.String("rainbow_base_actor_config_file", "configs/rainbow_base_actor_example.yaml", "")
-	replayFilenameFlag := flag.String("replay_config_file", "configs/replay_config_example.yaml", "")
-	flag.Parse()
-
-	fmt.Println("Using rainbow base config file", *learnerRainbowBaseFilenameFlag)
-	fmt.Println("Using replay config file", *replayFilenameFlag)
-
-	if _, err := os.Stat(*learnerRainbowBaseFilenameFlag); errors.Is(err, os.ErrNotExist) {
-		panic("Base rainbow config file does not exist")
-	}
-	if _, err := os.Stat(*replayFilenameFlag); errors.Is(err, os.ErrNotExist) {
-		panic("Replay config file does not exist")
+func main_2(hosts []string, learnerBaseFilenameFlag string, actorBaseFilenameFlag string, replayFilenameFlag string) {
+	if len(hosts) < 4 {
+		panic("Not enough available hosts to run.")
 	}
 
-	availableHosts, done := FindFreeServers(GenerateHosts(USERNAME))
-	<-done
+	replayClientHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+	mongoClientHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+	spectatorClientHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
 
-	replayClientHost := <-availableHosts
-	mongoClientHost := <-availableHosts
-	learnerClientHost := <-availableHosts
-	spectatorClientHost := <-availableHosts
+	totalActors := len(hosts)
 
-	totalActors := len(availableHosts)
+	fmt.Println("Replay client: ", replayClientHost)
+	fmt.Println("Mongo client: ", mongoClientHost)
+	fmt.Println("Num actors: ", totalActors)
+
+	noisySigmas := make([]float64, totalActors)
+
+	for i := 0; i < totalActors; i++ {
+		e_i := math.Pow(baseNoisySigma, 1+(float64(i)/float64(totalActors))*alpha)
+		noisySigmas[i] = e_i
+	}
+
+	replayClient := NewClient(replayClientHost)
+	mongoClient := NewClient(mongoClientHost)
+	spectatorClient := NewClient(spectatorClientHost)
+
+	defer replayClient.Close()
+	defer mongoClient.Close()
+	defer spectatorClient.Close()
+
+	distributedConfig := &DistributedConfig{
+		ReplayHost:            replayClientHost,
+		ReplayLearnerPort:     ReplayLearnerPort,
+		ReplayActorsPort:      ReplayActorPort,
+		MongoHost:             mongoClientHost,
+		MongoPort:             MongoPort,
+		MongoUsername:         MongoUsername,
+		MongoPasswordLocation: MongoPasswordLocation,
+	}
+
+	CreateConfigs(spectatorClient, *distributedConfig, learnerBaseFilenameFlag, actorBaseFilenameFlag, replayFilenameFlag)
+
+	replaySession, err := replayClient.NewSession()
+	if err != nil {
+		panic("failed to create session: " + err.Error())
+	}
+	defer replaySession.Close()
+
+	mongoSession, err := mongoClient.NewSession()
+	if err != nil {
+		panic("failed to create session: " + err.Error())
+	}
+	defer mongoSession.Close()
+
+	spectatorSession, err := spectatorClient.NewSession()
+	if err != nil {
+		panic("failed to create session: " + err.Error())
+	}
+	defer spectatorSession.Close()
+
+	replayStdout, replayStderr := StartReplay(replaySession, replayFilenameFlag)
+	mongoStdout, mongoStderr := StartMongo(mongoSession, MongoPort)
+	spectatorStdout, spectatorStderr := StartSpectator(spectatorSession, "spectator", fmt.Sprintf("%s/actor_config.yaml", OutputDir))
+
+	go func() {
+		for msg := range merge(replayStdout, replayStderr) {
+			fmt.Printf("[replay] %s\n", msg)
+		}
+	}()
+	go func() {
+		for msg := range merge(mongoStdout, mongoStderr) {
+			fmt.Printf("[mongo] %s\n", msg)
+		}
+	}()
+	go func() {
+		for msg := range merge(spectatorStdout, spectatorStderr) {
+			fmt.Printf("[spectator] %s\n", msg)
+		}
+	}()
+
+	actorClients := []*ssh.Client{}
+	for _, host := range hosts {
+		actorClients = append(actorClients, NewClient(host))
+	}
+
+	for i, client := range actorClients {
+		defer client.Close()
+
+		session, err := client.NewSession()
+		if err != nil {
+			panic("failed to create session: " + err.Error())
+		}
+		defer session.Close()
+
+		stdout, stderr := StartActor(session, uuid.New().String(), noisySigmas[i], fmt.Sprintf("%s/actor_config.yaml", OutputDir))
+
+		go func(client *ssh.Client) {
+			for msg := range merge(stdout, stderr) {
+				fmt.Printf("[actor %s] %s\n", client.RemoteAddr().String(), msg)
+			}
+		}(client)
+	}
+
+	updaterClient := NewClient(fmt.Sprintf("mimi.%s", FQDN))
+
+	ticker := time.NewTicker(10 * time.Second)
+	doneChannel := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				copyTrainingGraphsToStaticSite(updaterClient)
+			case <-doneChannel:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	reader := bufio.NewReader(os.Stdin)
+	reader.ReadString('\n')
+
+	wg := sync.WaitGroup{}
+
+	wg.Add(1)
+	go func() {
+		killReplay(replayClient)
+		wg.Done()
+	}()
+
+	wg.Add(1)
+	go func() {
+		killMongo(mongoClient)
+		wg.Done()
+	}()
+
+	wg.Add(1)
+	go func() {
+		killActor(spectatorClient)
+		wg.Done()
+	}()
+
+	for _, client := range actorClients {
+		wg.Add(1)
+		go func(c *ssh.Client) {
+			killActor(c)
+			wg.Done()
+		}(client)
+	}
+
+	doneChannel <- true
+	close(doneChannel)
+
+	wg.Wait()
+}
+
+func main_1(hosts []string, learnerBaseFilenameFlag string, actorBaseFilenameFlag string, replayFilenameFlag string) {
+	if len(hosts) < 5 {
+		panic("Not enough available hosts to run.")
+	}
+
+	replayClientHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+	mongoClientHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+	learnerClientHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+	spectatorClientHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+
+	totalActors := len(hosts)
 
 	fmt.Println("Replay client: ", replayClientHost)
 	fmt.Println("Mongo client: ", mongoClientHost)
@@ -418,7 +497,7 @@ func main() {
 		MongoPasswordLocation: MongoPasswordLocation,
 	}
 
-	CreateConfigs(spectatorClient, *distributedConfig, *learnerRainbowBaseFilenameFlag, *actorRainbowBaseFilenameFlag, *replayFilenameFlag)
+	CreateConfigs(spectatorClient, *distributedConfig, learnerBaseFilenameFlag, actorBaseFilenameFlag, replayFilenameFlag)
 
 	replaySession, err := replayClient.NewSession()
 	if err != nil {
@@ -444,12 +523,12 @@ func main() {
 	}
 	defer spectatorSession.Close()
 
-	replayStdout, replayStderr := StartReplay(replaySession, *replayFilenameFlag)
+	replayStdout, replayStderr := StartReplay(replaySession, replayFilenameFlag)
 	mongoStdout, mongoStderr := StartMongo(mongoSession, MongoPort)
 
-	learnerStdout, learnerStderr := StartLearner(learnerSession)
+	learnerStdout, learnerStderr := StartLearner(learnerSession, fmt.Sprintf("%s/learner_config.yaml", OutputDir))
 
-	spectatorStdout, spectatorStderr := StartSpectator(spectatorSession, "spectator", 0.4)
+	spectatorStdout, spectatorStderr := StartSpectator(spectatorSession, "spectator", fmt.Sprintf("%s/actor_config.yaml", OutputDir))
 
 	go func() {
 		for msg := range merge(replayStdout, replayStderr) {
@@ -473,7 +552,7 @@ func main() {
 	}()
 
 	actorClients := []*ssh.Client{}
-	for host := range availableHosts {
+	for _, host := range hosts {
 		actorClients = append(actorClients, NewClient(host))
 	}
 
@@ -486,7 +565,7 @@ func main() {
 		}
 		defer session.Close()
 
-		stdout, stderr := StartActor(session, uuid.New().String(), noisySigmas[i])
+		stdout, stderr := StartActor(session, uuid.New().String(), noisySigmas[i], fmt.Sprintf("%s/actor_config.yaml", OutputDir))
 
 		go func(client *ssh.Client) {
 			for msg := range merge(stdout, stderr) {
@@ -552,4 +631,41 @@ func main() {
 	close(doneChannel)
 
 	wg.Wait()
+}
+
+func main() {
+	learnerBaseFilenameFlag := flag.String("learner_config", "../configs/actor_config_example.yaml", "")
+	actorBaseFilenameFlag := flag.String("actor_config", "../configs/learner_config_example.yaml", "")
+	replayFilenameFlag := flag.String("replay_config_file", "../configs/replay_config_example.yaml", "")
+	hostsFilenameFlag := flag.String("hosts_file", "../generated/hosts.yaml", "")
+	hyperoptModeFlag := flag.Bool("hyperopt", false, "")
+	flag.Parse()
+
+	fmt.Printf("%-30s | %v\n", "Using learner base config file", *learnerBaseFilenameFlag)
+	fmt.Printf("%-30s | %v\n", "Using actor base config file", *actorBaseFilenameFlag)
+	fmt.Printf("%-30s | %v\n", "Using replay config file", *replayFilenameFlag)
+	fmt.Printf("%-30s | %v\n", "Using hyperopt mode", *hyperoptModeFlag)
+
+	hostsFileContent, err := os.ReadFile(*hostsFilenameFlag)
+	if err != nil {
+		panic(err)
+	}
+	hosts := []string{}
+
+	yaml.Unmarshal(hostsFileContent, &hosts)
+
+	fmt.Printf("%-30s | %v\n", "Using hosts", hosts)
+
+	if _, err := os.Stat(*learnerBaseFilenameFlag); errors.Is(err, os.ErrNotExist) {
+		panic("Base rainbow config file does not exist")
+	}
+	if _, err := os.Stat(*replayFilenameFlag); errors.Is(err, os.ErrNotExist) {
+		panic("Replay config file does not exist")
+	}
+
+	if *hyperoptModeFlag {
+		main_2(hosts, *learnerBaseFilenameFlag, *actorBaseFilenameFlag, *replayFilenameFlag)
+	} else {
+		main_1(hosts, *learnerBaseFilenameFlag, *actorBaseFilenameFlag, *replayFilenameFlag)
+	}
 }
