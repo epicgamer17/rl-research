@@ -5,3 +5,4 @@
 *.meta.json
 */test_notebook.ipynb
 **/build
+.vscode
