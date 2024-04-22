@@ -12,3 +12,7 @@ require (
 	golang.org/x/sys v0.19.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+require internal/pkg/ssh_util v1.0.0
+
+replace internal/pkg/ssh_util => ./internal/pkg/ssh_util
