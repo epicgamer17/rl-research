@@ -120,28 +120,30 @@ def run_training(config, env: gym.Env, name):
     cmd = f"./bin/write_configs --learner_config {learner_config_filename} --actor_config {actor_config_filename} --replay_config {replay_config_filename} --hosts_file {hosts_filename} --out_filename {distributed_config_filename}"
     subprocess.run(cmd.split(""), capture_output=True)
 
-    cmd = f"./bin/hyperopt --distributed_config {distributed_config_filename}"
-    go_proc = Popen(cmd.split(" "))
-    time.sleep(5)
+    try:
+        cmd = f"./bin/hyperopt --distributed_config {distributed_config_filename}"
+        go_proc = Popen(cmd.split(" "))
+        time.sleep(5)
 
-    learner = ApeXLearner(env, learner_config, name=name)
-    logger.info("        === Running learner")
-    learner.run()
-    logger.info("        === Learner done")
-
-    logger.info("        === Terminiating pool")
-    stdout, stderr = go_proc.communicate("\n\n\n")
-    print(stdout)
-    print(stderr)
+        learner = ApeXLearner(env, learner_config, name=name)
+        logger.info("        === Running learner")
+        learner.run()
+    except KeyboardInterrupt:
+        logger.info("learner interrupted, cleaning up")
+    finally:
+        stdout, stderr = go_proc.communicate("\n\n\n")
+        logger.info(f"go stdout: {stdout}")
+        logger.info(f"go stderr: {stderr}")
 
     logger.info("Training complete")
+
     return -learner.test(num_trials=10, step=0)
 
 
 def objective(params):
     gc.collect()
-    print("Params: ", params)
-    print("Making environments")
+    logger.info("Params: ", params)
+    logger.info("Making environments")
     environments_list = [
         gym.make("CartPole-v1", render_mode="rgb_array"),
         # gym.make("Acrobot-v1", render_mode="rgb_array"),
@@ -319,12 +321,10 @@ def main():
 
     try:  # try to load an already saved trials object, and increase the max
         trials = pickle.load(open("./classiccontrol_trials.p", "rb"))
-        print("Found saved Trials! Loading...")
+        logger.info("Found saved Trials! Loading...")
         max_trials = len(trials.trials) + trials_step
-        print(
-            "Rerunning from {} trials to {} (+{}) trials".format(
-                len(trials.trials), max_trials, trials_step
-            )
+        logger.info(
+            f"Rerunning from {len(trials.trials)} trials to {max_trials} (+{trials_step}) trials"
         )
     except:  # create a new trials object and start searching
         # trials = Trials()
@@ -342,7 +342,7 @@ def main():
         show_progressbar=False,
     )
 
-    print(best)
+    logger.info(best)
     best_trial = space_eval(search_space, best)
     gc.collect()
 
