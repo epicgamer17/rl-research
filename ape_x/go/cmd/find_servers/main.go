@@ -111,7 +111,8 @@ func main() {
 	indicesToExclude[17] = true
 	indicesToExclude[24] = true
 
-	for i := range exclude {
+	fmt.Println(exclude)
+	for _, i := range exclude {
 		indicesToExclude[i] = true
 	}
 

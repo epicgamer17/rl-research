@@ -38,7 +38,6 @@ from hyperopt import tpe, hp, fmin, space_eval
 import subprocess
 from subprocess import Popen
 import pathlib
-import contextlib
 import numpy as np
 
 ctx = multiprocessing.get_context("fork")
@@ -99,62 +98,41 @@ def run_training(config, env: gym.Env, name):
 
     replay_conf = ReplayBufferConfig(replay_conf)
 
-    actor_config_filename = "configs/apex_actor_config.yaml"
+    learner_config_filename = "./configs/learner_config.yaml"
+    learner_config.dump(learner_config_filename)
+
+    actor_config_filename = "./configs/actor_config.yaml"
     actor_config.dump(actor_config_filename)
 
-    replay_config_filename = "configs/replay_config.yaml"
+    replay_config_filename = "./configs/replay_config.yaml"
     replay_conf.dump(replay_config_filename)
 
-    def make_replay_args():
-        learner_port = distributed_config["learner_replay_port"]
-        actors_port = distributed_config["actor_replay_port"]
-        args = f"distributed_replay_buffer.py --learner_port {learner_port} --actors_port {actors_port} --config_file {replay_config_filename}".split(
-            " "
-        )
-        return [sys.executable, *args]
+    current_host = int(
+        subprocess.check_output("hostname | sed 's/[^0-9]*//'", shell=True).strip()
+    )
 
-    def make_mongo_args():
-        mongo_executable = subprocess.check_output(["which", "mongod"]).rstrip(b"\n")
-        mongo_port = distributed_config["storage_port"]
-        args = f"--dbpath /home/ezrahuang/mongodb/data --logpath /home/ezrahuang/mongodb/logs/mongod.log --port {mongo_port} --auth".split(
-            " "
-        )
-        return [mongo_executable, *args]
+    hosts_filename = "./generated/hosts.yaml"
+    distributed_config_filename = "./generated/distributed_config.yaml"
 
-    def make_actor_i_args(i):
-        epsilon = 0  # not used yet
-        args = f"main_actor.py --name {i} --config_file {actor_config_filename}".split(
-            " "
-        )
-        return [sys.executable, *args]
+    cmd = f"./bin/find_servers --exclude {current_host} --output {hosts_filename}"
+    subprocess.run(cmd.split(" "), capture_output=True)
 
-    def make_spectator_actor():
-        args = f"main_actor.py --name spectator --config_file {actor_config_filename} --spectator".split(
-            " "
-        )
-        p = Popen([sys.executable, *args])
-        return p
+    cmd = f"./bin/write_configs --learner_config {learner_config_filename} --actor_config {actor_config_filename} --replay_config {replay_config_filename} --hosts_file {hosts_filename} --out_filename {distributed_config_filename}"
+    subprocess.run(cmd.split(""), capture_output=True)
 
-    with contextlib.closing(ctx.Pool()) as pool:
-        # pool.apply(Popen, (make_mongo_args(),))
-        Popen(make_mongo_args())
-        replay_proc = Popen(make_replay_args())
-        time.sleep(5)
+    cmd = f"./bin/hyperopt --distributed_config {distributed_config_filename}"
+    go_proc = Popen(cmd.split(" "))
+    time.sleep(5)
 
-        actor_procs: list[Popen] = list()
-        for i in range(conf["num_actors"]):
-            actor_procs.append(Popen(make_actor_i_args(i)))
+    learner = ApeXLearner(env, learner_config, name=name)
+    logger.info("        === Running learner")
+    learner.run()
+    logger.info("        === Learner done")
 
-        learner = ApeXLearner(env, learner_config, name=name)
-        logger.info("        === Running learner")
-        learner.run()
-        logger.info("        === Learner done")
-
-        logger.info("        === Terminiating pool")
-        replay_proc.terminate()
-        for proc in actor_procs:
-            proc.terminate()
-        pool.terminate()
+    logger.info("        === Terminiating pool")
+    stdout, stderr = go_proc.communicate("\n\n\n")
+    print(stdout)
+    print(stderr)
 
     logger.info("Training complete")
     return -learner.test(num_trials=10, step=0)

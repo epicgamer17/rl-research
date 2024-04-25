@@ -37,6 +37,7 @@ func CreateConfigsRemote(client *ssh_util.Client, config configs.DistributedConf
 		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerConfig), learnerConfigFilename),
 		fmt.Sprintf("echo '%s' > \"%s\"", string(actorConfig), actorConfigFilename),
 		fmt.Sprintf("echo '%s' > \"%s\"", string(replayConfig), replayConfigFilename),
+		fmt.Sprintf("echo '%s' > \"%s\"", string(replayConfig), "../generated/replay_config.yaml"),
 		fmt.Sprintf("python3 ../config_generator.py --replay_addr %s --replay_learner_port %d --replay_actors_port %d --storage_hostname %s --storage_port %d --storage_username %s --actor_base %s --learner_base %s --output %s", config.ReplayHost, config.ReplayLearnerPort, config.ReplayActorsPort, config.MongoHost, config.MongoPort, config.MongoUsername, actorConfigFilename, learnerConfigFilename, fmt.Sprintf("../%s", OutputDir)),
 	}
 
@@ -59,9 +60,10 @@ const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
 func main() {
 	learnerBaseFilenameFlag := flag.String("learner_config", "../configs/learner_config_example.yaml", "")
 	actorBaseFilenameFlag := flag.String("actor_config", "../configs/actor_config_example.yaml", "")
-	replayFilenameFlag := flag.String("replay_config_file", "../configs/replay_config_example.yaml", "")
+	replayFilenameFlag := flag.String("replay_config", "../configs/replay_config_example.yaml", "")
 	hostsFilenameFlag := flag.String("hosts_file", "../generated/hosts.yaml", "")
-	withLearnerFlag := flag.Bool("with_learner", true, "")
+	outFilenameFlag := flag.String("output", "../generated/distributed_config.yaml", "")
+	withLearnerFlag := flag.Bool("with_learner", false, "")
 	hostsFileContent, err := os.ReadFile(*hostsFilenameFlag)
 	if err != nil {
 		panic(err)
@@ -74,6 +76,7 @@ func main() {
 
 	replayHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
 	mongoHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
+	spectatorHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
 
 	learnerHost := ""
 	if *withLearnerFlag {
@@ -91,6 +94,7 @@ func main() {
 		LearnerHost:           learnerHost,
 		WithLearner:           *withLearnerFlag,
 		ActorHosts:            hosts,
+		SpectatorHost:         spectatorHost,
 		LearnerConfigFilename: fmt.Sprintf("%s/learner_config.yaml", OutputDir),
 		ActorConfigFilename:   fmt.Sprintf("%s/actor_config.yaml", OutputDir),
 		ReplayConfigFilename:  fmt.Sprintf("%s/replay_config.yaml", OutputDir),
@@ -104,5 +108,5 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	os.WriteFile("../generated/distributed_config.yaml", out, os.FileMode(0644))
+	os.WriteFile(*outFilenameFlag, out, os.FileMode(0644))
 }
