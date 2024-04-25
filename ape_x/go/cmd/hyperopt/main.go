@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"internal/pkg/configs"
 	"internal/pkg/ssh_util"
@@ -291,7 +292,11 @@ func main_1(distributedConfig configs.DistributedConfig) {
 }
 
 func main() {
-	distributedConfigFileContent, err := os.ReadFile("../generated/distributed_config.yaml")
+	distributedConfigFilename := flag.String("distributed_config", "../generated/distributed_config.yaml", "")
+
+	flag.Parse()
+
+	distributedConfigFileContent, err := os.ReadFile(*distributedConfigFilename)
 	if err != nil {
 		panic(err)
 	}
@@ -299,7 +304,7 @@ func main() {
 
 	yaml.Unmarshal(distributedConfigFileContent, &distributedConfig)
 
-	fmt.Printf("%-30s | %v\n", "Using distributed config: ", distributedConfig)
+	fmt.Printf("%-30s | %+v\n", "Using distributed config: ", distributedConfig)
 
 	if !distributedConfig.WithLearner {
 		main_2(distributedConfig)

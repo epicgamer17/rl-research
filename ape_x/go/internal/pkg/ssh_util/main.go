@@ -77,7 +77,7 @@ func NewClient(host string, username string, name string) *Client {
 	address := net.JoinHostPort(host, "22")
 	client, err := ssh.Dial("tcp", address, config)
 	if err != nil {
-		panic("failed to dial: " + err.Error())
+		panic(fmt.Sprintf("failed to dial %s@%s: %s", host, username, err.Error()))
 	}
 
 	return &Client{
@@ -106,7 +106,9 @@ func (c *Client) Start(cmd string) *CommandSession {
 		panic("failed to create session: " + err.Error())
 	}
 	commandSession := c.NewCommandSession(session, cmd)
-	session.Start(cmd)
+	if err = session.Start(cmd); err != nil {
+		fmt.Printf("Error running command %s on %s: %s\n", cmd, c.Name, err)
+	}
 	c.sessions[session] = commandSession
 	return commandSession
 }
@@ -121,6 +123,7 @@ func (c *Client) Close() {
 			fmt.Println("Error closing session: ", err)
 		}
 	}
+	c.SSHClient.Close()
 }
 
 func (c *Client) NewCommandSession(session *ssh.Session, cmd string) *CommandSession {
