@@ -27,7 +27,8 @@ def main():
         default="configs/learner_config_example.yaml",
     )
 
-    parser.add_argument("-o", "--output", type=str, default="generated")
+    parser.add_argument("--learner_output", type=str, default="generated")
+    parser.add_argument("--actor_output", type=str, default="generated")
 
     args = parser.parse_args()
 
@@ -57,9 +58,8 @@ def main():
     actor_config = ApeXActorConfig(injected_actor_conf, actor_conf.game)
     learner_config = ApeXLearnerConfig(injected_learner_conf, learner_conf.game)
 
-    pathlib.Path(args.output).mkdir(exist_ok=True)
-    actor_config.dump(pathlib.Path(args.output, "actor_config.yaml"))
-    learner_config.dump(pathlib.Path(args.output, "learner_config.yaml"))
+    actor_config.dump(args.actor_output)
+    learner_config.dump(args.learner_output)
 
 
 if __name__ == "__main__":
