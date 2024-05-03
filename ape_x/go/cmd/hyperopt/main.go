@@ -292,7 +292,7 @@ func main_1(distributedConfig configs.DistributedConfig) {
 }
 
 func main() {
-	distributedConfigFilename := flag.String("distributed_config", "../generated/distributed_config.yaml", "")
+	distributedConfigFilename := flag.String("distributed_config", "generated/distributed_config.yaml", "")
 
 	flag.Parse()
 

@@ -30,7 +30,6 @@ if gpus:
         print(e)
 
 import multiprocessing
-import sys
 import pandas
 import pickle
 import gymnasium as gym
@@ -39,6 +38,7 @@ import subprocess
 from subprocess import Popen
 import pathlib
 import numpy as np
+from pathlib import Path
 
 ctx = multiprocessing.get_context("fork")
 
@@ -65,7 +65,7 @@ def run_training(config, env: gym.Env, name):
     with open(f"{pathlib.Path.home()}/mongodb/mongodb_admin_password", "r") as f:
         password = f.read()
 
-    distributed_config = {
+    distributed_config_placeholder = {
         "actor_replay_port": 5554,
         "learner_replay_port": 5555,
         "replay_addr": "127.0.0.1",
@@ -77,7 +77,7 @@ def run_training(config, env: gym.Env, name):
 
     conf = {
         **config,
-        **distributed_config,
+        **distributed_config_placeholder,
         "num_actors": 1,
         "training_steps": 100,
     }
@@ -95,33 +95,42 @@ def run_training(config, env: gym.Env, name):
 
     learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
     actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
-
     replay_conf = ReplayBufferConfig(replay_conf)
 
-    learner_config_filename = "./configs/learner_config.yaml"
-    learner_config.dump(learner_config_filename)
+    learner_config_path = Path(Path.cwd(), "configs", "learner_config.yaml")
+    actor_config_path = Path(Path.cwd(), "configs", "actor_config.yaml")
+    replay_config_path = Path(Path.cwd(), "configs", "replay_config.yaml")
 
-    actor_config_filename = "./configs/actor_config.yaml"
-    actor_config.dump(actor_config_filename)
+    learner_config.dump(learner_config_path)
+    actor_config.dump(actor_config_path)
+    replay_conf.dump(replay_config_path)
 
-    replay_config_filename = "./configs/replay_config.yaml"
-    replay_conf.dump(replay_config_filename)
+    host_output = subprocess.check_output("hostname | sed 's/[^0-9]*//'", shell=True)
+    logger.info(f"current host: {host_output.strip()}")
+    try:
+        current_host = int(host_output.strip())
+    except ValueError:
+        # assume we are not on open-gpu-x
+        current_host = 0
 
-    current_host = int(
-        subprocess.check_output("hostname | sed 's/[^0-9]*//'", shell=True).strip()
-    )
+    generated_dir = "generated"
+    os.makedirs(generated_dir, exist_ok=True)
 
     hosts_filename = "./generated/hosts.yaml"
-    distributed_config_filename = "./generated/distributed_config.yaml"
-
     cmd = f"./bin/find_servers --exclude {current_host} --output {hosts_filename}"
     subprocess.run(cmd.split(" "), capture_output=True)
 
-    cmd = f"./bin/write_configs --learner_config {learner_config_filename} --actor_config {actor_config_filename} --replay_config {replay_config_filename} --hosts_file {hosts_filename} --out_filename {distributed_config_filename}"
-    subprocess.run(cmd.split(""), capture_output=True)
+    learner_output_path = Path(Path.cwd(), "output", "learner_output.yaml")
+    actor_output_path = Path(Path.cwd(), "output", "actor_output.yaml")
+    replay_output_path = Path(Path.cwd(), "output", "replay_output.yaml")
+    distributed_output_path = Path(Path.cwd(), "output", "distributed_output.yaml")
 
+    cmd = f"./bin/write_configs --learner_config {learner_config_path} --actor_config {actor_config_path} --replay_config {replay_config_path} --hosts_file {hosts_filename} --learner_output {learner_output_path} --actor_output {actor_output_path} --replay_output {replay_output_path} --distributed_output {distributed_output_path}"
+    out = subprocess.run(cmd.split(" "), capture_output=True)
+    logger.debug(f"write_configs stdout: {out.stdout}")
+    logger.debug(f"write_configs stderr: {out.stderr}")
     try:
-        cmd = f"./bin/hyperopt --distributed_config {distributed_config_filename}"
+        cmd = f"./bin/hyperopt --distributed_config {distributed_output_path}"
         go_proc = Popen(cmd.split(" "))
         time.sleep(5)
 
@@ -301,10 +310,13 @@ def create_search_space():
         "actors_initial_sigma": hp.choice(
             "actors_initial_sigma", [0.1 * i for i in range(1, 10)]
         ),
-        "actors_sigma_alpha": hp.choice("actors_sigma_alpha", [range(1, 20)]),
+        "actors_sigma_alpha": hp.choice(
+            "actors_sigma_alpha", [i for i in range(1, 20)]
+        ),
         "learner_noisy_sigma": hp.choice(
             "learner_noisy_sigma", [0.1 * i for i in range(1, 10)]
         ),
+        "num_actors": hp.choice("num_actors", [i for i in range(1, 16 + 1)]),
         # 'per_beta_increase': hp.uniform('per_beta_increase', 0, 0.015),
         # 'search_max_depth': 5,
         # 'search_max_time': 10,
