@@ -77,15 +77,15 @@ class RainbowAgent(BaseAgent):
             config, self.num_actions, input_shape=self.observation_dimensions
         )
 
-        self.model.compile(
-            optimizer=self.config.optimizer,
-            loss=self.config.loss_function,
-        )
+        # self.model.compile(
+        #     optimizer=self.config.optimizer,
+        #     loss=self.config.loss_function,
+        # )
 
-        self.target_model.compile(
-            optimizer=self.config.optimizer,
-            loss=self.config.loss_function,
-        )
+        # self.target_model.compile(
+        #     optimizer=self.config.optimizer,
+        #     loss=self.config.loss_function,
+        # )
 
         self.target_model.set_weights(self.model.get_weights())
 
