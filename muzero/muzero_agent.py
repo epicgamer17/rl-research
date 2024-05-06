@@ -233,11 +233,7 @@ class MuZeroAgent(AlphaZeroAgent):
             # print("Loss ", loss)
 
             gradients = tape.gradient(loss, self.model.trainable_variables)
-            self.optimizer(
-                learning_rate=self.config.learning_rate,
-                epsilon=self.config.adam_epsilon,
-                clipnorm=self.config.clipnorm,
-            ).apply_gradients(
+            self.config.optimizer.apply_gradients(
                 grads_and_vars=zip(gradients, self.model.trainable_variables)
             )
         # RIGHT NOW THIS RETURNS ONE BUT SHOULD PROBABLY RETURN A VALUE FOR EACH ITERATION
