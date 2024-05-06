@@ -75,7 +75,8 @@ Some useful papers:
 14. PPO: https://arxiv.org/pdf/1707.06347.pdf
 15. What Matters in On Policy RL: https://arxiv.org/pdf/2006.05990.pdf 
 16. Population Based Training: https://arxiv.org/pdf/1711.09846.pdf <- not used but interesting idea for the future
-17. RL Caard: https://arxiv.org/abs/1910.04376
+17. RL Card: https://arxiv.org/abs/1910.04376
+18. NFSP https://arxiv.org/pdf/1603.01121
 
 
 To Look Into: 
