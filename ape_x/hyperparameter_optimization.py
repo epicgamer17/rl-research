@@ -90,7 +90,7 @@ def run_training(config, env: gym.Env, name):
         **config,
         **distributed_config_placeholder,
         "num_actors": 1,
-        "training_steps": 100,
+        "training_steps": 2000,
     }
 
     replay_conf = dict(
@@ -205,7 +205,9 @@ def objective(params):
             print("score: ", score)
             scores_list.append(score)
 
-    print("programs done")
+    print(
+        "programs done with score {} and status {}".format(np.sum(scores_list), status)
+    )
     return {"loss": np.sum(scores_list), "status": status}
 
 
