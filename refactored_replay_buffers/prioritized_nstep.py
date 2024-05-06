@@ -73,6 +73,7 @@ class ReplayBuffer(
         if min_size == None:
             min_size = batch_size
         assert min_size >= batch_size
+        assert min_size < max_size
 
         # self.observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
         # self.next_observation_buffer = np.zeros((max_size,) + observation_dimensions, dtype=np.float32)
