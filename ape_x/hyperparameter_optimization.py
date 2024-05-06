@@ -33,7 +33,7 @@ import multiprocessing
 import pandas
 import pickle
 import gymnasium as gym
-from hyperopt import tpe, hp, fmin, space_eval
+from hyperopt import tpe, hp, fmin, space_eval, STATUS_OK, STATUS_FAIL
 import subprocess
 from subprocess import Popen
 import pathlib
@@ -161,6 +161,7 @@ def objective(params):
     gc.collect()
     logger.info("Params: ", params)
     logger.info("Making environments")
+    status = STATUS_OK
     environments_list = [
         gym.make("CartPole-v1", render_mode="rgb_array"),
         # gym.make("Acrobot-v1", render_mode="rgb_array"),
@@ -193,14 +194,19 @@ def objective(params):
         ]
     ).T
 
-    scores_list = list()
-    for args in args_list:
-        score = run_training(args[0], args[1], args[2])
-        print("score: ", score)
-        scores_list.append(score)
+    if (
+        params["replay_buffer_size"] > params["minibatch_size"]
+    ):  # ADD OTHER BREAKING PARAM CONDITIONS HERE
+        status = STATUS_FAIL
+    else:
+        scores_list = list()
+        for args in args_list:
+            score = run_training(args[0], args[1], args[2])
+            print("score: ", score)
+            scores_list.append(score)
 
     print("programs done")
-    return np.sum(scores_list)
+    return {"loss": np.sum(scores_list), "status": status}
 
 
 from hyperopt import hp

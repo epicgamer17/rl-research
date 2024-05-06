@@ -7,6 +7,16 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import copy
 
+# Every model should have:
+# 1. A network
+# 2. An optimizer
+# 3. A loss function
+# 4. A training method
+#       this method should have training iterations, minibatches, and training steps
+# 5. A step method
+# 6. A select_action method
+# 7. A predict method
+
 
 class BaseAgent:
     def __init__(self, env: gym.Env, config: Config, name):
