@@ -76,6 +76,7 @@ func main() {
 	distributedOutputFlag := flag.String("distributed_output", "generated/distributed_config.yaml", "")
 
 	withLearnerFlag := flag.Bool("with_learner", false, "")
+	flag.Parse()
 
 	hostsFileContent, err := os.ReadFile(*hostsFilenameFlag)
 	if err != nil {

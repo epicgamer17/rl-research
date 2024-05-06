@@ -60,6 +60,17 @@ logging.basicConfig(
 )
 
 
+def get_current_host():
+    host_output = subprocess.check_output("hostname | sed 's/[^0-9]*//'", shell=True)
+    logger.info(f"current host: {host_output.strip()}")
+    try:
+        current_host = int(host_output.strip())
+    except ValueError:
+        # assume we are not on open-gpu-x
+        current_host = 0
+    return current_host
+
+
 def run_training(config, env: gym.Env, name):
     print("=================== Run Training ======================")
     with open(f"{pathlib.Path.home()}/mongodb/mongodb_admin_password", "r") as f:
@@ -93,44 +104,41 @@ def run_training(config, env: gym.Env, name):
         gamma=config["discount_factor"],
     )
 
-    learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
-    actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
-    replay_conf = ReplayBufferConfig(replay_conf)
+    generated_dir = "generated"
+    os.makedirs(generated_dir, exist_ok=True)
 
     learner_config_path = Path(Path.cwd(), "configs", "learner_config.yaml")
     actor_config_path = Path(Path.cwd(), "configs", "actor_config.yaml")
     replay_config_path = Path(Path.cwd(), "configs", "replay_config.yaml")
 
+    hosts_file_path = Path(Path.cwd(), generated_dir, "hosts.yaml")
+    learner_output_path = Path(Path.cwd(), generated_dir, "learner_output.yaml")
+    actor_output_path = Path(Path.cwd(), generated_dir, "actor_output.yaml")
+    replay_output_path = Path(Path.cwd(), generated_dir, "replay_output.yaml")
+    distributed_output_path = Path(Path.cwd(), generated_dir, "distributed_output.yaml")
+    learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
+    actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
+    replay_conf = ReplayBufferConfig(replay_conf)
+
     learner_config.dump(learner_config_path)
     actor_config.dump(actor_config_path)
     replay_conf.dump(replay_config_path)
 
-    host_output = subprocess.check_output("hostname | sed 's/[^0-9]*//'", shell=True)
-    logger.info(f"current host: {host_output.strip()}")
-    try:
-        current_host = int(host_output.strip())
-    except ValueError:
-        # assume we are not on open-gpu-x
-        current_host = 0
+    current_host = get_current_host()
 
-    generated_dir = "generated"
-    os.makedirs(generated_dir, exist_ok=True)
-
-    hosts_filename = "./generated/hosts.yaml"
-    cmd = f"./bin/find_servers --exclude {current_host} --output {hosts_filename}"
+    cmd = f"./bin/find_servers --exclude {current_host} --output {hosts_file_path}"
+    print("running cmd:", cmd)
     subprocess.run(cmd.split(" "), capture_output=True)
 
-    learner_output_path = Path(Path.cwd(), "output", "learner_output.yaml")
-    actor_output_path = Path(Path.cwd(), "output", "actor_output.yaml")
-    replay_output_path = Path(Path.cwd(), "output", "replay_output.yaml")
-    distributed_output_path = Path(Path.cwd(), "output", "distributed_output.yaml")
-
-    cmd = f"./bin/write_configs --learner_config {learner_config_path} --actor_config {actor_config_path} --replay_config {replay_config_path} --hosts_file {hosts_filename} --learner_output {learner_output_path} --actor_output {actor_output_path} --replay_output {replay_output_path} --distributed_output {distributed_output_path}"
+    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path}"
+    print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True)
+
     logger.debug(f"write_configs stdout: {out.stdout}")
     logger.debug(f"write_configs stderr: {out.stderr}")
     try:
-        cmd = f"./bin/hyperopt --distributed_config {distributed_output_path}"
+        cmd = f"./bin/hyperopt --distributed_config={distributed_output_path}"
+        print("running cmd:", cmd)
         go_proc = Popen(cmd.split(" "))
         time.sleep(5)
 
