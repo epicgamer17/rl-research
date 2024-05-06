@@ -186,11 +186,7 @@ class PPOAgent(BaseAgent):
         critic_gradients = tape.gradient(
             critic_loss, self.model.critic.trainable_variables
         )
-        self.config.critic.optimizer(
-            learning_rate=learning_rate,
-            epsilon=self.config.critic.adam_epsilon,
-            clipnorm=self.config.critic.clipnorm,
-        ).apply_gradients(
+        self.config.critic.optimizer.apply_gradients(
             grads_and_vars=zip(critic_gradients, self.model.critic.trainable_variables)
         )
 

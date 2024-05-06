@@ -25,3 +25,11 @@ register(
     reward_threshold=1.0,
     kwargs={"size": 3, "win_length": 3},
 )
+
+register(
+    id="custom_gym_envs/MississippiMarbles-v0",
+    entry_point="custom_gym_envs.envs:MississippiMarblesEnv",
+    max_episode_steps=300,
+    reward_threshold=1.0,
+    kwargs={"players": 6},
+)
