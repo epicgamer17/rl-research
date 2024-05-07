@@ -223,10 +223,10 @@ class AlphaZeroAgent(BaseAgent):
         state_input = self.prepare_states(state)
         value, policy = self.model(inputs=state_input)
         policy = policy.numpy()[0]
-        # Set illegal moves probability to zero and renormalize
-        if self.config.game.has_legal_moves:
-            policy = self.action_mask(legal_moves, policy)
         value = value.numpy().item()
+        # Set illegal moves probability to zero and renormalize
+        policy = self.action_mask(legal_moves, policy)
+        policy = policy / np.sum(policy)
         return value, policy
 
     def select_action(self, state, legal_moves=None, game=None):
@@ -251,26 +251,26 @@ class AlphaZeroAgent(BaseAgent):
         else:
             return action, target_policy
 
-    def action_mask(self, legal_moves, policy):
-        illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
-        policy[illegal_moves] = 0
-        policy /= np.sum(policy)
-        return policy
+    # def action_mask(self, legal_moves, policy):
+    #     illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
+    #     policy[illegal_moves] = 0
+    #
+    #     return policy
 
     def play_game(self):
         state, info = self.env.reset()
         game = Game()
-        legal_moves = info["legal_moves"] if self.config.game.has_legal_moves else None
 
         done = False
         while not done:
-            action, target_policy = self.select_action(state, legal_moves, game=game)
+            action, target_policy = self.select_action(
+                state,
+                info["legal_moves"] if self.config.game.has_legal_moves else None,
+                game=game,
+            )
             print("Action ", action)
             next_state, reward, terminated, truncated, info = self.step(action)
             done = terminated or truncated
-            legal_moves = (
-                info["legal_moves"] if self.config.game.has_legal_moves else None
-            )
             game.append(state, reward, target_policy)
             state = next_state
         game.set_rewards()

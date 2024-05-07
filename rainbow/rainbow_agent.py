@@ -131,16 +131,19 @@ class RainbowAgent(BaseAgent):
         #     debug=False,
         # )
 
-    def predict_single(self, state):
+    def predict_single(self, state, legal_moves=None):
         state_input = self.prepare_states(state)
-        q_values = self.model(inputs=state_input).numpy()
+        q_distribution = self.model(inputs=state_input).numpy()
+        q_values = np.sum(np.multiply(q_distribution, np.array(self.support)), axis=2)[
+            0
+        ]
+        q_values = self.action_mask(q_values, legal_moves, mask_value=-np.inf)
+
         # print(q_values.shape)
         return q_values
 
     def select_action(self, state, legal_moves=None):
-        q_values = np.sum(
-            np.multiply(self.predict_single(state), np.array(self.support)), axis=2
-        )
+        q_values = self.predict_single(state, legal_moves)
         selected_action = np.argmax(q_values)
         if not self.is_test:
             self.transition = [state, selected_action]
@@ -424,7 +427,10 @@ class RainbowAgent(BaseAgent):
         score = 0
         for training_step in range(self.training_steps):
             for _ in range(self.config.replay_interval):
-                action = self.select_action(state)
+                action = self.select_action(
+                    state,
+                    info["legal_moves"] if self.config.game.has_legal_moves else None,
+                )
 
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated

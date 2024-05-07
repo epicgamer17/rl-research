@@ -10,13 +10,19 @@ class ReservoirBuffer:
     ):
         self.observation_dimensions = observation_dimensions
         self.batch_size = batch_size
-        self.observation_buffer = np.empty(
-            [max_size, self.observation_dimensions], dtype=np.float32
-        )
-        self.action_buffer = np.empty(max_size, dtype=np.int32)
+        self.max_size = max_size
+        observation_buffer_shape = []
+        observation_buffer_shape += [self.max_size]
+        observation_buffer_shape += list(self.observation_dimensions)
+        observation_buffer_shape = list(observation_buffer_shape)
+
+        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
+        self.action_buffer = np.zeros(self.max_size, dtype=np.int32)
         self.size = 0
 
     def store(self, observation, action, id=None):
+        print(self.observation_buffer.shape)
+        print(observation.shape)
         self.observation_buffer[self.size] = observation
         self.action_buffer[self.size] = action
         self.size += 1

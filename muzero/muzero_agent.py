@@ -283,17 +283,17 @@ class MuZeroAgent(AlphaZeroAgent):
     def play_game(self):
         state, info = self.env.reset()
         game = Game()
-        legal_moves = info["legal_moves"] if self.config.game.has_legal_moves else None
 
         done = False
         while not done:
-            action, target_policy = self.select_action(state, legal_moves, game=game)
+            action, target_policy = self.select_action(
+                state,
+                info["legal_moves"] if self.config.game.has_legal_moves else None,
+                game=game,
+            )
             print("Action ", action)
             next_state, reward, terminated, truncated, info = self.step(action)
             done = terminated or truncated
-            legal_moves = (
-                info["legal_moves"] if self.config.game.has_legal_moves else None
-            )
             game.append(state, reward, target_policy)
             state = next_state
             game.set_rewards()
