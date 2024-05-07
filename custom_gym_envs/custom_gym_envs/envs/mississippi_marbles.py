@@ -20,6 +20,62 @@ class MississippiMarblesEnv(gym.Env):
         # the next element is the score recieved by the player from the previous player (piggybacking)
         # Last max_players elements are the scores of the players (starting from current players turn)
         self.observation_space = spaces.Discrete(6 + 1 + 1 + 1 + self.max_players)
+        # self.observation_space = spaces.Box(
+        #     [
+        #         1,
+        #         1,
+        #         1,
+        #         1,
+        #         1,
+        #         1,
+        #         0,
+        #         -20000,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #         0,
+        #     ],
+        #     [
+        #         6,
+        #         6,
+        #         6,
+        #         6,
+        #         6,
+        #         6,
+        #         6,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #         20000,
+        #     ],
+        #     (25,),
+        #     np.int8,
+        # )
 
         # OPTION 1 FOR ACTION SPACE (ROLLING HAPPENS AUTOMATICALLY, ALL POSSIBLE OPTIONS FOR SCORING + 1 FOR PASSING DICE)
         # We have 94 Actions
@@ -124,10 +180,14 @@ class MississippiMarblesEnv(gym.Env):
             (
                 self._dice,
                 np.array(
-                    [self._dice_remaining, self._score_this_turn, self._score_piggyback]
+                    [
+                        self._dice_remaining,
+                        self._score_this_turn / 50,
+                        self._score_piggyback / 50,
+                    ]
                 ),
-                self._score[self._current_player - 1 : self.players],
-                self._score[0 : self._current_player - 1],
+                self._score[self._current_player - 1 : self.max_players] / 50,
+                self._score[0 : self._current_player - 1] / 50,
             )
         )
 

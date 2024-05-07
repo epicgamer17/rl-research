@@ -1,6 +1,7 @@
 import tensorflow as tf
 from layers.noisy_dense import NoisyDense
 import numpy as np
+from agent_configs import prepare_kernel_initializers
 
 
 class Network(tf.keras.Model):
@@ -36,7 +37,9 @@ class CriticNetwork(tf.keras.Model):
                                 filters,
                                 kernel_size,
                                 strides=strides,
-                                kernel_initializer=config.prepare_kernel_initializers(),
+                                kernel_initializer=prepare_kernel_initializers(
+                                    config.kernel_initializer
+                                ),
                                 activation=config.activation,
                                 input_shape=input_shape,
                                 padding="same",
@@ -48,7 +51,9 @@ class CriticNetwork(tf.keras.Model):
                                 filters,
                                 kernel_size,
                                 strides=strides,
-                                kernel_initializer=config.prepare_kernel_initializers(),
+                                kernel_initializer=prepare_kernel_initializers(
+                                    config.kernel_initializer
+                                ),
                                 activation=config.activation,
                                 padding="same",
                             )
@@ -62,7 +67,9 @@ class CriticNetwork(tf.keras.Model):
                         NoisyDense(
                             config.critic_width,
                             sigma=config.noisy_sigma,
-                            kernel_initializer=config.prepare_kernel_initializers(),
+                            kernel_initializer=prepare_kernel_initializers(
+                                config.kernel_initializer
+                            ),
                             activation=config.activation,
                         )
                     )
@@ -70,13 +77,15 @@ class CriticNetwork(tf.keras.Model):
                     self.dense_layers.append(
                         tf.keras.layers.Dense(
                             config.critic_width,
-                            kernel_initializer=config.prepare_kernel_initializers(),
+                            kernel_initializer=prepare_kernel_initializers(
+                                config.kernel_initializer
+                            ),
                             activation=config.activation,
                         )
                     )
         self.value = tf.keras.layers.Dense(
             1,
-            kernel_initializer=config.prepare_kernel_initializers(),
+            kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
             activation=None,
             name="value",
         )
@@ -118,7 +127,9 @@ class ActorNetwork(tf.keras.Model):
                                 filters,
                                 kernel_size,
                                 strides=strides,
-                                kernel_initializer=config.prepare_kernel_initializers(),
+                                kernel_initializer=prepare_kernel_initializers(
+                                    config.kernel_initializer
+                                ),
                                 activation=config.activation,
                                 input_shape=input_shape,
                                 padding="same",
@@ -130,7 +141,9 @@ class ActorNetwork(tf.keras.Model):
                                 filters,
                                 kernel_size,
                                 strides=strides,
-                                kernel_initializer=config.prepare_kernel_initializers(),
+                                kernel_initializer=prepare_kernel_initializers(
+                                    config.kernel_initializer
+                                ),
                                 activation=config.activation,
                                 padding="same",
                             )
@@ -144,7 +157,9 @@ class ActorNetwork(tf.keras.Model):
                         NoisyDense(
                             config.actor_width,
                             sigma=config.noisy_sigma,
-                            kernel_initializer=config.prepare_kernel_initializers(),
+                            kernel_initializer=prepare_kernel_initializers(
+                                config.kernel_initializer
+                            ),
                             activation=config.activation,
                         )
                     )
@@ -152,27 +167,35 @@ class ActorNetwork(tf.keras.Model):
                     self.dense_layers.append(
                         tf.keras.layers.Dense(
                             config.actor_width,
-                            kernel_initializer=config.prepare_kernel_initializers(),
+                            kernel_initializer=prepare_kernel_initializers(
+                                config.kernel_initializer
+                            ),
                             activation=config.activation,
                         )
                     )
         if self.discrete:
             self.actions = tf.keras.layers.Dense(
                 output_shape,
-                kernel_initializer=config.prepare_kernel_initializers(),
+                kernel_initializer=prepare_kernel_initializers(
+                    config.kernel_initializer
+                ),
                 activation="softmax",
                 name="actions",
             )
         else:
             self.mean = tf.keras.layers.Dense(
                 output_shape,
-                kernel_initializer=config.prepare_kernel_initializers(),
+                kernel_initializer=prepare_kernel_initializers(
+                    config.kernel_initializer
+                ),
                 activation="tanh",
                 name="mean",
             )
             self.std = tf.keras.layers.Dense(
                 output_shape,
-                kernel_initializer=config.prepare_kernel_initializers(),
+                kernel_initializer=prepare_kernel_initializers(
+                    config.kernel_initializer
+                ),
                 activation="softplus",
                 name="std",
             )

@@ -33,7 +33,14 @@ class BaseAgent:
             )
         else:
             self.test_env = copy.deepcopy(env)
-        self.observation_dimensions = env.observation_space.shape
+
+        if isinstance(env.observation_space, gym.spaces.Box):
+            self.observation_dimensions = env.observation_space.shape
+        elif isinstance(env.observation_space, gym.spaces.Discrete):
+            self.observation_dimensions = (env.observation_space.n,)
+        else:
+            raise ValueError("Observation space not supported")
+
         print("observation_dimensions: ", self.observation_dimensions)
         if isinstance(env.action_space, gym.spaces.Discrete):
             self.num_actions = env.action_space.n
@@ -77,10 +84,16 @@ class BaseAgent:
     def select_action(self, state, legal_moves=None):
         raise NotImplementedError
 
-    def action_mask(self, legal_moves):
-        # TO DO FOR EACH MODEL
-        # raise NotImplementedError
-        pass
+    def action_mask(self, actions, legal_moves, mask_value=0):
+        if self.config.game.has_legal_moves and self.config.game.is_discrete:
+            print("masking actions")
+            mask = np.zeros(self.num_actions, dtype=np.int8)
+            mask[legal_moves] = 1
+            print("mask", mask)
+            print("legal_moves", legal_moves)
+            actions[mask == 0] = mask_value
+            print(actions)
+        return actions
 
     def calculate_loss(self, batch):
         pass

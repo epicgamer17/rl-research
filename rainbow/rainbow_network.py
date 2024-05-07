@@ -4,6 +4,7 @@ from keras import Model
 import numpy as np
 from layers.noisy_dense import NoisyDense
 from agent_configs import RainbowConfig
+from agent_configs import prepare_kernel_initializers
 
 # from noisy_conv2d import NoisyConv2D
 
@@ -22,9 +23,9 @@ class Network(Model):
             for i, (filters, kernel_size, strides) in enumerate(config.conv_layers):
                 if config.conv_layers_noisy:
                     # if i == 0:
-                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=self.config.prepare_kernel_initializers(), activation=activation, input_shape=input_shape))
+                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=prepare_kernel_initializers(config.kernel_initializer), activation=activation, input_shape=input_shape))
                     # else:
-                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=self.config.prepare_kernel_initializers(), activation=activation))
+                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=prepare_kernel_initializers(config.kernel_initializer), activation=activation))
                     pass
                 else:
                     if i == 0:
@@ -33,7 +34,9 @@ class Network(Model):
                                 filters,
                                 kernel_size,
                                 strides=strides,
-                                kernel_initializer=self.config.prepare_kernel_initializers(),
+                                kernel_initializer=prepare_kernel_initializers(
+                                    config.kernel_initializer
+                                ),
                                 activation=config.activation,
                                 input_shape=input_shape,
                                 padding="same",
@@ -45,7 +48,9 @@ class Network(Model):
                                 filters,
                                 kernel_size,
                                 strides=strides,
-                                kernel_initializer=self.config.prepare_kernel_initializers(),
+                                kernel_initializer=prepare_kernel_initializers(
+                                    config.kernel_initializer
+                                ),
                                 activation=config.activation,
                                 padding="same",
                             )
@@ -60,7 +65,9 @@ class Network(Model):
                         NoisyDense(
                             config.width,
                             sigma=config.noisy_sigma,
-                            kernel_initializer=self.config.prepare_kernel_initializers(),
+                            kernel_initializer=prepare_kernel_initializers(
+                                config.kernel_initializer
+                            ),
                             activation=config.activation,
                         )
                     )
@@ -68,7 +75,9 @@ class Network(Model):
                     self.dense_layers.append(
                         tf.keras.layers.Dense(
                             config.width,
-                            kernel_initializer=self.config.prepare_kernel_initializers(),
+                            kernel_initializer=prepare_kernel_initializers(
+                                config.kernel_initializer
+                            ),
                             activation=config.activation,
                         )
                     )
@@ -81,7 +90,9 @@ class Network(Model):
                     NoisyDense(
                         config.width,
                         sigma=config.noisy_sigma,
-                        kernel_initializer=self.config.prepare_kernel_initializers(),
+                        kernel_initializer=prepare_kernel_initializers(
+                            config.kernel_initializer
+                        ),
                         activation=config.activation,
                     )
                 )
@@ -89,7 +100,7 @@ class Network(Model):
         self.value = NoisyDense(
             config.atom_size,
             sigma=config.noisy_sigma,
-            kernel_initializer=self.config.prepare_kernel_initializers(),
+            kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
             activation="linear",
             name="HiddenV",
         )
@@ -102,7 +113,9 @@ class Network(Model):
                     NoisyDense(
                         config.width,
                         sigma=config.noisy_sigma,
-                        kernel_initializer=self.config.prepare_kernel_initializers(),
+                        kernel_initializer=prepare_kernel_initializers(
+                            config.kernel_initializer
+                        ),
                         activation=config.activation,
                     )
                 )
@@ -110,7 +123,7 @@ class Network(Model):
         self.advantage = NoisyDense(
             config.atom_size * output_size,
             sigma=config.noisy_sigma,
-            kernel_initializer=self.config.prepare_kernel_initializers(),
+            kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
             activation="linear",
             name="A",
         )

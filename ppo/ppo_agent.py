@@ -74,11 +74,13 @@ class PPOAgent(BaseAgent):
 
         self.transition = list()
 
-    def predict_single(self, state):
+    def predict_single(self, state, legal_moves=None):
         state_input = self.prepare_states(state)
         value = self.model.critic(inputs=state_input).numpy()
         if self.discrete_action_space:
-            probabilities = self.model.actor(inputs=state_input)
+            probabilities = self.model.actor(inputs=state_input).numpy()[0]
+            probabilities = self.action_mask(probabilities, legal_moves)
+            probabilities /= np.sum(probabilities)
             return probabilities, value
         else:
             mean, std = self.model.actor(inputs=state_input)
@@ -210,7 +212,10 @@ class PPOAgent(BaseAgent):
             total_score = 0
             score = 0
             for timestep in range(self.config.steps_per_epoch):
-                action = self.select_action(state)
+                action = self.select_action(
+                    state,
+                    info["legal_moves"] if self.config.game.has_legal_moves else None,
+                )
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated
                 state = next_state

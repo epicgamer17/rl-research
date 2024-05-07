@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 
 from layers.residual import Residual
+from agent_configs import prepare_kernel_initializers
 
 
 class Representation(tf.keras.Model):
