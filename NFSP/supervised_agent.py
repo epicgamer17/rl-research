@@ -41,9 +41,10 @@ class AverageStrategyAgent(BaseAgent):
 
     def select_action(self, state, legal_moves=None):
         policy = self.predict_single(state, legal_moves)
+        print("policy", policy)
         distribution = tfp.distributions.Categorical(probs=policy)
         selected_action = distribution.sample().numpy()
-
+        print("selected_action", selected_action)
         return selected_action
 
     def predict_single(self, state, legal_moves=None):

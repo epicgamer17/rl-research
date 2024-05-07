@@ -192,20 +192,28 @@ class MississippiMarblesEnv(gym.Env):
         )
 
     def _get_info(self):
-        return {"legal_moves": self._legal_moves}
+        return {"legal_moves": self._legal_moves, "player": self._current_player}
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
         # Set a blank board
-        self._dice = np.zeros(6)
+        self._dice = np.zeros(6, dtype=np.int8)
         self._dice_remaining = 6
         self._score_this_turn = 0
         self._score_piggyback = 0
-        self._score = np.zeros(self.max_players)
+        self._score = np.zeros(self.max_players, dtype=np.int16)
         self._current_player = 0
         self._can_pass = False
+
+        self._dice = np.random.randint(1, 7, 6)
+        self._can_pass = True
+        # rolled = True
+        # Check for four 2s
+        if np.sum(self._dice == 2) == 4:
+            self._score_this_turn -= self._score[0]
+            self._score[0] = 0
 
         # Reset legal moves
         self._legal_moves = [1]
@@ -270,13 +278,13 @@ class MississippiMarblesEnv(gym.Env):
             # Keep a 1
             self._score_this_turn += 100
             self._dice_remaining -= 1
-            self._dice[self._dice == 1] = 0
+            self._dice[np.where(self._dice == 1)[0][0]] = 0
             collected = True
         if action == 4:
             # Keep a 5
             self._score_this_turn += 50
             self._dice_remaining -= 1
-            self._dice[self._dice == 5] = 0
+            self._dice[np.where(self._dice == 5)[0][0]] = 0
             collected = True
         if action == 5:
             # Keep three of a kind
@@ -380,19 +388,47 @@ class MississippiMarblesEnv(gym.Env):
 
         observation = self._get_obs()
         info = self._get_info()
-        print(self._legal_moves)
 
         if self.render_mode == "human":
-            self._render_frame()
+            self._render_frame(action)
 
-        if np.sum(self._score >= 11000) > 0 and self._current_player == 0:
+        if self._score[self._current_player] >= 11000:
+            if (
+                np.max(self._score) == self._score[self._current_player]
+                and self._current_player == 0
+            ):
+                return (
+                    observation,
+                    1,
+                    True,
+                    False,
+                    info,
+                )  # some way of telling agent which model won so it can properly do rewards in replay buffer when storing games
+            elif np.max(self._score) == self._score[self._current_player]:
+                return (
+                    observation,
+                    1,
+                    False,
+                    False,
+                    info,
+                )
+            else:
+                return (
+                    observation,
+                    0,
+                    False,
+                    False,
+                    info,
+                )  # some way of telling agent which model won so it can properly do rewards in replay buffer when storing games
+
+        if np.max(self._score) >= 11000 and self._current_player == 0:
             return (
                 observation,
-                1,
+                0,
                 True,
                 False,
                 info,
-            )  # some way of telling agent which model won so it can properly do rewards in replay buffer when storing games
+            )
 
         return observation, 0, False, False, info
 
@@ -400,7 +436,7 @@ class MississippiMarblesEnv(gym.Env):
         if self.render_mode == "rgb_array":
             return self._render_frame()
 
-    def _render_frame(self):
+    def _render_frame(self, action=None):
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
@@ -631,6 +667,29 @@ class MississippiMarblesEnv(gym.Env):
                     pix_square_size // 10,
                     width=3,
                 )
+
+        # Next we draw the action
+        action_meaning = {
+            0: "Pass",
+            1: "Roll or Piggyback {}".format(self._score_piggyback),
+            2: "Don't Piggyback",
+            3: "Keep a 1",
+            4: "Keep a 5",
+            5: "Keep Three of a Kind",
+            6: "Keep Four of a Kind",
+            7: "Keep Five of a Kind",
+            8: "Keep Six of a Kind",
+            9: "Keep a Straight",
+        }
+        font = pygame.font.Font(None, 36)
+        text = font.render(
+            "Action {}".format(
+                action_meaning[action] if action is not None else "Start"
+            ),
+            True,
+            (0, 0, 0),
+        )
+        canvas.blit(text, (0, self.window_size - 108))
 
         # Next we draw the current player
         font = pygame.font.Font(None, 36)

@@ -224,6 +224,7 @@ class RainbowAgent(BaseAgent):
                 # add the losses together to reduce variance (original paper just uses n_step loss)
                 # elementwise_loss += elementwise_loss_n_step
                 elementwise_loss = elementwise_loss_n_step
+                # print("Elementwise Loss ", elementwise_loss)
                 assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                     elementwise_loss
                 )
