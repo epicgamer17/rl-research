@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class reservoirBuffer:
+class ReservoirBuffer:
     def __init__(
         self,
         observation_dimensions,

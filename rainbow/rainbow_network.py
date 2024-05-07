@@ -15,7 +15,6 @@ class Network(Model):
         super().__init__()
         self.config = config
 
-        self.inputs = tf.keras.layers.Input(shape=input_shape, name="my_input")
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = config.dense_layers > 0
         if self.has_conv_layers:

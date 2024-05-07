@@ -117,7 +117,6 @@ class RainbowAgent(BaseAgent):
         )
 
         self.transition = list()
-        self.is_test = True
         # self.search = search.Search(
         #     scoring_function=self.score_state,
         #     max_depth=config["search_max_depth"],
