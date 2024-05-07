@@ -30,15 +30,11 @@ if gpus:
         print(e)
 
 import datetime
-import copy
 import numpy as np
-from ppo.ppo_network import ActorNetwork, CriticNetwork, Network
+from ppo.ppo_network import Network
 from replay_buffers.ppo_replay_buffer import ReplayBuffer
 import tensorflow_probability as tfp
-import matplotlib.pyplot as plt
-import gymnasium as gym
 from base_agent.agent import BaseAgent
-from typing import Optional
 
 
 class PPOAgent(BaseAgent):
