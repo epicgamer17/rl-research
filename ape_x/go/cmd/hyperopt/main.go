@@ -89,8 +89,8 @@ func killMongo(client *ssh.Client) {
 	}
 }
 
-func copyTrainingGraphsToStaticSite(client *ssh_util.Client) {
-	cmd := "cp ~/rl-research/ape_x/training_graphs/learner/learner.png ~/public_html/training/learner.png; cp ~/rl-research/ape_x/training_graphs/spectator/spectator.png ~/public_html/training/spectator.png"
+func copyTrainingGraphsToStaticSite(client *ssh_util.Client, learnerName string) {
+	cmd := fmt.Sprintf("cp ~/rl-research/ape_x/training_graphs/%s/%s.png ~/public_html/training/learner.png; cp ~/rl-research/ape_x/training_graphs/spectator/spectator.png ~/public_html/training/spectator.png\n", learnerName, learnerName)
 
 	if _, err := client.Run(cmd); err != nil {
 		fmt.Println("Failed to copy training graphs: ", err)
@@ -100,7 +100,7 @@ func copyTrainingGraphsToStaticSite(client *ssh_util.Client) {
 const baseNoisySigma = 0.9
 const alpha = 20
 
-func main_2(distributedConfig configs.DistributedConfig) {
+func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	totalActors := len(distributedConfig.ActorHosts)
 
 	noisySigmas := make([]float64, totalActors)
@@ -146,7 +146,7 @@ func main_2(distributedConfig configs.DistributedConfig) {
 		for {
 			select {
 			case <-ticker.C:
-				copyTrainingGraphsToStaticSite(updaterClient)
+				copyTrainingGraphsToStaticSite(updaterClient, learnerName)
 			case <-doneChannel:
 				ticker.Stop()
 				return
@@ -191,7 +191,7 @@ func main_2(distributedConfig configs.DistributedConfig) {
 	wg.Wait()
 }
 
-func main_1(distributedConfig configs.DistributedConfig) {
+func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	totalActors := len(distributedConfig.ActorHosts)
 	noisySigmas := make([]float64, totalActors)
 
@@ -240,7 +240,7 @@ func main_1(distributedConfig configs.DistributedConfig) {
 		for {
 			select {
 			case <-ticker.C:
-				copyTrainingGraphsToStaticSite(updaterClient)
+				copyTrainingGraphsToStaticSite(updaterClient, learnerName)
 			case <-doneChannel:
 				ticker.Stop()
 				return
@@ -293,6 +293,7 @@ func main_1(distributedConfig configs.DistributedConfig) {
 
 func main() {
 	distributedConfigFilename := flag.String("distributed_config", "generated/distributed_config.yaml", "")
+	learnerName := flag.String("learner_name", "learner", "")
 
 	flag.Parse()
 
@@ -307,8 +308,8 @@ func main() {
 	fmt.Printf("%-30s | %+v\n", "Using distributed config: ", distributedConfig)
 
 	if !distributedConfig.WithLearner {
-		main_2(distributedConfig)
+		main_2(distributedConfig, *learnerName)
 	} else {
-		main_1(distributedConfig)
+		main_1(distributedConfig, *learnerName)
 	}
 }
