@@ -143,13 +143,17 @@ def run_training(config, env: gym.Env, name):
         go_proc = Popen(cmd.split(" "))
         time.sleep(5)
 
-        learner = ApeXLearner(env, learner_config, name=name)
+        learner_generated_config = ApeXLearnerConfig.load(learner_output_path)
+        learner = ApeXLearner(env, learner_generated_config, name=name)
         logger.info("        === Running learner")
         learner.run()
         logger.info("Training complete")
         return -learner.test(num_trials=10, step=0)
     except KeyboardInterrupt:
         logger.info("learner interrupted, cleaning up")
+        return 0
+    except Exception as e:
+        logger.exception(f"learner failed due to error {e}")
         return 0
     finally:
         stdout, stderr = go_proc.communicate("\n\n\n")

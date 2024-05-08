@@ -16,12 +16,15 @@ class StorageConfig(NamedTuple):
 
 class Storage:
     def __init__(self, config: StorageConfig, reset: bool = False):
-        self.client = MongoClient(
-            host=config.hostname,
-            port=config.port,
-            username=config.username,
-            password=config.password,
-        )
+        try:
+            self.client = MongoClient(
+                host=config.hostname,
+                port=config.port,
+                username=config.username,
+                password=config.password,
+            )
+        except ConnectionError as e:
+            logger.exception(e)
 
         self.latest_id = ""
         self.same_latest = 0
