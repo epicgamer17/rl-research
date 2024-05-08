@@ -59,8 +59,8 @@ class SupervisedConfig(ConfigBase):
         self.min_replay_buffer_size = self.parse_field(
             "sl_min_replay_buffer_size", self.minibatch_size
         )
-        self.replay_buffer_size = self.training_steps * self.parse_field(
-            "num_players", required=True
+        self.replay_buffer_size = self.parse_field(
+            "sl_replay_buffer_size", self.training_steps
         )
         self.activation = self.parse_field(
             "sl_activation", "relu", wrapper=prepare_activations
