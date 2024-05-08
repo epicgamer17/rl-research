@@ -196,7 +196,7 @@ def objective(params):
     status = STATUS_OK
     try:
         # add other illegal hyperparameter combinations here
-        assert params["min_replay_buffer_size"] <= params["minibatch_size"]
+        assert params["min_replay_buffer_size"] >= params["minibatch_size"]
         assert params["replay_buffer_size"] > params["min_replay_buffer_size"]
     except AssertionError as e:
         status = STATUS_FAIL
