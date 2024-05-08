@@ -87,6 +87,9 @@ class RainbowAgent(BaseAgent):
         #     loss=self.config.loss_function,
         # )
 
+        self.model(np.zeros((1,) + self.observation_dimensions))
+        self.target_model(np.zeros((1,) + self.observation_dimensions))
+
         self.target_model.set_weights(self.model.get_weights())
 
         self.replay_buffer = PrioritizedReplayBuffer(
@@ -117,7 +120,6 @@ class RainbowAgent(BaseAgent):
         )
 
         self.transition = list()
-        self.is_test = True
         # self.search = search.Search(
         #     scoring_function=self.score_state,
         #     max_depth=config["search_max_depth"],
@@ -132,17 +134,22 @@ class RainbowAgent(BaseAgent):
         #     debug=False,
         # )
 
-    def predict_single(self, state):
+    def predict_single(self, state, legal_moves=None):
         state_input = self.prepare_states(state)
-        q_values = self.model(inputs=state_input).numpy()
+        q_distribution = self.model(inputs=state_input).numpy()
+        q_values = np.sum(np.multiply(q_distribution, np.array(self.support)), axis=2)[
+            0
+        ]
+        q_values = self.action_mask(q_values, legal_moves, mask_value=-np.inf)
+
         # print(q_values.shape)
         return q_values
 
     def select_action(self, state, legal_moves=None):
-        q_values = np.sum(
-            np.multiply(self.predict_single(state), np.array(self.support)), axis=2
-        )
+        q_values = self.predict_single(state, legal_moves)
+        print("Q Values ", q_values)
         selected_action = np.argmax(q_values)
+        print("Selected Action ", selected_action)
         if not self.is_test:
             self.transition = [state, selected_action]
         return selected_action
@@ -154,6 +161,7 @@ class RainbowAgent(BaseAgent):
             done = terminated or truncated
             self.transition += [reward, next_state, done]
             # if self.use_n_step:
+            print(self.transition)
             one_step_transition = self.n_step_replay_buffer.store(*self.transition)
             # else:
             #     one_step_transition = self.transition
@@ -222,10 +230,13 @@ class RainbowAgent(BaseAgent):
                 # add the losses together to reduce variance (original paper just uses n_step loss)
                 # elementwise_loss += elementwise_loss_n_step
                 elementwise_loss = elementwise_loss_n_step
+                print("Elementwise Loss ", elementwise_loss)
                 assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                     elementwise_loss
                 )
                 loss = tf.reduce_mean(elementwise_loss * weights)
+                print("Weights ", weights)
+                print("Loss ", loss)
 
             # TRAINING WITH GRADIENT TAPE
             gradients = tape.gradient(loss, self.model.trainable_variables)
@@ -425,7 +436,10 @@ class RainbowAgent(BaseAgent):
         score = 0
         for training_step in range(self.training_steps):
             for _ in range(self.config.replay_interval):
-                action = self.select_action(state)
+                action = self.select_action(
+                    state,
+                    info["legal_moves"] if self.config.game.has_legal_moves else None,
+                )
 
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated

@@ -91,6 +91,7 @@ def run_training(config, env: gym.Env, name):
         **distributed_config_placeholder,
         "num_actors": 1,
         "training_steps": 2000,
+        "training_steps": 2000,
     }
 
     replay_conf = dict(

@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 
 from layers.residual import Residual
+from agent_configs import prepare_kernel_initializers
 
 
 class Network(tf.keras.Model):
@@ -15,7 +16,7 @@ class Network(tf.keras.Model):
             strides=1,
             padding="same",
             input_shape=input_shape,
-            kernel_initializer=config.prepare_kernel_initializers(),
+            kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
             kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
             data_format="channels_last",
         )
@@ -28,7 +29,9 @@ class Network(tf.keras.Model):
             Residual(
                 config.num_filters,
                 kernel_size=config.kernel_size,
-                kernel_initializer=config.prepare_kernel_initializers(),
+                kernel_initializer=prepare_kernel_initializers(
+                    config.kernel_initializer
+                ),
                 regularizer=tf.keras.regularizers.L2(config.weight_decay),
             )
             for _ in range(config.residual_blocks)
@@ -41,7 +44,9 @@ class Network(tf.keras.Model):
                     kernel_size=3,
                     strides=1,
                     padding="same",
-                    kernel_initializer=config.prepare_kernel_initializers(),
+                    kernel_initializer=prepare_kernel_initializers(
+                        config.kernel_initializer
+                    ),
                     kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
                     data_format="channels_last",
                 )
@@ -59,7 +64,9 @@ class Network(tf.keras.Model):
                 tf.keras.layers.Dense(
                     config.critic_dense_size,
                     activation="relu",
-                    kernel_initializer=config.prepare_kernel_initializers(),
+                    kernel_initializer=prepare_kernel_initializers(
+                        config.kernel_initializer
+                    ),
                     kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
                 )
             )
@@ -78,7 +85,9 @@ class Network(tf.keras.Model):
                     kernel_size=1,
                     strides=1,
                     padding="same",
-                    kernel_initializer=config.prepare_kernel_initializers(),
+                    kernel_initializer=prepare_kernel_initializers(
+                        config.kernel_initializer
+                    ),
                     kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
                     data_format="channels_last",
                 )
@@ -97,14 +106,16 @@ class Network(tf.keras.Model):
                 tf.keras.layers.Dense(
                     config.actor_dense_size,
                     activation="relu",
-                    kernel_initializer=config.prepare_kernel_initializers(),
+                    kernel_initializer=prepare_kernel_initializers(
+                        config.kernel_initializer
+                    ),
                     kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
                 )
             )
         self.actor = tf.keras.layers.Dense(
             output_shape,
             name="actor",
-            kernel_initializer=config.prepare_kernel_initializers(),
+            kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
             kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
         )
 

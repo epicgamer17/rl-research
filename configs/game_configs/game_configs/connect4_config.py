@@ -10,4 +10,6 @@ class Connect4Config(GameConfig):
             is_image=True,
             is_deterministic=True,
             has_legal_moves=True,
+            perfect_information=True,
+            multi_agent=True,
         )
