@@ -67,51 +67,47 @@ from base_agent.agent import BaseAgent
 from configs.agent_configs.agent_configs.nfsp_config import NFSPConfig
 
 
-class NFSPAgent(BaseAgent):
-    def __init__(self, env, config: NFSPConfig, name, agent_type) -> None:
-        super().__init__(env, config, name)
+class NFSP:
+    def __init__(self, env, config: NFSPConfig, agent_type) -> None:
+        self.env = env
+        self.config = config
+        self.agent_type = agent_type
         rl_configs = self.config.rl_configs
-        self.rl_agents = [
-            agent_type(env, rl_configs[player], name)
-            for player in range(self.config.num_players)
-        ]
-
         sl_configs = self.config.sl_configs
-        self.sl_agents = [
-            AverageStrategyAgent(env, sl_configs[player], name)
-            for player in range(self.config.num_players)
+        self.nfsp_agents = [
+            NFSPAgent(env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}", agent_type)
+            for i in range(self.config.num_players)
         ]
-
-        self.current_agent = 0
-        self.checkpoint_interval = 10000
+        self.training_steps = self.config.training_steps
 
     def train(self):
         training_time = time()
         self.is_test = False
         stats = {
-            "score": [],
             "rl_loss": [],
             "sl_loss": [],
             "test_score": [],
         }
         targets = {
-            "score": self.env.spec.reward_threshold,
             "test_score": self.env.spec.reward_threshold,
         }
 
         state, info = self.env.reset()
-        score = 0
 
-        rewards = np.zeros(self.config.num_players)
-        states = np.zeros((self.config.num_players,) + self.observation_dimensions)
-        next_states = np.zeros((self.config.num_players,) + self.observation_dimensions)
-        dones = np.zeros(self.config.num_players)
+        for p in range(self.config.num_players):
+            self.nfsp_agents[p].select_policy(self.config.anticipatory_param)
 
         for training_step in range(self.training_steps):
-            for p in range(self.config.num_players):
-                for _ in range(self.config.replay_interval):
-                    states[self.current_agent] = state
-                    action = self.select_action(
+            for _ in range(self.config.replay_interval):
+                states = [None] * self.config.num_players
+                next_states = [None] * self.config.num_players
+                actions = [None] * self.config.num_players
+                rewards = [0] * self.config.num_players
+                dones = [0] * self.config.num_players
+                transitions = [None] * self.config.num_players
+
+                for p in range(self.config.num_players):
+                    action = self.nfsp_agents[p].select_action(
                         state,
                         (
                             info["legal_moves"]
@@ -120,112 +116,83 @@ class NFSPAgent(BaseAgent):
                         ),
                     )
 
-                    (
-                        next_states[self.current_agent],
-                        rewards[self.current_agent],
-                        terminated,
-                        truncated,
-                        info,
-                    ) = self.step(
-                        action
-                    )  # Stores RL Experiences in step function
+                    next_state, reward, terminated, truncated, info = self.step(action)
+                    done = terminated or truncated
+                    # STORE AFTER ONE ROUND FOR ALL AGENTS!!!
+                    next_states[p] = state
+                    if states[p] is not None:
+                        transitions = [
+                            states[p],
+                            actions[p],
+                            rewards[p],
+                            next_states[p],
+                            dones[p],
+                        ]
 
-                    one_step_transition = self.rl_agents[
-                        self.current_agent
-                    ].n_step_replay_buffer.store(
-                        *self.rl_agents[self.current_agent].transition
-                    )
-
-                    if one_step_transition:
-                        self.rl_agents[self.current_agent].replay_buffer.store(
-                            *one_step_transition
-                        )
-
-                    dones[self.current_agent] = terminated or truncated
-                    state = next_states[self.current_agent]
-                    score += rewards[self.current_agent]
-                    self.config.rl_configs[self.current_agent].per_beta = min(
+                    self.nfsp_agents[p].rl_agent.config.per_beta = min(
                         1.0,
-                        self.config.rl_configs[self.current_agent].per_beta
-                        + (1 - self.config.rl_configs[self.current_agent].per_beta)
+                        self.nfsp_agents[p].rl_agent.config.per_beta
+                        + (1 - self.nfsp_agents[p].rl_agent.config.per_beta)
                         / self.training_steps,  # per beta increase
                     )
 
-                    if dones[self.current_agent]:
-                        dones[self.current_agent :] = 1
+                    if done:
+                        # assume sparse rewards/zero sum (so if game is done, all players are done and rewards should be updated accordingly)
+                        # game should return a list or dictionary of rewards for each player
+                        rewards = reward  # will be a list (for leduc holdem at least)
                         state, info = self.env.reset()
-                        stats["score"].append(score)  # might be irrelevant for NFSP
-                        score = 0
+                        transitions = [None] * self.config.num_players
+                    else:
+                        rewards[p] = reward
+                    states[p] = state
+                    actions[p] = action
+                    dones[p] = done
 
-                for minibatch in range(self.config.num_minibatches):
-                    rl_loss, sl_loss = self.experience_replay()
-                    stats["rl_loss"].append(
-                        rl_loss
-                    )  # may want to average since it could be noisy between the different agents
-                    stats["sl_loss"].append(sl_loss)
+                    state = next_state
 
-                if (
-                    training_step
-                    % self.config.rl_configs[self.current_agent].transfer_interval
-                    == 0
-                ):
-                    self.rl_agents[self.current_agent].update_target_model(
-                        training_step
-                    )  # Update target model for the current RL agent
-                self.current_agent = info["player"] if "player" in info else 0
+                for p in range(self.config.num_players):
+                    if transitions[p] is not None:
+                        one_step_transition = self.nfsp_agents[
+                            p
+                        ].rl_agent.n_step_replay_buffer.store(*transitions[p])
+                        print(one_step_transition)
+                        if one_step_transition:
+                            self.nfsp_agents[p].rl_agent.replay_buffer.store(
+                                *one_step_transition
+                            )
 
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
-                self.save_checkpoint(
-                    stats,
-                    targets,
-                    5,
-                    training_step,
-                    training_step * self.config.replay_interval,
-                    time() - training_time,
-                )
+                    for minibatch in range(self.config.num_minibatches):
+                        self.nfsp_agents[p].experience_replay()
+                        # rl_loss, sl_loss = self.experience_replay()
+                        # stats["rl_loss"].append(
+                        #     rl_loss
+                        # )  # may want to average since it could be noisy between the different agents
+                        # stats["sl_loss"].append(sl_loss)
 
-        self.save_checkpoint(
-            stats,
-            targets,
-            5,
-            training_step,
-            training_step * self.config.replay_interval,
-            time() - training_time,
-        )
+                    if training_step % self.config.rl_configs[p].transfer_interval == 0:
+                        self.nfsp_agents[p].rl_agent.target_model.set_weights(
+                            self.nfsp_agents[p].rl_agent.model.get_weights()
+                        )
+
+        #     if training_step % self.checkpoint_interval == 0 and training_step > 0:
+        #         self.save_checkpoint(
+        #             stats,
+        #             targets,
+        #             5,
+        #             training_step,
+        #             training_step * self.config.replay_interval,
+        #             time() - training_time,
+        #         )
+
+        # self.save_checkpoint(
+        #     stats,
+        #     targets,
+        #     5,
+        #     training_step,
+        #     training_step * self.config.replay_interval,
+        #     time() - training_time,
+        # )
         self.env.close()
-
-    def select_action(self, state, legal_moves=None):
-        if random.random() < self.config.anticipatory_param and not self.is_test:
-            print("Selected Action from RL Agent")
-            action = self.rl_agents[self.current_agent].select_action(
-                state, legal_moves
-            )
-            self.sl_agents[self.current_agent].replay_buffer.store(
-                state, action
-            )  # Store best moves in SL Memory
-        else:
-            print("Selected Action from SL Agent")
-            action = self.sl_agents[self.current_agent].select_action(
-                state, legal_moves
-            )
-            self.rl_agents[self.current_agent].transition = [state, action]
-
-        return action
-
-    def experience_replay(self):
-        rl_loss = 0
-        sl_loss = 0
-        if (
-            self.rl_agents[self.current_agent].replay_buffer.size
-            > self.config.rl_configs[self.current_agent].min_replay_buffer_size
-        ):
-            rl_loss = self.rl_agents[self.current_agent].experience_replay()
-        if (
-            self.sl_agents[self.current_agent].replay_buffer.size
-            > self.config.sl_configs[self.current_agent].min_replay_buffer_size
-        ):
-            sl_loss = self.sl_agents[self.current_agent].experience_replay()
-        return rl_loss, sl_loss
 
     def save_checkpoint(
         self, stats, targets, num_trials, training_step, frames_seen, time_taken
@@ -258,11 +225,45 @@ class NFSPAgent(BaseAgent):
         self.plot_graph(stats, targets, training_step, frames_seen, time_taken)
 
     def step(self, action):
-        if not self.is_test:
-            next_state, reward, terminated, truncated, info = self.env.step(action)
-            done = terminated or truncated
-            self.rl_agents[self.current_agent].transition += [reward, next_state, done]
-        else:
-            next_state, reward, terminated, truncated, info = self.test_env.step(action)
+        return self.env.step(action)
 
-        return next_state, reward, terminated, truncated, info
+
+class NFSPAgent(BaseAgent):
+    def __init__(self, env, rl_config, sl_config, name, agent_type) -> None:
+        super().__init__(env, rl_config, name)
+        self.rl_agent = agent_type(env, rl_config, name)
+        self.sl_agent = AverageStrategyAgent(env, sl_config, name)
+        self.policy = "best_response"  # "average_strategy" or "best_response
+
+    def select_policy(self, anticipatory_param):
+        if random.random() < anticipatory_param and not self.is_test:
+            return "best_response"
+        else:
+            return "average_strategy"
+
+    def select_action(self, state, legal_moves=None):
+        if self.policy == "average_strategy":
+            action = self.sl_agent.select_action(state, legal_moves)
+        else:
+            action = self.rl_agent.select_action(state, legal_moves)
+            self.sl_agent.replay_buffer.store(
+                state, action
+            )  # Store best moves in SL Memory
+            return action
+
+        return action
+
+    def experience_replay(self):
+        rl_loss = 0
+        sl_loss = 0
+        if (
+            self.rl_agent.replay_buffer.size
+            > self.rl_agent.config.min_replay_buffer_size
+        ):
+            rl_loss = self.rl_agent.experience_replay()
+        if (
+            self.sl_agent.replay_buffer.size
+            > self.sl_agent.config.min_replay_buffer_size
+        ):
+            sl_loss = self.sl_agent.experience_replay()
+        return rl_loss, sl_loss

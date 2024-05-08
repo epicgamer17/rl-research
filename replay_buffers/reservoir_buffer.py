@@ -21,8 +21,6 @@ class ReservoirBuffer:
         self.size = 0
 
     def store(self, observation, action, id=None):
-        print(self.observation_buffer.shape)
-        print(observation.shape)
         self.observation_buffer[self.size] = observation
         self.action_buffer[self.size] = action
         self.size += 1

@@ -69,7 +69,7 @@ class LeducHoldemEnv(gym.Env):
         move_history = dict["action_record"]
 
         terminated = self.game.is_over()
-        reward = self.game.get_payoffs()[self._player] if terminated else 0
+        reward = self.game.get_payoffs() if terminated else 0
         info = self._get_info()
 
         if self.render_mode == "human":

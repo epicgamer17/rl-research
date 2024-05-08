@@ -83,7 +83,11 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         # print("Sampling from PrioritizedReplayBuffer")
         # time1 = 0
         # time1 = time()
-        assert len(self) >= self.batch_size
+        assert (
+            len(self) >= self.batch_size
+        ), "Only {} elements in buffer expected at least {}".format(
+            len(self), self.batch_size
+        )
         assert beta > 0
 
         indices = self._sample_proportional()
