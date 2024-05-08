@@ -19,11 +19,13 @@ class ReservoirBuffer:
         self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
         self.action_buffer = np.zeros(self.max_size, dtype=np.int32)
         self.size = 0
+        self.pointer = 0
 
     def store(self, observation, action, id=None):
-        self.observation_buffer[self.size] = observation
-        self.action_buffer[self.size] = action
-        self.size += 1
+        self.observation_buffer[self.pointer] = observation
+        self.action_buffer[self.pointer] = action
+        self.size = min(self.size + 1, self.max_size)
+        self.pointer = (self.pointer + 1) % self.max_size
 
     def sample(self):
         # http://erikerlandson.github.io/blog/2015/11/20/very-fast-reservoir-sampling/

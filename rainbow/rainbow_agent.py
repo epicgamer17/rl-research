@@ -147,7 +147,9 @@ class RainbowAgent(BaseAgent):
 
     def select_action(self, state, legal_moves=None):
         q_values = self.predict_single(state, legal_moves)
+        print("Q Values ", q_values)
         selected_action = np.argmax(q_values)
+        print("Selected Action ", selected_action)
         if not self.is_test:
             self.transition = [state, selected_action]
         return selected_action
@@ -159,6 +161,7 @@ class RainbowAgent(BaseAgent):
             done = terminated or truncated
             self.transition += [reward, next_state, done]
             # if self.use_n_step:
+            print(self.transition)
             one_step_transition = self.n_step_replay_buffer.store(*self.transition)
             # else:
             #     one_step_transition = self.transition
@@ -227,11 +230,13 @@ class RainbowAgent(BaseAgent):
                 # add the losses together to reduce variance (original paper just uses n_step loss)
                 # elementwise_loss += elementwise_loss_n_step
                 elementwise_loss = elementwise_loss_n_step
-                # print("Elementwise Loss ", elementwise_loss)
+                print("Elementwise Loss ", elementwise_loss)
                 assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                     elementwise_loss
                 )
                 loss = tf.reduce_mean(elementwise_loss * weights)
+                print("Weights ", weights)
+                print("Loss ", loss)
 
             # TRAINING WITH GRADIENT TAPE
             gradients = tape.gradient(loss, self.model.trainable_variables)

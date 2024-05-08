@@ -3,9 +3,10 @@ from .base_config import Config, ConfigBase
 from keras.optimizers import Optimizer, Adam
 
 
-class NFSPConfig(Config):
+class NFSPDQNConfig(Config):
     def __init__(self, config_dict, game_config, rl_config_type):
-        super(NFSPConfig, self).__init__(config_dict, game_config)
+        # Config type should be a DQN Type
+        super(NFSPDQNConfig, self).__init__(config_dict, game_config)
         self.num_players = self.parse_field("num_players", required=True)
         self.rl_configs = [
             rl_config_type(config_dict, game_config) for _ in range(self.num_players)
@@ -16,7 +17,7 @@ class NFSPConfig(Config):
         for c in self.sl_configs:
             c.game = game_config
 
-        self.replay_interval = self.parse_field("replay_interval", 1)
+        self.replay_interval = self.parse_field("replay_interval", 16)
 
         self.anticipatory_param = self.parse_field("anticipatory_param", 0.5)
 

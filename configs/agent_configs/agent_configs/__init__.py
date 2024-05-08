@@ -16,7 +16,7 @@ from .ppo_critic_config import PPOCriticConfig
 from .ppo_config import PPOConfig
 from .rainbow_config import RainbowConfig
 from .replay_config import ReplayBufferConfig
-from .nfsp_config import NFSPConfig
+from .nfsp_config import NFSPDQNConfig
 from .sl_config import SupervisedConfig
 
 from .base_config import prepare_activations, prepare_kernel_initializers
