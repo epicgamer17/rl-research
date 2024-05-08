@@ -138,7 +138,7 @@ def run_training(config, env: gym.Env, name):
     logger.debug(f"write_configs stdout: {out.stdout}")
     logger.debug(f"write_configs stderr: {out.stderr}")
     try:
-        cmd = f"./bin/hyperopt --distributed_config={distributed_output_path}"
+        cmd = f"./bin/hyperopt --distributed_config={distributed_output_path} --learner_name={name}"
         print("running cmd:", cmd)
         go_proc = Popen(cmd.split(" "))
         time.sleep(5)
