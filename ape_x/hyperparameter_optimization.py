@@ -90,7 +90,7 @@ def run_training(config, env: gym.Env, name):
         **config,
         **distributed_config_placeholder,
         "num_actors": 1,
-        "training_steps": 100,
+        "training_steps": 2000,
     }
 
     replay_conf = dict(
@@ -145,23 +145,21 @@ def run_training(config, env: gym.Env, name):
         learner = ApeXLearner(env, learner_config, name=name)
         logger.info("        === Running learner")
         learner.run()
+        logger.info("Training complete")
+        return -learner.test(num_trials=10, step=0)
     except KeyboardInterrupt:
         logger.info("learner interrupted, cleaning up")
+        return 0
     finally:
         stdout, stderr = go_proc.communicate("\n\n\n")
         logger.info(f"go stdout: {stdout}")
         logger.info(f"go stderr: {stderr}")
-
-    logger.info("Training complete")
-
-    return -learner.test(num_trials=10, step=0)
 
 
 def objective(params):
     gc.collect()
     logger.info("Params: ", params)
     logger.info("Making environments")
-    status = STATUS_OK
     environments_list = [
         gym.make("CartPole-v1", render_mode="rgb_array"),
         # gym.make("Acrobot-v1", render_mode="rgb_array"),
@@ -194,18 +192,26 @@ def objective(params):
         ]
     ).T
 
-    if (
-        params["replay_buffer_size"] > params["minibatch_size"]
-    ):  # ADD OTHER BREAKING PARAM CONDITIONS HERE
+    status = STATUS_OK
+    try:
+        # add other illegal hyperparameter combinations here
+        assert params["min_replay_buffer_size"] <= params["minibatch_size"]
+        assert params["replay_buffer_size"] > params["min_replay_buffer_size"]
+    except AssertionError:
         status = STATUS_FAIL
-    else:
+        logger.info("exited due to invalid hyperparameter combination")
+        return {"status": status}
+
+    if status != STATUS_FAIL:
         scores_list = list()
         for args in args_list:
             score = run_training(args[0], args[1], args[2])
             print("score: ", score)
             scores_list.append(score)
 
-    print("programs done")
+    print(
+        "training done with loss {} and status {}".format(np.sum(scores_list), status)
+    )
     return {"loss": np.sum(scores_list), "status": status}
 
 
