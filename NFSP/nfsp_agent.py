@@ -114,24 +114,25 @@ class NFSPDQN(BaseAgent):
                 if done:
                     reward_p1 = reward_p1[0]
                     reward_p2 = reward_p1[1]
-                    # next_state_p1 is terminal state from p1 persepctive (instead of p2 which is what it currently is)
+                    # next_state_p1 is irrelivent but could be the terminal state from p1 persepctive (instead of p2 which is what it currently is)
                     # rewards from list
                     # state_p1 is as normal
                     # action_p1 is as normal
                     # done is True
                     # state_p2 may not exist (if it is the first move of the game and p1 folds) otherwise as normal
-                    # next_state_p2 will always exist but could be wrong (if it is the first move of the game) otherwise it is as normal
+                    # next_state_p2 is irrelevant but it will always exist but could be wrong (if it is the first move of the game) otherwise it is as normal
                     # reward from list
                     # action_p2 may not exist (first move) but if it does it is as normal
                     # done is True
                     state_p1, info = self.env.reset()
 
-                # ONLY IF THERE IS A STATE FOR P2???
-                self.nfsp_agents[1].rl_agent.transition += [
-                    reward_p2,
-                    next_state_p2,
-                    done,
-                ]
+                # dont do twice if done is true maybe should exit in done check
+                if len(self.nfsp_agents[1].rl_agent.transition) == 2:
+                    self.nfsp_agents[1].rl_agent.transition += [
+                        reward_p2,
+                        next_state_p2,
+                        done,
+                    ]
 
                 one_step_transition = self.nfsp_agents[
                     1
@@ -160,10 +161,10 @@ class NFSPDQN(BaseAgent):
                     reward_p1 = reward_p2[1]
                     reward_p2 = reward_p2[0]
                     # rewards from list
-                    # state_p1 and next_state_p1 are as normal
+                    # state_p1 and next_state_p1 (next_state_p1 is irrelevant) are as normal
                     # action_p1 is as normal
                     # done is True
-                    # next_state_p2 is terminal state from p2 persepctive (instead of p1 which is what it currently is)
+                    # next_state_p2 is irrelevant (but could be terminal state from p2 persepctive (instead of p1 which is what it currently is))
                     # state_p2 as normal
                     # rewards from list
                     # action_p2 as normal
