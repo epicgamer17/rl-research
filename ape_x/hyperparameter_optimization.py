@@ -159,7 +159,7 @@ def run_training(config, env: gym.Env, name):
 
 def objective(params):
     gc.collect()
-    logger.info("Params: ", params)
+    logger.info(f"Params: {params}")
     logger.info("Making environments")
     environments_list = [
         gym.make("CartPole-v1", render_mode="rgb_array"),
@@ -198,9 +198,9 @@ def objective(params):
         # add other illegal hyperparameter combinations here
         assert params["min_replay_buffer_size"] <= params["minibatch_size"]
         assert params["replay_buffer_size"] > params["min_replay_buffer_size"]
-    except AssertionError:
+    except AssertionError as e:
         status = STATUS_FAIL
-        logger.info("exited due to invalid hyperparameter combination")
+        logger.info(f"exited due to invalid hyperparameter combination: {e}")
         return {"status": status}
 
     if status != STATUS_FAIL:
