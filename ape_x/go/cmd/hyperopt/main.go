@@ -161,7 +161,7 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	wg.Add(1)
 	go func() {
-		replayClient.KillByName("distributed_replay_buffer.py")
+		replayClient.KillPythonProcesses()
 		wg.Done()
 	}()
 
@@ -173,14 +173,14 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	wg.Add(1)
 	go func() {
-		spectatorClient.KillByName("main_actor.py")
+		spectatorClient.KillPythonProcesses()
 		wg.Done()
 	}()
 
 	for _, client := range actorClients {
 		wg.Add(1)
 		go func(c *ssh_util.Client) {
-			c.KillByName("main_actor.py")
+			c.KillPythonProcesses()
 			wg.Done()
 		}(client)
 	}
@@ -255,7 +255,7 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	wg.Add(1)
 	go func() {
-		replayClient.KillByName("distributed_replay_buffer.py")
+		replayClient.KillPythonProcesses()
 		wg.Done()
 	}()
 
@@ -267,20 +267,20 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	wg.Add(1)
 	go func() {
-		learnerClient.KillByName("main_learner.py")
+		learnerClient.KillPythonProcesses()
 		wg.Done()
 	}()
 
 	wg.Add(1)
 	go func() {
-		spectatorClient.KillByName("main_actor.py")
+		spectatorClient.KillPythonProcesses()
 		wg.Done()
 	}()
 
 	for _, client := range actorClients {
 		wg.Add(1)
 		go func(c *ssh_util.Client) {
-			c.KillByName("main_actor.py")
+			c.KillPythonProcesses()
 			wg.Done()
 		}(client)
 	}

@@ -171,11 +171,12 @@ func merge(channels ...<-chan string) <-chan string {
 	return ch
 }
 
-func (c *Client) KillByName(processName string) {
-	cmd := fmt.Sprintf("kill -9 $(ps aux | grep %s | grep -v grep | awk '{print $2}')", processName)
+func (c *Client) KillPythonProcesses() {
+	cmd := "pkill \"python\""
 
+	fmt.Println("Killing python processes on", c.Name)
 	if _, err := c.Run(cmd); err != nil {
-		fmt.Printf("Failed to kill process %s on %s: %v\n", processName, c.Name, err)
+		fmt.Printf("Failed to kill python processes on %s: %v\n", c.Name, err)
 	}
 }
 
