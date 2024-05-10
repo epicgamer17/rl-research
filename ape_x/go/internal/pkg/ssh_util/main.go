@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -91,7 +92,7 @@ func NewClient(host string, username string, name string) *Client {
 func (c *Client) Run(cmd string) ([]byte, error) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
-		fmt.Println("failed to create session: " + err.Error())
+		log.Println("failed to create session: " + err.Error())
 		return []byte{}, err
 	}
 	defer session.Close()
@@ -103,14 +104,14 @@ func (c *Client) Run(cmd string) ([]byte, error) {
 func (c *Client) Start(cmd string, killCmd string) (*CommandSession, error) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
-		fmt.Println("failed to create session: " + err.Error())
+		log.Println("failed to create session: " + err.Error())
 		return nil, err
 	}
 
-	fmt.Printf("[%s] Starting command: %s\n", c.Name, cmd)
+	log.Printf("[%s] Starting command: %s\n", c.Name, cmd)
 	commandSession := c.NewCommandSession(session, cmd, killCmd)
 	if err = session.Start(cmd); err != nil {
-		fmt.Printf("Error running command %s on %s: %s\n", cmd, c.Name, err)
+		log.Printf("Error running command %s on %s: %s\n", cmd, c.Name, err)
 		return nil, err
 	}
 
@@ -120,15 +121,15 @@ func (c *Client) Start(cmd string, killCmd string) (*CommandSession, error) {
 
 func (c *Client) Close() {
 	for k, v := range c.sessions {
-		fmt.Printf("cleaning up session on %s\n", c.SSHClient.Conn.RemoteAddr())
+		log.Printf("cleaning up session on %s\n", c.SSHClient.Conn.RemoteAddr())
 		out, err := c.Run(v.killCommand)
-		fmt.Printf("kill output %s: %s\n", c.Name, out)
-		fmt.Printf("kill err %s: %s\n", c.Name, err)
+		log.Printf("kill output %s: %s\n", c.Name, out)
+		log.Printf("kill err %s: %s\n", c.Name, err)
 		if !v.stderrFinished || !v.stdoutFinished {
-			fmt.Printf("warning: command %s on host %s never terminated\n", v.cmd, c.SSHClient.Conn.RemoteAddr())
+			log.Printf("warning: command %s on host %s never terminated\n", v.cmd, c.SSHClient.Conn.RemoteAddr())
 		}
 		if err := k.Close(); err != nil {
-			fmt.Println("Error closing session: ", err)
+			log.Println("Error closing session: ", err)
 		}
 	}
 	c.SSHClient.Close()
@@ -183,7 +184,7 @@ func merge(channels ...<-chan string) <-chan string {
 func (cs *CommandSession) StreamOutput(prefix string) {
 	go func() {
 		for msg := range merge(cs.stdout, cs.stderr) {
-			fmt.Printf("%s %s\n", prefix, msg)
+			log.Printf("%s %s\n", prefix, msg)
 		}
 	}()
 }

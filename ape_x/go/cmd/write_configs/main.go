@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -35,7 +36,7 @@ func CreateConfigsRemote(
 		panic(err)
 	}
 
-	fmt.Println("Creating configs: ")
+	log.Println("Creating configs: ")
 
 	// copy config files to remote, then run the config_generator.py script to inject the necessary distributed info
 	commands := []string{
@@ -51,8 +52,8 @@ func CreateConfigsRemote(
 	cmd := strings.Join(commands, "; ")
 	out, err := client.Run(cmd)
 	if err != nil {
-		fmt.Println("err: ", err)
-		fmt.Println("out: ", string(out))
+		log.Println("err: ", err)
+		log.Println("out: ", string(out))
 		panic(err)
 	}
 }
@@ -84,7 +85,7 @@ func main() {
 	}
 	hosts := []string{}
 	yaml.Unmarshal(hostsFileContent, &hosts)
-	fmt.Println("Using hosts: ", hosts)
+	log.Println("Using hosts: ", hosts)
 
 	replayHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
 	mongoHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]

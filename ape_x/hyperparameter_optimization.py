@@ -156,7 +156,7 @@ def run_training(config, env: gym.Env, name):
         logger.exception(f"learner failed due to error {e}")
         return 0
     finally:
-        stdout, stderr = go_proc.communicate("\n\n\n")
+        stdout, stderr = go_proc.communicate(b"\n\n")
         logger.info(f"go stdout: {stdout}")
         logger.info(f"go stderr: {stderr}")
 
