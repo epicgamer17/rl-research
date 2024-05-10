@@ -60,6 +60,7 @@ func Reader(reader io.Reader, finished *bool) <-chan string {
 
 type CommandSession struct {
 	cmd            string
+	killCommand    string
 	stdout         <-chan string
 	stderr         <-chan string
 	stdoutFinished bool
@@ -90,34 +91,41 @@ func NewClient(host string, username string, name string) *Client {
 func (c *Client) Run(cmd string) ([]byte, error) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
-		panic("failed to create session: " + err.Error())
+		fmt.Println("failed to create session: " + err.Error())
+		return []byte{}, err
 	}
-
 	defer session.Close()
 
-	fmt.Println("Running command: ", cmd)
-
-	return session.Output(cmd)
+	fmt.Printf("[%s] Running command: %s\n", c.Name, cmd)
+	return session.CombinedOutput(cmd)
 }
 
-func (c *Client) Start(cmd string) *CommandSession {
+func (c *Client) Start(cmd string, killCmd string) (*CommandSession, error) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
-		panic("failed to create session: " + err.Error())
+		fmt.Println("failed to create session: " + err.Error())
+		return nil, err
 	}
-	commandSession := c.NewCommandSession(session, cmd)
+
+	fmt.Printf("[%s] Starting command: %s\n", c.Name, cmd)
+	commandSession := c.NewCommandSession(session, cmd, killCmd)
 	if err = session.Start(cmd); err != nil {
 		fmt.Printf("Error running command %s on %s: %s\n", cmd, c.Name, err)
+		return nil, err
 	}
+
 	c.sessions[session] = commandSession
-	return commandSession
+	return commandSession, nil
 }
 
 func (c *Client) Close() {
 	for k, v := range c.sessions {
 		if !v.stderrFinished || !v.stdoutFinished {
-			fmt.Printf("command %s on host %s never terminated\n", v.cmd, c.SSHClient.Conn.RemoteAddr())
-			// kill if possible
+			fmt.Printf("cleaning up unfinished session on %s\n", c.SSHClient.Conn.RemoteAddr())
+			c.Run(v.killCommand)
+		}
+		if !v.stderrFinished || !v.stdoutFinished {
+			fmt.Printf("warning: command %s on host %s never terminated\n", v.cmd, c.SSHClient.Conn.RemoteAddr())
 		}
 		if err := k.Close(); err != nil {
 			fmt.Println("Error closing session: ", err)
@@ -126,9 +134,10 @@ func (c *Client) Close() {
 	c.SSHClient.Close()
 }
 
-func (c *Client) NewCommandSession(session *ssh.Session, cmd string) *CommandSession {
+func (c *Client) NewCommandSession(session *ssh.Session, cmd string, killCmd string) *CommandSession {
 	cmdSess := &CommandSession{
 		cmd:            cmd,
+		killCommand:    killCmd,
 		stdoutFinished: false,
 		stderrFinished: false,
 	}
@@ -169,15 +178,6 @@ func merge(channels ...<-chan string) <-chan string {
 	}()
 
 	return ch
-}
-
-func (c *Client) KillPythonProcesses() {
-	cmd := "pkill \"python\""
-
-	fmt.Println("Killing python processes on", c.Name)
-	if _, err := c.Run(cmd); err != nil {
-		fmt.Printf("Failed to kill python processes on %s: %v\n", c.Name, err)
-	}
 }
 
 func (cs *CommandSession) StreamOutput(prefix string) {

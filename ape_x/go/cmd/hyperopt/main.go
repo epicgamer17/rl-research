@@ -8,20 +8,20 @@ import (
 	"internal/pkg/ssh_util"
 	"math"
 	"os"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 )
 
 const SSH_ARGS = "-oStrictHostKeyChecking=no -oConnectTimeout=5"
 const USERNAME = "ehuang"
 const FQDN = "cs.mcgill.ca"
+const KillPythonProcessesCmd = "pkill \"python\""
 
-func StartReplay(client *ssh_util.Client, config configs.DistributedConfig) *ssh_util.CommandSession {
+func createReplayCommand(config configs.DistributedConfig) string {
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
@@ -29,19 +29,19 @@ func StartReplay(client *ssh_util.Client, config configs.DistributedConfig) *ssh
 	}
 
 	cmd := strings.Join(commands, "; ")
-	return client.Start(cmd)
+	return cmd
 }
 
-func StartMongo(client *ssh_util.Client, config configs.DistributedConfig) *ssh_util.CommandSession {
+func createMongoCmd(config configs.DistributedConfig) string {
 	commands := []string{
 		fmt.Sprintf("mongod --dbpath ~/mongodb/data --logpath ~/mongodb/mongod.log --port %d --auth --bind_ip_all", config.MongoPort),
 	}
 
 	cmd := strings.Join(commands, "; ")
-	return client.Start(cmd)
+	return cmd
 }
 
-func StartLearner(client *ssh_util.Client, config configs.DistributedConfig) *ssh_util.CommandSession {
+func createLearnerCmd(config configs.DistributedConfig) string {
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
@@ -49,21 +49,21 @@ func StartLearner(client *ssh_util.Client, config configs.DistributedConfig) *ss
 	}
 
 	cmd := strings.Join(commands, "; ")
-	return client.Start(cmd)
+	return cmd
 }
 
-func StartActor(client *ssh_util.Client, id string, noisySigma float64, config configs.DistributedConfig) *ssh_util.CommandSession {
+func createActorCmd(config configs.DistributedConfig, id string, noisySigma string) string {
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
-		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --noisy_sigma %.8f", config.ActorConfigFilename, id, noisySigma),
+		fmt.Sprintf("python3 main_actor.py --config_file %s --name %s --noisy_sigma %s", config.ActorConfigFilename, id, noisySigma),
 	}
 
 	cmd := strings.Join(commands, "; ")
-	return client.Start(cmd)
+	return cmd
 }
 
-func StartSpectator(client *ssh_util.Client, id string, config configs.DistributedConfig) *ssh_util.CommandSession {
+func createSpectatorCmd(config configs.DistributedConfig, id string) string {
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
@@ -71,22 +71,7 @@ func StartSpectator(client *ssh_util.Client, id string, config configs.Distribut
 	}
 
 	cmd := strings.Join(commands, "; ")
-	return client.Start(cmd)
-}
-
-func killMongo(client *ssh.Client) {
-	cmd := "mongod --shutdown --dbpath ~/mongodb/data"
-
-	session, err := client.NewSession()
-	if err != nil {
-		panic("failed to create session: " + err.Error())
-	}
-
-	fmt.Println("Running command: ", cmd)
-
-	if err := session.Run(cmd); err != nil {
-		fmt.Println("Failed to kill mongo: ", err)
-	}
+	return cmd
 }
 
 func copyTrainingGraphsToStaticSite(client *ssh_util.Client, learnerName string) {
@@ -118,9 +103,18 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	defer mongoClient.Close()
 	defer spectatorClient.Close()
 
-	replayCommandSession := StartReplay(replayClient, distributedConfig)
-	mongoCommandSession := StartMongo(mongoClient, distributedConfig)
-	spectatorCommandSession := StartSpectator(spectatorClient, "spectator", distributedConfig)
+	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
+	if err != nil {
+		panic(err)
+	}
+	mongoCommandSession, err := mongoClient.Start(createMongoCmd(distributedConfig), "mongod --shutdown --dbpath ~/mongodb/data")
+	if err != nil {
+		panic(err)
+	}
+	spectatorCommandSession, err := spectatorClient.Start(createSpectatorCmd(distributedConfig, "spectator"), KillPythonProcessesCmd)
+	if err != nil {
+		fmt.Println("Warning: spectator failed to start", err)
+	}
 
 	replayCommandSession.StreamOutput("[replay] ")
 	mongoCommandSession.StreamOutput("[mongo] ")
@@ -134,7 +128,11 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	}
 
 	for i, client := range actorClients {
-		actorCommandSession := StartActor(client, uuid.New().String(), noisySigmas[i], distributedConfig)
+		cmd := createActorCmd(distributedConfig, uuid.New().String(), strconv.FormatFloat(noisySigmas[i], 'f', 8, 64))
+		actorCommandSession, err := client.Start(cmd, KillPythonProcessesCmd)
+		if err != nil {
+			fmt.Printf("Warning: %s failed to start: %s\n", client.Name, err)
+		}
 		actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
 
@@ -157,38 +155,8 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
 
-	wg := sync.WaitGroup{}
-
-	wg.Add(1)
-	go func() {
-		replayClient.KillPythonProcesses()
-		wg.Done()
-	}()
-
-	wg.Add(1)
-	go func() {
-		killMongo(mongoClient.SSHClient)
-		wg.Done()
-	}()
-
-	wg.Add(1)
-	go func() {
-		spectatorClient.KillPythonProcesses()
-		wg.Done()
-	}()
-
-	for _, client := range actorClients {
-		wg.Add(1)
-		go func(c *ssh_util.Client) {
-			c.KillPythonProcesses()
-			wg.Done()
-		}(client)
-	}
-
 	doneChannel <- true
 	close(doneChannel)
-
-	wg.Wait()
 }
 
 func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
@@ -210,10 +178,22 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	defer learnerClient.Close()
 	defer spectatorClient.Close()
 
-	replayCommandSession := StartReplay(replayClient, distributedConfig)
-	mongoCommandSession := StartMongo(mongoClient, distributedConfig)
-	learnerCommandSession := StartLearner(learnerClient, distributedConfig)
-	spectatorCommandSession := StartSpectator(spectatorClient, "spectator", distributedConfig)
+	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
+	if err != nil {
+		panic(err)
+	}
+	mongoCommandSession, err := mongoClient.Start(createMongoCmd(distributedConfig), "mongod --shutdown --dbpath ~/mongodb/data")
+	if err != nil {
+		panic(err)
+	}
+	spectatorCommandSession, err := spectatorClient.Start(createSpectatorCmd(distributedConfig, "spectator"), KillPythonProcessesCmd)
+	if err != nil {
+		fmt.Println("Warning: spectator failed to start", err)
+	}
+	learnerCommandSession, err := learnerClient.Start(createLearnerCmd(distributedConfig), KillPythonProcessesCmd)
+	if err != nil {
+		panic(err)
+	}
 
 	replayCommandSession.StreamOutput("[replay] ")
 	mongoCommandSession.StreamOutput("[mongo] ")
@@ -228,7 +208,11 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	}
 
 	for i, client := range actorClients {
-		actorCommandSession := StartActor(client, uuid.New().String(), noisySigmas[i], distributedConfig)
+		cmd := createActorCmd(distributedConfig, uuid.New().String(), strconv.FormatFloat(noisySigmas[i], 'f', 8, 64))
+		actorCommandSession, err := client.Start(cmd, KillPythonProcessesCmd)
+		if err != nil {
+			fmt.Printf("Warning: %s failed to start: %s\n", client.Name, err)
+		}
 		actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
 
@@ -251,44 +235,8 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
 
-	wg := sync.WaitGroup{}
-
-	wg.Add(1)
-	go func() {
-		replayClient.KillPythonProcesses()
-		wg.Done()
-	}()
-
-	wg.Add(1)
-	go func() {
-		killMongo(mongoClient.SSHClient)
-		wg.Done()
-	}()
-
-	wg.Add(1)
-	go func() {
-		learnerClient.KillPythonProcesses()
-		wg.Done()
-	}()
-
-	wg.Add(1)
-	go func() {
-		spectatorClient.KillPythonProcesses()
-		wg.Done()
-	}()
-
-	for _, client := range actorClients {
-		wg.Add(1)
-		go func(c *ssh_util.Client) {
-			c.KillPythonProcesses()
-			wg.Done()
-		}(client)
-	}
-
 	doneChannel <- true
 	close(doneChannel)
-
-	wg.Wait()
 }
 
 func main() {
