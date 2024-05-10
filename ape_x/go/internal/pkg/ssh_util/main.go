@@ -122,7 +122,9 @@ func (c *Client) Close() {
 	for k, v := range c.sessions {
 		if !v.stderrFinished || !v.stdoutFinished {
 			fmt.Printf("cleaning up unfinished session on %s\n", c.SSHClient.Conn.RemoteAddr())
-			c.Run(v.killCommand)
+			out, err := c.Run(v.killCommand)
+			fmt.Printf("output %s: %s\n", c.Name, out)
+			fmt.Printf("err %s: %s\n", c.Name, err)
 		}
 		if !v.stderrFinished || !v.stdoutFinished {
 			fmt.Printf("warning: command %s on host %s never terminated\n", v.cmd, c.SSHClient.Conn.RemoteAddr())
