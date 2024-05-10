@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"internal/pkg/configs"
 	"internal/pkg/ssh_util"
+	"log"
 	"math"
 	"os"
 	"strconv"
@@ -78,7 +79,7 @@ func copyTrainingGraphsToStaticSite(client *ssh_util.Client, learnerName string)
 	cmd := fmt.Sprintf("cp ~/rl-research/ape_x/training_graphs/%s/%s.png ~/public_html/training/learner.png; cp ~/rl-research/ape_x/training_graphs/spectator/spectator.png ~/public_html/training/spectator.png\n", learnerName, learnerName)
 
 	if _, err := client.Run(cmd); err != nil {
-		fmt.Println("Failed to copy training graphs: ", err)
+		log.Println("Failed to copy training graphs: ", err)
 	}
 }
 
@@ -113,7 +114,7 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	}
 	spectatorCommandSession, err := spectatorClient.Start(createSpectatorCmd(distributedConfig, "spectator"), KillPythonProcessesCmd)
 	if err != nil {
-		fmt.Println("Warning: spectator failed to start", err)
+		log.Println("Warning: spectator failed to start", err)
 	}
 
 	replayCommandSession.StreamOutput("[replay] ")
@@ -131,7 +132,7 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 		cmd := createActorCmd(distributedConfig, uuid.New().String(), strconv.FormatFloat(noisySigmas[i], 'f', 8, 64))
 		actorCommandSession, err := client.Start(cmd, KillPythonProcessesCmd)
 		if err != nil {
-			fmt.Printf("Warning: %s failed to start: %s\n", client.Name, err)
+			log.Printf("Warning: %s failed to start: %s\n", client.Name, err)
 		}
 		actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
@@ -188,7 +189,7 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	}
 	spectatorCommandSession, err := spectatorClient.Start(createSpectatorCmd(distributedConfig, "spectator"), KillPythonProcessesCmd)
 	if err != nil {
-		fmt.Println("Warning: spectator failed to start", err)
+		log.Println("Warning: spectator failed to start", err)
 	}
 	learnerCommandSession, err := learnerClient.Start(createLearnerCmd(distributedConfig), KillPythonProcessesCmd)
 	if err != nil {
@@ -211,7 +212,7 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 		cmd := createActorCmd(distributedConfig, uuid.New().String(), strconv.FormatFloat(noisySigmas[i], 'f', 8, 64))
 		actorCommandSession, err := client.Start(cmd, KillPythonProcessesCmd)
 		if err != nil {
-			fmt.Printf("Warning: %s failed to start: %s\n", client.Name, err)
+			log.Printf("Warning: %s failed to start: %s\n", client.Name, err)
 		}
 		actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
@@ -240,6 +241,11 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 }
 
 func main() {
+	f, _ := os.Create("hyperopt_go.log")
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	log.SetOutput(w)
+
 	distributedConfigFilename := flag.String("distributed_config", "generated/distributed_config.yaml", "")
 	learnerName := flag.String("learner_name", "learner", "")
 
@@ -253,7 +259,7 @@ func main() {
 
 	yaml.Unmarshal(distributedConfigFileContent, &distributedConfig)
 
-	fmt.Printf("%-30s | %+v\n", "Using distributed config: ", distributedConfig)
+	log.Printf("%-30s | %+v\n", "Using distributed config: ", distributedConfig)
 
 	if !distributedConfig.WithLearner {
 		main_2(distributedConfig, *learnerName)
