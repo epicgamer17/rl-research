@@ -102,21 +102,21 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
 
 	wg := sync.WaitGroup{}
+	wg.Add(1)
 	defer func() {
 		defer wg.Done()
-		wg.Add(1)
 		log.Println("Test3")
 		replayClient.Close()
 	}()
+	wg.Add(1)
 	defer func() {
 		defer wg.Done()
-		wg.Add(1)
 		defer log.Println("Test2")
 		mongoClient.Close()
 	}()
+	wg.Add(1)
 	defer func() {
 		defer wg.Done()
-		wg.Add(1)
 		defer log.Println("Test1")
 		spectatorClient.Close()
 	}()
@@ -176,10 +176,13 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
+	log.Println("recieved stop signal, stopping")
 
 	doneChannel <- true
 	close(doneChannel)
+	log.Println("waiting for waitgroup")
 	wg.Wait()
+	log.Println("main finished")
 }
 
 func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
@@ -198,27 +201,27 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	wg := sync.WaitGroup{}
 
+	wg.Add(1)
 	defer func() {
 		defer wg.Done()
-		wg.Add(1)
 		replayClient.Close()
 	}()
 
+	wg.Add(1)
 	defer func() {
 		defer wg.Done()
-		wg.Add(1)
 		mongoClient.Close()
 	}()
 
+	wg.Add(1)
 	defer func() {
 		defer wg.Done()
-		wg.Add(1)
 		learnerClient.Close()
 	}()
 
+	wg.Add(1)
 	defer func() {
 		defer wg.Done()
-		wg.Add(1)
 		spectatorClient.Close()
 	}()
 
@@ -247,9 +250,9 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	actorClients := []*ssh_util.Client{}
 	for _, host := range distributedConfig.ActorHosts {
 		client := ssh_util.NewClient(host, USERNAME, fmt.Sprintf("actor %s", host))
+		wg.Add(1)
 		defer func() {
 			defer wg.Done()
-			wg.Add(1)
 			client.Close()
 		}()
 		actorClients = append(actorClients, client)
@@ -282,10 +285,13 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
+	log.Println("recieved stop signal, stopping")
 
 	doneChannel <- true
 	close(doneChannel)
+	log.Println("waiting for waitgroup")
 	wg.Wait()
+	log.Println("main finished")
 }
 
 func main() {
