@@ -140,7 +140,7 @@ def run_training(config, env: gym.Env, name):
     try:
         cmd = f"./bin/hyperopt --distributed_config={distributed_output_path} --learner_name={name}"
         print("running cmd:", cmd)
-        go_proc = Popen(cmd.split(" "))
+        go_proc = Popen(cmd.split(" "), stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         time.sleep(5)
 
         learner_generated_config = ApeXLearnerConfig.load(learner_output_path)
