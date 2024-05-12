@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -100,12 +101,25 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	mongoClient := ssh_util.NewClient(distributedConfig.MongoHost, USERNAME, "mongo")
 	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
 
-	defer replayClient.Close()
-	defer log.Println("Test3")
-	defer mongoClient.Close()
-	defer log.Println("Test2")
-	defer spectatorClient.Close()
-	defer log.Println("Test1")
+	wg := sync.WaitGroup{}
+	defer func() {
+		defer wg.Done()
+		wg.Add(1)
+		log.Println("Test3")
+		replayClient.Close()
+	}()
+	defer func() {
+		defer wg.Done()
+		wg.Add(1)
+		defer log.Println("Test2")
+		mongoClient.Close()
+	}()
+	defer func() {
+		defer wg.Done()
+		wg.Add(1)
+		defer log.Println("Test1")
+		spectatorClient.Close()
+	}()
 
 	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
 	if err != nil {
@@ -127,7 +141,11 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	actorClients := []*ssh_util.Client{}
 	for _, host := range distributedConfig.ActorHosts {
 		client := ssh_util.NewClient(host, USERNAME, fmt.Sprintf("actor %s", host))
-		defer client.Close()
+		wg.Add(1)
+		defer func() {
+			defer wg.Done()
+			client.Close()
+		}()
 		actorClients = append(actorClients, client)
 	}
 
@@ -161,6 +179,7 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	doneChannel <- true
 	close(doneChannel)
+	wg.Wait()
 }
 
 func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
@@ -177,10 +196,31 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	learnerClient := ssh_util.NewClient(distributedConfig.LearnerHost, USERNAME, "learner")
 	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
 
-	defer replayClient.Close()
-	defer mongoClient.Close()
-	defer learnerClient.Close()
-	defer spectatorClient.Close()
+	wg := sync.WaitGroup{}
+
+	defer func() {
+		defer wg.Done()
+		wg.Add(1)
+		replayClient.Close()
+	}()
+
+	defer func() {
+		defer wg.Done()
+		wg.Add(1)
+		mongoClient.Close()
+	}()
+
+	defer func() {
+		defer wg.Done()
+		wg.Add(1)
+		learnerClient.Close()
+	}()
+
+	defer func() {
+		defer wg.Done()
+		wg.Add(1)
+		spectatorClient.Close()
+	}()
 
 	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
 	if err != nil {
@@ -207,7 +247,11 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	actorClients := []*ssh_util.Client{}
 	for _, host := range distributedConfig.ActorHosts {
 		client := ssh_util.NewClient(host, USERNAME, fmt.Sprintf("actor %s", host))
-		defer client.Close()
+		defer func() {
+			defer wg.Done()
+			wg.Add(1)
+			client.Close()
+		}()
 		actorClients = append(actorClients, client)
 	}
 
@@ -241,6 +285,7 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	doneChannel <- true
 	close(doneChannel)
+	wg.Wait()
 }
 
 func main() {
