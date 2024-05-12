@@ -97,7 +97,7 @@ func (c *Client) Run(cmd string) ([]byte, error) {
 	}
 	defer session.Close()
 
-	fmt.Printf("[%s] Running command: %s\n", c.Name, cmd)
+	log.Printf("[%s] Running command: %s\n", c.Name, cmd)
 	return session.CombinedOutput(cmd)
 }
 

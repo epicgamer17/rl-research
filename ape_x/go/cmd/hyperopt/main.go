@@ -101,11 +101,11 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
 
 	defer replayClient.Close()
-	defer fmt.Println("Test3")
+	defer log.Println("Test3")
 	defer mongoClient.Close()
-	defer fmt.Println("Test2")
+	defer log.Println("Test2")
 	defer spectatorClient.Close()
-	defer fmt.Println("Test1")
+	defer log.Println("Test1")
 
 	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
 	if err != nil {
@@ -269,4 +269,6 @@ func main() {
 	} else {
 		main_1(distributedConfig, *learnerName)
 	}
+
+	log.Println("go process done")
 }
