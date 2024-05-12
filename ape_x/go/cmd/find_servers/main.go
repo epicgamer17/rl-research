@@ -46,20 +46,20 @@ func FindFreeServers(hosts <-chan string) (<-chan string, <-chan bool) {
 		go func(h string) {
 			defer wg.Done()
 			output, err := cmd.Output()
-			if err == nil {
-				o := strings.Trim(string(output), "\n")
-				numUsersOnline, err := strconv.Atoi(o)
-				if err != nil {
-					panic(err)
-				}
-				if numUsersOnline <= 1 {
-					color.Green("  %s is free", h)
-					c <- h
-				} else {
-					color.Yellow("  %s has other users online", h)
-				}
-			} else {
+			if err != nil {
 				color.Red("  %s is not online", h)
+				return
+			}
+			o := strings.Trim(string(output), "\n")
+			numUsersOnline, err := strconv.Atoi(o)
+			if err != nil {
+				panic(err)
+			}
+			if numUsersOnline <= 1 {
+				color.Green("  %s is free", h)
+				c <- h
+			} else {
+				color.Yellow("  %s has other users online", h)
 			}
 		}(host)
 	}
