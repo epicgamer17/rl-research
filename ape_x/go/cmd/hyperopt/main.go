@@ -175,7 +175,11 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	}()
 
 	reader := bufio.NewReader(os.Stdin)
-	reader.ReadString('\n')
+	_, err = reader.ReadString('\n')
+	if err != nil {
+		log.Println("error reading string", err)
+	}
+	fmt.Printf("doone")
 	log.Println("recieved stop signal, stopping")
 
 	doneChannel <- true
@@ -284,7 +288,11 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	}()
 
 	reader := bufio.NewReader(os.Stdin)
-	reader.ReadString('\n')
+	_, err = reader.ReadString('\n')
+	if err != nil {
+		log.Println("error reading string", err)
+	}
+	fmt.Printf("doone")
 	log.Println("recieved stop signal, stopping")
 
 	doneChannel <- true
