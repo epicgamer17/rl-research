@@ -1,5 +1,4 @@
 import numpy as np
-import tensorflow_probability as tfp
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -11,14 +10,12 @@ class ArmedBanditsEnv(gym.Env):
     def __init__(
         self,
         render_mode=None,
-        means=[0.1, 0.2, 0.3, 0.4, 0.5],
-        std_devs=[0.01, 0.01, 0.01, 0.01, 0.01],
+        means=[np.random.rand() for _ in range(1000)],
+        std_devs=[np.random.rand() for _ in range(1000)],
     ):
         assert len(means) == len(std_devs)
-        self.distributions = [
-            tfp.distributions.Normal(loc=mean, scale=std_dev)
-            for mean, std_dev in zip(means, std_devs)
-        ]
+        self.means = means
+        self.std_devs = std_devs
         self.observation_space = spaces.Discrete(1)  # or 0
         self.action_space = spaces.Discrete(len(means))
 
@@ -39,7 +36,7 @@ class ArmedBanditsEnv(gym.Env):
         return observation, info
 
     def step(self, action):
-        reward = self.distributions[action].sample()
+        reward = np.random.normal(self.means[action], self.std_devs[action])
         observation = self._get_obs()
         info = self._get_info()
         return observation, reward, False, False, info
