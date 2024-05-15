@@ -132,7 +132,10 @@ func (c *Client) Close() {
 			log.Println("Error closing session: ", err)
 		}
 	}
-	c.SSHClient.Close()
+	err := c.SSHClient.Close()
+	if err != nil {
+		log.Println("error closing underlying ssh client: ", err)
+	}
 }
 
 func (c *Client) NewCommandSession(session *ssh.Session, cmd string, killCmd string) *CommandSession {
@@ -182,9 +185,7 @@ func merge(channels ...<-chan string) <-chan string {
 }
 
 func (cs *CommandSession) StreamOutput(prefix string) {
-	go func() {
-		for msg := range merge(cs.stdout, cs.stderr) {
-			log.Printf("%s %s\n", prefix, msg)
-		}
-	}()
+	for msg := range merge(cs.stdout, cs.stderr) {
+		log.Printf("%s %s\n", prefix, msg)
+	}
 }

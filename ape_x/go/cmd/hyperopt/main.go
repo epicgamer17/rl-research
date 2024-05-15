@@ -11,7 +11,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,6 +83,21 @@ func copyTrainingGraphsToStaticSite(client *ssh_util.Client, learnerName string)
 	}
 }
 
+func runUpdator(client *ssh_util.Client, duration time.Duration, learnerName string, doneChannel <-chan bool) {
+	ticker := time.NewTicker(duration)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				copyTrainingGraphsToStaticSite(client, learnerName)
+			case <-doneChannel:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+}
+
 const baseNoisySigma = 0.9
 const alpha = 20
 
@@ -98,54 +112,32 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	}
 
 	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, USERNAME, "replay")
+	defer replayClient.Close()
 	mongoClient := ssh_util.NewClient(distributedConfig.MongoHost, USERNAME, "mongo")
+	defer mongoClient.Close()
 	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	defer func() {
-		defer wg.Done()
-		log.Println("Test3")
-		replayClient.Close()
-	}()
-	wg.Add(1)
-	defer func() {
-		defer wg.Done()
-		defer log.Println("Test2")
-		mongoClient.Close()
-	}()
-	wg.Add(1)
-	defer func() {
-		defer wg.Done()
-		defer log.Println("Test1")
-		spectatorClient.Close()
-	}()
+	defer spectatorClient.Close()
 
 	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
 	if err != nil {
 		panic(err)
 	}
+	go replayCommandSession.StreamOutput("[replay] ")
 	mongoCommandSession, err := mongoClient.Start(createMongoCmd(distributedConfig), "mongod --shutdown --dbpath ~/mongodb/data")
 	if err != nil {
 		panic(err)
 	}
+	go mongoCommandSession.StreamOutput("[mongo] ")
 	spectatorCommandSession, err := spectatorClient.Start(createSpectatorCmd(distributedConfig, "spectator"), KillPythonProcessesCmd)
 	if err != nil {
 		log.Println("Warning: spectator failed to start", err)
 	}
-
-	replayCommandSession.StreamOutput("[replay] ")
-	mongoCommandSession.StreamOutput("[mongo] ")
-	spectatorCommandSession.StreamOutput("[spectator]")
+	go spectatorCommandSession.StreamOutput("[spectator]")
 
 	actorClients := []*ssh_util.Client{}
 	for _, host := range distributedConfig.ActorHosts {
 		client := ssh_util.NewClient(host, USERNAME, fmt.Sprintf("actor %s", host))
-		wg.Add(1)
-		defer func() {
-			defer wg.Done()
-			client.Close()
-		}()
+		defer client.Close()
 		actorClients = append(actorClients, client)
 	}
 
@@ -155,38 +147,24 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 		if err != nil {
 			log.Printf("Warning: %s failed to start: %s\n", client.Name, err)
 		}
-		actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
+		go actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
 
 	updaterClient := ssh_util.NewClient(fmt.Sprintf("mimi.%s", FQDN), USERNAME, "updator")
-
-	ticker := time.NewTicker(10 * time.Second)
+	defer updaterClient.Close()
 	doneChannel := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				copyTrainingGraphsToStaticSite(updaterClient, learnerName)
-			case <-doneChannel:
-				ticker.Stop()
-				return
-			}
-		}
+	defer func() {
+		doneChannel <- true
+		close(doneChannel)
 	}()
+	runUpdator(updaterClient, 10*time.Second, learnerName, doneChannel)
 
 	reader := bufio.NewReader(os.Stdin)
 	_, err = reader.ReadString('\n')
 	if err != nil {
 		log.Println("error reading string", err)
 	}
-	fmt.Printf("doone")
-	log.Println("recieved stop signal, stopping")
-
-	doneChannel <- true
-	close(doneChannel)
-	log.Println("waiting for waitgroup")
-	wg.Wait()
-	log.Println("main finished")
+	log.Println("recieved stop signal, stopping...")
 }
 
 func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
@@ -199,66 +177,39 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	}
 
 	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, USERNAME, "replay")
+	defer replayClient.Close()
 	mongoClient := ssh_util.NewClient(distributedConfig.MongoHost, USERNAME, "mongo")
+	defer mongoClient.Close()
 	learnerClient := ssh_util.NewClient(distributedConfig.LearnerHost, USERNAME, "learner")
+	defer learnerClient.Close()
 	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
-
-	wg := sync.WaitGroup{}
-
-	wg.Add(1)
-	defer func() {
-		defer wg.Done()
-		replayClient.Close()
-	}()
-
-	wg.Add(1)
-	defer func() {
-		defer wg.Done()
-		mongoClient.Close()
-	}()
-
-	wg.Add(1)
-	defer func() {
-		defer wg.Done()
-		learnerClient.Close()
-	}()
-
-	wg.Add(1)
-	defer func() {
-		defer wg.Done()
-		spectatorClient.Close()
-	}()
+	defer spectatorClient.Close()
 
 	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
 	if err != nil {
 		panic(err)
 	}
+	go replayCommandSession.StreamOutput("[replay] ")
 	mongoCommandSession, err := mongoClient.Start(createMongoCmd(distributedConfig), "mongod --shutdown --dbpath ~/mongodb/data")
 	if err != nil {
 		panic(err)
 	}
+	go mongoCommandSession.StreamOutput("[mongo] ")
 	spectatorCommandSession, err := spectatorClient.Start(createSpectatorCmd(distributedConfig, "spectator"), KillPythonProcessesCmd)
 	if err != nil {
 		log.Println("Warning: spectator failed to start", err)
 	}
+	go spectatorCommandSession.StreamOutput("[spectator]")
 	learnerCommandSession, err := learnerClient.Start(createLearnerCmd(distributedConfig), KillPythonProcessesCmd)
 	if err != nil {
 		panic(err)
 	}
-
-	replayCommandSession.StreamOutput("[replay] ")
-	mongoCommandSession.StreamOutput("[mongo] ")
-	learnerCommandSession.StreamOutput("[learner] ")
-	spectatorCommandSession.StreamOutput("[spectator]")
+	go learnerCommandSession.StreamOutput("[learner] ")
 
 	actorClients := []*ssh_util.Client{}
 	for _, host := range distributedConfig.ActorHosts {
 		client := ssh_util.NewClient(host, USERNAME, fmt.Sprintf("actor %s", host))
-		wg.Add(1)
-		defer func() {
-			defer wg.Done()
-			client.Close()
-		}()
+		defer client.Close()
 		actorClients = append(actorClients, client)
 	}
 
@@ -268,38 +219,24 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 		if err != nil {
 			log.Printf("Warning: %s failed to start: %s\n", client.Name, err)
 		}
-		actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
+		go actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
 
 	updaterClient := ssh_util.NewClient(fmt.Sprintf("mimi.%s", FQDN), USERNAME, "updator")
-
-	ticker := time.NewTicker(10 * time.Second)
+	defer updaterClient.Close()
 	doneChannel := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				copyTrainingGraphsToStaticSite(updaterClient, learnerName)
-			case <-doneChannel:
-				ticker.Stop()
-				return
-			}
-		}
+	defer func() {
+		doneChannel <- true
+		close(doneChannel)
 	}()
+	runUpdator(updaterClient, 10*time.Second, learnerName, doneChannel)
 
 	reader := bufio.NewReader(os.Stdin)
 	_, err = reader.ReadString('\n')
 	if err != nil {
 		log.Println("error reading string", err)
 	}
-	fmt.Printf("doone")
-	log.Println("recieved stop signal, stopping")
-
-	doneChannel <- true
-	close(doneChannel)
-	log.Println("waiting for waitgroup")
-	wg.Wait()
-	log.Println("main finished")
+	log.Println("recieved stop signal, stopping...")
 }
 
 func main() {

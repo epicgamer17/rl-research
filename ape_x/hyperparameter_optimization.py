@@ -140,7 +140,7 @@ def run_training(config, env: gym.Env, name):
     try:
         cmd = f"./bin/hyperopt --distributed_config={distributed_output_path} --learner_name={name}"
         print("running cmd:", cmd)
-        go_proc = Popen(cmd.split(" "), stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        go_proc = Popen(cmd.split(" "), stdin=subprocess.PIPE, text=True)
         time.sleep(5)
 
         learner_generated_config = ApeXLearnerConfig.load(learner_output_path)
@@ -156,7 +156,7 @@ def run_training(config, env: gym.Env, name):
         logger.exception(f"learner failed due to error {e}")
         return 0
     finally:
-        stdout, stderr = go_proc.communicate(b"\n\n")
+        stdout, stderr = go_proc.communicate("\n\n")
         logger.info(f"go stdout: {stdout}")
         logger.info(f"go stderr: {stderr}")
 
