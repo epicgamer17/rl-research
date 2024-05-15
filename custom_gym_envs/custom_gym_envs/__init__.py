@@ -43,3 +43,9 @@ register(
     id="custom_gym_envs/ArmedBandits-v0",
     entry_point="custom_gym_envs.envs:ArmedBanditsEnv",
 )
+
+register(
+    id="custom_gym_envs/NonstationairyArmedBandits-v0",
+    entry_point="custom_gym_envs.envs:NonstationairyArmedBanditsEnv",
+    kwargs={"mode": "random"},
+)
