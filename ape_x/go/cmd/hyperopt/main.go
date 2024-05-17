@@ -9,8 +9,10 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -231,12 +233,13 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	}()
 	runUpdator(updaterClient, 10*time.Second, learnerName, doneChannel)
 
-	reader := bufio.NewReader(os.Stdin)
-	_, err = reader.ReadString('\n')
-	if err != nil {
-		log.Println("error reading string", err)
-	}
-	log.Println("recieved stop signal, stopping...")
+	cancelChan := make(chan os.Signal, 1)
+	// catch SIGETRM or SIGINTERRUPT
+	signal.Notify(cancelChan, syscall.SIGTERM, syscall.SIGINT)
+
+	sig := <-cancelChan
+	log.Printf("Caught signal %v", sig)
+	fmt.Println("stopping and cleaning up...")
 }
 
 func main() {

@@ -13,7 +13,7 @@ import (
 func main() {
 	defer log.Println("main finished normally")
 	testClient := ssh_util.NewClient("mimi.cs.mcgill.ca", "ehuang", "test_client")
-	cmdSess, err := testClient.Start("bash -c \"while sleep 0.1; do echo 'hello'; done\"", "pkill bash")
+	cmdSess, err := testClient.Start("cd ~/rl-research/ape_x; conda activate ml; python main_actor.py", "pkill python")
 	if err != nil {
 		panic(err)
 	}
