@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	ticker := time.NewTicker(time.Nanosecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	doneChannel := make(chan bool)
 
 	go func() {

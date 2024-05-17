@@ -39,6 +39,9 @@ from subprocess import Popen
 import pathlib
 import numpy as np
 from pathlib import Path
+from hyperopt import hp
+import tensorflow as tf
+from hyperopt.pyll import scope
 
 ctx = multiprocessing.get_context("fork")
 
@@ -218,11 +221,6 @@ def objective(params):
         "training done with loss {} and status {}".format(np.sum(scores_list), status)
     )
     return {"loss": np.sum(scores_list), "status": status}
-
-
-from hyperopt import hp
-import tensorflow as tf
-from hyperopt.pyll import scope
 
 
 def create_search_space():
