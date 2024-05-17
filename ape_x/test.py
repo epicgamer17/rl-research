@@ -5,6 +5,8 @@ from hyperopt import fmin, tpe, space_eval, hp, STATUS_OK
 import pickle
 import gc
 
+SIGTERM = 15
+
 
 def test(params):
     try:
@@ -18,9 +20,10 @@ def test(params):
         print(e)
         return 0
     finally:
-        stdout, stderr = go_proc.communicate("\n\n")
-        print(f"stdout:{stdout}")
-        print(f"stderr:{stderr}")
+        go_proc.send_signal(SIGTERM)
+        while go_proc.poll() == None:
+            print("process not terminated yet, waiting")
+            time.sleep(1)
 
 
 def objective(params):

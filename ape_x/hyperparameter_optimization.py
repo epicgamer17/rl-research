@@ -17,6 +17,8 @@ import gc
 
 from learner import ApeXLearner
 
+SIGTERM = 15
+
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
     try:
@@ -159,9 +161,11 @@ def run_training(config, env: gym.Env, name):
         logger.exception(f"learner failed due to error {e}")
         return 0
     finally:
-        stdout, stderr = go_proc.communicate("\n\n")
-        logger.info(f"go stdout: {stdout}")
-        logger.info(f"go stderr: {stderr}")
+        go_proc.send_signal(SIGTERM)
+        while go_proc.poll() == None:
+            logger.debug("process not terminated yet, waiting")
+            time.sleep(1)
+        logger.info("cleaning up finished")
 
 
 def objective(params):
