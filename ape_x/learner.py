@@ -130,64 +130,72 @@ class ApeXLearnerBase(RainbowAgent):
         return loss
 
     def run(self):
-        training_time = time.time()
-        self.on_run()
+        # early stopping?
+        try:
+            training_time = time.time()
+            self.on_run()
 
-        logger.info("learner running")
-        self.is_test = False
-        stats = {
-            "loss": [],
-            "test_score": [],
-        }
-        targets = {
-            "test_score": self.env.spec.reward_threshold,
-        }
-        # self.fill_replay_buffer()
-        state, _ = self.env.reset()
-        model_update_count = 0
-        training_step = 0
+            logger.info("learner running")
+            self.is_test = False
+            stats = {
+                "loss": [],
+                "test_score": [],
+            }
+            targets = {
+                "test_score": self.env.spec.reward_threshold,
+            }
+            # self.fill_replay_buffer()
+            state, _ = self.env.reset()
+            model_update_count = 0
+            training_step = 0
 
-        for training_step in range(self.training_steps + 1):
-            logger.info(f"learner training step: {training_step}/{self.training_steps}")
-
-            if training_step % self.config.push_params_interval == 0:
-                self.store_weights()
-                logger.info("pushed params")
-
-            self.config.per_beta = min(
-                1.0,
-                self.config.per_beta
-                + (1 - self.config.per_beta) / self.training_steps,  # per beta increase
-            )
-
-            model_update_count += 1
-            loss = self._experience_replay()
-            logger.info(f"finished exp replay")
-            stats["loss"].append(loss)
-            self.update_target_model(model_update_count)
-
-            if training_step % self.checkpoint_interval == 0:
-                self.save_checkpoint(
-                    stats,
-                    targets,
-                    5,
-                    training_step,
-                    training_step * self.config.replay_interval,
-                    time.time() - training_time,
+            for training_step in range(self.training_steps + 1):
+                logger.info(
+                    f"learner training step: {training_step}/{self.training_steps}"
                 )
 
-        logger.info("loop done")
+                if training_step % self.config.push_params_interval == 0:
+                    self.store_weights()
+                    logger.info("pushed params")
 
-        self.save_checkpoint(
-            stats,
-            targets,
-            5,
-            self.training_steps,
-            training_step * self.config.replay_interval,
-            time.time() - training_time,
-        )
-        self.env.close()
-        self.on_done()
+                self.config.per_beta = min(
+                    1.0,
+                    self.config.per_beta
+                    + (1 - self.config.per_beta)
+                    / self.training_steps,  # per beta increase
+                )
+
+                model_update_count += 1
+                loss = self._experience_replay()
+                logger.info(f"finished exp replay")
+                stats["loss"].append(loss)
+                self.update_target_model(model_update_count)
+
+                if training_step % self.checkpoint_interval == 0:
+                    self.save_checkpoint(
+                        stats,
+                        targets,
+                        5,
+                        training_step,
+                        training_step * self.config.replay_interval,
+                        time.time() - training_time,
+                    )
+
+            logger.info("loop done")
+
+            self.save_checkpoint(
+                stats,
+                targets,
+                5,
+                self.training_steps,
+                training_step * self.config.replay_interval,
+                time.time() - training_time,
+            )
+        except Exception as e:
+            print(e)
+        finally:
+            self.env.close()
+            self.on_done()
 
 
 import zmq
