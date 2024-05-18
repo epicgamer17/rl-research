@@ -113,14 +113,14 @@ func createNoisySigmas(totalActors int) []float64 {
 	return noisySigmas
 }
 
-func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
+func main_2(distributedConfig configs.DistributedConfig, learnerName string, SSHUsername string) {
 	noisySigmas := createNoisySigmas(len(distributedConfig.ActorHosts))
 
-	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, USERNAME, "replay")
+	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, SSHUsername, "replay")
 	defer replayClient.Close()
-	mongoClient := ssh_util.NewClient(distributedConfig.MongoHost, USERNAME, "mongo")
+	mongoClient := ssh_util.NewClient(distributedConfig.MongoHost, SSHUsername, "mongo")
 	defer mongoClient.Close()
-	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
+	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, SSHUsername, "spectator")
 	defer spectatorClient.Close()
 
 	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
@@ -141,7 +141,7 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	actorClients := []*ssh_util.Client{}
 	for _, host := range distributedConfig.ActorHosts {
-		client := ssh_util.NewClient(host, USERNAME, fmt.Sprintf("actor %s", host))
+		client := ssh_util.NewClient(host, SSHUsername, fmt.Sprintf("actor %s", host))
 		defer client.Close()
 		actorClients = append(actorClients, client)
 	}
@@ -155,7 +155,7 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 		go actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
 
-	updaterClient := ssh_util.NewClient(fmt.Sprintf("mimi.%s", FQDN), USERNAME, "updator")
+	updaterClient := ssh_util.NewClient(fmt.Sprintf("mimi.%s", FQDN), SSHUsername, "updator")
 	defer updaterClient.Close()
 	doneChannel := make(chan bool)
 	defer func() {
@@ -173,16 +173,16 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	fmt.Println("stopping and cleaning up...")
 }
 
-func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
+func main_1(distributedConfig configs.DistributedConfig, learnerName string, SSHUsername string) {
 	noisySigmas := createNoisySigmas(len(distributedConfig.ActorHosts))
 
-	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, USERNAME, "replay")
+	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, SSHUsername, "replay")
 	defer replayClient.Close()
-	mongoClient := ssh_util.NewClient(distributedConfig.MongoHost, USERNAME, "mongo")
+	mongoClient := ssh_util.NewClient(distributedConfig.MongoHost, SSHUsername, "mongo")
 	defer mongoClient.Close()
-	learnerClient := ssh_util.NewClient(distributedConfig.LearnerHost, USERNAME, "learner")
+	learnerClient := ssh_util.NewClient(distributedConfig.LearnerHost, SSHUsername, "learner")
 	defer learnerClient.Close()
-	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, USERNAME, "spectator")
+	spectatorClient := ssh_util.NewClient(distributedConfig.SpectatorHost, SSHUsername, "spectator")
 	defer spectatorClient.Close()
 
 	replayCommandSession, err := replayClient.Start(createReplayCommand(distributedConfig), KillPythonProcessesCmd)
@@ -208,7 +208,7 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 
 	actorClients := []*ssh_util.Client{}
 	for _, host := range distributedConfig.ActorHosts {
-		client := ssh_util.NewClient(host, USERNAME, fmt.Sprintf("actor %s", host))
+		client := ssh_util.NewClient(host, SSHUsername, fmt.Sprintf("actor %s", host))
 		defer client.Close()
 		actorClients = append(actorClients, client)
 	}
@@ -222,7 +222,7 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 		go actorCommandSession.StreamOutput(fmt.Sprintf("[%s] ", client.Name))
 	}
 
-	updaterClient := ssh_util.NewClient(fmt.Sprintf("mimi.%s", FQDN), USERNAME, "updator")
+	updaterClient := ssh_util.NewClient(fmt.Sprintf("mimi.%s", FQDN), SSHUsername, "updator")
 	defer updaterClient.Close()
 	doneChannel := make(chan bool)
 	defer func() {
@@ -247,6 +247,7 @@ func main() {
 	log.SetOutput(w)
 
 	distributedConfigFilename := flag.String("distributed_config", "generated/distributed_config.yaml", "")
+	SSHUsernameFlag := flag.String("ssh_username", USERNAME, "")
 	learnerName := flag.String("learner_name", "learner", "")
 
 	flag.Parse()
@@ -262,9 +263,9 @@ func main() {
 	log.Printf("%-30s | %+v\n", "Using distributed config: ", distributedConfig)
 
 	if !distributedConfig.WithLearner {
-		main_2(distributedConfig, *learnerName)
+		main_2(distributedConfig, *learnerName, *SSHUsernameFlag)
 	} else {
-		main_1(distributedConfig, *learnerName)
+		main_1(distributedConfig, *learnerName, *SSHUsernameFlag)
 	}
 
 	log.Println("go process done")

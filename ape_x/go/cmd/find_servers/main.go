@@ -95,9 +95,10 @@ func (arr *arrayFlagInt) Set(value string) error {
 }
 
 func main() {
-	var exclude arrayFlagInt
-	flag.Var(&exclude, "exclude", "")
-	output := flag.String("output", "../generated/hosts.yaml", "")
+	var excludeFlag arrayFlagInt
+	flag.Var(&excludeFlag, "exclude", "")
+	outputFilenameFlag := flag.String("output", "../generated/hosts.yaml", "")
+	usernameFlag := flag.String("ssh_username", USERNAME, "")
 
 	flag.Parse()
 
@@ -105,18 +106,17 @@ func main() {
 
 	// open-gpu-17 doesn't exist, open-gpu-5/7/24 have cuda driver issues
 	// open-gpu-13 throws tensorflow.python.framework.errors_impl.InternalError: cudaSetDevice() on GPU:0 failed. Status: CUDA-capable device(s) is/are busy or unavailable
-	indicesToExclude[5] = true
-	indicesToExclude[7] = true
-	indicesToExclude[13] = true
-	indicesToExclude[17] = true
-	indicesToExclude[24] = true
-
-	fmt.Println(exclude)
-	for _, i := range exclude {
+	for _, i := range []int{5, 7, 13, 17, 24} {
 		indicesToExclude[i] = true
 	}
 
-	hostsCh, done := FindFreeServers(GenerateHosts(USERNAME, indicesToExclude))
+	for _, i := range excludeFlag {
+		indicesToExclude[i] = true
+	}
+
+	fmt.Println("excluding:", excludeFlag)
+
+	hostsCh, done := FindFreeServers(GenerateHosts(*usernameFlag, indicesToExclude))
 	hosts := []string{}
 
 	go func() {
@@ -132,5 +132,5 @@ func main() {
 		panic(err)
 	}
 
-	os.WriteFile(*output, enc, os.FileMode(0644))
+	os.WriteFile(*outputFilenameFlag, enc, os.FileMode(0644))
 }

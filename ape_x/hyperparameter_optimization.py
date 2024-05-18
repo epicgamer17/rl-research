@@ -7,6 +7,7 @@ from pathlib import Path
 import multiprocessing
 import time
 import gc
+import argparse
 
 # os.environ["OMP_NUM_THREADS"] = f"{1}"
 # os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
@@ -28,6 +29,7 @@ from learner import ApeXLearner
 
 
 SIGTERM = 15
+SSH_USERNAME = "ehuang"
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -74,6 +76,7 @@ def get_current_host():
 
 
 def run_training(config, env: gym.Env, name):
+    global SSH_USERNAME
     print("=================== Run Training ======================")
     with open(f"{pathlib.Path.home()}/mongodb/mongodb_admin_password", "r") as f:
         password = f.read()
@@ -129,17 +132,17 @@ def run_training(config, env: gym.Env, name):
 
     current_host = get_current_host()
 
-    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path}"
+    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME}"
     print("running cmd:", cmd)
     subprocess.run(cmd.split(" "), capture_output=True, text=True)
 
-    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path}"
+    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME}"
     print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
     logger.debug(f"write_configs stderr: {out.stderr}")
     try:
-        cmd = f"./bin/hyperopt -distributed_config={distributed_output_path} -learner_name={name}"
+        cmd = f"./bin/hyperopt -distributed_config={distributed_output_path} -learner_name={name} -ssh_username={SSH_USERNAME}"
         print("running cmd:", cmd)
         go_proc = Popen(cmd.split(" "), stdin=subprocess.PIPE, text=True)
         time.sleep(5)
@@ -342,6 +345,13 @@ def create_search_space():
 
 
 def main():
+    global SSH_USERNAME
+    parser = argparse.ArgumentParser()
+    parser.add_argument("ssh_username", type=str, help="an integer to be summed")
+    args = parser.parse_args()
+
+    SSH_USERNAME = args.ssh_username
+
     search_space, initial_best_config = create_search_space()
     max_trials = 16
     trials_step = 1  # how many additional trials to do after loading the last ones
