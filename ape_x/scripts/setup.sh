@@ -88,6 +88,7 @@ destroy_default_python_env
 echo "Creating new conda environment..."
 
 conda env create -f ./scripts/environment.yml
+conda init bash
 conda activate ml
 
 echo "installing additional dependencies"
