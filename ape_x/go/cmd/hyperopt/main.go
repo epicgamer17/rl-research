@@ -9,8 +9,10 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -101,15 +103,18 @@ func runUpdator(client *ssh_util.Client, duration time.Duration, learnerName str
 const baseNoisySigma = 0.9
 const alpha = 20
 
-func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
-	totalActors := len(distributedConfig.ActorHosts)
-
+func createNoisySigmas(totalActors int) []float64 {
 	noisySigmas := make([]float64, totalActors)
 
 	for i := 0; i < totalActors; i++ {
 		e_i := math.Pow(baseNoisySigma, 1+(float64(i)/float64(totalActors))*alpha)
 		noisySigmas[i] = e_i
 	}
+	return noisySigmas
+}
+
+func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
+	noisySigmas := createNoisySigmas(len(distributedConfig.ActorHosts))
 
 	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, USERNAME, "replay")
 	defer replayClient.Close()
@@ -159,22 +164,17 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string) {
 	}()
 	runUpdator(updaterClient, 10*time.Second, learnerName, doneChannel)
 
-	reader := bufio.NewReader(os.Stdin)
-	_, err = reader.ReadString('\n')
-	if err != nil {
-		log.Println("error reading string", err)
-	}
-	log.Println("recieved stop signal, stopping...")
+	cancelChan := make(chan os.Signal, 1)
+	// catch SIGETRM or SIGINTERRUPT
+	signal.Notify(cancelChan, syscall.SIGTERM, syscall.SIGINT)
+
+	sig := <-cancelChan
+	log.Printf("Caught signal %v", sig)
+	fmt.Println("stopping and cleaning up...")
 }
 
 func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
-	totalActors := len(distributedConfig.ActorHosts)
-	noisySigmas := make([]float64, totalActors)
-
-	for i := 0; i < totalActors; i++ {
-		e_i := math.Pow(baseNoisySigma, 1+(float64(i)/float64(totalActors))*alpha)
-		noisySigmas[i] = e_i
-	}
+	noisySigmas := createNoisySigmas(len(distributedConfig.ActorHosts))
 
 	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, USERNAME, "replay")
 	defer replayClient.Close()
@@ -231,12 +231,13 @@ func main_1(distributedConfig configs.DistributedConfig, learnerName string) {
 	}()
 	runUpdator(updaterClient, 10*time.Second, learnerName, doneChannel)
 
-	reader := bufio.NewReader(os.Stdin)
-	_, err = reader.ReadString('\n')
-	if err != nil {
-		log.Println("error reading string", err)
-	}
-	log.Println("recieved stop signal, stopping...")
+	cancelChan := make(chan os.Signal, 1)
+	// catch SIGETRM or SIGINTERRUPT
+	signal.Notify(cancelChan, syscall.SIGTERM, syscall.SIGINT)
+
+	sig := <-cancelChan
+	log.Printf("Caught signal %v", sig)
+	fmt.Println("stopping and cleaning up...")
 }
 
 func main() {

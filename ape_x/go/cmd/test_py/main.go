@@ -1,22 +1,32 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
+	"internal/pkg/ssh_util"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
 func main() {
-	ticker := time.NewTicker(time.Nanosecond)
+	defer log.Println("main finished normally")
+	testClient := ssh_util.NewClient("mimi.cs.mcgill.ca", "ehuang", "test_client")
+	cmdSess, err := testClient.Start("cd ~/rl-research/ape_x; conda activate ml; python main_actor.py", "pkill python")
+	if err != nil {
+		panic(err)
+	}
+	defer testClient.Close()
+	go cmdSess.StreamOutput("test_client")
+	ticker := time.NewTicker(100 * time.Millisecond)
 	doneChannel := make(chan bool)
 
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				fmt.Println("[x] done")
+				fmt.Println("[x] test")
 			case <-doneChannel:
 				ticker.Stop()
 				return
@@ -28,11 +38,11 @@ func main() {
 		close(doneChannel)
 	}()
 
-	reader := bufio.NewReader(os.Stdin)
-	_, err := reader.ReadString('\n')
-	if err != nil {
-		log.Println("error reading string", err)
-	}
-	fmt.Println("recieved stop signal, stopping")
-	fmt.Println("main finished")
+	cancelChan := make(chan os.Signal, 1)
+	// catch SIGETRM or SIGINTERRUPT
+	signal.Notify(cancelChan, syscall.SIGTERM, syscall.SIGINT)
+
+	sig := <-cancelChan
+	log.Printf("Caught signal %v", sig)
+	fmt.Println("stopping and cleaning up...")
 }

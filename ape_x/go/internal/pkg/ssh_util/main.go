@@ -37,18 +37,20 @@ func NewSSHConfig(username string) *ssh.ClientConfig {
 	return config
 }
 
-func Reader(reader io.Reader, finished *bool) <-chan string {
+func Reader(reader io.Reader, finished *bool, wg *sync.WaitGroup) <-chan string {
 	ch := make(chan string)
 	scanner := bufio.NewScanner(reader)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			if scanner.Scan() {
 				ch <- scanner.Text()
 			} else {
 				if err := scanner.Err(); err != nil {
-					fmt.Println("Error reading from SSH: ", err)
+					log.Println("Error reading from SSH: ", err)
 				} else {
-					fmt.Println("EOF")
+					log.Println("EOF")
 					close(ch)
 					*finished = true
 					break
@@ -66,6 +68,7 @@ type CommandSession struct {
 	stderr         <-chan string
 	stdoutFinished bool
 	stderrFinished bool
+	wg             sync.WaitGroup
 }
 
 type Client struct {
@@ -123,19 +126,24 @@ func (c *Client) Close() {
 	for k, v := range c.sessions {
 		log.Printf("cleaning up session on %s\n", c.SSHClient.Conn.RemoteAddr())
 		out, err := c.Run(v.killCommand)
-		log.Printf("kill output %s: %s\n", c.Name, out)
-		log.Printf("kill err %s: %s\n", c.Name, err)
+		if err != nil {
+			log.Printf("[%s] error running kill cmd: %v\n", c.Name, err)
+		}
+		log.Printf("[%s] kill stdout and stderr: %v\n", c.Name, out)
+		v.wg.Wait()
 		if !v.stderrFinished || !v.stdoutFinished {
 			log.Printf("warning: command %s on host %s never terminated\n", v.cmd, c.SSHClient.Conn.RemoteAddr())
-		}
-		if err := k.Close(); err != nil {
-			log.Println("Error closing session: ", err)
+			// forcefully close the session (will leave dangling proceses on remote machines)
+			if err := k.Close(); err != nil {
+				log.Println("Error closing session: ", err)
+			}
 		}
 	}
 	err := c.SSHClient.Close()
 	if err != nil {
 		log.Println("error closing underlying ssh client: ", err)
 	}
+	log.Println("cleaned up sucessfully")
 }
 
 func (c *Client) NewCommandSession(session *ssh.Session, cmd string, killCmd string) *CommandSession {
@@ -144,6 +152,7 @@ func (c *Client) NewCommandSession(session *ssh.Session, cmd string, killCmd str
 		killCommand:    killCmd,
 		stdoutFinished: false,
 		stderrFinished: false,
+		wg:             sync.WaitGroup{},
 	}
 	stderrPipe, err := session.StderrPipe()
 	if err != nil {
@@ -154,8 +163,8 @@ func (c *Client) NewCommandSession(session *ssh.Session, cmd string, killCmd str
 		panic("failed to create stdout pipe: " + err.Error())
 	}
 
-	cmdSess.stdout = Reader(stdoutPipe, &cmdSess.stdoutFinished)
-	cmdSess.stderr = Reader(stderrPipe, &cmdSess.stderrFinished)
+	cmdSess.stdout = Reader(stdoutPipe, &cmdSess.stdoutFinished, &cmdSess.wg)
+	cmdSess.stderr = Reader(stderrPipe, &cmdSess.stderrFinished, &cmdSess.wg)
 
 	return cmdSess
 }

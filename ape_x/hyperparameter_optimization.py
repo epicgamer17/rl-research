@@ -1,21 +1,33 @@
 import os
+import pickle
+import subprocess
+from subprocess import Popen
+import pathlib
+from pathlib import Path
+import multiprocessing
 import time
+import gc
 
 # os.environ["OMP_NUM_THREADS"] = f"{1}"
 # os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
 # os.environ['TF_NUM_INTRAOP_THREADS'] = f"{1}"
 
+import tensorflow as tf
+import numpy as np
+import pandas as pd
+import gymnasium as gym
+from hyperopt import tpe, hp, fmin, space_eval, STATUS_OK, STATUS_FAIL
+
 from agent_configs import ApeXActorConfig, ApeXLearnerConfig
 from agent_configs import ReplayBufferConfig
 from game_configs.cartpole_config import CartPoleConfig
-import tensorflow as tf
+from learner import ApeXLearner
 
 # tf.config.threading.set_intra_op_parallelism_threads(1)
 # tf.config.threading.set_inter_op_parallelism_threads(1)
 
-import gc
 
-from learner import ApeXLearner
+SIGTERM = 15
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -29,16 +41,6 @@ if gpus:
         # Memory growth must be set before GPUs have been initialized
         print(e)
 
-import multiprocessing
-import pandas
-import pickle
-import gymnasium as gym
-from hyperopt import tpe, hp, fmin, space_eval, STATUS_OK, STATUS_FAIL
-import subprocess
-from subprocess import Popen
-import pathlib
-import numpy as np
-from pathlib import Path
 
 ctx = multiprocessing.get_context("fork")
 
@@ -127,18 +129,17 @@ def run_training(config, env: gym.Env, name):
 
     current_host = get_current_host()
 
-    cmd = f"./bin/find_servers --exclude {current_host} --output {hosts_file_path}"
+    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path}"
     print("running cmd:", cmd)
-    subprocess.run(cmd.split(" "), capture_output=True)
+    subprocess.run(cmd.split(" "), capture_output=True, text=True)
 
     cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path}"
     print("running cmd: ", cmd)
-    out = subprocess.run(cmd.split(" "), capture_output=True)
-
+    out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
     logger.debug(f"write_configs stderr: {out.stderr}")
     try:
-        cmd = f"./bin/hyperopt --distributed_config={distributed_output_path} --learner_name={name}"
+        cmd = f"./bin/hyperopt -distributed_config={distributed_output_path} -learner_name={name}"
         print("running cmd:", cmd)
         go_proc = Popen(cmd.split(" "), stdin=subprocess.PIPE, text=True)
         time.sleep(5)
@@ -156,9 +157,11 @@ def run_training(config, env: gym.Env, name):
         logger.exception(f"learner failed due to error {e}")
         return 0
     finally:
-        stdout, stderr = go_proc.communicate("\n\n")
-        logger.info(f"go stdout: {stdout}")
-        logger.info(f"go stderr: {stderr}")
+        go_proc.send_signal(SIGTERM)
+        while go_proc.poll() == None:
+            logger.debug("process not terminated yet, waiting")
+            time.sleep(1)
+        logger.info("cleaning up finished")
 
 
 def objective(params):
@@ -178,7 +181,7 @@ def objective(params):
         name = "classiccontrol_1"
     # name = datetime.datetime.now().timestamp()
     params["model_name"] = name
-    entry = pandas.DataFrame.from_dict(
+    entry = pd.DataFrame.from_dict(
         params,
         orient="index",
     ).T
@@ -188,14 +191,6 @@ def objective(params):
         mode="a",
         header=False,
     )
-
-    args_list = np.array(
-        [
-            [params for env in environments_list],
-            environments_list,
-            [name for env in environments_list],
-        ]
-    ).T
 
     status = STATUS_OK
     try:
@@ -209,8 +204,8 @@ def objective(params):
 
     if status != STATUS_FAIL:
         scores_list = list()
-        for args in args_list:
-            score = run_training(args[0], args[1], args[2])
+        for env in environments_list:
+            score = run_training(params, env, name)
             print("score: ", score)
             scores_list.append(score)
 
@@ -218,11 +213,6 @@ def objective(params):
         "training done with loss {} and status {}".format(np.sum(scores_list), status)
     )
     return {"loss": np.sum(scores_list), "status": status}
-
-
-from hyperopt import hp
-import tensorflow as tf
-from hyperopt.pyll import scope
 
 
 def create_search_space():
