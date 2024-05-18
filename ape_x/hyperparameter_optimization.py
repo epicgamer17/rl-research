@@ -94,6 +94,8 @@ def run_training(config, env: gym.Env, name):
     conf = (config | distributed_config_placeholder) | {
         "num_actors": 1,
         "training_steps": 2000,
+        # save on mimi disk quota
+        "save_intermediate_weights": False,
         # set for learner, will be overwritten by cli flags in actors
         "noisy_sigma": config["learner_noisy_sigma"],
     }

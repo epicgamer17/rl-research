@@ -1,11 +1,13 @@
 import math
 import os
+from pathlib import Path
 import gymnasium as gym
 from agent_configs import Config
 import numpy as np
 import matplotlib.pyplot as plt
 import gymnasium as gym
 import copy
+import dill
 
 # Every model should have:
 # 1. A network
@@ -107,22 +109,38 @@ class BaseAgent:
         # raise NotImplementedError
         pass
 
+    def on_save(self):
+        pass
+
+    def load(self, dir):
+        raise NotImplementedError
+
+    def on_load(self):
+        pass
+
     def save_checkpoint(
-        self, stats, targets, num_trials, training_step, frames_seen, time_taken
+        self,
+        stats,
+        targets,
+        num_trials,
+        training_step,
+        frames_seen,
+        time_taken,
     ):
-        # save the model weights
-        if not os.path.exists("./model_weights"):
-            os.makedirs("./model_weights")
-        if not os.path.exists("./model_weights/{}".format(self.model_name)):
-            os.makedirs("./model_weights/{}".format(self.model_name))
+        if self.config.save_intermediate_weights:
+            dir = Path("model_weights", self.model_name)
+            os.makedirs(dir, exist_ok=True)
 
-        path = "./model_weights/{}/episode_{}.keras".format(
-            self.model_name, training_step
-        )
+            # save the model weights
+            weights_path = str(Path(dir, f"episode_{training_step}.keras"))
+            self.model.save(weights_path)
 
-        self.model.save(path)
-        # save replay buffer
-        # save optimizer
+            # save optimizer (pickle doesn't work but dill does)
+            with open(Path(dir, f"episode_{training_step}_optimizer.dill"), "wb") as f:
+                dill.dump(self.config.optimizer, f)
+
+            # save other things like replay buffer (to be implemented in subclasses)
+            self.on_save()
 
         # test model
         test_score = self.test(num_trials, training_step)

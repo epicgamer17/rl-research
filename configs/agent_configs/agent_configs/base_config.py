@@ -177,6 +177,11 @@ class Config(ConfigBase):
 
         self._verify_game()
 
+        # not hyperparameters but utility things
+        self.save_intermediate_weights: bool = self.parse_field(
+            "save_intermediate_weights", True
+        )
+
         # ADD LEARNING RATE SCHEDULES
 
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
