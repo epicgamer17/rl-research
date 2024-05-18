@@ -15,4 +15,6 @@ type DistributedConfig struct {
 	ActorConfigFilename   string
 	ReplayConfigFilename  string
 	WithLearner           bool
+	Alpha                 float64
+	BaseNoisySigma        float64
 }

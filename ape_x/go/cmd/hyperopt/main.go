@@ -100,21 +100,19 @@ func runUpdator(client *ssh_util.Client, duration time.Duration, learnerName str
 	}()
 }
 
-const baseNoisySigma = 0.9
-const alpha = 20
+func createNoisySigmas(c configs.DistributedConfig) []float64 {
+	N := len(c.ActorHosts)
+	noisySigmas := make([]float64, N)
 
-func createNoisySigmas(totalActors int) []float64 {
-	noisySigmas := make([]float64, totalActors)
-
-	for i := 0; i < totalActors; i++ {
-		e_i := math.Pow(baseNoisySigma, 1+(float64(i)/float64(totalActors))*alpha)
+	for i := 0; i < N; i++ {
+		e_i := math.Pow(c.BaseNoisySigma, 1+(float64(i)/float64(N))*c.Alpha)
 		noisySigmas[i] = e_i
 	}
 	return noisySigmas
 }
 
 func main_2(distributedConfig configs.DistributedConfig, learnerName string, SSHUsername string) {
-	noisySigmas := createNoisySigmas(len(distributedConfig.ActorHosts))
+	noisySigmas := createNoisySigmas(distributedConfig)
 
 	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, SSHUsername, "replay")
 	defer replayClient.Close()
@@ -174,7 +172,7 @@ func main_2(distributedConfig configs.DistributedConfig, learnerName string, SSH
 }
 
 func main_1(distributedConfig configs.DistributedConfig, learnerName string, SSHUsername string) {
-	noisySigmas := createNoisySigmas(len(distributedConfig.ActorHosts))
+	noisySigmas := createNoisySigmas(distributedConfig)
 
 	replayClient := ssh_util.NewClient(distributedConfig.ReplayHost, SSHUsername, "replay")
 	defer replayClient.Close()

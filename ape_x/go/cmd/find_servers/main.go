@@ -99,6 +99,7 @@ func main() {
 	flag.Var(&excludeFlag, "exclude", "")
 	outputFilenameFlag := flag.String("output", "../generated/hosts.yaml", "")
 	usernameFlag := flag.String("ssh_username", USERNAME, "")
+	numActorsFlag := flag.Int("num_actors", 4, "")
 
 	flag.Parse()
 
@@ -127,7 +128,12 @@ func main() {
 
 	<-done
 
-	enc, err := yaml.Marshal(hosts)
+	if len(hosts) < *numActorsFlag {
+		fmt.Println("not enough actors to run.")
+		os.Exit(1)
+	}
+	truncated := hosts[:*numActorsFlag]
+	enc, err := yaml.Marshal(truncated)
 	if err != nil {
 		panic(err)
 	}

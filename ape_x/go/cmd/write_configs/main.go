@@ -68,6 +68,9 @@ const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
 func main() {
 	SSHUsernameFlag := flag.String("ssh_username", USERNAME, "")
 
+	actorsInitialSigmaFlag := flag.Float64("actors_initial_sigma", 0.9, "")
+	actorsSigmaAlphaFlag := flag.Float64("actors_sigma_alpha", 20, "")
+
 	learnerBaseFilenameFlag := flag.String("learner_config", "configs/learner_config_example.yaml", "")
 	actorBaseFilenameFlag := flag.String("actor_config", "configs/actor_config_example.yaml", "")
 	replayFilenameFlag := flag.String("replay_config", "configs/replay_config_example.yaml", "")
@@ -113,6 +116,8 @@ func main() {
 		LearnerConfigFilename: *learnerOutputFlag,
 		ActorConfigFilename:   *actorOutputFlag,
 		ReplayConfigFilename:  *replayOutputFlag,
+		Alpha:                 *actorsSigmaAlphaFlag,
+		BaseNoisySigma:        *actorsInitialSigmaFlag,
 	}
 
 	client := ssh_util.NewClient(replayHost, *SSHUsernameFlag, "")

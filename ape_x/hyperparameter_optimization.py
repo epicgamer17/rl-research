@@ -91,12 +91,11 @@ def run_training(config, env: gym.Env, name):
         "storage_password": password.strip(),
     }
 
-    conf = {
-        **config,
-        **distributed_config_placeholder,
+    conf = (config | distributed_config_placeholder) | {
         "num_actors": 1,
         "training_steps": 2000,
-        "training_steps": 2000,
+        # set for learner, will be overwritten by cli flags in actors
+        "noisy_sigma": config["learner_noisy_sigma"],
     }
 
     replay_conf = dict(
@@ -106,7 +105,8 @@ def run_training(config, env: gym.Env, name):
         batch_size=conf["minibatch_size"],
         max_priority=1.0,
         per_alpha=config["per_alpha"],
-        n_step=1,  # we don't need n-step because the actors give n-step transitions already
+        # we don't need n-step because the actors give n-step transitions already
+        n_step=1,
         gamma=config["discount_factor"],
     )
 
@@ -132,11 +132,15 @@ def run_training(config, env: gym.Env, name):
 
     current_host = get_current_host()
 
-    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME}"
+    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME}, -num_actors={config["num_actors"]}"
     print("running cmd:", cmd)
-    subprocess.run(cmd.split(" "), capture_output=True, text=True)
+    proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
 
-    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME}"
+    # not enough actors to run or other issue generating hosts
+    if proc.returncode != 0:
+        return {"status": STATUS_FAIL}
+
+    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]}, -actors_sigma_alpha={config["actors_sigma_alpha"]}"
     print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
@@ -152,13 +156,14 @@ def run_training(config, env: gym.Env, name):
         logger.info("        === Running learner")
         learner.run()
         logger.info("Training complete")
-        return -learner.test(num_trials=10, step=0)
+        loss = -learner.test(num_trials=10, step=0)
+        return {"status": STATUS_OK, "loss": loss}
     except KeyboardInterrupt:
         logger.info("learner interrupted, cleaning up")
-        return 0
+        return {"status": STATUS_OK, "loss": 0}
     except Exception as e:
         logger.exception(f"learner failed due to error {e}")
-        return 0
+        return {"status": STATUS_FAIL, "loss": 0}
     finally:
         go_proc.send_signal(SIGTERM)
         while go_proc.poll() == None:
@@ -206,16 +211,16 @@ def objective(params):
         return {"status": status}
 
     if status != STATUS_FAIL:
-        scores_list = list()
+        loss_list = list()
         for env in environments_list:
-            score = run_training(params, env, name)
-            print("score: ", score)
-            scores_list.append(score)
+            res_dict = run_training(params, env, name)
+            if res_dict["status"] == STATUS_FAIL:
+                return {"status": status}
+            else:
+                loss_list.append(res_dict["loss"])
 
-    print(
-        "training done with loss {} and status {}".format(np.sum(scores_list), status)
-    )
-    return {"loss": np.sum(scores_list), "status": status}
+    print("training done with loss {} and status {}".format(np.sum(loss_list), status))
+    return {"loss": np.sum(loss_list), "status": status}
 
 
 def create_search_space():
