@@ -68,9 +68,8 @@ install_mongosh
 create_admin_password
 touch "$setup_file"
 echo "mongoPassword = \"$(cat $password_file)\";" > $setup_file
-echo $(cat mongo_setup_template.js) >> $setup_file
+echo $(cat ./scripts/mongo_setup_template.js) >> $setup_file
 
-set -x
 mongod --fork --dbpath $HOME/mongodb/data --logpath $HOME/mongodb/logs/mongod.log 
 mongosh --file $setup_file
 echo "MongoDB setup complete, shutting down database"
