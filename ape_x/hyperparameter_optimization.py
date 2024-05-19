@@ -162,7 +162,8 @@ def run_training(config, env: gym.Env, name):
         return {"status": STATUS_OK, "loss": loss}
     except KeyboardInterrupt:
         logger.info("learner interrupted, cleaning up")
-        return {"status": STATUS_OK, "loss": 0}
+        loss = -learner.test(num_trials=10, step=0)
+        return {"status": STATUS_OK, "loss": loss}
     except Exception as e:
         logger.exception(f"learner failed due to error {e}")
         return {"status": STATUS_FAIL, "loss": 0}
