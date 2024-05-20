@@ -135,7 +135,7 @@ def run_training(config, env: gym.Env, name):
     current_host = get_current_host()
 
     num_actors = config["num_actors"] + 3  # +mongo, replay, spectator
-    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME}, -num_actors={num_actors}"
+    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME} -num_actors={num_actors}"
     print("running cmd:", cmd)
     proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
 
@@ -143,7 +143,7 @@ def run_training(config, env: gym.Env, name):
     if proc.returncode != 0:
         return {"status": STATUS_FAIL}
 
-    cmd = f'./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]}, -actors_sigma_alpha={config["actors_sigma_alpha"]}'
+    cmd = f'./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]} -actors_sigma_alpha={config["actors_sigma_alpha"]}'
     print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
