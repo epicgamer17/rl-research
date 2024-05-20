@@ -9,11 +9,12 @@ import rlcard
 class LeducHoldemEnv(gym.Env):
     metadata = {"render_modes": [], "render_fps": 1}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, players=2):
         self.game = rlcard.make("leduc-holdem")
         self.observation_space = spaces.Box(
             low=-10, high=10, shape=(36,), dtype=np.int8
         )
+        self.players = players
 
         # We have 9 actions, corresponding to each cell
         self.action_space = spaces.Discrete(4)
@@ -69,10 +70,10 @@ class LeducHoldemEnv(gym.Env):
         move_history = dict["action_record"]
 
         terminated = self.game.is_over()
-        reward = self.game.get_payoffs() if terminated else 0
+        rewards = self.game.get_payoffs() if terminated else [0] * self.players
         info = self._get_info()
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return observation, reward, terminated, False, info
+        return observation, rewards, terminated, False, info

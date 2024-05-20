@@ -76,12 +76,11 @@ class NFSPDQN(BaseAgent):
         sl_configs = self.config.sl_configs
         self.nfsp_agents = [
             NFSPDQNAgent(
-                env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}", agent_type, i
+                env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}", agent_type
             )
             for i in range(self.config.num_players)
         ]
         self.checkpoint_interval = 50
-        self.episodes = config.episodes
 
     def train(self):
         training_time = time()
@@ -95,44 +94,142 @@ class NFSPDQN(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
-        for episode in range(
-            self.episodes
-        ):  # change to training steps and just make it so it ends a game even if the training steps are done
-            for p in range(self.config.num_players):
-                self.nfsp_agents[p].select_policy(self.config.anticipatory_param)
-            state, info = self.env.reset()
-            done = False
-            while not done:
-                # for _ in range(self.config.replay_interval):
-                # for current_player in range(self.config.num_players):
-                current_player = state["current_player"]
-                current_agent = self.nfsp_agents[current_player]
-                action = current_agent.select_action(
-                    state,
+        state_p1, info = self.env.reset()
+
+        for p in range(self.config.num_players):
+            self.nfsp_agents[p].select_policy(self.config.anticipatory_param)
+
+        for training_step in range(self.training_steps):
+            for _ in range(self.config.replay_interval):
+                action_p1 = self.nfsp_agents[0].select_action(
+                    state_p1,
+                    (info["legal_moves"] if self.config.game.has_legal_moves else None),
+                )
+                self.nfsp_agents[0].rl_agent.transition = [state_p1, action_p1]
+                next_state_p2, reward_p1, terminated, truncated, info = self.step(
+                    action_p1
+                )
+                done = terminated or truncated
+
+                if done:
+                    reward_p1 = reward_p1[0]
+                    reward_p2 = reward_p1[1]
+                    # next_state_p1 is irrelivent but could be the terminal state from p1 persepctive (instead of p2 which is what it currently is)
+                    # rewards from list
+                    # state_p1 is as normal
+                    # action_p1 is as normal
+                    # done is True
+                    # state_p2 may not exist (if it is the first move of the game and p1 folds) otherwise as normal
+                    # next_state_p2 is irrelevant but it will always exist but could be wrong (if it is the first move of the game) otherwise it is as normal
+                    # reward from list
+                    # action_p2 may not exist (first move) but if it does it is as normal
+                    # done is True
+                    state_p1, info = self.env.reset()
+
+                # dont do twice if done is true maybe should exit in done check
+                if len(self.nfsp_agents[1].rl_agent.transition) == 2:
+                    self.nfsp_agents[1].rl_agent.transition += [
+                        reward_p2,
+                        next_state_p2,
+                        done,
+                    ]
+
+                one_step_transition = self.nfsp_agents[
+                    1
+                ].rl_agent.n_step_replay_buffer.store(
+                    *self.nfsp_agents[1].rl_agent.transition
+                )
+                if one_step_transition is not None:
+                    self.nfsp_agents[1].rl_agent.replay_buffer.store(
+                        *one_step_transition
+                    )
+
+                state_p2 = next_state_p2
+                action_p2 = self.nfsp_agents[1].select_action(
+                    state_p2,
                     (info["legal_moves"] if self.config.game.has_legal_moves else None),
                 )
 
-                current_agent.config.per_beta = min(
-                    1.0,
-                    current_agent.rl_agent.config.per_beta
-                    + (1 - current_agent.rl_agent.config.per_beta)
-                    / self.training_steps,  # per beta increase
-                )
+                self.nfsp_agents[1].rl_agent.transition = [state_p2, action_p2]
 
-                # self.nfsp_agents[0].rl_agent.transition = [state_p1, action_p1]
-                next_state, rewards, terminated, truncated, info = self.step(action)
-                state = next_state
-                done = terminated or truncated
-                if done:
-                    break
-                current_agent.step(
-                    action, state, rewards[current_player], done, info, training_step
+                next_state_p1, reward_p2, terminated, truncated, info = self.step(
+                    action_p2
                 )
+                done = terminated or truncated
+
+                if done:
+                    reward_p1 = reward_p2[1]
+                    reward_p2 = reward_p2[0]
+                    # rewards from list
+                    # state_p1 and next_state_p1 (next_state_p1 is irrelevant) are as normal
+                    # action_p1 is as normal
+                    # done is True
+                    # next_state_p2 is irrelevant (but could be terminal state from p2 persepctive (instead of p1 which is what it currently is))
+                    # state_p2 as normal
+                    # rewards from list
+                    # action_p2 as normal
+                    # done is True
+                    state_p1, info = self.env.reset()
+
+                self.nfsp_agents[0].rl_agent.transition += [
+                    reward_p1,
+                    next_state_p1,
+                    done,
+                ]
+
+                one_step_transition = self.nfsp_agents[
+                    0
+                ].rl_agent.n_step_replay_buffer.store(
+                    *self.nfsp_agents[0].rl_agent.transition
+                )
+                if one_step_transition is not None:
+                    self.nfsp_agents[0].rl_agent.replay_buffer.store(
+                        *one_step_transition
+                    )
+
+            self.nfsp_agents[0].rl_agent.config.per_beta = min(
+                1.0,
+                self.nfsp_agents[0].rl_agent.config.per_beta
+                + (1 - self.nfsp_agents[0].rl_agent.config.per_beta)
+                / self.training_steps,  # per beta increase
+            )
+            self.nfsp_agents[1].rl_agent.config.per_beta = min(
+                1.0,
+                self.nfsp_agents[1].rl_agent.config.per_beta
+                + (1 - self.nfsp_agents[1].rl_agent.config.per_beta)
+                / self.training_steps,  # per beta increase
+            )
 
             for p in range(self.config.num_players):
-                self.nfsp_agents[p].step(
-                    action, state, rewards[p], done, info, training_step
+                for minibatch in range(self.config.num_minibatches):
+                    rl_loss, sl_loss = self.nfsp_agents[p].experience_replay()
+                    if p == 0:
+                        stats["rl_loss"].append(rl_loss)
+                        stats["sl_loss"].append(sl_loss)
+
+                if training_step % self.config.rl_configs[p].transfer_interval == 0:
+                    self.nfsp_agents[p].rl_agent.target_model.set_weights(
+                        self.nfsp_agents[p].rl_agent.model.get_weights()
+                    )
+
+            if training_step % self.checkpoint_interval == 0 and training_step > 0:
+                self.save_checkpoint(
+                    stats,
+                    targets,
+                    50,
+                    training_step,
+                    training_step * self.config.replay_interval,
+                    time() - training_time,
                 )
+
+        self.save_checkpoint(
+            stats,
+            targets,
+            50,
+            training_step,
+            training_step * self.config.replay_interval,
+            time() - training_time,
+        )
         self.env.close()
 
     def save_checkpoint(
@@ -204,51 +301,11 @@ class NFSPDQN(BaseAgent):
 
 
 class NFSPDQNAgent(BaseAgent):
-    def __init__(self, env, rl_config, sl_config, name, agent_type, player) -> None:
+    def __init__(self, env, rl_config, sl_config, name, agent_type) -> None:
         super().__init__(env, rl_config, name)
         self.rl_agent = agent_type(env, rl_config, name)
         self.sl_agent = AverageStrategyAgent(env, sl_config, name)
         self.policy = "best_response"  # "average_strategy" or "best_response
-        # transition = [state, action, reward, next_state, done]
-        self.previous_state = None
-        self.previous_action = None
-        self.previous_reward = None
-
-    def step(self, action, state, reward, done, info, training_step):
-        self.transition = [self.previous_state, self.previous_action]
-        if (
-            self.previous_action is not None
-            and self.previous_state is not None
-            and self.previous_reward is not None
-        ):
-            self.transition += [self.previous_reward, state, done]
-            # only do this if it is average policy? (open spiel)
-            self.rl_agent.replay_buffer.store(*self.transition)
-        if not done:
-            self.previous_state = state
-            self.previous_action = action
-            self.previous_reward = reward
-        else:
-            self.previous_state = None
-            self.previous_action = None
-            self.previous_reward = None
-
-        for minibatch in range(self.config.num_minibatches):
-
-            rl_loss, sl_loss = self.experience_replay()
-
-            if training_step % self.config.transfer_interval == 0:
-                self.target_model.set_weights(self.rl_agent.model.get_weights())
-
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
-                self.save_checkpoint(
-                    stats,
-                    targets,
-                    50,
-                    training_step,
-                    training_step * self.config.replay_interval,
-                    time() - training_time,
-                )
 
     def select_policy(self, anticipatory_param):
         if random.random() < anticipatory_param and not self.is_test:
@@ -272,14 +329,20 @@ class NFSPDQNAgent(BaseAgent):
     def experience_replay(self):
         rl_loss = 0
         sl_loss = 0
+        print("RL Buffer Size ", self.rl_agent.replay_buffer.size)
+        print("Min RL Buffer Size", self.sl_agent.config.min_replay_buffer_size)
         if (
             self.rl_agent.replay_buffer.size
             > self.rl_agent.config.min_replay_buffer_size
-        ):  # only do if not in rl agent mode? (open spiel)
+        ):
+            print("Experience Replay for RL Agent")
             rl_loss = self.rl_agent.experience_replay()
         if (
             self.sl_agent.replay_buffer.size
             > self.sl_agent.config.min_replay_buffer_size
         ):
+            print("Experience Replay for SL Agent")
             sl_loss = self.sl_agent.experience_replay()
+        print("RL Loss", rl_loss)
+        print("SL Loss", sl_loss)
         return rl_loss, sl_loss
