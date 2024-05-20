@@ -184,7 +184,7 @@ class ApeXLearnerBase(RainbowAgent):
                         time.time() - start_time,
                     )
 
-                    if training_step / self.checkpoint_interval > 25:
+                    if training_step // self.training_steps > 0.125:
                         past_scores = stats["test_score"][-5:]
                         avg = np.sum(past_scores) / 5
                         if avg < 10:
