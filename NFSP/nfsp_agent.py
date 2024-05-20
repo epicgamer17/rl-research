@@ -81,7 +81,6 @@ class NFSPDQN(BaseAgent):
             for i in range(self.config.num_players)
         ]
         self.checkpoint_interval = 50
-        self.episodes = config.episodes
 
     def train(self):
         training_time = time()
@@ -95,8 +94,9 @@ class NFSPDQN(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
-        for episode in range(
-            self.episodes
+        training_step = 0
+        while (
+            training_step < self.training_steps
         ):  # change to training steps and just make it so it ends a game even if the training steps are done
             for p in range(self.config.num_players):
                 self.nfsp_agents[p].select_policy(self.config.anticipatory_param)
@@ -123,43 +123,34 @@ class NFSPDQN(BaseAgent):
                 next_state, rewards, terminated, truncated, info = self.step(action)
                 state = next_state
                 done = terminated or truncated
-                if done:
-                    break
-                current_agent.step(
-                    action, state, rewards[current_player], done, info, training_step
-                )
+
+                training_step += 1
+                for minibatch in range(self.config.num_minibatches):
+                    rl_loss, sl_loss = self.experience_replay()
+
+                if training_step % self.config.transfer_interval == 0:
+                    self.target_model.set_weights(self.rl_agent.model.get_weights())
+
+                if training_step % self.checkpoint_interval == 0 and training_step > 0:
+                    for p in range(self.config.num_players):
+                        self.nfsp_agents[p].save_checkpoint(
+                            stats,
+                            targets,
+                            5,
+                            training_step,
+                            training_step * self.config.replay_interval,
+                            time() - training_time,
+                        )
+                    # CALL CHECKPOINTING ON THE INDIVIDUAL AGENTS
+
+                if not done:
+                    current_agent.step(
+                        action, state, rewards[current_player], done
+                    )  # stores experiences
 
             for p in range(self.config.num_players):
-                self.nfsp_agents[p].step(
-                    action, state, rewards[p], done, info, training_step
-                )
+                self.nfsp_agents[p].step(action, state, rewards[p], done)
         self.env.close()
-
-    def save_checkpoint(
-        self, stats, targets, num_trials, training_step, frames_seen, time_taken
-    ):
-        # save the model weights
-        if not os.path.exists("./model_weights"):
-            os.makedirs("./model_weights")
-        if not os.path.exists("./model_weights/{}".format(self.model_name)):
-            os.makedirs("./model_weights/{}".format(self.model_name))
-
-        for p in range(self.config.num_players):
-            self.nfsp_agents[p].rl_agent.model.save(
-                f"./model_weights/{self.model_name}/rl_agent_{p}_episode_{training_step}.keras"
-            )
-            self.nfsp_agents[p].sl_agent.model.save(
-                f"./model_weights/{self.model_name}/sl_agent_{p}_episode_{training_step}.keras"
-            )
-
-        # save replay buffer
-        # save optimizer
-
-        # test model
-        test_score = self.test(num_trials)
-        stats["test_score"].append(test_score)
-        # plot the graphs
-        self.plot_graph(stats, targets, training_step, frames_seen, time_taken)
 
     def step(self, action):
         if self.is_test:
@@ -214,7 +205,7 @@ class NFSPDQNAgent(BaseAgent):
         self.previous_action = None
         self.previous_reward = None
 
-    def step(self, action, state, reward, done, info, training_step):
+    def step(self, action, state, reward, done):
         self.transition = [self.previous_state, self.previous_action]
         if (
             self.previous_action is not None
@@ -232,23 +223,6 @@ class NFSPDQNAgent(BaseAgent):
             self.previous_state = None
             self.previous_action = None
             self.previous_reward = None
-
-        for minibatch in range(self.config.num_minibatches):
-
-            rl_loss, sl_loss = self.experience_replay()
-
-            if training_step % self.config.transfer_interval == 0:
-                self.target_model.set_weights(self.rl_agent.model.get_weights())
-
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
-                self.save_checkpoint(
-                    stats,
-                    targets,
-                    50,
-                    training_step,
-                    training_step * self.config.replay_interval,
-                    time() - training_time,
-                )
 
     def select_policy(self, anticipatory_param):
         if random.random() < anticipatory_param and not self.is_test:
