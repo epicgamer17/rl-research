@@ -54,7 +54,7 @@ class BaseAgent:
         print("num_actions: ", self.num_actions)
 
         self.training_steps = self.config.training_steps
-        self.checkpoint_interval = 10
+        self.checkpoint_interval = self.training_steps // 30
 
         self.is_test = False
 
