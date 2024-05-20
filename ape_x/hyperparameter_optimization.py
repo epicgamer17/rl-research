@@ -167,7 +167,10 @@ def run_training(config, env: gym.Env, name):
         return {"status": STATUS_OK, "loss": loss}
     except Exception as e:
         logger.exception(f"learner failed due to error {e}")
-        return {"status": STATUS_FAIL, "loss": 0}
+        return {
+            "status": STATUS_FAIL,
+            "loss": 100000,
+        }  # make this high since some games have negative rewards (mountain car and acrobot) and 0 would actually be a perfect score
     finally:
         go_proc.send_signal(SIGTERM)
         while go_proc.poll() == None:
@@ -336,12 +339,12 @@ def main():
 
     search_space, initial_best_config = create_search_space()
     max_trials = 64
-    trials_step = 1  # how many additional trials to do after loading the last ones
+    trials_step = 64  # how many additional trials to do after loading the last ones
 
     try:  # try to load an already saved trials object, and increase the max
         trials = pickle.load(open("./classiccontrol_trials.p", "rb"))
         logger.info("Found saved Trials! Loading...")
-        max_trials = len(trials.trials) + trials_step
+        max_trials = max(len(trials.trials) + trials_step, max_trials + trials_step)
         logger.info(
             f"Rerunning from {len(trials.trials)} trials to {max_trials} (+{trials_step}) trials"
         )
