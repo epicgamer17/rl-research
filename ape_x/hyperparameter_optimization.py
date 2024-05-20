@@ -141,7 +141,7 @@ def run_training(config, env: gym.Env, name):
 
     # not enough actors to run or other issue generating hosts
     if proc.returncode != 0:
-        return {"status": STATUS_FAIL}
+        return {"status": STATUS_FAIL, "loss": 0}
 
     cmd = f'./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]} -actors_sigma_alpha={config["actors_sigma_alpha"]}'
     print("running cmd: ", cmd)
@@ -212,14 +212,14 @@ def objective(params):
     except AssertionError as e:
         status = STATUS_FAIL
         logger.info(f"exited due to invalid hyperparameter combination: {e}")
-        return {"status": status}
+        return {"status": status, "loss": 0}
 
     if status != STATUS_FAIL:
         loss_list = list()
         for env in environments_list:
             res_dict = run_training(params, env, name)
             if res_dict["status"] == STATUS_FAIL:
-                return {"status": status}
+                return res_dict
             else:
                 loss_list.append(res_dict["loss"])
 
@@ -335,7 +335,7 @@ def main():
     SSH_USERNAME = args.ssh_username
 
     search_space, initial_best_config = create_search_space()
-    max_trials = 16
+    max_trials = 64
     trials_step = 1  # how many additional trials to do after loading the last ones
 
     try:  # try to load an already saved trials object, and increase the max
