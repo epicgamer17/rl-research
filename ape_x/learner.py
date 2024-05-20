@@ -130,9 +130,8 @@ class ApeXLearnerBase(RainbowAgent):
         return loss
 
     def run(self):
-        # early stopping?
         try:
-            training_time = time.time()
+            start_time = time.time()
             self.on_run()
 
             logger.info("learner running")
@@ -150,6 +149,10 @@ class ApeXLearnerBase(RainbowAgent):
             training_step = 0
 
             for training_step in range(self.training_steps + 1):
+                # stop training if going over 1.5 hours
+                if time.time() - start_time > 3600 * 1.5:
+                    break
+
                 logger.info(
                     f"learner training step: {training_step}/{self.training_steps}"
                 )
@@ -178,8 +181,14 @@ class ApeXLearnerBase(RainbowAgent):
                         5,
                         training_step,
                         training_step * self.config.replay_interval,
-                        time.time() - training_time,
+                        time.time() - start_time,
                     )
+
+                    if training_step / self.checkpoint_interval > 25:
+                        past_scores = stats["test_score"][-5:]
+                        avg = np.sum(past_scores) / 5
+                        if avg < 10:
+                            return
 
             logger.info("loop done")
 
@@ -189,7 +198,7 @@ class ApeXLearnerBase(RainbowAgent):
                 5,
                 self.training_steps,
                 training_step * self.config.replay_interval,
-                time.time() - training_time,
+                time.time() - start_time,
             )
         except Exception as e:
             print(e)

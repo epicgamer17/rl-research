@@ -134,7 +134,8 @@ def run_training(config, env: gym.Env, name):
 
     current_host = get_current_host()
 
-    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME}, -num_actors={config["num_actors"]}"
+    num_actors = config["num_actors"] + 3  # +mongo, replay, spectator
+    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME}, -num_actors={num_actors}"
     print("running cmd:", cmd)
     proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
 
@@ -142,7 +143,7 @@ def run_training(config, env: gym.Env, name):
     if proc.returncode != 0:
         return {"status": STATUS_FAIL}
 
-    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]}, -actors_sigma_alpha={config["actors_sigma_alpha"]}"
+    cmd = f'./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]}, -actors_sigma_alpha={config["actors_sigma_alpha"]}'
     print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
@@ -228,29 +229,7 @@ def objective(params):
 
 def create_search_space():
     search_space = {
-        "activation": hp.choice(
-            "activation",
-            [
-                # "linear",
-                "relu",
-                # 'relu6',
-                # "sigmoid",
-                # "softplus",
-                # "soft_sign",
-                # "silu",
-                # "swish",
-                # "log_sigmoid",
-                # "hard_sigmoid",
-                # 'hard_silu',
-                # 'hard_swish',
-                # 'hard_tanh',
-                # "elu",
-                # 'celu',
-                # "selu",
-                # "gelu",
-                # 'glu'
-            ],
-        ),
+        "activation": hp.choice("activation", ["relu"]),
         "kernel_initializer": hp.choice(
             "kernel_initializer",
             [
@@ -271,11 +250,11 @@ def create_search_space():
             ],
         ),
         "learning_rate": hp.choice(
-            "learning_rate", [1, 0.1, 0.01, 0.001, 0.0001, 0.00001]
+            "learning_rate", [0.1, 0.01, 0.001, 0.0001, 0.00001]
         ),  #
         "adam_epsilon": hp.choice(
             "adam_epsilon",
-            [0.5, 0.3125, 0.03125, 0.003125, 0.0003125, 0.00003125, 0.000003125],
+            [0.3125, 0.03125, 0.003125, 0.0003125, 0.00003125, 0.000003125],
         ),
         "clipnorm": hp.choice(
             "clipnorm", [None, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]
@@ -284,26 +263,21 @@ def create_search_space():
         "transfer_interval": hp.choice(
             "transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
         ),
-        "replay_interval": hp.choice("replay_interval", [1, 2, 3, 4, 5, 8, 10, 12]),
-        "minibatch_size": hp.choice(
-            "minibatch_size", [2**i for i in range(3, 8)]
-        ),  ###########
+        "minibatch_size": hp.choice("minibatch_size", [2**i for i in range(3, 8)]),
         "replay_buffer_size": hp.choice(
             "replay_buffer_size",
             [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000, 100000],
-        ),  #############
+        ),
         "actor_buffer_size": hp.choice(
             "actor_buffer_size", [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
         ),
         "min_replay_buffer_size": hp.choice(
             "min_replay_buffer_size",
-            [0, 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000],
-        ),  # 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000
-        "n_step": hp.choice("n_step", [1, 2, 3, 4, 5, 8, 10]),
-        "discount_factor": hp.choice(
-            "discount_factor", [0.1, 0.5, 0.9, 0.99, 0.995, 0.999]
+            [125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000],
         ),
-        "atom_size": hp.choice("atom_size", [11, 21, 31, 41, 51, 61, 71, 81]),  #
+        "n_step": hp.choice("n_step", [1, 2, 3, 4, 5, 8, 10]),
+        "discount_factor": hp.choice("discount_factor", [0.9, 0.99, 0.995, 0.999]),
+        "atom_size": hp.choice("atom_size", [41, 51, 61, 71, 81]),  #
         "width": hp.choice("width", [32, 64, 128, 256, 512, 1024]),
         "dense_layers": hp.choice("dense_layers", [0, 1, 2, 3, 4]),
         # REWARD CLIPPING
