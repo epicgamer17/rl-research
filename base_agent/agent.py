@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import copy
 import dill
-from utils import make_stack, normalize_images, get_legal_moves
+from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
 
 # Every model should have:
 # 1. A network
@@ -133,54 +133,9 @@ class BaseAgent:
         test_score = self.test(num_trials, training_step)
         stats["test_score"].append(test_score)
         # plot the graphs
-        self.plot_graph(stats, targets, training_step, frames_seen, time_taken)
-
-    def plot_graph(self, stats, targets, step, frames_seen, time_taken):
-        num_plots = len(stats)
-        sqrt_num_plots = math.ceil(np.sqrt(num_plots))
-        fig, axs = plt.subplots(
-            sqrt_num_plots,
-            sqrt_num_plots,
-            figsize=(10 * sqrt_num_plots, 5 * sqrt_num_plots),
-            squeeze=False,
+        plot_graphs(
+            stats, targets, training_step, frames_seen, time_taken, self.model_name
         )
-
-        hours = int(time_taken // 3600)
-        minutes = int((time_taken % 3600) // 60)
-        seconds = int(time_taken % 60)
-
-        fig.suptitle(
-            "training stats | training step {} | frames seen {} | time taken {} hours {} minutes {} seconds".format(
-                step, frames_seen, hours, minutes, seconds
-            )
-        )
-
-        for i, (key, value) in enumerate(stats.items()):
-            x = np.arange(0, len(value))
-            row = i // sqrt_num_plots
-            col = i % sqrt_num_plots
-            axs[row, col].plot(x, value)
-            axs[row, col].set_title(
-                "{} | rolling average: {}".format(key, np.mean(value[-10:]))
-            )
-            if key in targets and targets[key] is not None:
-                axs[row, col].axhline(y=targets[key], color="r", linestyle="--")
-
-        for i in range(num_plots, sqrt_num_plots**2):
-            row = i // sqrt_num_plots
-            col = i % sqrt_num_plots
-            fig.delaxes(axs[row, col])
-
-        # plt.show()
-        if not os.path.exists("./training_graphs"):
-            os.makedirs("./training_graphs")
-        if not os.path.exists("./training_graphs/{}".format(self.model_name)):
-            os.makedirs("./training_graphs/{}".format(self.model_name))
-        plt.savefig(
-            "./training_graphs/{}/{}.png".format(self.model_name, self.model_name)
-        )
-
-        plt.close(fig)
 
     def test(self, num_trials, step) -> None:
         """Test the agent."""
