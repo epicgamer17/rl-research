@@ -236,8 +236,9 @@ class NFSPDQNAgent(BaseAgent):
         else:
             action = self.rl_agent.select_action(state, legal_moves)
             if not self.is_test:
+                target_policy = tf.one_hot(action, self.num_actions)
                 self.sl_agent.replay_buffer.store(
-                    state, action
+                    state, target_policy
                 )  # Store best moves in SL Memory
             return action
 
