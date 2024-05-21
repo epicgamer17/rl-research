@@ -3,7 +3,7 @@ from tensorflow import keras
 from keras import Model
 import numpy as np
 from layers.noisy_dense import NoisyDense
-from agent_configs import prepare_kernel_initializers
+from utils import prepare_kernel_initializers
 
 
 class SupervisedNetwork(Model):

@@ -3,6 +3,8 @@ from agent_configs import RainbowConfig
 
 import sys
 
+from utils import update_per_beta
+
 sys.path.append("../")
 from base_agent.agent import BaseAgent
 
@@ -445,11 +447,8 @@ class RainbowAgent(BaseAgent):
                 done = terminated or truncated
                 state = next_state
                 score += reward
-                self.config.per_beta = min(
-                    1.0,
-                    self.config.per_beta
-                    + (1 - self.config.per_beta)
-                    / self.training_steps,  # per beta increase
+                self.config.per_beta = update_per_beta(
+                    self.config.per_beta, 1.0, self.training_steps
                 )
 
                 if done:

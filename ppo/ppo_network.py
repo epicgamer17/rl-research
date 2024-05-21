@@ -1,7 +1,7 @@
 import tensorflow as tf
 from layers.noisy_dense import NoisyDense
 import numpy as np
-from agent_configs import prepare_kernel_initializers
+from utils import prepare_kernel_initializers
 
 
 class Network(tf.keras.Model):

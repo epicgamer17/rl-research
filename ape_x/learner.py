@@ -8,6 +8,7 @@ import threading
 from typing import NamedTuple
 from agent_configs import ApeXLearnerConfig
 
+from utils import update_per_beta
 
 sys.path.append("../")
 from rainbow.rainbow_agent import RainbowAgent
@@ -161,11 +162,8 @@ class ApeXLearnerBase(RainbowAgent):
                     self.store_weights()
                     logger.info("pushed params")
 
-                self.config.per_beta = min(
-                    1.0,
-                    self.config.per_beta
-                    + (1 - self.config.per_beta)
-                    / self.training_steps,  # per beta increase
+                self.config.per_beta = update_per_beta(
+                    self.config.per_beta, 1.0, self.training_steps
                 )
 
                 model_update_count += 1

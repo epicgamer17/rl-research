@@ -88,13 +88,9 @@ class BaseAgent:
 
     def action_mask(self, actions, legal_moves, mask_value=0):
         if self.config.game.has_legal_moves and self.config.game.is_discrete:
-            # print("masking actions")
             mask = np.zeros(self.num_actions, dtype=np.int8)
             mask[legal_moves] = 1
-            # print("mask", mask)
-            # print("legal_moves", legal_moves)
             actions[mask == 0] = mask_value
-            # print(actions)
         return actions
 
     def calculate_loss(self, batch):
