@@ -170,7 +170,9 @@ class ApeXLearnerBase(RainbowAgent):
                 loss = self._experience_replay()
                 logger.info(f"finished exp replay")
                 stats["loss"].append(loss)
-                self.update_target_model(model_update_count)
+                if training_step % self.config.transfer_interval == 0:
+                    stats["target_model_weight_update"] = [model_update_count]
+                    self.update_target_model(model_update_count)
 
                 if training_step % self.checkpoint_interval == 0:
                     self.save_checkpoint(

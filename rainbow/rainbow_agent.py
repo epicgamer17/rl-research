@@ -402,6 +402,7 @@ class RainbowAgent(BaseAgent):
                 state, _ = self.env.reset()
 
     def update_target_model(self, step):
+
         if self.config.soft_update:
             new_weights = self.target_model.get_weights()
 
@@ -415,10 +416,7 @@ class RainbowAgent(BaseAgent):
                 counter += 1
             self.target_model.set_weights(new_weights)
         else:
-            if step % self.config.transfer_interval == 0 and (
-                len(self.replay_buffer) >= self.config.minibatch_size
-            ):
-                self.target_model.set_weights(self.model.get_weights())
+            self.target_model.set_weights(self.model.get_weights())
 
     def train(self):
         training_time = time()
@@ -427,6 +425,7 @@ class RainbowAgent(BaseAgent):
             "score": [],
             "loss": [],
             "test_score": [],
+            "target_model_weight_update": [],
         }
         targets = {
             "score": self.env.spec.reward_threshold,
@@ -455,11 +454,13 @@ class RainbowAgent(BaseAgent):
                     state, _ = self.env.reset()
                     stats["score"].append(score)
                     score = 0
+
             for minibatch in range(self.config.num_minibatches):
                 loss = self.experience_replay()
                 stats["loss"].append(loss)
 
             if training_step % self.config.transfer_interval == 0:
+                stats["target_model_weight_update"].append(training_step)
                 self.update_target_model(training_step)
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
