@@ -3,6 +3,13 @@ from time import time
 
 from agent_configs import PPOConfig
 
+from utils import (
+    normalize_policy,
+    action_mask,
+    get_legal_moves,
+    update_linear_lr_schedule,
+)
+
 sys.path.append("../")
 
 import os
@@ -78,18 +85,18 @@ class PPOAgent(BaseAgent):
         state_input = self.prepare_states(state)
         value = self.model.critic(inputs=state_input).numpy()
         if self.discrete_action_space:
-            probabilities = self.model.actor(inputs=state_input).numpy()[0]
-            probabilities = self.action_mask(probabilities, legal_moves)
-            probabilities /= np.sum(probabilities)
-            return probabilities, value
+            policy = self.model.actor(inputs=state_input).numpy()[0]
+            policy = action_mask(policy, legal_moves, self.num_actions, mask_value=0)
+            policy = normalize_policy(policy)
+            return policy, value
         else:
             mean, std = self.model.actor(inputs=state_input)
             return mean, std, value
 
     def select_action(self, state, legal_moves=None):
         if self.discrete_action_space:
-            probabilities, value = self.predict_single(state)
-            distribution = tfp.distributions.Categorical(probs=probabilities)
+            policy, value = self.predict_single(state)
+            distribution = tfp.distributions.Categorical(probs=policy)
         else:
             mean, std, value = self.predict_single(state)
             distribution = tfp.distributions.Normal(mean, std)
@@ -214,7 +221,7 @@ class PPOAgent(BaseAgent):
             for timestep in range(self.config.steps_per_epoch):
                 action = self.select_action(
                     state,
-                    info["legal_moves"] if self.config.game.has_legal_moves else None,
+                    get_legal_moves(info),
                 )
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated
@@ -247,14 +254,15 @@ class PPOAgent(BaseAgent):
             np.random.shuffle(indices)
             minibatch_size = len(observations) // self.config.num_minibatches
 
-            for _ in range(self.config.train_policy_iterations):
-
-                learning_rate = self.config.actor.learning_rate * (
-                    1 - ((training_step - 1) / self.training_steps)
-                )
-                # print(learning_rate)
+            for iteration in range(self.config.train_policy_iterations):
                 learning_rate = max(learning_rate, 0)
-                # COULD BREAK UP INTO MINI BATCHES
+                learning_rate = update_linear_lr_schedule(
+                    learning_rate,
+                    0,
+                    self.training_steps,
+                    self.config.actor.learning_rate,
+                    iteration,
+                )
                 for start in range(0, len(observations), minibatch_size):
                     end = start + minibatch_size
                     batch_indices = indices[start:end]
@@ -281,13 +289,14 @@ class PPOAgent(BaseAgent):
                 #     print("Early stopping at iteration {}".format(_))
                 #     break
 
-            for _ in range(self.config.train_value_iterations):
-                # COULD BREAK UP INTO MINI BATCHES
-                learning_rate = self.config.critic.learning_rate * (
-                    1 - ((training_step - 1) / self.training_steps)
+            for iteration in range(self.config.train_value_iterations):
+                learning_rate = update_linear_lr_schedule(
+                    learning_rate,
+                    0,
+                    self.training_steps,
+                    self.config.critic.learning_rate,
+                    iteration,
                 )
-
-                # print(learning_rate)
                 learning_rate = max(learning_rate, 0)
                 for start in range(0, len(observations), minibatch_size):
                     end = start + minibatch_size

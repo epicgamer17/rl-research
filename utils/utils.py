@@ -32,29 +32,25 @@ import numpy as np
 
 
 def normalize_policy(policy):
-    policy /= tf.reduce_sum(policy)
+    policy /= tf.reduce_sum(policy, axis=1)
     return policy
 
 
-def action_mask(actions, legal_moves, mask_value=0):
-    mask = np.zeros(self.num_actions, dtype=np.int8)
+def action_mask(actions, legal_moves, num_actions, mask_value=0):
+    mask = np.zeros(num_actions, dtype=np.int8)
     mask[legal_moves] = 1
     actions[mask == 0] = mask_value
     return actions
 
 
-def get_legal_moves(self, info):
+def get_legal_moves(info):
     # info["legal_moves"] if self.config.game.has_legal_moves else None
     return info["legal_moves"] if "legal_moves" in info else None
 
 
-def normalize_image(image, single_image=True):
+def normalize_images(image):
     image_copy = np.array(image)
-    image_copy = image_copy / 255.0
-    if single_image:
-        make_stack(image_copy)
-    else:
-        normalized_image = image_copy
+    normalized_image = image_copy / 255.0
     return normalized_image
 
 
@@ -72,7 +68,28 @@ def update_per_beta(per_beta, per_beta_final, per_beta_steps):
     return per_beta
 
 
-def prepare_kernel_initializers(kernel_initializer=None):
+def update_linear_lr_schedule(
+    learning_rate, final_value, total_steps, initial_value=None, current_step=None
+):
+    # learning_rate = initial_value
+    if initial_value < final_value or learning_rate < final_value:
+        clamp_func = min
+    else:
+        clamp_func = max
+    if initial_value is not None and current_step is not None:
+        learning_rate = clamp_func(
+            final_value,
+            initial_value
+            + (final_value - initial_value) * (current_step / total_steps),
+        )
+    else:
+        learning_rate = clamp_func(
+            final_value, learning_rate + (final_value - learning_rate) / total_steps
+        )
+    return learning_rate
+
+
+def prepare_kernel_initializers(kernel_initializer):
     if kernel_initializer == "glorot_uniform":
         return GlorotUniform(seed=np.random.seed())
     elif kernel_initializer == "glorot_normal":
@@ -105,7 +122,7 @@ def prepare_kernel_initializers(kernel_initializer=None):
     raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
 
-def prepare_activations(activation=None):
+def prepare_activations(activation):
     # print("Activation to prase: ", activation)
     if activation == "linear":
         return None

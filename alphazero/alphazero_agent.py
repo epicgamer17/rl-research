@@ -6,6 +6,8 @@ from agent_configs import AlphaZeroConfig
 
 import sys
 
+from utils import normalize_policy, action_mask, get_legal_moves
+
 sys.path.append("../")
 from base_agent.agent import BaseAgent
 
@@ -153,9 +155,7 @@ class AlphaZeroAgent(BaseAgent):
                 )
                 _, reward, terminated, truncated, info = mcts_env.step(action)
                 search_path.append(node)
-                legal_moves = (
-                    info["legal_moves"] if self.config.game.has_legal_moves else None
-                )
+                legal_moves = get_legal_moves(info)
 
             # Turn of the leaf node
             leaf_node_turn = node.state[0][0][2]
@@ -225,8 +225,8 @@ class AlphaZeroAgent(BaseAgent):
         policy = policy.numpy()[0]
         value = value.numpy().item()
         # Set illegal moves probability to zero and renormalize
-        policy = self.action_mask(legal_moves, policy)
-        policy = policy / np.sum(policy)
+        policy = action_mask(policy, legal_moves, self.num_actions, mask_value=0)
+        policy = normalize_policy(policy)
         return value, policy
 
     def select_action(self, state, legal_moves=None, game=None):
@@ -250,12 +250,6 @@ class AlphaZeroAgent(BaseAgent):
             return action
         else:
             return action, target_policy
-
-    # def action_mask(self, legal_moves, policy):
-    #     illegal_moves = [a for a in range(self.num_actions) if a not in legal_moves]
-    #     policy[illegal_moves] = 0
-    #
-    #     return policy
 
     def play_game(self):
         state, info = self.env.reset()

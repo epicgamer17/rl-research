@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import copy
 import dill
+from utils import make_stack, normalize_images, get_legal_moves
 
 # Every model should have:
 # 1. A network
@@ -70,28 +71,18 @@ class BaseAgent:
         raise NotImplementedError
 
     def prepare_states(self, state):
-        state_copy = np.array(state)
+        prepared_state = np.array(state)
         if self.config.game.is_image:
-            state_copy = state_copy / 255.0
-        if state_copy.shape == self.observation_dimensions:
-            new_shape = (1,) + state_copy.shape
-            state_input = state_copy.reshape(new_shape)
-        else:
-            state_input = state_copy
-        return state_input
+            prepared_state = normalize_images(prepared_state)
+        if prepared_state.shape == self.observation_dimensions:
+            prepared_state = make_stack(prepared_state)
+        return prepared_state
 
     def predict_single(self, state):
         raise NotImplementedError
 
     def select_action(self, state, legal_moves=None):
         raise NotImplementedError
-
-    def action_mask(self, actions, legal_moves, mask_value=0):
-        if self.config.game.has_legal_moves and self.config.game.is_discrete:
-            mask = np.zeros(self.num_actions, dtype=np.int8)
-            mask[legal_moves] = 1
-            actions[mask == 0] = mask_value
-        return actions
 
     def calculate_loss(self, batch):
         pass
@@ -203,9 +194,7 @@ class BaseAgent:
         for trials in range(num_trials):
             state, info = self.test_env.reset()
             # self.test_env.render()
-            legal_moves = (
-                info["legal_moves"] if self.config.game.has_legal_moves else None
-            )
+            legal_moves = get_legal_moves(info)
 
             done = False
             score = 0
@@ -215,10 +204,7 @@ class BaseAgent:
                 next_state, reward, terminated, truncated, info = self.step(action)
                 # self.test_env.render()
                 done = terminated or truncated
-                legal_moves = (
-                    info["legal_moves"] if self.config.game.has_legal_moves else None
-                )
-
+                legal_moves = get_legal_moves(info)
                 state = next_state
                 score += reward
             average_score += score

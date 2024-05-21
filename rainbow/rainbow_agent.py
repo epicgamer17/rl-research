@@ -3,7 +3,7 @@ from agent_configs import RainbowConfig
 
 import sys
 
-from utils import update_per_beta
+from utils import update_per_beta, action_mask, get_legal_moves
 
 sys.path.append("../")
 from base_agent.agent import BaseAgent
@@ -142,9 +142,9 @@ class RainbowAgent(BaseAgent):
         q_values = np.sum(np.multiply(q_distribution, np.array(self.support)), axis=2)[
             0
         ]
-        q_values = self.action_mask(q_values, legal_moves, mask_value=-np.inf)
-
-        # print(q_values.shape)
+        q_values = action_mask(
+            q_values, legal_moves, self.num_actions, mask_value=-np.inf
+        )
         return q_values
 
     def select_action(self, state, legal_moves=None):
@@ -440,7 +440,7 @@ class RainbowAgent(BaseAgent):
             for _ in range(self.config.replay_interval):
                 action = self.select_action(
                     state,
-                    info["legal_moves"] if self.config.game.has_legal_moves else None,
+                    get_legal_moves(info),
                 )
 
                 next_state, reward, terminated, truncated, info = self.step(action)

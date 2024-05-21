@@ -5,6 +5,8 @@ from imitation_learning.imitation_agent import BaseImitationAgent
 from replay_buffers.nfsp_reservoir_buffer import NFSPReservoirBuffer
 import tensorflow_probability as tfp
 
+from utils import normalize_policy, action_mask
+
 
 class AverageStrategyAgent(BaseImitationAgent):
     def __init__(self, env, config, name):
@@ -32,6 +34,6 @@ class AverageStrategyAgent(BaseImitationAgent):
     def predict_single(self, state, legal_moves=None):
         state_input = self.prepare_states(state)
         policy = self.model(inputs=state_input).numpy()[0]
-        policy = self.action_mask(policy, legal_moves)
-        policy /= tf.reduce_sum(policy)
+        policy = action_mask(policy, legal_moves, self.num_actions, mask_value=0)
+        policy = normalize_policy(policy)
         return policy

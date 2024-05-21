@@ -36,6 +36,8 @@ from time import time
 from agent_configs import NFSPDQNConfig
 import numpy as np
 
+from utils import get_legal_moves
+
 sys.path.append("../")
 
 import os
@@ -109,7 +111,7 @@ class NFSPDQN(BaseAgent):
                 current_agent = self.nfsp_agents[current_player]
                 action = current_agent.select_action(
                     state,
-                    (info["legal_moves"] if self.config.game.has_legal_moves else None),
+                    get_legal_moves(info),
                 )
 
                 current_agent.config.per_beta = min(
@@ -176,11 +178,7 @@ class NFSPDQN(BaseAgent):
                 for p in range(self.config.num_players):
                     action = self.nfsp_agents[p].select_action(
                         state,
-                        (
-                            info["legal_moves"]
-                            if self.config.game.has_legal_moves
-                            else None
-                        ),
+                        get_legal_moves(info),
                     )
                     next_state, reward, terminated, truncated, info = self.step(action)
                     done = terminated or truncated
