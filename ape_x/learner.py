@@ -178,7 +178,7 @@ class ApeXLearnerBase(RainbowAgent):
                         targets,
                         5,
                         training_step,
-                        training_step * self.config.replay_interval,
+                        training_step,
                         time.time() - start_time,
                     )
 
@@ -196,8 +196,8 @@ class ApeXLearnerBase(RainbowAgent):
                 stats,
                 targets,
                 5,
-                self.training_steps,
-                training_step * self.config.replay_interval,
+                training_step,
+                training_step,
                 time.time() - start_time,
             )
         except Exception as e:
