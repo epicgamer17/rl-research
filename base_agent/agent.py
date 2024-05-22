@@ -175,4 +175,4 @@ class BaseAgent:
         self.test_env.close()
         self.is_test = False
         average_score /= num_trials
-        return average_score, max_score, min_score
+        return {"score": average_score, "max": max_score, "min": min_score}

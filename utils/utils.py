@@ -103,6 +103,10 @@ def default_plot_func(axs, key, values, targets, row, col, **kwargs):
 
 
 def plot_scores(axs, key, values, targets, row, col, **kwargs):
+    assert (
+        "score" in values[0]
+    ), "Values must be a list of dicts with a 'score' key and optionally a max and min scores key"
+
     axs[row, col].set_title(
         "{} | rolling average: {} | latest test score: {}".format(
             key, np.mean(values[-10:]), values[-1]
@@ -115,16 +119,33 @@ def plot_scores(axs, key, values, targets, row, col, **kwargs):
     axs[row, col].set_xlim(0, len(values))
 
     x = np.arange(0, len(values))
-    score_plots = map(list, zip(*values))
-    scores = score_plots[0]
-    max_scores = score_plots[1]
-    min_scores = score_plots[2]
+    scores = [value["score"] for value in values]
+    max_scores = (
+        [value["max_score"] for value in values] if "max_score" in values[0] else None
+    )
+    min_scores = (
+        [value["min_score"] for value in values] if "min_score" in values[0] else None
+    )
 
-    axs[row, col].plot(x, values)
-    axs[row, col].fill_between(x, min_scores, max_scores, alpha=0.5)
+    assert (
+        max_scores is None or min_scores is not None
+    ), "If max_scores is provided, min_scores must be provided as well"
+    assert (
+        min_scores is None or max_scores is not None
+    ), "If min_scores is provided, max_scores must be provided as well"
+
+    axs[row, col].plot(x, scores)
+    if max_scores is not None and min_scores is not None:
+        axs[row, col].fill_between(x, min_scores, max_scores, alpha=0.5)
 
     best_fit = np.polyfit(x, values, 1)
-    axs[row, col].plot(x, best_fit[0] * x + best_fit[1], color="g")
+    axs[row, col].plot(
+        x,
+        best_fit[0] * x + best_fit[1],
+        color="g",
+        label="Best Fit Line",
+        linestyle="..",
+    )
 
     if "target_model_weight_update" in kwargs:
         weight_updates = kwargs["target_model_weight_update"]
@@ -136,14 +157,14 @@ def plot_scores(axs, key, values, targets, row, col, **kwargs):
                 label="Target Model Weight Update {}".format(i),
             )
 
-    if "weight_update" in kwargs:
-        weight_updates = kwargs["weight_update"]
+    if "model_weight_update" in kwargs:
+        weight_updates = kwargs["model_weight_update"]
         for i, weight_update in enumerate(weight_updates):
             axs[row, col].axvline(
                 x=weight_update,
                 color="r",
                 linestyle="--",
-                label="Weight Update {}".format(i),
+                label="Model Weight Update {}".format(i),
             )
 
     if key in targets and targets[key] is not None:
