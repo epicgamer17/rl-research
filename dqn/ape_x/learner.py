@@ -291,6 +291,14 @@ class ApeXLearner(ApeXLearnerBase):
             if not active:
                 time.sleep(1)
 
+    def on_save(self):
+        pass
+        # trigger replay buffer save to file with zmq
+    
+    def on_load(self):
+        self.store_weights()
+        # trigger replay buffer load from file with zmq
+
     def store_weights(self):
         weights = self.model.get_weights()
         # print(weights)
