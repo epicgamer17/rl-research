@@ -99,8 +99,25 @@ class BaseAgent:
     def on_save(self):
         pass
 
-    def load(self, dir):
-        raise NotImplementedError
+    def load(self, dir, training_step):
+        """ load the model from a directory and training step. The name of the directory will be the name of the model, and should contain the following files:
+            - episode_{training_step}_optimizer.dill
+            - config.yaml
+          """
+
+        # dir = Path("model_weights", self.model_name)
+        name = ""
+        optimizer_path = Path(dir, f"episode_{training_step}_optimizer.dill"), "wb"
+        config_path = Path(dir, f"episode_{training_step}_optimizer.dill"), "wb"
+        weights_path = str(Path(dir, f"episode_{training_step}.keras"))
+
+        self.config = self.config.__class__.load(config_path)
+        with open(optimizer_path, "rb") as f:
+            self.config.optimizer = dill.load(f)
+        
+        self.mode.load(weights_path)
+
+        self.on_load()
 
     def on_load(self):
         pass
