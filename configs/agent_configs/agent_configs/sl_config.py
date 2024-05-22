@@ -1,5 +1,5 @@
 import tensorflow as tf
-from .base_config import Config, ConfigBase, prepare_activations
+from .base_config import Config, ConfigBase
 from tensorflow import keras
 from keras.initializers import (
     VarianceScaling,
@@ -37,6 +37,11 @@ import numpy as np
 from game_configs import GameConfig
 
 import yaml
+
+import sys
+
+sys.path.append("../../utils")
+import utils
 
 
 class SupervisedConfig(ConfigBase):

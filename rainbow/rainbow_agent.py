@@ -4,7 +4,8 @@ from agent_configs import RainbowConfig
 import sys
 
 sys.path.append("../")
-from utils import update_per_beta, action_mask, get_legal_moves
+# from utils import update_per_beta, action_mask, get_legal_moves
+import utils
 
 from base_agent.agent import BaseAgent
 

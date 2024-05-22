@@ -15,6 +15,24 @@ from keras.initializers import (
     Initializer,
 )
 
+
+from keras.activations import (
+    relu,
+    sigmoid,
+    softplus,
+    softsign,
+    hard_sigmoid,
+    elu,
+    selu,
+)
+
+from tensorflow.nn import (
+    silu,
+    swish,
+    gelu,
+)
+
+
 import numpy as np
 
 
@@ -109,7 +127,8 @@ def plot_scores(axs, key, values, targets, row, col, *args, **kwargs):
             min_scores.append(score_dict["min_score"])
 
     axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(scores[-10:])} | latest test score: {scores[-1]}")
+        f"{key} | rolling average: {np.mean(scores[-10:])} | latest test score: {scores[-1]}"
+    )
 
     axs[row][col].set_xlabel("Test Game")
     axs[row][col].set_ylabel("Test Score")
@@ -204,7 +223,7 @@ def plot_graphs(stats: dict, targets, step, frames_seen, time_taken, model_name)
     for i, (key, values) in enumerate(stats.items()):
         row = i // sqrt_num_plots
         col = i % sqrt_num_plots
-        
+
         if key in stat_keys_to_plot_funcs:
             stat_keys_to_plot_funcs[key](axs, key, values, targets, row, col)
         else:
@@ -257,3 +276,44 @@ def prepare_kernel_initializers(kernel_initializer):
 
     raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
+
+def prepare_activations(activation):
+    # print("Activation to prase: ", activation)
+    if activation == "linear":
+        return None
+    elif activation == "relu":
+        return relu
+    elif activation == "relu6":
+        return relu(max_value=6)
+    elif activation == "sigmoid":
+        return sigmoid
+    elif activation == "softplus":
+        return softplus
+    elif activation == "soft_sign":
+        return softsign
+    elif activation == "silu":
+        return silu
+    elif activation == "swish":
+        return swish
+    # elif activation == "log_sigmoid":
+    #     return log_sigmoid
+    elif activation == "hard_sigmoid":
+        return hard_sigmoid
+    # elif activation == "hard_silu":
+    #     return hard_silu
+    # elif activation == "hard_swish":
+    #     return hard_swish
+    # elif activation == "hard_tanh":
+    #     return hard_tanh
+    elif activation == "elu":
+        return elu
+    # elif activation == "celu":
+    #     return celu
+    elif activation == "selu":
+        return selu
+    elif activation == "gelu":
+        return gelu
+    # elif activation == "glu":
+    #     return glu
+
+    raise ValueError(f"Activation {activation} not recognized")

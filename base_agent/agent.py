@@ -10,8 +10,9 @@ import copy
 import dill
 
 import sys
-sys.path.append('../')
-from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
+
+sys.path.append("../")
+# from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
 
 # Every model should have:
 # 1. A network
@@ -103,10 +104,10 @@ class BaseAgent:
         pass
 
     def load(self, dir, training_step):
-        """ load the model from a directory and training step. The name of the directory will be the name of the model, and should contain the following files:
-            - episode_{training_step}_optimizer.dill
-            - config.yaml
-          """
+        """load the model from a directory and training step. The name of the directory will be the name of the model, and should contain the following files:
+        - episode_{training_step}_optimizer.dill
+        - config.yaml
+        """
 
         # dir = Path("model_weights", self.model_name)
         name = ""
@@ -117,7 +118,7 @@ class BaseAgent:
         self.config = self.config.__class__.load(config_path)
         with open(optimizer_path, "rb") as f:
             self.config.optimizer = dill.load(f)
-        
+
         self.mode.load(weights_path)
 
         self.on_load()

@@ -5,64 +5,10 @@ from keras.losses import Loss
 from game_configs import GameConfig
 
 import yaml
+import sys
 
-from keras.activations import (
-    relu,
-    sigmoid,
-    softplus,
-    softsign,
-    hard_sigmoid,
-    elu,
-    selu,
-)
+from utils import prepare_activations
 
-from tensorflow.nn import (
-    silu,
-    swish,
-    gelu,
-)
-
-
-def prepare_activations(activation):
-    # print("Activation to prase: ", activation)
-    if activation == "linear":
-        return None
-    elif activation == "relu":
-        return relu
-    elif activation == "relu6":
-        return relu(max_value=6)
-    elif activation == "sigmoid":
-        return sigmoid
-    elif activation == "softplus":
-        return softplus
-    elif activation == "soft_sign":
-        return softsign
-    elif activation == "silu":
-        return silu
-    elif activation == "swish":
-        return swish
-    # elif activation == "log_sigmoid":
-    #     return log_sigmoid
-    elif activation == "hard_sigmoid":
-        return hard_sigmoid
-    # elif activation == "hard_silu":
-    #     return hard_silu
-    # elif activation == "hard_swish":
-    #     return hard_swish
-    # elif activation == "hard_tanh":
-    #     return hard_tanh
-    elif activation == "elu":
-        return elu
-    # elif activation == "celu":
-    #     return celu
-    elif activation == "selu":
-        return selu
-    elif activation == "gelu":
-        return gelu
-    # elif activation == "glu":
-    #     return glu
-
-    raise ValueError(f"Activation {activation} not recognized")
 
 class ConfigBase:
     def parse_field(self, field_name, default=None, wrapper=None, required=True):
