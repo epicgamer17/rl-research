@@ -151,7 +151,7 @@ class BaseAgent:
 
         # test model
         test_score = self.test(num_trials, training_step)
-        stats["test_score"].append({"score": test_score})
+        stats["test_score"].append(test_score)
         # plot the graphs
         plot_graphs(
             stats, targets, training_step, frames_seen, time_taken, self.model_name
@@ -195,4 +195,4 @@ class BaseAgent:
         self.test_env.close()
         self.is_test = False
         average_score /= num_trials
-        return {"score": average_score, "max": max_score, "min": min_score}
+        return {"score": average_score, "max_score": max_score, "min_score": min_score}

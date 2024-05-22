@@ -94,96 +94,140 @@ def update_linear_lr_schedule(
     return learning_rate
 
 
-def default_plot_func(axs, key, values, targets, row, col, *args, **kwargs):
+def default_plot_func(axs, key, values, targets, row, col):
     axs[row][col].set_title(
         "{} | rolling average: {}".format(key, np.mean(values[-10:]))
     )
-    x = np.arange(0, len(values))
+    x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
         axs[row][col].axhline(y=targets[key], color="r", linestyle="--")
 
 
-def plot_scores(axs, key, values, targets, row, col, *args, **kwargs):
-    assert (
-        "score" in values[0]
-    ), "Values must be a list of dicts with a 'score' key and optionally a max and min scores key"
+def plot_scores(axs, key, values, targets, row, col):
+    # assert (
+    #     "score" in values[0]
+    # ), "Values must be a list of dicts with a 'score' key and optionally a max and min scores key. Values was {}".format(
+    #     values
+    # )
+
+    scores = [value["score"] for value in values]
+    x = np.arange(1, len(values) + 1)
+    axs[row][col].plot(x, scores)
 
     has_max_scores = "max_score" in values[0]
     has_min_scores = "min_score" in values[0]
-    scores = list()
-    max_scores = list()
-    min_scores = list()
-
     assert (
         has_max_scores == has_min_scores
     ), "Both max_scores and min_scores must be provided or not provided"
 
-    for score_dict in values:
-        scores.append(score_dict["score"])
-        if has_max_scores:
-            max_scores.append(score_dict["max_score"])
-        if has_min_scores:
-            min_scores.append(score_dict["min_score"])
-
-    axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(scores[-10:])} | latest test score: {scores[-1]}"
-    )
-
-    axs[row][col].set_xlabel("Test Game")
-    axs[row][col].set_ylabel("Test Score")
-
-    axs[row][col].set_xlim(0, len(values))
-
-    x = np.arange(len(values))
-
-    axs[row][col].plot(x, scores)
     if has_max_scores:
+        max_scores = [value["max_score"] for value in values]
+        min_scores = [value["min_score"] for value in values]
         axs[row][col].fill_between(x, min_scores, max_scores, alpha=0.5)
 
-    best_fit = np.polyfit(x, scores, 1)
-    axs[row][col].plot(
-        x,
-        best_fit[0] * x + best_fit[1],
-        color="g",
-        label="Best Fit Line",
-        linestyle="dotted",
+    has_target_model_updates = "target_model_updated" in values[0]
+    has_model_updates = "model_updated" in values[0]
+
+    if has_target_model_updates:
+        weight_updates = [value["target_model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="black",
+                    linestyle="dotted",
+                    label="Target Model Weight Update {}".format(i),
+                )
+
+    if has_model_updates:
+        weight_updates = [value["model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="gray",
+                    linestyle="dotted",
+                    label="Model Weight Update {}".format(i),
+                )
+
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(scores[-10:])} | latest: {scores[-1]}"
     )
 
-    if "target_model_weight_update" in kwargs:
-        weight_updates = kwargs["target_model_weight_update"]
-        for i, weight_update in enumerate(weight_updates):
-            axs[row][col].axvline(
-                x=weight_update,
-                color="r",
-                linestyle="dashed",
-                label="Target Model Weight Update {}".format(i),
-            )
+    axs[row][col].set_xlabel("Game")
+    axs[row][col].set_ylabel("Score")
 
-    if "model_weight_update" in kwargs:
-        weight_updates = kwargs["model_weight_update"]
-        for i, weight_update in enumerate(weight_updates):
-            axs[row][col].axvline(
-                x=weight_update,
-                color="r",
-                linestyle="--",
-                label="Model Weight Update {}".format(i),
-            )
+    axs[row][col].set_xlim(1, len(values) + 1)
+
+    if len(scores) > 1:
+        best_fit_x, best_fit_y = np.polyfit(x, scores, 1)
+        axs[row][col].plot(
+            x,
+            best_fit_x * x + best_fit_y,
+            color="g",
+            label="Best Fit Line",
+            linestyle="dotted",
+        )
 
     if key in targets and targets[key] is not None:
         axs[row][col].axhline(
             y=targets[key],
             color="r",
-            linestyle="--",
+            linestyle="dashed",
             label="Target Score {}".format(targets[key]),
         )
 
 
-def plot_loss(axs, key, values, targets, row, col, **kwargs):
-    default_plot_func(axs, key, values, targets, row, col)
+def plot_loss(axs, key, values, targets, row, col):
+    loss = [value["loss"] for value in values]
+    x = np.arange(1, len(values) + 1)
+    axs[row][col].plot(x, loss)
+
+    has_target_model_updates = "target_model_updated" in values[0]
+    has_model_updates = "model_updated" in values[0]
+
+    if has_target_model_updates:
+        weight_updates = [value["target_model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="black",
+                    linestyle="dotted",
+                    label="Target Model Weight Update {}".format(i),
+                )
+
+    if has_model_updates:
+        weight_updates = [value["model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="gray",
+                    linestyle="dotted",
+                    label="Model Weight Update {}".format(i),
+                )
+
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(loss[-10:])} | latest: {loss[-1]}"
+    )
+
+    axs[row][col].set_xlabel("Time Step")
+    axs[row][col].set_ylabel("Loss")
+
+    axs[row][col].set_xlim(1, len(values) + 1)
+
+    if key in targets and targets[key] is not None:
+        axs[row][col].axhline(
+            y=targets[key],
+            color="r",
+            linestyle="dashed",
+            label="Target Score {}".format(targets[key]),
+        )
 
 
-def plot_exploitability(axs, key, values, targets, row, col, **kwargs):
+def plot_exploitability(axs, key, values, targets, row, col):
     default_plot_func(axs, key, values, targets, row, col)
 
 
