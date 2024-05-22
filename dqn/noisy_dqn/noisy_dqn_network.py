@@ -39,6 +39,8 @@ class Network(Model):
                 strides,
                 self.config.activation,
                 self.config.kernel_initializer,
+                noisy=self.config.conv_layers_noisy,
+                noisy_sigma=self.config.noisy_sigma,
             )
 
         widths = [config.width] * config.dense_layers
@@ -47,12 +49,16 @@ class Network(Model):
                 widths,
                 self.config.activation,
                 self.config.kernel_initializer,
+                self.config.noisy,
+                noisy_sigma=self.config.noisy_sigma,
             )
 
-        self.output = tf.keras.layers.Dense(
+        self.output = NoisyDense(
             output_size,
             activation=None,
             kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
+            noisy=self.config.noisy,
+            noisy_sigma=self.config.noisy_sigma,
         )
 
         self.flatten = tf.keras.layers.Flatten()

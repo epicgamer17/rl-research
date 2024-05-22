@@ -48,7 +48,7 @@ from replay_buffers.prioritized_replay_buffer import (
     PrioritizedReplayBuffer,
     FastPrioritizedReplayBuffer,
 )
-from dqn.dqn_network import Network
+from rainbow.rainbow_network import Network
 
 
 class Sample(NamedTuple):
@@ -62,14 +62,14 @@ class Sample(NamedTuple):
     dones: np.ndarray
 
 
-class NStepDQNAgent(BaseAgent):
+class RainbowAgent(BaseAgent):
     def __init__(
         self,
         env,
         config: RainbowConfig,
         name=datetime.datetime.now().timestamp(),
     ):
-        super(NStepDQNAgent, self).__init__(env, config, name)
+        super(RainbowAgent, self).__init__(env, config, name)
         self.config = config
         self.model = Network(
             config, self.num_actions, input_shape=self.observation_dimensions
