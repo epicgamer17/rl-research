@@ -144,10 +144,9 @@ class ApeXLearnerBase(RainbowAgent):
             targets = {
                 "test_score": self.env.spec.reward_threshold,
             }
+            # target_model_updated = False
             # self.fill_replay_buffer()
-            state, _ = self.env.reset()
-            model_update_count = 0
-            training_step = 0
+            state, info = self.env.reset()
 
             for training_step in range(self.training_steps + 1):
                 # stop training if going over 1.5 hours
@@ -166,13 +165,12 @@ class ApeXLearnerBase(RainbowAgent):
                     self.config.per_beta, 1.0, self.training_steps
                 )
 
-                model_update_count += 1
                 loss = self._experience_replay()
                 logger.info(f"finished exp replay")
                 stats["loss"].append(loss)
                 if training_step % self.config.transfer_interval == 0:
-                    stats["target_model_weight_update"] = [model_update_count]
-                    self.update_target_model(model_update_count)
+                    # target_model_updated = True
+                    self.update_target_model(training_step)
 
                 if training_step % self.checkpoint_interval == 0:
                     self.save_checkpoint(
@@ -185,7 +183,9 @@ class ApeXLearnerBase(RainbowAgent):
                     )
 
                     if training_step // self.training_steps > 0.125:
-                        past_scores = stats["test_score"][-5:]
+                        past_scores = stats["test_score"][-5:][
+                            "score"
+                        ]  # this may not work, you might need to convert it to a list first like in utils plots :)
                         avg = np.sum(past_scores) / 5
                         if avg < 10:
                             return
@@ -301,7 +301,7 @@ class ApeXLearner(ApeXLearnerBase):
     def on_run(self):
         self.flag = threading.Event()
 
-        state, _ = self.env.reset()
+        state, info = self.env.reset()
         self.select_action(state)
         self.replay_thread = threading.Thread(
             target=self.handle_replay_socket, args=(self.flag,)
