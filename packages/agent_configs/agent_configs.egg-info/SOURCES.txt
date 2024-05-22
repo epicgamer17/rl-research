@@ -6,10 +6,13 @@ agent_configs/ape_x_config.py
 agent_configs/base_config.py
 agent_configs/distributed_configs.py
 agent_configs/muzero_config.py
+agent_configs/nfsp_config.py
 agent_configs/ppo_actor_config.py
 agent_configs/ppo_config.py
 agent_configs/ppo_critic_config.py
 agent_configs/rainbow_config.py
+agent_configs/replay_config.py
+agent_configs/sl_config.py
 agent_configs.egg-info/PKG-INFO
 agent_configs.egg-info/SOURCES.txt
 agent_configs.egg-info/dependency_links.txt

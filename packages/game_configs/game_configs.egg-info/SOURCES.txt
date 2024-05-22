@@ -3,8 +3,11 @@ setup.py
 game_configs/__init__.py
 game_configs/atari_config.py
 game_configs/cartpole_config.py
+game_configs/classiccontrol_config.py
 game_configs/connect4_config.py
 game_configs/game_config.py
+game_configs/leduc_holdem_config.py
+game_configs/mississippi_marbles_config.py
 game_configs/tictactoe_config.py
 game_configs.egg-info/PKG-INFO
 game_configs.egg-info/SOURCES.txt
