@@ -181,13 +181,6 @@ stat_keys_to_plot_funcs = {
 }
 
 
-from typing import NamedTuple
-
-class Statictic(NamedTuple):
-    score: float
-    min: float
-    max:float
-
 def plot_graphs(stats: dict, targets, step, frames_seen, time_taken, model_name):
     num_plots = len(stats)
     sqrt_num_plots = math.ceil(np.sqrt(num_plots))
