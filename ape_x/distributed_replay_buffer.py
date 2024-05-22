@@ -1,5 +1,5 @@
 import argparse
-import gymnasium as gym
+import signal
 import numpy as np
 import entities.replayMemory_capnp as replay_memory_capnp
 import zmq
@@ -64,6 +64,7 @@ class ReplayServer:
         replay_memory: SaveableReplayBuffer,
         learner_port,
         actors_port,
+        model_name
     ):
         self.replay_memory = replay_memory
         self.ctx = zmq.Context()
@@ -76,6 +77,14 @@ class ReplayServer:
         self.poller = zmq.Poller()
         self.poller.register(self.actors_socket, zmq.POLLIN)
         self.poller.register(self.learners_socket, zmq.POLLIN)
+
+        self.exit = False
+        signal.signal(signal.SIGINT, self.cleanup)
+        signal.signal(signal.SIGTERM, self.cleanup)
+
+        self.current_episode = 0
+        self.model_name = model_name
+    
 
     def make_sample(self, beta):
         try:
@@ -106,8 +115,12 @@ class ReplayServer:
 
         return builder.to_bytes_packed()
 
+    def cleanup(self):
+        self.replay_memory.save(f"{self.model_name}_episode_{self.current_episode}.xz")
+        self.exit = True
+
     def run(self):
-        while True:
+        while not self.exit:
             try:
                 socks = dict(self.poller.poll())
             except KeyboardInterrupt:
@@ -162,7 +175,6 @@ class ReplayServer:
                     self.replay_memory.replay_memory.update_priorities(
                         indices=indices, priorities=losses, ids=ids
                     )
-        self.replay_memory.save("replay_memory.xz")
 
 
 def main():
@@ -173,13 +185,17 @@ def main():
     parser.add_argument("--actors_port", type=str, default="5555")
     parser.add_argument("--load", default=False, action="store_true")
     parser.add_argument(
+        "--model_name", type=str, default="learner"
+    )
+    # TODO pass in this command line argument wherever this is called (ie hyperopt.go)
+    parser.add_argument(
         "--config_file", type=str, default="configs/replay_config_example.yaml"
     )
 
     args = parser.parse_args()
     config = ReplayBufferConfig.load(args.config_file)
     replay_memory = SaveableReplayBuffer(config, args.load)
-    server = ReplayServer(replay_memory, args.learner_port, args.actors_port)
+    server = ReplayServer(replay_memory, args.learner_port, args.actors_port, args.model_name)
     logger.info(
         f"replay buffer started on ports {args.actors_port} (actors) and {args.learner_port} (learner)"
     )
