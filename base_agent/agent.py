@@ -11,8 +11,7 @@ import dill
 
 import sys
 
-sys.path.append("../")
-# from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
+from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
 
 # Every model should have:
 # 1. A network

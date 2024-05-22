@@ -38,11 +38,6 @@ from game_configs import GameConfig
 
 import yaml
 
-import sys
-
-sys.path.append("../../utils")
-import utils
-
 
 class SupervisedConfig(ConfigBase):
     def __init__(self, config_dict):

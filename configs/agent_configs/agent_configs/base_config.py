@@ -7,7 +7,7 @@ from game_configs import GameConfig
 import yaml
 import sys
 
-from utils import prepare_activations
+from utils import utils
 
 
 class ConfigBase:

@@ -3,10 +3,9 @@ import datetime
 import gc
 from time import time
 from agent_configs import AlphaZeroConfig
+from utils import normalize_policy, action_mask, get_legal_moves
 
 import sys
-
-from utils import normalize_policy, action_mask, get_legal_moves
 
 sys.path.append("../")
 from base_agent.agent import BaseAgent

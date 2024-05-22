@@ -1,11 +1,10 @@
 import os
 from agent_configs import RainbowConfig
+from utils import update_per_beta, action_mask, get_legal_moves
 
 import sys
 
 sys.path.append("../")
-# from utils import update_per_beta, action_mask, get_legal_moves
-import utils
 
 from base_agent.agent import BaseAgent
 
