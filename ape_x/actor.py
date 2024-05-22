@@ -198,10 +198,10 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
     def on_run_start(self):
         logger.info("fetching initial network params from learner...")
-        state, _ = self.env.reset()
+        state, info = self.env.reset()
         self.select_action(state)
         self.update_params()
-        self.env_state, _ = self.env.reset()
+        self.env_state, info = self.env.reset()
 
         if self.spectator:
             self.t_i = time.time()
