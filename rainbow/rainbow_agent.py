@@ -3,9 +3,9 @@ from agent_configs import RainbowConfig
 
 import sys
 
+sys.path.append("../")
 from utils import update_per_beta, action_mask, get_legal_moves
 
-sys.path.append("../")
 from base_agent.agent import BaseAgent
 
 os.environ["OMP_NUM_THREADS"] = f"{8}"
@@ -433,7 +433,7 @@ class RainbowAgent(BaseAgent):
         }
 
         self.fill_replay_buffer()
-        state, _ = self.env.reset()
+        state, info = self.env.reset()
         score = 0
         for training_step in range(self.training_steps):
             for _ in range(self.config.replay_interval):
@@ -451,8 +451,8 @@ class RainbowAgent(BaseAgent):
                 )
 
                 if done:
-                    state, _ = self.env.reset()
-                    stats["score"].append(score)
+                    state, info = self.env.reset()
+                    stats["score"].append({"score": score})
                     score = 0
 
             for minibatch in range(self.config.num_minibatches):

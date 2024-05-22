@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import copy
 import dill
+
+import sys
+sys.path.append('../')
 from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
 
 # Every model should have:
@@ -148,7 +151,7 @@ class BaseAgent:
 
         # test model
         test_score = self.test(num_trials, training_step)
-        stats["test_score"].append(test_score)
+        stats["test_score"].append({"score": test_score})
         # plot the graphs
         plot_graphs(
             stats, targets, training_step, frames_seen, time_taken, self.model_name

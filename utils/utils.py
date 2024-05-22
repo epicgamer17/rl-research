@@ -15,22 +15,6 @@ from keras.initializers import (
     Initializer,
 )
 
-from keras.activations import (
-    relu,
-    sigmoid,
-    softplus,
-    softsign,
-    hard_sigmoid,
-    elu,
-    selu,
-)
-
-from tensorflow.nn import (
-    silu,
-    swish,
-    gelu,
-)
-
 import numpy as np
 
 
@@ -92,75 +76,75 @@ def update_linear_lr_schedule(
     return learning_rate
 
 
-def default_plot_func(axs, key, values, targets, row, col, **kwargs):
-    axs[row, col].set_title(
+def default_plot_func(axs, key, values, targets, row, col, *args, **kwargs):
+    axs[row][col].set_title(
         "{} | rolling average: {}".format(key, np.mean(values[-10:]))
     )
     x = np.arange(0, len(values))
-    axs[row, col].plot(x, values)
+    axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
-        axs[row, col].axhline(y=targets[key], color="r", linestyle="--")
+        axs[row][col].axhline(y=targets[key], color="r", linestyle="--")
 
 
-def plot_scores(axs, key, values, targets, row, col, **kwargs):
+def plot_scores(axs, key, values, targets, row, col, *args, **kwargs):
     assert (
         "score" in values[0]
     ), "Values must be a list of dicts with a 'score' key and optionally a max and min scores key"
 
-    axs[row, col].set_title(
-        "{} | rolling average: {} | latest test score: {}".format(
-            key, np.mean(values[-10:]), values[-1]
-        )
-    )
-
-    axs[row, col].set_xlabel("Test Game")
-    axs[row, col].set_ylabel("Test Score")
-
-    axs[row, col].set_xlim(0, len(values))
-
-    x = np.arange(0, len(values))
-    scores = [value["score"] for value in values]
-    max_scores = (
-        [value["max_score"] for value in values] if "max_score" in values[0] else None
-    )
-    min_scores = (
-        [value["min_score"] for value in values] if "min_score" in values[0] else None
-    )
+    has_max_scores = "max_score" in values[0]
+    has_min_scores = "min_score" in values[0]
+    scores = list()
+    max_scores = list()
+    min_scores = list()
 
     assert (
-        max_scores is None or min_scores is not None
-    ), "If max_scores is provided, min_scores must be provided as well"
-    assert (
-        min_scores is None or max_scores is not None
-    ), "If min_scores is provided, max_scores must be provided as well"
+        has_max_scores == has_min_scores
+    ), "Both max_scores and min_scores must be provided or not provided"
 
-    axs[row, col].plot(x, scores)
-    if max_scores is not None and min_scores is not None:
-        axs[row, col].fill_between(x, min_scores, max_scores, alpha=0.5)
+    for score_dict in values:
+        scores.append(score_dict["score"])
+        if has_max_scores:
+            max_scores.append(score_dict["max_score"])
+        if has_min_scores:
+            min_scores.append(score_dict["min_score"])
 
-    best_fit = np.polyfit(x, values, 1)
-    axs[row, col].plot(
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(scores[-10:])} | latest test score: {scores[-1]}")
+
+    axs[row][col].set_xlabel("Test Game")
+    axs[row][col].set_ylabel("Test Score")
+
+    axs[row][col].set_xlim(0, len(values))
+
+    x = np.arange(len(values))
+
+    axs[row][col].plot(x, scores)
+    if has_max_scores:
+        axs[row][col].fill_between(x, min_scores, max_scores, alpha=0.5)
+
+    best_fit = np.polyfit(x, scores, 1)
+    axs[row][col].plot(
         x,
         best_fit[0] * x + best_fit[1],
         color="g",
         label="Best Fit Line",
-        linestyle="..",
+        linestyle="dotted",
     )
 
     if "target_model_weight_update" in kwargs:
         weight_updates = kwargs["target_model_weight_update"]
         for i, weight_update in enumerate(weight_updates):
-            axs[row, col].axvline(
+            axs[row][col].axvline(
                 x=weight_update,
                 color="r",
-                linestyle="--",
+                linestyle="dashed",
                 label="Target Model Weight Update {}".format(i),
             )
 
     if "model_weight_update" in kwargs:
         weight_updates = kwargs["model_weight_update"]
         for i, weight_update in enumerate(weight_updates):
-            axs[row, col].axvline(
+            axs[row][col].axvline(
                 x=weight_update,
                 color="r",
                 linestyle="--",
@@ -168,7 +152,7 @@ def plot_scores(axs, key, values, targets, row, col, **kwargs):
             )
 
     if key in targets and targets[key] is not None:
-        axs[row, col].axhline(
+        axs[row][col].axhline(
             y=targets[key],
             color="r",
             linestyle="--",
@@ -197,7 +181,14 @@ stat_keys_to_plot_funcs = {
 }
 
 
-def plot_graphs(stats, targets, step, frames_seen, time_taken, model_name):
+from typing import NamedTuple
+
+class Statictic(NamedTuple):
+    score: float
+    min: float
+    max:float
+
+def plot_graphs(stats: dict, targets, step, frames_seen, time_taken, model_name):
     num_plots = len(stats)
     sqrt_num_plots = math.ceil(np.sqrt(num_plots))
     fig, axs = plt.subplots(
@@ -220,16 +211,16 @@ def plot_graphs(stats, targets, step, frames_seen, time_taken, model_name):
     for i, (key, values) in enumerate(stats.items()):
         row = i // sqrt_num_plots
         col = i % sqrt_num_plots
-        (
-            stat_keys_to_plot_funcs[key](axs, key, values, targets, targets, row, col)
-            if key in stat_keys_to_plot_funcs
-            else default_plot_func(axs, key, values, targets, row, col)
-        )
+        
+        if key in stat_keys_to_plot_funcs:
+            stat_keys_to_plot_funcs[key](axs, key, values, targets, row, col)
+        else:
+            default_plot_func(axs, key, values, targets, row, col)
 
     for i in range(num_plots, sqrt_num_plots**2):
         row = i // sqrt_num_plots
         col = i % sqrt_num_plots
-        fig.delaxes(axs[row, col])
+        fig.delaxes(axs[row][col])
 
     # plt.show()
     if not os.path.exists("./training_graphs"):
@@ -273,44 +264,3 @@ def prepare_kernel_initializers(kernel_initializer):
 
     raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
-
-def prepare_activations(activation):
-    # print("Activation to prase: ", activation)
-    if activation == "linear":
-        return None
-    elif activation == "relu":
-        return relu
-    elif activation == "relu6":
-        return relu(max_value=6)
-    elif activation == "sigmoid":
-        return sigmoid
-    elif activation == "softplus":
-        return softplus
-    elif activation == "soft_sign":
-        return softsign
-    elif activation == "silu":
-        return silu
-    elif activation == "swish":
-        return swish
-    # elif activation == "log_sigmoid":
-    #     return log_sigmoid
-    elif activation == "hard_sigmoid":
-        return hard_sigmoid
-    # elif activation == "hard_silu":
-    #     return hard_silu
-    # elif activation == "hard_swish":
-    #     return hard_swish
-    # elif activation == "hard_tanh":
-    #     return hard_tanh
-    elif activation == "elu":
-        return elu
-    # elif activation == "celu":
-    #     return celu
-    elif activation == "selu":
-        return selu
-    elif activation == "gelu":
-        return gelu
-    # elif activation == "glu":
-    #     return glu
-
-    raise ValueError(f"Activation {activation} not recognized")

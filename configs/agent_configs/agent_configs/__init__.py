@@ -9,7 +9,7 @@ from .distributed_configs import (
     DistributedActorConfig,
     DistributedConfig,
 )
-from .base_config import ConfigBase, Config
+from .base_config import ConfigBase, Config, prepare_activations
 from .muzero_config import MuZeroConfig
 from .ppo_actor_config import PPOActorConfig
 from .ppo_critic_config import PPOCriticConfig
