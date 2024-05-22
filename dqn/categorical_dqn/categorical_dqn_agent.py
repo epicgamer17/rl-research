@@ -48,7 +48,7 @@ from replay_buffers.prioritized_replay_buffer import (
     PrioritizedReplayBuffer,
     FastPrioritizedReplayBuffer,
 )
-from distributional_dqn.distributional_dqn_network import Network
+from dqn.categorical_dqn.categorical_dqn_network import Network
 
 
 class Sample(NamedTuple):

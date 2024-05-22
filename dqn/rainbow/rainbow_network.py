@@ -14,7 +14,7 @@ from utils import prepare_kernel_initializers
 
 class Network(Model):
     def __init__(
-        self, config: RainbowConfig, output_size, input_shape, *args, **kwargs
+        self, config: RainbowConfig, output_size: int, input_shape, *args, **kwargs
     ):
         super().__init__()
         self.config = config

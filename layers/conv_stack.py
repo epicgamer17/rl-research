@@ -11,6 +11,8 @@ class ConvStack(tf.keras.Model):
         strides: list[int],
         activation,
         kernel_initializer,
+        kernel_regularizer=None,
+        data_format: str = "channels_last",
         noisy: bool = False,
         noisy_sigma: float = None,
     ):
@@ -33,9 +35,11 @@ class ConvStack(tf.keras.Model):
                     kernel_sizes[0],
                     strides=strides[0],
                     kernel_initializer=prepare_kernel_initializers(kernel_initializer),
+                    kernel_regularizer=kernel_regularizer,
                     activation=activation,
                     input_shape=input_shape,
                     padding="same",
+                    data_format=data_format,
                 )
             )
 
@@ -48,8 +52,10 @@ class ConvStack(tf.keras.Model):
                         kernel_initializer=prepare_kernel_initializers(
                             kernel_initializer
                         ),
+                        kernel_regularizer=kernel_regularizer,
                         activation=activation,
                         padding="same",
+                        data_format=data_format,
                     )
                 )
         # self.flatten = tf.keras.layers.Flatten()
