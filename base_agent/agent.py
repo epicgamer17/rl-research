@@ -158,6 +158,8 @@ class BaseAgent:
         """Test the agent."""
         self.is_test = True
         average_score = 0
+        max_score = float("-inf")
+        min_score = float("inf")
         if self.test_env.render_mode == "rgb_array":
             self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
             self.test_env.video_folder = "./videos/{}/{}".format(self.model_name, step)
@@ -180,6 +182,8 @@ class BaseAgent:
                 state = next_state
                 score += reward
             average_score += score
+            max_score = max(max_score, score)
+            min_score = min(min_score, score)
             print("score: ", score)
 
         # reset
@@ -188,4 +192,4 @@ class BaseAgent:
         self.test_env.close()
         self.is_test = False
         average_score /= num_trials
-        return average_score
+        return {"score": average_score, "max": max_score, "min": min_score}

@@ -92,6 +92,111 @@ def update_linear_lr_schedule(
     return learning_rate
 
 
+def default_plot_func(axs, key, values, targets, row, col, **kwargs):
+    axs[row, col].set_title(
+        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
+    )
+    x = np.arange(0, len(values))
+    axs[row, col].plot(x, values)
+    if key in targets and targets[key] is not None:
+        axs[row, col].axhline(y=targets[key], color="r", linestyle="--")
+
+
+def plot_scores(axs, key, values, targets, row, col, **kwargs):
+    assert (
+        "score" in values[0]
+    ), "Values must be a list of dicts with a 'score' key and optionally a max and min scores key"
+
+    axs[row, col].set_title(
+        "{} | rolling average: {} | latest test score: {}".format(
+            key, np.mean(values[-10:]), values[-1]
+        )
+    )
+
+    axs[row, col].set_xlabel("Test Game")
+    axs[row, col].set_ylabel("Test Score")
+
+    axs[row, col].set_xlim(0, len(values))
+
+    x = np.arange(0, len(values))
+    scores = [value["score"] for value in values]
+    max_scores = (
+        [value["max_score"] for value in values] if "max_score" in values[0] else None
+    )
+    min_scores = (
+        [value["min_score"] for value in values] if "min_score" in values[0] else None
+    )
+
+    assert (
+        max_scores is None or min_scores is not None
+    ), "If max_scores is provided, min_scores must be provided as well"
+    assert (
+        min_scores is None or max_scores is not None
+    ), "If min_scores is provided, max_scores must be provided as well"
+
+    axs[row, col].plot(x, scores)
+    if max_scores is not None and min_scores is not None:
+        axs[row, col].fill_between(x, min_scores, max_scores, alpha=0.5)
+
+    best_fit = np.polyfit(x, values, 1)
+    axs[row, col].plot(
+        x,
+        best_fit[0] * x + best_fit[1],
+        color="g",
+        label="Best Fit Line",
+        linestyle="..",
+    )
+
+    if "target_model_weight_update" in kwargs:
+        weight_updates = kwargs["target_model_weight_update"]
+        for i, weight_update in enumerate(weight_updates):
+            axs[row, col].axvline(
+                x=weight_update,
+                color="r",
+                linestyle="--",
+                label="Target Model Weight Update {}".format(i),
+            )
+
+    if "model_weight_update" in kwargs:
+        weight_updates = kwargs["model_weight_update"]
+        for i, weight_update in enumerate(weight_updates):
+            axs[row, col].axvline(
+                x=weight_update,
+                color="r",
+                linestyle="--",
+                label="Model Weight Update {}".format(i),
+            )
+
+    if key in targets and targets[key] is not None:
+        axs[row, col].axhline(
+            y=targets[key],
+            color="r",
+            linestyle="--",
+            label="Target Score {}".format(targets[key]),
+        )
+
+
+def plot_loss(axs, key, values, targets, row, col, **kwargs):
+    default_plot_func(axs, key, values, targets, row, col)
+
+
+def plot_exploitability(axs, key, values, targets, row, col, **kwargs):
+    default_plot_func(axs, key, values, targets, row, col)
+
+
+stat_keys_to_plot_funcs = {
+    "test_score": plot_scores,
+    "score": plot_scores,
+    "policy_loss": plot_loss,
+    "value_loss": plot_loss,
+    "l2_loss": plot_loss,
+    "loss": plot_loss,
+    "rl_loss": plot_loss,
+    "sl_loss": plot_loss,
+    "exploitability": plot_exploitability,  # should this be plot_scores?
+}
+
+
 def plot_graphs(stats, targets, step, frames_seen, time_taken, model_name):
     num_plots = len(stats)
     sqrt_num_plots = math.ceil(np.sqrt(num_plots))
@@ -112,16 +217,14 @@ def plot_graphs(stats, targets, step, frames_seen, time_taken, model_name):
         )
     )
 
-    for i, (key, value) in enumerate(stats.items()):
-        x = np.arange(0, len(value))
+    for i, (key, values) in enumerate(stats.items()):
         row = i // sqrt_num_plots
         col = i % sqrt_num_plots
-        axs[row, col].plot(x, value)
-        axs[row, col].set_title(
-            "{} | rolling average: {}".format(key, np.mean(value[-10:]))
+        (
+            stat_keys_to_plot_funcs[key](axs, key, values, targets, targets, row, col)
+            if key in stat_keys_to_plot_funcs
+            else default_plot_func(axs, key, values, targets, row, col)
         )
-        if key in targets and targets[key] is not None:
-            axs[row, col].axhline(y=targets[key], color="r", linestyle="--")
 
     for i in range(num_plots, sqrt_num_plots**2):
         row = i // sqrt_num_plots
