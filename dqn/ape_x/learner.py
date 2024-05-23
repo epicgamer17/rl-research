@@ -161,7 +161,7 @@ class ApeXLearnerBase(RainbowAgent):
                     self.store_weights()
                     logger.info("pushed params")
 
-                self.config.per_beta = update_per_beta(
+                self.replay_buffer.beta = update_per_beta(
                     self.config.per_beta, 1.0, self.training_steps
                 )
 
@@ -294,7 +294,7 @@ class ApeXLearner(ApeXLearnerBase):
     def on_save(self):
         pass
         # trigger replay buffer save to file with zmq
-    
+
     def on_load(self):
         self.store_weights()
         # trigger replay buffer load from file with zmq

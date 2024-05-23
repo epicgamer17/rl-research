@@ -1,9 +1,9 @@
-from .base_config import Config
+from ..base_config import Config
 
 
-class DQNConfig(Config):
+class CategoricalDQNConfig(Config):
     def __init__(self, config_dict, game_config):
-        super(DQNConfig, self).__init__(config_dict, game_config)
+        super(CategoricalDQNConfig, self).__init__(config_dict, game_config)
 
         # Network Arcitecture
 

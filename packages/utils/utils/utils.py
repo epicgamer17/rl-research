@@ -66,7 +66,11 @@ def make_stack(item):
 
 def update_per_beta(per_beta, per_beta_final, per_beta_steps):
     # could also use an initial per_beta instead of current (multiply below equation by current step)
-    per_beta = min(
+    if per_beta < per_beta_final:
+        clamp_func = min
+    else:
+        clamp_func = max
+    per_beta = clamp_func(
         per_beta_final, per_beta + (per_beta_final - per_beta) / (per_beta_steps)
     )
 
@@ -110,7 +114,8 @@ def plot_scores(axs, key, values, targets, row, col):
     # ), "Values must be a list of dicts with a 'score' key and optionally a max and min scores key. Values was {}".format(
     #     values
     # )
-
+    if len(values) == 0:
+        return
     scores = [value["score"] for value in values]
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, scores)
@@ -244,7 +249,15 @@ stat_keys_to_plot_funcs = {
 }
 
 
-def plot_graphs(stats: dict, targets, step, frames_seen, time_taken, model_name):
+def plot_graphs(
+    stats: dict,
+    targets: dict,
+    step: int,
+    frames_seen: int,
+    time_taken: float,
+    model_name: str,
+    dir: str = "./checkpoints/graphs",
+):
     num_plots = len(stats)
     sqrt_num_plots = math.ceil(np.sqrt(num_plots))
     fig, axs = plt.subplots(
@@ -279,11 +292,10 @@ def plot_graphs(stats: dict, targets, step, frames_seen, time_taken, model_name)
         fig.delaxes(axs[row][col])
 
     # plt.show()
-    if not os.path.exists("./training_graphs"):
-        os.makedirs("./training_graphs")
-    if not os.path.exists("./training_graphs/{}".format(model_name)):
-        os.makedirs("./training_graphs/{}".format(model_name))
-    plt.savefig("./training_graphs/{}/{}.png".format(model_name, model_name))
+    assert os.path.exists(dir), f"Directory {dir} does not exist"
+    if not os.path.exists("{}/{}".format(dir, model_name)):
+        os.makedirs("{}/{}".format(dir, model_name))
+    plt.savefig("{}/{}/{}.png".format(dir, model_name, model_name))
 
     plt.close(fig)
 

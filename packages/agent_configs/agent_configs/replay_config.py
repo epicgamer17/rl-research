@@ -11,5 +11,6 @@ class ReplayBufferConfig(ConfigBase):
         self.batch_size: int = self.parse_field("batch_size")
         self.max_priority: float = self.parse_field("max_priority", 1.0)
         self.per_alpha: float = self.parse_field("per_alpha", 0.5)
+        self.per_beta: float = self.parse_field("per_beta", 0.4)
         self.n_step: int = self.parse_field("n_step", 1)
         self.discount_factor: float = self.parse_field("discount_factor", 0.99)

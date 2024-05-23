@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import copy
 import dill
+import yaml
+import pickle
 
 import sys
 
@@ -34,7 +36,7 @@ class BaseAgent:
         if hasattr(self.env, "render_mode") and self.env.render_mode == "rgb_array":
             self.test_env = gym.wrappers.RecordVideo(
                 copy.deepcopy(env),
-                "./videos/{}".format(self.model_name),
+                ".",
                 name_prefix="{}".format(self.model_name),
             )
         else:
@@ -91,8 +93,7 @@ class BaseAgent:
         pass
 
     def learn(self):
-        # experience replay
-        # raise NotImplementedError
+        # raise NotImplementedError, "Every agent should have a learn method. (Previously experience_replay)"
         pass
 
     def collect_experience(self):
@@ -135,29 +136,50 @@ class BaseAgent:
         time_taken,
     ):
         if self.config.save_intermediate_weights:
-            dir = Path("model_weights", self.model_name)
+            dir = Path("checkpoints", self.model_name)
             os.makedirs(dir, exist_ok=True)
+            os.makedirs(Path(dir, "model_weights"), exist_ok=True)
+            os.makedirs(Path(dir, "optimizers"), exist_ok=True)
+            os.makedirs(Path(dir, "configs"), exist_ok=True)
+            os.makedirs(Path(dir, "replay_buffers"), exist_ok=True)
+            os.makedirs(Path(dir, "graphs"), exist_ok=True)
+            os.makedirs(Path(dir, "videos"), exist_ok=True)
 
             # save the model weights
-            weights_path = str(Path(dir, f"episode_{training_step}.keras"))
+            weights_path = str(Path(dir, f"model_weights/step_{training_step}.keras"))
             self.model.save(weights_path)
 
             # save optimizer (pickle doesn't work but dill does)
-            with open(Path(dir, f"episode_{training_step}_optimizer.dill"), "wb") as f:
+            with open(
+                Path(dir, f"optimizers/step_{training_step}_optimizer.dill"), "wb"
+            ) as f:
                 dill.dump(self.config.optimizer, f)
 
-            # save other things like replay buffer (to be implemented in subclasses)
-            self.on_save()
+            # save config
+            self.config.dump(f"{dir}/configs/config.yaml")
+
+            # save replay buffer
+            with open(
+                Path(dir, f"replay_buffers/step_{training_step}_replay_buffer.pkl"),
+                "wb",
+            ) as f:
+                pickle.dump(self.replay_buffer, f)
 
         # test model
-        test_score = self.test(num_trials, training_step)
+        test_score = self.test(num_trials, training_step, dir)
         stats["test_score"].append(test_score)
         # plot the graphs
         plot_graphs(
-            stats, targets, training_step, frames_seen, time_taken, self.model_name
+            stats,
+            targets,
+            training_step,
+            frames_seen,
+            time_taken,
+            self.model_name,
+            f"{dir}/graphs",
         )
 
-    def test(self, num_trials, step) -> None:
+    def test(self, num_trials, step, dir="./checkpoints") -> None:
         """Test the agent."""
         self.is_test = True
         average_score = 0
@@ -165,7 +187,9 @@ class BaseAgent:
         min_score = float("inf")
         if self.test_env.render_mode == "rgb_array":
             self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
-            self.test_env.video_folder = "./videos/{}/{}".format(self.model_name, step)
+            self.test_env.video_folder = "{}/videos/{}/{}".format(
+                dir, self.model_name, step
+            )
             if not os.path.exists(self.test_env.video_folder):
                 os.makedirs(self.test_env.video_folder)
         for trials in range(num_trials):

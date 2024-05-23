@@ -13,11 +13,13 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         batch_size=32,
         max_priority=1.0,
         alpha=0.6,
+        beta=0.4,
         # epsilon=0.01,
         n_step=1,
         gamma=0.99,
     ):
         assert alpha >= 0
+        assert beta >= 0
 
         super(PrioritizedReplayBuffer, self).__init__(
             observation_dimensions, max_size, batch_size, n_step=n_step, gamma=gamma
@@ -27,6 +29,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self.tree_pointer = 0
 
         self.alpha = alpha  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
+        self.beta = beta
         # self.epsilon = epsilon
         tree_capacity = 1
         while tree_capacity < self.max_size:
@@ -79,7 +82,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         return transition
 
-    def sample(self, beta=0.4):
+    def sample(self):
         # print("Sampling from PrioritizedReplayBuffer")
         # time1 = 0
         # time1 = time()
@@ -88,7 +91,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         ), "Only {} elements in buffer expected at least {}".format(
             len(self), self.batch_size
         )
-        assert beta > 0
 
         indices = self._sample_proportional()
         # print("Retrieving Data from PrioritizedReplayBuffer Data Arrays")
@@ -100,7 +102,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         rewards = self.reward_buffer[indices]
         dones = self.done_buffer[indices]
         ids = self.id_buffer[indices]
-        weights = np.array([self._calculate_weight(i, beta) for i in indices])
+        weights = np.array([self._calculate_weight(i, self.beta) for i in indices])
         # print("Retrieving Data from PrioritizedReplayBuffer Data Arrays Time ", time() - time2)
 
         # print("Sampling from PrioritizedReplayBuffer Time ", time() - time1)
@@ -186,11 +188,13 @@ class FastPrioritizedReplayBuffer(ReplayBuffer):
         batch_size=32,
         max_priority=1.0,
         alpha=0.6,
+        beta=0.4,
         # epsilon=0.01,
         n_step=1,
         gamma=0.99,
     ):
         assert alpha >= 0
+        assert beta >= 0
 
         super(FastPrioritizedReplayBuffer, self).__init__(
             observation_dimensions, max_size, batch_size, n_step=n_step, gamma=gamma
@@ -201,6 +205,7 @@ class FastPrioritizedReplayBuffer(ReplayBuffer):
         self.tree_pointer = 0
 
         self.alpha = alpha  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
+        self.beta = beta
         # self.epsilon = epsilon
 
         self.tree = FastSumTree(self.max_size)
@@ -222,12 +227,11 @@ class FastPrioritizedReplayBuffer(ReplayBuffer):
         # print("Storing in PrioritizedReplayBuffer Time ", time() - time1)
         return transition
 
-    def sample(self, beta=0.4):
+    def sample(self):
         # print("Sampling from PrioritizedReplayBuffer")
         # time1 = 0
         # time1 = time()
         assert len(self) >= self.batch_size
-        assert beta > 0
 
         # indices = self._sample_proportional()
         # print("Getting Indices from PrioritizedReplayBuffer Sum Tree")
@@ -246,12 +250,14 @@ class FastPrioritizedReplayBuffer(ReplayBuffer):
             index, priority = self.tree.retrieve(value)
             sampling_probabilities = priority / self.tree.total_priority
             # weights[i, 0] = (self.batch_size * sampling_probabilities) ** -beta
-            weights[i, 0] = (len(self) * sampling_probabilities) ** -beta
+            weights[i, 0] = (len(self) * sampling_probabilities) ** -self.beta
             indices[i] = index - self.tree.capacity + 1
             indices[i] = index - self.tree.capacity + 1
 
         # max_weight = max(weights)
-        max_weight = (len(self) * self.min_priority / self.tree.total_priority) ** -beta
+        max_weight = (
+            len(self) * self.min_priority / self.tree.total_priority
+        ) ** -self.beta
         weights = weights / max_weight
 
         # print(weights)

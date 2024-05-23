@@ -2,7 +2,6 @@ from agent_configs.distributed_configs import (
     DistributedActorConfig,
     DistributedLearnerConfig,
 )
-from .base_config import ConfigBase
 from .rainbow_config import RainbowConfig
 
 

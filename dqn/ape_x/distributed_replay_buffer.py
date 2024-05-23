@@ -39,6 +39,7 @@ class SaveableReplayBuffer:
                 batch_size=config.batch_size,
                 max_priority=config.max_priority,
                 alpha=config.per_alpha,  # config["per_alpha"],
+                beta=config.per_beta,  # config["per_beta"],
                 n_step=config.n_step,
                 gamma=config.discount_factor,
             )
@@ -60,11 +61,7 @@ class SaveableReplayBuffer:
 
 class ReplayServer:
     def __init__(
-        self,
-        replay_memory: SaveableReplayBuffer,
-        learner_port,
-        actors_port,
-        model_name
+        self, replay_memory: SaveableReplayBuffer, learner_port, actors_port, model_name
     ):
         self.replay_memory = replay_memory
         self.ctx = zmq.Context()
@@ -84,7 +81,6 @@ class ReplayServer:
 
         self.current_episode = 0
         self.model_name = model_name
-    
 
     def make_sample(self, beta):
         try:
@@ -184,9 +180,7 @@ def main():
     parser.add_argument("--learner_port", type=str, default="5554")
     parser.add_argument("--actors_port", type=str, default="5555")
     parser.add_argument("--load", default=False, action="store_true")
-    parser.add_argument(
-        "--model_name", type=str, default="learner"
-    )
+    parser.add_argument("--model_name", type=str, default="learner")
     # TODO pass in this command line argument wherever this is called (ie hyperopt.go)
     parser.add_argument(
         "--config_file", type=str, default="configs/replay_config_example.yaml"
@@ -195,7 +189,9 @@ def main():
     args = parser.parse_args()
     config = ReplayBufferConfig.load(args.config_file)
     replay_memory = SaveableReplayBuffer(config, args.load)
-    server = ReplayServer(replay_memory, args.learner_port, args.actors_port, args.model_name)
+    server = ReplayServer(
+        replay_memory, args.learner_port, args.actors_port, args.model_name
+    )
     logger.info(
         f"replay buffer started on ports {args.actors_port} (actors) and {args.learner_port} (learner)"
     )

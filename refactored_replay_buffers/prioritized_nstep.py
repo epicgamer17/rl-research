@@ -61,6 +61,7 @@ class ReplayBuffer(
         n_step=1,
         gamma=0.99,
         alpha=0.6,
+        beta=0.4,
         max_priority=1.0,
         min_size=None,
     ):
@@ -70,6 +71,7 @@ class ReplayBuffer(
         assert max_size > 0
         assert batch_size >= 0
         assert alpha >= 0
+        assert beta >= 0
         if min_size == None:
             min_size = batch_size
         assert min_size >= batch_size
@@ -169,9 +171,10 @@ class ReplayBuffer(
         # print("Buffer Storage Time ", time() - time1)
         return t
 
-    def __sample__(self, beta=0.4) -> TransitionBatch:
+    def __sample__(
+        self,
+    ) -> TransitionBatch:
         assert self.__len__() >= self.min_size
-        assert beta > 0
 
         indices = sample_tree_proportional(self.sum_tree, self.batch_size, self.size)
 
@@ -183,7 +186,7 @@ class ReplayBuffer(
             rewards=self.reward_buffer[indices],
             next_observations=self.next_observation_buffer[indices],
             dones=self.done_buffer[indices],
-            weights=np.array([self._calculate_weight(i, beta) for i in indices]),
+            weights=np.array([self._calculate_weight(i, self.beta) for i in indices]),
         )
 
     def __get_n_step_info__(self) -> Transition:

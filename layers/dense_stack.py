@@ -10,15 +10,12 @@ class DenseStack(tf.keras.Model):
         widths: list[int],
         activation,
         kernel_initializer,
-        noisy: bool = False,
         noisy_sigma=None,
     ):
         super(DenseStack, self).__init__()
-        self.noisy = noisy
         assert len(widths) > 0
-        assert self.noisy and noisy_sigma is not None, "Noisy Dense requires sigma"
         self.dense_layers = []
-        if self.noisy:
+        if noisy_sigma != 0:
             for i in range(len(widths)):
                 self.dense_layers.append(
                     NoisyDense(
@@ -47,3 +44,8 @@ class DenseStack(tf.keras.Model):
         for layer in self.dense_layers:
             x = layer(x)
         return x
+
+    def reset_noise(self):
+        for layer in self.dense_layers:
+            if isinstance(layer, NoisyDense):
+                layer.reset_noise()

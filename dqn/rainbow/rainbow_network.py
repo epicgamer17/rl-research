@@ -48,7 +48,6 @@ class Network(Model):
                 widths,
                 self.config.activation,
                 self.config.kernel_initializer,
-                self.config.noisy,
                 noisy_sigma=self.config.noisy_sigma,
             )
 
@@ -59,11 +58,10 @@ class Network(Model):
                 widths,
                 self.config.activation,
                 self.config.kernel_initializer,
-                self.config.noisy,
                 noisy_sigma=self.config.noisy_sigma,
             )
 
-        if self.config.noisy:
+        if self.config.noisy_sigma != 0:
             self.value = NoisyDense(
                 config.atom_size,
                 sigma=config.noisy_sigma,
@@ -90,11 +88,10 @@ class Network(Model):
                 widths,
                 self.config.activation,
                 self.config.kernel_initializer,
-                self.config.noisy,
                 noisy_sigma=self.config.noisy_sigma,
             )
 
-        if self.config.noisy:
+        if self.config.noisy_sigma != 0:
             self.advantage = NoisyDense(
                 config.atom_size * output_size,
                 sigma=config.noisy_sigma,
@@ -163,18 +160,14 @@ class Network(Model):
         return q
 
     def reset_noise(self):
-        if self.config.noisy:
+        if self.config.noisy_sigma != 0:
+            if self.has_conv_layers:
+                self.conv_layers.reset_noise()
             if self.has_dense_layers:
-                for layer in self.conv_layers:
-                    layer.reset_noise()
-            if self.has_dense_layers:
-                for layer in self.dense_layers:
-                    layer.reset_noise()
+                self.dense_layers.reset_noise()
             if self.has_value_hidden_layers:
-                for layer in self.value_hidden_layers:
-                    layer.reset_noise()
+                self.value_hidden_layers.reset_noise()
             if self.has_advantage_hidden_layers:
-                for layer in self.advantage_hidden_layers:
-                    layer.reset_noise()
+                self.advantage_hidden_layers.reset_noise()
             self.value.reset_noise()
             self.advantage.reset_noise()

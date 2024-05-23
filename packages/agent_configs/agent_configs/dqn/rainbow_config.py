@@ -1,4 +1,4 @@
-from .base_config import Config
+from ..base_config import Config
 
 
 class RainbowConfig(Config):

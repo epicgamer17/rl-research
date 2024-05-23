@@ -4,7 +4,7 @@ from utils import update_per_beta, action_mask, get_legal_moves
 
 import sys
 
-sys.path.append("../")
+sys.path.append("../../")
 
 from base_agent.agent import BaseAgent
 
@@ -48,7 +48,7 @@ from replay_buffers.prioritized_replay_buffer import (
     PrioritizedReplayBuffer,
     FastPrioritizedReplayBuffer,
 )
-from rainbow.rainbow_network import Network
+from dqn.rainbow.rainbow_network import Network
 
 
 class Sample(NamedTuple):
@@ -100,6 +100,7 @@ class RainbowAgent(BaseAgent):
             batch_size=self.config.minibatch_size,
             max_priority=1.0,
             alpha=self.config.per_alpha,
+            beta=self.config.per_beta,
             # epsilon=config["per_epsilon"],
             n_step=self.config.n_step,
             gamma=self.config.discount_factor,
@@ -447,7 +448,7 @@ class RainbowAgent(BaseAgent):
                 done = terminated or truncated
                 state = next_state
                 score += reward
-                self.config.per_beta = update_per_beta(
+                self.replay_buffer.beta = update_per_beta(
                     self.config.per_beta, 1.0, self.training_steps
                 )
 

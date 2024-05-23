@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 from typing import NamedTuple
 from uuid import uuid4
+from utils.utils import update_per_beta
 import zmq
 from gymnasium import Env
 from agent_configs import ApeXActorConfig
@@ -207,8 +208,9 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             self.t_i = time.time()
 
     def on_training_step_end(self, training_step):
-        per_beta_increase = (1 - self.config.per_beta) / self.training_steps
-        self.config.per_beta = min(1.0, self.config.per_beta + per_beta_increase)
+        self.replay_buffer.beta = update_per_beta(
+            training_step, self.config.per_beta, self.config.training_steps
+        )
 
         if self.spectator:
             targets = {

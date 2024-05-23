@@ -13,18 +13,16 @@ class ConvStack(tf.keras.Model):
         kernel_initializer,
         kernel_regularizer=None,
         data_format: str = "channels_last",
-        noisy: bool = False,
         noisy_sigma: float = None,
     ):
         super(ConvStack, self).__init__()
-        self.noisy = noisy
         filters = filters
         kernel_sizes = kernel_sizes
         strides = strides
         num_layers = len(filters)
         self.conv_layers = []
 
-        if self.noisy:
+        if noisy_sigma != 0:
             assert noisy_sigma is not None, "Noisy Conv requires sigma"
             raise NotImplementedError("Noisy convolutions not implemented yet")
         else:
@@ -66,3 +64,9 @@ class ConvStack(tf.keras.Model):
             x = layer(x)
         # x = self.flatten(x)
         return x
+
+    def reset_noise(self):
+        for layer in self.conv_layers:
+            if isinstance(layer, NoisyConv):
+                layer.reset_noise()
+        return
