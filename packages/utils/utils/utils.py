@@ -380,3 +380,12 @@ def epsilon_greedy_policy(q_values, epsilon):
         return np.random.randint(len(q_values))
     else:
         return np.argmax(q_values)
+
+
+def add_dirichlet_noise(policy, dirichlet_alpha, exploration_fraction):
+    # MAKE ALPHAZERO USE THIS
+    noise = np.random.dirichlet([dirichlet_alpha] * len(policy))
+    frac = exploration_fraction
+    for i, n in enumerate(noise):
+        policy[i] = (1 - frac) * policy[i] + frac * n
+    return policy

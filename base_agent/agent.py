@@ -100,9 +100,6 @@ class BaseAgent:
         # raise NotImplementedError
         pass
 
-    def on_save(self):
-        pass
-
     def load(self, dir, training_step):
         """load the model from a directory and training step. The name of the directory will be the name of the model, and should contain the following files:
         - episode_{training_step}_optimizer.dill
@@ -125,6 +122,14 @@ class BaseAgent:
 
     def on_load(self):
         pass
+
+    def save_replay_buffers(self, training_step, dir):
+        # with open(
+        #     Path(dir, f"replay_buffers/step_{training_step}_replay_buffer.pkl"),
+        #     "wb",
+        # ) as f:
+        #     pickle.dump(self.replay_buffer, f)
+        raise NotImplementedError
 
     def save_checkpoint(
         self,
@@ -159,11 +164,7 @@ class BaseAgent:
             self.config.dump(f"{dir}/configs/config.yaml")
 
             # save replay buffer
-            with open(
-                Path(dir, f"replay_buffers/step_{training_step}_replay_buffer.pkl"),
-                "wb",
-            ) as f:
-                pickle.dump(self.replay_buffer, f)
+            self.save_replay_buffers(training_step, dir)
 
         # test model
         test_score = self.test(num_trials, training_step, dir)
