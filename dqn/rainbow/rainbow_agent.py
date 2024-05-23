@@ -89,9 +89,6 @@ class RainbowAgent(BaseAgent):
         #     loss=self.config.loss_function,
         # )
 
-        self.model(np.zeros((1,) + self.observation_dimensions))
-        self.target_model(np.zeros((1,) + self.observation_dimensions))
-
         self.target_model.set_weights(self.model.get_weights())
 
         self.replay_buffer = PrioritizedReplayBuffer(

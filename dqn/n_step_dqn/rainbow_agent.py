@@ -270,13 +270,13 @@ class NStepDQNAgent(BaseAgent):
         # print("Rewards ", rewards)
         # print("Dones ", dones)
 
-        next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
+        actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
         # print(next_actions.shape)
         # print(target_distributions.shape)
 
         target_distributions = target_network_distributions[
-            range(self.config.minibatch_size), next_actions
+            range(self.config.minibatch_size), actions
         ]
         target_z = rewards + (1 - dones) * (discount_factor) * self.support
         target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
