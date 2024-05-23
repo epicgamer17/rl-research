@@ -42,15 +42,14 @@ class DenseStack(nn.Module):
                 current_input_width *= widths[i]
 
         if kernel_initializer != None:
-            for layer in self.dense_layers:
-                kernel_initializer(layer)
+            self.apply(kernel_initializer)
 
         self._output_len = current_input_width
 
     def forward(self, inputs):
         x = inputs
         for layer in self.dense_layers:
-            x = self.activation.forward(layer.forward(x))
+            x = self.activation(layer(x))
         return x
 
     def reset_noise(self):

@@ -19,7 +19,8 @@ class Conv2dStack(nn.Module):
         self.conv_layers: list[nn.Module] = []
         self.activation = activation
 
-        assert len(input_shape) == 3
+        # [B. H, W, C_in]
+        assert len(input_shape) == 4
         assert len(filters) == len(kernel_sizes) == len(strides)
         assert len(filters) > 0
 
@@ -27,7 +28,7 @@ class Conv2dStack(nn.Module):
         if self.noisy:
             raise NotImplementedError("Noisy convolutions not implemented yet")
         else:
-            current_input_channels = input_shape[2]
+            current_input_channels = input_shape[-1]
 
             for i in range(len(filters)):
                 layer = nn.Conv2d(
@@ -38,22 +39,22 @@ class Conv2dStack(nn.Module):
                     padding="same",
                 )
 
-                if kernel_initializer != None:
-                    kernel_initializer(layer)
-
-                if kernel_regularizer != None:
-                    kernel_regularizer(layer)
-
                 self.conv_layers.append(layer)
 
                 current_input_channels *= filters[i]
 
             self._output_len = current_input_channels
 
+        if kernel_initializer != None:
+            self.apply(kernel_initializer)
+
+        if kernel_regularizer != None:
+            self.apply(kernel_regularizer)
+
     def forward(self, inputs):
         x = inputs
         for layer in self.conv_layers:
-            x = self.activation.forward(layer.forward(x))
+            x = self.activation(layer(x))
         return x
 
     def reset_noise(self):

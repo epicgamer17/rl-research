@@ -10,7 +10,14 @@ class RainbowConfig(Config):
         self.width: int = self.parse_field("width", 128)
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
         self.conv_layers: list = self.parse_field("conv_layers", [])
-        self.dense_layers: int = self.parse_field("dense_layers", 1)
+        self.dense_layers_widths: int = self.parse_field("dense_layers", [256])
+        self.value_hidden_layers_widths = self.parse_field(
+            "value_hidden_layers_widths", []
+        )
+        self.advantage_hidden_layers_widths: int = self.parse_field(
+            "advantage_hidden_layers_widths", []
+        )
+
         self.deuling: bool = self.parse_field("deuling", False)
         self.value_hidden_layers: int = self.parse_field("value_hidden_layers", 0)
         self.advantage_hidden_layers: int = self.parse_field(

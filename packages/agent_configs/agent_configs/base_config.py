@@ -7,7 +7,7 @@ from game_configs import GameConfig
 import yaml
 import sys
 
-from utils import prepare_activations
+from utils import prepare_activations, prepare_kernel_initializers
 
 
 class ConfigBase:
@@ -104,9 +104,25 @@ class Config(ConfigBase):
         self.training_steps: int = self.parse_field("training_steps", 10000)
 
         self.activation = self.parse_field(
-            "activation", "relu", wrapper=prepare_activations
+            "activation", "relu", wrapper=kernel_initializer_wrapper
         )
-        self.kernel_initializer = self.parse_field("kernel_initializer")
+
+        self.kernel_initializer = self.parse_field(
+            "kernel_initializer",
+            None,
+            required=False,
+            wrapper=kernel_initializer_wrapper,
+        )
 
     def _verify_game(self):
         raise NotImplementedError
+
+
+def kernel_initializer_wrapper(x):
+    if x is None:
+        return x
+    elif isinstance(x, str):
+        return prepare_kernel_initializers(x)
+    else:
+        assert callable(x)
+        return x

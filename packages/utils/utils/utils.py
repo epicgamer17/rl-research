@@ -1,37 +1,9 @@
 import math
 import os
 from matplotlib import pyplot as plt
-import tensorflow as tf
-from tensorflow import keras
-from keras.initializers import (
-    VarianceScaling,
-    Orthogonal,
-    GlorotUniform,
-    GlorotNormal,
-    HeNormal,
-    HeUniform,
-    LecunNormal,
-    LecunUniform,
-    Initializer,
-)
-
-
-from keras.activations import (
-    relu,
-    sigmoid,
-    softplus,
-    softsign,
-    hard_sigmoid,
-    elu,
-    selu,
-)
-
-from tensorflow.nn import (
-    silu,
-    swish,
-    gelu,
-)
-
+from typing import Iterable, Tuple
+from datetime import datetime
+from torch import nn
 
 import numpy as np
 
@@ -300,35 +272,36 @@ def plot_graphs(
     plt.close(fig)
 
 
-def prepare_kernel_initializers(kernel_initializer):
+def prepare_kernel_initializers(kernel_initializer: str):
     if kernel_initializer == "glorot_uniform":
-        return GlorotUniform(seed=np.random.seed())
+        return nn.init.xavier_uniform_
     elif kernel_initializer == "glorot_normal":
-        return GlorotNormal(seed=np.random.seed())
+        return nn.init.xavier_normal_
     elif kernel_initializer == "he_uniform":
-        return HeUniform(seed=np.random.seed())
+        return nn.init.kaiming_uniform_
     elif kernel_initializer == "he_normal":
-        return HeNormal(seed=np.random.seed())
-    elif kernel_initializer == "variance_baseline":
-        return VarianceScaling(seed=np.random.seed())
-    elif kernel_initializer == "variance_0.1":
-        return VarianceScaling(scale=0.1, seed=np.random.seed())
-    elif kernel_initializer == "variance_0.3":
-        return VarianceScaling(scale=0.3, seed=np.random.seed())
-    elif kernel_initializer == "variance_0.8":
-        return VarianceScaling(scale=0.8, seed=np.random.seed())
-    elif kernel_initializer == "variance_3":
-        return VarianceScaling(scale=3, seed=np.random.seed())
-    elif kernel_initializer == "variance_5":
-        return VarianceScaling(scale=5, seed=np.random.seed())
-    elif kernel_initializer == "variance_10":
-        return VarianceScaling(scale=10, seed=np.random.seed())
-    elif kernel_initializer == "lecun_uniform":
-        return LecunUniform(seed=np.random.seed())
-    elif kernel_initializer == "lecun_normal":
-        return LecunNormal(seed=np.random.seed())
+        return nn.init.kaiming_normal_
+    ### TODO
+    # elif kernel_initializer == "variance_baseline":
+    #     # return VarianceScaling(seed=np.random.seed())
+    # elif kernel_initializer == "variance_0.1":
+    #     # return VarianceScaling(scale=0.1, seed=np.random.seed())
+    # elif kernel_initializer == "variance_0.3":
+    #     # return VarianceScaling(scale=0.3, seed=np.random.seed())
+    # elif kernel_initializer == "variance_0.8":
+    #     # return VarianceScaling(scale=0.8, seed=np.random.seed())
+    # elif kernel_initializer == "variance_3":
+    #     # return VarianceScaling(scale=3, seed=np.random.seed())
+    # elif kernel_initializer == "variance_5":
+    #     # return VarianceScaling(scale=5, seed=np.random.seed())
+    # elif kernel_initializer == "variance_10":
+    #     # return VarianceScaling(scale=10, seed=np.random.seed())
+    # elif kernel_initializer == "lecun_uniform":
+    #     # return LecunUniform(seed=np.random.seed())
+    # elif kernel_initializer == "lecun_normal":
+    #     # return LecunNormal(seed=np.random.seed())
     elif kernel_initializer == "orthogonal":
-        return Orthogonal(seed=np.random.seed())
+        return nn.init.orthogonal_
 
     raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
@@ -336,41 +309,37 @@ def prepare_kernel_initializers(kernel_initializer):
 def prepare_activations(activation):
     # print("Activation to prase: ", activation)
     if activation == "linear":
-        return None
+        return nn.Identity()
     elif activation == "relu":
-        return relu
+        return nn.ReLU()
     elif activation == "relu6":
-        return relu(max_value=6)
+        return nn.ReLU6()
     elif activation == "sigmoid":
-        return sigmoid
+        return nn.Sigmoid()
     elif activation == "softplus":
-        return softplus
+        return nn.Softplus()
     elif activation == "soft_sign":
-        return softsign
-    elif activation == "silu":
-        return silu
-    elif activation == "swish":
-        return swish
+        return nn.Softsign()
+    elif activation == "silu" or activation == "swish":
+        return nn.SiLU()
     # elif activation == "log_sigmoid":
-    #     return log_sigmoid
+    #     return nn.LogSigmoid()
     elif activation == "hard_sigmoid":
-        return hard_sigmoid
-    # elif activation == "hard_silu":
-    #     return hard_silu
-    # elif activation == "hard_swish":
-    #     return hard_swish
+        return nn.Hardsigmoid()
+    # elif activation == "hard_silu" or activation == "hard_swish":
+    #     return nn.Hardswish()
     # elif activation == "hard_tanh":
-    #     return hard_tanh
+    #     return nn.Hardtanh()
     elif activation == "elu":
-        return elu
+        return nn.ELU()
     # elif activation == "celu":
-    #     return celu
+    #     return nn.CELU()
     elif activation == "selu":
-        return selu
+        return nn.SELU()
     elif activation == "gelu":
-        return gelu
+        return nn.GELU()
     # elif activation == "glu":
-    #     return glu
+    #     return nn.GLU()
 
     raise ValueError(f"Activation {activation} not recognized")
 
@@ -380,3 +349,20 @@ def epsilon_greedy_policy(q_values, epsilon):
         return np.random.randint(len(q_values))
     else:
         return np.argmax(q_values)
+
+
+def to_lists(list: list[Iterable]) -> zip[Tuple]:
+    """Convert a list of iterables to a zip of tuples
+
+    Args:
+        list (list[Iterable]): A list of iterables, e.g. [(1,1,1),(2,2,2),(3,3,3)]
+
+    Returns:
+        zip[Tuple]: A zip of tuples, i.e. (1,2,3), (1,2,3), (1,2,3)
+    """
+
+    return zip(*list)
+
+
+def current_timestamp():
+    return datetime.now().timestamp()
