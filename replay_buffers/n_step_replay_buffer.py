@@ -8,14 +8,31 @@ from replay_buffers.base_replay_buffer import BaseReplayBuffer
 
 class NStepReplayBuffer(BaseReplayBuffer):
     def __init__(
-        self, observation_dimensions, max_size: int, batch_size=32, n_step=1, gamma=0.99
+        self,
+        observation_dimensions: tuple,
+        max_size: int,
+        batch_size: int = 32,
+        n_step: int = 1,
+        gamma: float = 0.99,
     ):
         self.n_step = n_step
         self.gamma = gamma
         self.observation_dimensions = observation_dimensions
         super().__init__(max_size=max_size, batch_size=batch_size)
 
-    def store(self, observation, action, reward, next_observation, done, id=None):
+    def store(
+        self,
+        observation,
+        action: int | float,
+        reward: float,
+        next_observation,
+        done: bool,
+        id=None,
+    ):
+        """
+        Store a transition in the replay buffer
+        action can be an int or a float (float for continuous action spaces?)
+        """
         transition = (observation, action, reward, next_observation, done)
         self.n_step_buffer.append(transition)
 
@@ -66,7 +83,7 @@ class NStepReplayBuffer(BaseReplayBuffer):
             dones=self.done_buffer[indices],
         )
 
-    def sample_from_indices(self, indices):
+    def sample_from_indices(self, indices: list[int]):
         return dict(
             observations=self.observation_buffer[indices],
             next_observations=self.next_observation_buffer[indices],

@@ -1,6 +1,4 @@
 import numpy as np
-import copy
-
 from replay_buffers.base_replay_buffer import BaseReplayBuffer, Game
 
 

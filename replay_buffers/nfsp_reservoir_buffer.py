@@ -9,12 +9,12 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         self,
         observation_dimensions,
         max_size: int,
-        batch_size=32,
+        batch_size: int = 32,
     ):
         self.observation_dimensions = observation_dimensions
         super().__init__(max_size=max_size, batch_size=batch_size)
 
-    def store(self, observation, target_policy, id=None):
+    def store(self, observation, target_policy: list[float], id=None):
         self.observation_buffer[self.pointer] = observation
         self.target_policy_buffer[self.pointer] = target_policy
         self.size = min(self.size + 1, self.max_size)

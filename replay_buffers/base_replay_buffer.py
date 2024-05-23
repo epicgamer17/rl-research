@@ -15,7 +15,7 @@ class BaseReplayBuffer:
     def store(self, *args, **kwargs):
         raise NotImplementedError
 
-    def sample(self):
+    def sample(self, *args, **kwargs):
         raise NotImplementedError
 
     def clear(self):

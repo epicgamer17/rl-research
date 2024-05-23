@@ -9,17 +9,19 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
-        max_size,
-        batch_size=32,
-        max_priority=1.0,
-        alpha=0.6,
-        beta=0.4,
+        max_size: int,
+        batch_size: int = 32,
+        max_priority: float = 1.0,
+        alpha: float = 0.6,
+        beta: float = 0.4,
         # epsilon=0.01,
-        n_step=1,
-        gamma=0.99,
+        n_step: float = 1,
+        gamma: float = 0.99,
     ):
-        assert alpha >= 0
-        assert beta >= 0
+        assert alpha >= 0 and alpha <= 1
+        assert beta >= 0 and beta <= 1
+        assert n_step >= 1
+        assert gamma > 0 and gamma <= 1
 
         super(PrioritizedReplayBuffer, self).__init__(
             observation_dimensions, max_size, batch_size, n_step=n_step, gamma=gamma
@@ -38,7 +40,15 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         self.sum_tree = SumSegmentTree(tree_capacity)
         self.min_tree = MinSegmentTree(tree_capacity)
 
-    def store(self, observation, action, reward, next_observation, done, id=None):
+    def store(
+        self,
+        observation,
+        action: int | float,
+        reward: float,
+        next_observation,
+        done: bool,
+        id=None,
+    ):
         # print("Storing in PrioritizedReplayBuffer")
         # time1 = 0
         # time1 = time()
@@ -55,7 +65,13 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         return transition
 
     def store_with_priority(
-        self, observation, action, reward, next_observation, done, priority
+        self,
+        observation,
+        action: int | float,
+        reward: float,
+        next_observation,
+        done: bool,
+        priority: float,
     ):
         transition = super().store(observation, action, reward, next_observation, done)
 
@@ -68,7 +84,14 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         return transition
 
     def store_with_priority_exact(
-        self, observation, action, reward, next_observation, done, priority, id=None
+        self,
+        observation,
+        action: int | float,
+        reward: float,
+        next_observation,
+        done: bool,
+        priority: float,
+        id=None,
     ):
         transition = super().store(
             observation, action, reward, next_observation, done, id=id
@@ -102,7 +125,7 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         rewards = self.reward_buffer[indices]
         dones = self.done_buffer[indices]
         ids = self.id_buffer[indices]
-        weights = np.array([self._calculate_weight(i, self.beta) for i in indices])
+        weights = np.array([self._calculate_weight(i) for i in indices])
         # print("Retrieving Data from PrioritizedReplayBuffer Data Arrays Time ", time() - time2)
 
         # print("Sampling from PrioritizedReplayBuffer Time ", time() - time1)
@@ -117,7 +140,7 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
             ids=ids,
         )
 
-    def update_priorities(self, indices, priorities, ids=None):
+    def update_priorities(self, indices: list[int], priorities: list[float], ids=None):
         # necessary for shared replay buffer
         if ids is not None:
             assert len(priorities) == len(ids) == len(indices)
@@ -166,11 +189,11 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         # print("Getting Indices from PrioritizedReplayBuffer Sum Tree Time ", time() - time1)
         return indices
 
-    def _calculate_weight(self, index, beta):
+    def _calculate_weight(self, index: int):
         min_priority = self.min_tree.min() / self.sum_tree.sum()
-        max_weight = (min_priority * len(self)) ** (-beta)
+        max_weight = (min_priority * len(self)) ** (-self.beta)
         priority_sample = self.sum_tree[index] / self.sum_tree.sum()
-        weight = (priority_sample * len(self)) ** (-beta)
+        weight = (priority_sample * len(self)) ** (-self.beta)
         weight = weight / max_weight
 
         # print("Min Tree Min ", self.min_tree.min())
@@ -184,17 +207,19 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
-        max_size,
-        batch_size=32,
-        max_priority=1.0,
-        alpha=0.6,
-        beta=0.4,
+        max_size: int,
+        batch_size: int = 32,
+        max_priority: float = 1.0,
+        alpha: float = 0.6,
+        beta: float = 0.4,
         # epsilon=0.01,
-        n_step=1,
-        gamma=0.99,
+        n_step: int = 1,
+        gamma: float = 0.99,
     ):
-        assert alpha >= 0
-        assert beta >= 0
+        assert alpha >= 0 and alpha <= 1
+        assert beta >= 0 and beta <= 1
+        assert n_step >= 1
+        assert gamma > 0 and gamma <= 1
 
         super(FastPrioritizedReplayBuffer, self).__init__(
             observation_dimensions, max_size, batch_size, n_step=n_step, gamma=gamma
@@ -210,7 +235,14 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
 
         self.tree = FastSumTree(self.max_size)
 
-    def store(self, observation, action, reward, next_observation, done):
+    def store(
+        self,
+        observation,
+        action: int | float,
+        reward: float,
+        next_observation,
+        done: bool,
+    ):
         # print("Storing in PrioritizedReplayBuffer")
         # time1 = 0
         # time1 = time()
@@ -284,7 +316,7 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
             indices=indices,
         )
 
-    def update_priorities(self, indices, priorities):
+    def update_priorities(self, indices: list[int], priorities: list[float]):
         assert len(indices) == len(priorities)
         # priorities += self.epsilon
 

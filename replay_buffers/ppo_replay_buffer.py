@@ -4,6 +4,8 @@ from time import time
 import scipy.signal
 from utils import calculate_observation_buffer_shape
 
+from replay_buffers.base_replay_buffer import BaseReplayBuffer
+
 
 def discounted_cumulative_sums(x, discount):
     # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
@@ -12,7 +14,11 @@ def discounted_cumulative_sums(x, discount):
 
 class PPOReplayBuffer(BaseReplayBuffer):
     def __init__(
-        self, observation_dimensions, max_size: int, gamma=0.99, gae_lambda=0.95
+        self,
+        observation_dimensions,
+        max_size: int,
+        gamma: float = 0.99,
+        gae_lambda: float = 0.95,
     ):
         self.observation_dimensions = observation_dimensions
 
@@ -20,7 +26,14 @@ class PPOReplayBuffer(BaseReplayBuffer):
         self.gae_lambda = gae_lambda
         super().__init__(max_size=max_size)
 
-    def store(self, observation, action, value, log_probability, reward):
+    def store(
+        self,
+        observation,
+        action: int | float,
+        value: float,
+        log_probability: float,
+        reward: float,
+    ):
         self.observation_buffer[self.pointer] = observation
         self.action_buffer[self.pointer] = action
         self.reward_buffer[self.pointer] = reward
@@ -60,7 +73,7 @@ class PPOReplayBuffer(BaseReplayBuffer):
         self.trajectory_start_index = 0
         self.size = 0
 
-    def finish_trajectory(self, last_value=0):
+    def finish_trajectory(self, last_value: float = 0):
         path_slice = slice(self.trajectory_start_index, self.pointer)
         rewards = np.append(self.reward_buffer[path_slice], last_value)
         values = np.append(self.value_buffer[path_slice], last_value)

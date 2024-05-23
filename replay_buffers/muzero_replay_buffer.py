@@ -1,8 +1,5 @@
-from collections import deque
 import numpy as np
-import copy
-
-from replay_buffers.base_replay_buffer import BaseReplayBuffer, Game
+from replay_buffers.alphazero_replay_buffer import AlphaZeroReplayBuffer
 
 
 class MuZeroReplayBuffer(AlphaZeroReplayBuffer):

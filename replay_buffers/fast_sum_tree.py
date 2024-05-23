@@ -1,12 +1,13 @@
 import numpy as np
 
+
 class FastSumTree(object):
     # https://medium.com/free-code-camp/improvements-in-deep-q-learning-dueling-double-dqn-prioritized-experience-replay-and-fixed-58b130cc5682
 
-    def __init__(self, capacity):
-        self.capacity = int(
-            capacity
-        )  # number of leaf nodes (final nodes) that contains experiences
+    def __init__(self, capacity: int):
+        self.capacity = (
+            capacity  # number of leaf nodes (final nodes) that contains experiences
+        )
 
         self.tree = np.zeros(2 * self.capacity - 1)  # sub tree
         # self.data = np.zeros(self.capacity, object)  # contains the experiences
@@ -23,7 +24,7 @@ class FastSumTree(object):
 
         return self.tree[self.capacity + idx]
 
-    def update(self, tree_index, val):
+    def update(self, tree_index: int, val: float):
         change = val - self.tree[tree_index]
         # print("change", change)
         self.tree[tree_index] = val
@@ -32,8 +33,7 @@ class FastSumTree(object):
             self.tree[tree_index] += change
             # print("new value", self.tree[tree_index])
 
-
-    def retrieve(self, v):
+    def retrieve(self, v: float):
         parent_index = 0
         while True:
             left_child_index = 2 * parent_index + 1
