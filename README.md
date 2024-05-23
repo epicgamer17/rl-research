@@ -1,5 +1,22 @@
 RL recreations and implementation from papers
 
+Includes:
+1. DQN
+2. Double DQN
+3. Prioritized Experience Replay DQN 
+4. Deuling DQN
+5. Noisy DQN 
+6. N Step DQN
+7. Categorical DQN
+8. Rainbow DQN 
+These can be used by passing in the correct config into RainbowAgent (You can also mix and match these by creating your own configs)
+9. Ape-X
+10. Neural Ficticious Self Play
+11. PPO 
+12. AlphaZero
+13. MuZero
+
+
 Envs we have implimented: 
 1. Tic Tac Toe
 2. CartPole
@@ -85,9 +102,8 @@ To Look Into:
 3. R2D2
 4. NGU 
 5. Agent 57
-6. NFSP 
-7. CFR (For imperfect information)
-8. DeepCFR (For imperfect information)
-9. StarCraft League 
-10. Meta Learning 
-11. World Models
+6. CFR (For imperfect information)
+7. DeepCFR (For imperfect information)
+8. StarCraft League 
+9. Meta Learning 
+10. World Models
