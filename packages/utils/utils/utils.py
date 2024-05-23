@@ -36,7 +36,7 @@ from tensorflow.nn import (
 
 import numpy as np
 
-from replay_buffers.base_replay_buffer import Game
+# from ....replay_buffers.base_replay_buffer import Game
 
 
 def normalize_policy(policy: np.float16):
@@ -407,7 +407,7 @@ def add_dirichlet_noise(
 
 
 def augment_board(
-    self, game: Game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False
+    self, game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False
 ):
     # augmented_games[0] = rotate 90
     # augmented_games[1] = rotate 180
@@ -483,3 +483,10 @@ def augment_board(
 
     augemented_games.append(game)
     return augemented_games
+
+
+def calculate_observation_buffer_shape(max_size, observation_dimensions):
+    observation_buffer_shape = []
+    observation_buffer_shape += [max_size]
+    observation_buffer_shape += list(observation_dimensions)
+    return list(observation_buffer_shape)

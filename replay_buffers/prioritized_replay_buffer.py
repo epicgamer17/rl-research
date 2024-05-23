@@ -2,10 +2,10 @@ from time import time
 import numpy as np
 from replay_buffers.segment_tree import SumSegmentTree, MinSegmentTree
 from replay_buffers.fast_sum_tree import FastSumTree
-from replay_buffers.n_step_replay_buffer import ReplayBuffer
+from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
 
 
-class PrioritizedReplayBuffer(ReplayBuffer):
+class PrioritizedReplayBuffer(NStepReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
@@ -180,7 +180,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         return weight
 
 
-class FastPrioritizedReplayBuffer(ReplayBuffer):
+class FastPrioritizedReplayBuffer(NStepReplayBuffer):
     def __init__(
         self,
         observation_dimensions,

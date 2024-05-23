@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+import pickle
 from agent_configs import RainbowConfig
 from utils import update_per_beta, action_mask, get_legal_moves
 
@@ -43,7 +45,7 @@ import gymnasium as gym
 from time import time
 
 # import moviepy
-from replay_buffers.n_step_replay_buffer import ReplayBuffer
+from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
 from replay_buffers.prioritized_replay_buffer import (
     PrioritizedReplayBuffer,
     FastPrioritizedReplayBuffer,
@@ -106,7 +108,7 @@ class RainbowAgent(BaseAgent):
             gamma=self.config.discount_factor,
         )
 
-        self.n_step_replay_buffer = ReplayBuffer(
+        self.n_step_replay_buffer = NStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.config.replay_buffer_size,
             batch_size=self.config.minibatch_size,
@@ -186,7 +188,7 @@ class RainbowAgent(BaseAgent):
         for training_iteration in range(self.config.training_iterations):
             with tf.GradientTape() as tape:
                 elementwise_loss = 0
-                samples = self.replay_buffer.sample(self.config.per_beta)
+                samples = self.replay_buffer.sample()
                 # actions = samples["actions"]
                 # observations = samples["observations"]
                 # inputs = self.prepare_states(observations)
@@ -418,6 +420,22 @@ class RainbowAgent(BaseAgent):
             self.target_model.set_weights(new_weights)
         else:
             self.target_model.set_weights(self.model.get_weights())
+
+    def save_replay_buffers(self, training_step, dir):
+        with open(
+            Path(
+                dir,
+                f"replay_buffers/step_{training_step}_prioritized_replay_buffer.pkl",
+            ),
+            "wb",
+        ) as f:
+            pickle.dump(self.replay_buffer, f)
+
+        with open(
+            Path(dir, f"replay_buffers/step_{training_step}_n_step_replay_buffer.pkl"),
+            "wb",
+        ) as f:
+            pickle.dump(self.n_step_replay_buffer, f)
 
     def train(self):
         training_time = time()

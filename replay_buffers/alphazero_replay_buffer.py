@@ -10,14 +10,13 @@ class AlphaZeroReplayBuffer(BaseReplayBuffer):
         max_size: int,
         batch_size: int,
     ):
-        self.max_size = max_size
-        self.batch_size = batch_size
-        self.buffer: list[Game] = []
+        super().__init__(max_size=max_size, batch_size=batch_size)
 
     def store(self, game: Game):
         if len(self.buffer) >= self.max_size:
             self.buffer.pop(0)
         self.buffer.append(game)
+        self.size += 1
 
     def sample(self):
         move_sum = float(sum([len(game) for game in self.buffer]))
@@ -37,5 +36,6 @@ class AlphaZeroReplayBuffer(BaseReplayBuffer):
             policy=[game.policy_history[i] for game, i in game_indices],
         )
 
-    def __len__(self):
-        return self.size
+    def clear(self):
+        self.buffer: list[Game] = []
+        self.size = 0

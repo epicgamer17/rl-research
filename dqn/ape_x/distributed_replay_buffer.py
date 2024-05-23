@@ -84,7 +84,8 @@ class ReplayServer:
 
     def make_sample(self, beta):
         try:
-            samples = self.replay_memory.sample(beta)
+            self.replay_memory.beta = beta
+            samples = self.replay_memory.sample()
         except AssertionError as e:
             # if the buffer does not have enough samples, return empty samples
             return b""

@@ -2,33 +2,10 @@ from collections import deque
 import numpy as np
 import copy
 
-
-class Game:
-    def __init__(
-        self, num_players=2, num_actions=9, discount=1.0, n_step=1, gamma=0.99
-    ):
-        self.length = 0
-        self.observation_history = []
-        self.rewards = []
-        self.policy_history = []
-        self.value_history = []
-        self.action_history = []
-
-        self.num_players = num_players
-
-    def append(self, observation, reward, policy, value, action):
-        self.observation_history.append(copy.deepcopy(observation))
-        self.rewards.append(reward)
-        self.policy_history.append(policy)
-        self.value_history.append(value)
-        self.action_history.append(action)
-        self.length += 1
-
-    def __len__(self):
-        return self.length
+from replay_buffers.base_replay_buffer import BaseReplayBuffer, Game
 
 
-class ReplayBuffer:
+class MuZeroReplayBuffer(AlphaZeroReplayBuffer):
     def __init__(
         self,
         max_size: int,
@@ -36,19 +13,11 @@ class ReplayBuffer:
         n_step: int,
         gamma: float,
     ):
-        self.max_size = max_size
-        self.batch_size = batch_size
-        self.buffer = []
-
         self.n_step = n_step
         self.gamma = gamma
+        super().__init__(max_size=max_size, batch_size=batch_size)
 
-    def store(self, game):
-        if len(self.buffer) >= self.max_size:
-            self.buffer.pop(0)
-        self.buffer.append(game)
-
-    def sample(self, num_unroll_steps, n_step):
+    def sample(self, num_unroll_steps: int, n_step: int):
         move_sum = float(sum([len(game) for game in self.buffer]))
         games = np.random.choice(
             self.buffer,
@@ -82,7 +51,13 @@ class ReplayBuffer:
         )
 
     def _get_n_step_info(
-        self, index, values, policies, rewards, num_unroll_steps, n_step
+        self,
+        index: int,
+        values: list,
+        policies: list,
+        rewards: list,
+        num_unroll_steps: int,
+        n_step: int,
     ):
         n_step_values = []
         n_step_rewards = []
@@ -108,6 +83,3 @@ class ReplayBuffer:
                 n_step_policies.append([])
 
         return n_step_values, n_step_policies, n_step_rewards
-
-    def __len__(self):
-        return self.size
