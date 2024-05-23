@@ -44,6 +44,10 @@ from time import time
 
 # import moviepy
 from replay_buffers.n_step_replay_buffer import ReplayBuffer
+from replay_buffers.prioritized_replay_buffer import (
+    PrioritizedReplayBuffer,
+    FastPrioritizedReplayBuffer,
+)
 from dqn.dqn_network import Network
 
 
@@ -70,6 +74,14 @@ class DQNAgent(BaseAgent):
         self.model = Network(
             config, self.num_actions, input_shape=self.observation_dimensions
         )
+        self.target_model = Network(
+            config, self.num_actions, input_shape=self.observation_dimensions
+        )
+
+        self.model(np.zeros((1,) + self.observation_dimensions))
+        self.target_model(np.zeros((1,) + self.observation_dimensions))
+
+        self.target_model.set_weights(self.model.get_weights())
 
         self.replay_buffer = ReplayBuffer(
             observation_dimensions=self.observation_dimensions,
@@ -106,6 +118,23 @@ class DQNAgent(BaseAgent):
             next_state, reward, terminated, truncated, info = self.test_env.step(action)
 
         return next_state, reward, terminated, truncated, info
+
+    def update_target_model(self, step):
+
+        if self.config.soft_update:
+            new_weights = self.target_model.get_weights()
+
+            counter = 0
+            for wt, wp in zip(
+                self.target_model.get_weights(),
+                self.model.get_weights(),
+            ):
+                wt = (self.config.ema_beta * wt) + ((1 - self.config.ema_beta) * wp)
+                new_weights[counter] = wt
+                counter += 1
+            self.target_model.set_weights(new_weights)
+        else:
+            self.target_model.set_weights(self.model.get_weights())
 
     def learn(self):
         for training_iteration in range(self.config.training_iterations):
@@ -166,6 +195,7 @@ class DQNAgent(BaseAgent):
         self.fill_replay_buffer()
         state, info = self.env.reset()
         score = 0
+        target_model_updated = (False, False)  # (score, loss)
 
         for training_step in range(self.training_steps):
             for _ in range(self.config.replay_interval):
@@ -184,12 +214,28 @@ class DQNAgent(BaseAgent):
 
                 if done:
                     state, info = self.env.reset()
-                    stats["score"].append({"score": score})
+                    stats["score"].append(
+                        {
+                            "score": score,
+                            "target_model_updated": target_model_updated[0],
+                        }
+                    )
+                    target_model_updated = (False, target_model_updated[1])
                     score = 0
 
             for minibatch in range(self.config.num_minibatches):
                 loss = self.learn()
-                stats["loss"].append({"loss": loss})
+                stats["loss"].append(
+                    {"loss": loss, "target_model_updated": target_model_updated[1]}
+                )
+                target_model_updated = (target_model_updated[0], False)
+
+            if training_step % self.config.transfer_interval == 0:
+                target_model_updated = (True, True)
+                # stats["test_score"].append(
+                #     {"target_model_weight_update": training_step}
+                # )
+                self.update_target_model(training_step)
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(

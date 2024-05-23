@@ -89,6 +89,9 @@ class RainbowAgent(BaseAgent):
         #     loss=self.config.loss_function,
         # )
 
+        self.model(np.zeros((1,) + self.observation_dimensions))
+        self.target_model(np.zeros((1,) + self.observation_dimensions))
+
         self.target_model.set_weights(self.model.get_weights())
 
         self.replay_buffer = PrioritizedReplayBuffer(
@@ -178,7 +181,7 @@ class RainbowAgent(BaseAgent):
 
         return next_state, reward, terminated, truncated, info
 
-    def experience_replay(self):
+    def learn(self):
         for training_iteration in range(self.config.training_iterations):
             with tf.GradientTape() as tape:
                 elementwise_loss = 0
@@ -460,7 +463,7 @@ class RainbowAgent(BaseAgent):
                     score = 0
 
             for minibatch in range(self.config.num_minibatches):
-                loss = self.experience_replay()
+                loss = self.learn()
                 stats["loss"].append(
                     {"loss": loss, "target_model_updated": target_model_updated[1]}
                 )
