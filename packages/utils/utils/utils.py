@@ -361,3 +361,10 @@ def prepare_activations(activation):
     #     return glu
 
     raise ValueError(f"Activation {activation} not recognized")
+
+
+def epsilon_greedy_policy(q_values, epsilon):
+    if np.random.rand() < epsilon:
+        return np.random.randint(len(q_values))
+    else:
+        return np.argmax(q_values)
