@@ -1,7 +1,7 @@
 config_dict:
   activation: relu
   adam_epsilon: 0.0003125
-  advantage_hidden_layers: 0
+  advantage_hidden_layers: 1
   atom_size: 51
   clipnorm: null
   conv_layers: !!python/tuple []
@@ -27,7 +27,7 @@ config_dict:
   minibatch_size: 128
   n_step: 3
   noisy_sigma: 0.5
-  num_minibatches: 1
+  num_minibatches: 2
   optimizer: !!python/name:keras.src.optimizers.legacy.adam.Adam ''
   per_alpha: 0.5
   per_beta: 0.4
@@ -35,11 +35,11 @@ config_dict:
   replay_buffer_size: 50000
   replay_interval: 2
   soft_update: false
-  training_iterations: 1
+  training_iterations: 2
   training_steps: 30000
   transfer_interval: 100
-  value_hidden_layers: 0
-  width: 512
+  value_hidden_layers: 1
+  width: 128
 game: !!python/object:game_configs.cartpole_config.CartPoleConfig
   has_legal_moves: false
   is_deterministic: true

@@ -95,7 +95,7 @@ def test_ten_steps_old():
 
 
 from replay_buffers.n_step_replay_buffer import ReplayBuffer as OldNStep
-from replay_buffers.prioritized_replay_buffer import (
+from replay_buffers.prioritized_n_step_replay_buffer import (
     PrioritizedReplayBuffer as OldPrioritized,
 )
 from replay_buffers.prioritized_nstep import ReplayBuffer as NewNStep

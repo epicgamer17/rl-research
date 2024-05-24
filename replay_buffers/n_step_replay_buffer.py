@@ -23,16 +23,12 @@ class NStepReplayBuffer(BaseReplayBuffer):
     def store(
         self,
         observation,
-        action: int | float,
+        action,
         reward: float,
         next_observation,
         done: bool,
         id=None,
     ):
-        """
-        Store a transition in the replay buffer
-        action can be an int or a float (float for continuous action spaces?)
-        """
         transition = (observation, action, reward, next_observation, done)
         self.n_step_buffer.append(transition)
 
@@ -57,15 +53,15 @@ class NStepReplayBuffer(BaseReplayBuffer):
         observation_buffer_shape = calculate_observation_buffer_shape(
             self.max_size, self.observation_dimensions
         )
-        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
+        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
         self.next_observation_buffer = np.zeros(
-            observation_buffer_shape, dtype=np.float32
+            observation_buffer_shape, dtype=np.float16
         )
 
         self.id_buffer = np.zeros(self.max_size, dtype=np.object_)
-        self.action_buffer = np.zeros(self.max_size, dtype=np.int32)
-        self.reward_buffer = np.zeros(self.max_size, dtype=np.float32)
-        self.done_buffer = np.zeros(self.max_size)
+        self.action_buffer = np.zeros(self.max_size, dtype=np.int16)
+        self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.done_buffer = np.zeros(self.max_size, dtype=np.bool_)
         self.trajectory_start_index = 0
 
         self.pointer = 0

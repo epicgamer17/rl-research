@@ -142,11 +142,15 @@ class Network(Model):
 
         if self.has_value_hidden_layers:
             value = self.value_hidden_layers(x)
+        else:
+            value = x
         value = self.value(value)
         value = self.value_reshaped(value)
 
         if self.has_advantage_hidden_layers:
             advantage = self.advantage_hidden_layers(x)
+        else:
+            advantage = x
         advantage = self.advantage(advantage)
         advantage = self.advantage_reshaped(advantage)
         advantage = self.advantage_reduced_mean(advantage)

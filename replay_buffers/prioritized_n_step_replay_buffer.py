@@ -23,7 +23,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         assert n_step >= 1
         assert gamma > 0 and gamma <= 1
 
-        super(PrioritizedReplayBuffer, self).__init__(
+        super(PrioritizedNStepReplayBuffer, self).__init__(
             observation_dimensions, max_size, batch_size, n_step=n_step, gamma=gamma
         )
 
@@ -43,16 +43,13 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
     def store(
         self,
         observation,
-        action: int | float,
+        action,
         reward: float,
         next_observation,
         done: bool,
         priority: float = None,
         id=None,
     ):
-        # print("Storing in PrioritizedReplayBuffer")
-        # time1 = 0
-        # time1 = time()
         transition = super().store(
             observation, action, reward, next_observation, done, id
         )
@@ -68,7 +65,6 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             self.min_tree[self.tree_pointer] = priority**self.alpha
             self.tree_pointer = (self.tree_pointer + 1) % self.max_size
 
-        # print("Storing in PrioritizedReplayBuffer Time ", time() - time1)
         return transition
 
     def sample(self):
@@ -200,14 +196,11 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
     def store(
         self,
         observation,
-        action: int | float,
+        action,
         reward: float,
         next_observation,
         done: bool,
     ):
-        # print("Storing in PrioritizedReplayBuffer")
-        # time1 = 0
-        # time1 = time()
         transition = super().store(observation, action, reward, next_observation, done)
 
         # max_priority = np.max(self.tree.tree[-self.tree.capacity :])
@@ -218,7 +211,6 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
             self.tree.add(self.tree_pointer, self.max_priority)
             self.tree_pointer = (self.tree_pointer + 1) % self.max_size
 
-        # print("Storing in PrioritizedReplayBuffer Time ", time() - time1)
         return transition
 
     def sample(self):

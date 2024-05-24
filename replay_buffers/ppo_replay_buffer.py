@@ -29,7 +29,7 @@ class PPOReplayBuffer(BaseReplayBuffer):
     def store(
         self,
         observation,
-        action: int | float,
+        action,
         value: float,
         log_probability: float,
         reward: float,
@@ -62,13 +62,13 @@ class PPOReplayBuffer(BaseReplayBuffer):
         observation_buffer_shape = calculate_observation_buffer_shape(
             self.observation_dimensions, self.max_size
         )
-        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
-        self.action_buffer = np.zeros(self.max_size, dtype=np.int32)
-        self.reward_buffer = np.zeros(self.max_size, dtype=np.float32)
-        self.advantage_buffer = np.zeros(self.max_size, dtype=np.float32)
-        self.return_buffer = np.zeros(self.max_size, dtype=np.float32)
-        self.value_buffer = np.zeros(self.max_size, dtype=np.float32)
-        self.log_probability_buffer = np.zeros(self.max_size, dtype=np.float32)
+        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
+        self.action_buffer = np.zeros(self.max_size, dtype=np.int8)
+        self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.advantage_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.return_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.value_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.log_probability_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.pointer = 0
         self.trajectory_start_index = 0
         self.size = 0

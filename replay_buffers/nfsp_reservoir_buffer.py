@@ -14,7 +14,13 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         self.observation_dimensions = observation_dimensions
         super().__init__(max_size=max_size, batch_size=batch_size)
 
-    def store(self, observation, target_policy: list[float], id=None):
+    def store(self, observation, target_policy: list[int], id=None):
+        """
+        Store a transition in the replay buffer.
+        :param observation: the current observation
+        :param target_policy: the target policy for the current observation, in this case it is of type list[int] since it will be a one-hot encoded vector of the action selected by the best agent network
+        :param id: the id of the transition
+        """
         self.observation_buffer[self.pointer] = observation
         self.target_policy_buffer[self.pointer] = target_policy
         self.size = min(self.size + 1, self.max_size)
@@ -54,7 +60,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         observation_buffer_shape = calculate_observation_buffer_shape(
             self.max_size, self.observation_dimensions
         )
-        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float32)
-        self.target_policy_buffer = np.zeros(self.max_size, dtype=np.int32)
+        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
+        self.target_policy_buffer = np.zeros(self.max_size, dtype=np.int8)
         self.size = 0
         self.pointer = 0
