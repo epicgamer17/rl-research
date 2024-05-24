@@ -46,8 +46,8 @@ from time import time
 
 # import moviepy
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
-from replay_buffers.prioritized_replay_buffer import (
-    PrioritizedReplayBuffer,
+from replay_buffers.prioritized_n_step_replay_buffer import (
+    PrioritizedNStepReplayBuffer,
     FastPrioritizedReplayBuffer,
 )
 from dqn.rainbow.rainbow_network import Network
@@ -96,7 +96,7 @@ class RainbowAgent(BaseAgent):
 
         self.target_model.set_weights(self.model.get_weights())
 
-        self.replay_buffer = PrioritizedReplayBuffer(
+        self.replay_buffer = PrioritizedNStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.config.replay_buffer_size,
             batch_size=self.config.minibatch_size,

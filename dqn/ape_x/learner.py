@@ -66,7 +66,7 @@ class ApeXLearnerBase(RainbowAgent):
     def on_done(self):
         pass
 
-    def _experience_replay(self):
+    def _learn(self):
         ti = time.time()
         with tf.GradientTape() as tape:
             samples = self.samples_queue.get()
@@ -165,7 +165,7 @@ class ApeXLearnerBase(RainbowAgent):
                     self.config.per_beta, 1.0, self.training_steps
                 )
 
-                loss = self._experience_replay()
+                loss = self._learn()
                 logger.info(f"finished exp replay")
                 stats["loss"].append(loss)
                 if training_step % self.config.transfer_interval == 0:

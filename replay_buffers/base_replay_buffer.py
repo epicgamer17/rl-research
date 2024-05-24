@@ -9,8 +9,11 @@ class BaseReplayBuffer:
     ):
         self.max_size = max_size
         self.batch_size = batch_size if batch_size is not None else max_size
+
         self.clear()
         assert self.size == 0, "Replay buffer should be empty at initialization"
+        assert self.max_size > 0, "Replay buffer should have a maximum size"
+        assert self.batch_size > 0, "Replay buffer batch size should be greater than 0"
 
     def store(self, *args, **kwargs):
         raise NotImplementedError

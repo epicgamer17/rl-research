@@ -98,7 +98,7 @@ from replay_buffers.n_step_replay_buffer import ReplayBuffer as OldNStep
 from replay_buffers.prioritized_replay_buffer import (
     PrioritizedReplayBuffer as OldPrioritized,
 )
-from refactored_replay_buffers.prioritized_nstep import ReplayBuffer as NewNStep
+from replay_buffers.prioritized_nstep import ReplayBuffer as NewNStep
 
 
 def test_n_step():

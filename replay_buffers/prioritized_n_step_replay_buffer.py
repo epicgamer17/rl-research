@@ -5,7 +5,7 @@ from replay_buffers.fast_sum_tree import FastSumTree
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
 
 
-class PrioritizedReplayBuffer(NStepReplayBuffer):
+class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
@@ -47,6 +47,7 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         reward: float,
         next_observation,
         done: bool,
+        priority: float = None,
         id=None,
     ):
         # print("Storing in PrioritizedReplayBuffer")
@@ -56,59 +57,21 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
             observation, action, reward, next_observation, done, id
         )
 
+        if priority is None:
+            priority = self.max_priority**self.alpha
+            self.max_priority = max(
+                self.max_priority, priority
+            )  # could remove and clip priorities in experience replay isntead
+
         if transition:
-            self.sum_tree[self.tree_pointer] = self.max_priority**self.alpha
-            self.min_tree[self.tree_pointer] = self.max_priority**self.alpha
+            self.sum_tree[self.tree_pointer] = priority**self.alpha
+            self.min_tree[self.tree_pointer] = priority**self.alpha
             self.tree_pointer = (self.tree_pointer + 1) % self.max_size
 
         # print("Storing in PrioritizedReplayBuffer Time ", time() - time1)
         return transition
 
-    def store_with_priority(
-        self,
-        observation,
-        action: int | float,
-        reward: float,
-        next_observation,
-        done: bool,
-        priority: float,
-    ):
-        transition = super().store(observation, action, reward, next_observation, done)
-
-        if transition:
-            self.sum_tree[self.tree_pointer] = priority**self.alpha
-            self.min_tree[self.tree_pointer] = priority**self.alpha
-            self.max_priority = max(self.max_priority, priority)
-            self.tree_pointer = (self.tree_pointer + 1) % self.max_size
-
-        return transition
-
-    def store_with_priority_exact(
-        self,
-        observation,
-        action: int | float,
-        reward: float,
-        next_observation,
-        done: bool,
-        priority: float,
-        id=None,
-    ):
-        transition = super().store(
-            observation, action, reward, next_observation, done, id=id
-        )
-
-        if transition:
-            self.sum_tree[self.tree_pointer] = priority
-            self.min_tree[self.tree_pointer] = priority
-            self.max_priority = max(self.max_priority, priority)
-            self.tree_pointer = (self.tree_pointer + 1) % self.max_size
-
-        return transition
-
     def sample(self):
-        # print("Sampling from PrioritizedReplayBuffer")
-        # time1 = 0
-        # time1 = time()
         assert (
             len(self) >= self.batch_size
         ), "Only {} elements in buffer expected at least {}".format(
@@ -116,9 +79,7 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         )
 
         indices = self._sample_proportional()
-        # print("Retrieving Data from PrioritizedReplayBuffer Data Arrays")
-        # time2 = 0
-        # time2 = time()
+
         observations = self.observation_buffer[indices]
         next_observations = self.next_observation_buffer[indices]
         actions = self.action_buffer[indices]
@@ -126,9 +87,7 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         dones = self.done_buffer[indices]
         ids = self.id_buffer[indices]
         weights = np.array([self._calculate_weight(i) for i in indices])
-        # print("Retrieving Data from PrioritizedReplayBuffer Data Arrays Time ", time() - time2)
 
-        # print("Sampling from PrioritizedReplayBuffer Time ", time() - time1)
         return dict(
             observations=observations,
             next_observations=next_observations,
@@ -201,6 +160,9 @@ class PrioritizedReplayBuffer(NStepReplayBuffer):
         # print("Min Priority ", min_priority)
         # print("Length Self ", len(self))
         return weight
+
+    def __check_id__(self, index: int, id: str) -> bool:
+        return self.id_buffer[index] == id
 
 
 class FastPrioritizedReplayBuffer(NStepReplayBuffer):

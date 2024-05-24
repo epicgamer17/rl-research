@@ -66,7 +66,7 @@ class NStepReplayBuffer(BaseReplayBuffer):
         self.action_buffer = np.zeros(self.max_size, dtype=np.int32)
         self.reward_buffer = np.zeros(self.max_size, dtype=np.float32)
         self.done_buffer = np.zeros(self.max_size)
-        self.pointer, self.trajectory_start_index = 0, 0
+        self.trajectory_start_index = 0
 
         self.pointer = 0
         self.size = 0
