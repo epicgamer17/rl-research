@@ -1,10 +1,10 @@
-import torch
-from torch import nn
+from typing import Callable
+
+from torch import nn, Tensor
 
 from agent_configs import RainbowConfig
-from modules.conv_stack import Conv2dStack
-from modules.dense_stack import DenseStack
-from modules.noisy_dense import NoisyDense
+from modules.conv import Conv2dStack
+from modules.dense import DenseStack, build_dense
 from utils.utils import to_lists
 
 
@@ -15,6 +15,7 @@ class RainbowNetwork(nn.Module):
         super().__init__()
         B = current_shape[0]
         self.config = config
+        self.output_size = output_size
 
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layers_widths) > 0
@@ -36,7 +37,6 @@ class RainbowNetwork(nn.Module):
                 strides=strides,
                 activation=self.config.activation,
                 noisy_sigma=config.noisy_sigma,
-                kernel_initializer=config.kernel_initializer,
             )
             current_shape = (
                 B,
@@ -58,7 +58,6 @@ class RainbowNetwork(nn.Module):
                 widths=self.config.dense_layers_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
-                kernel_initializer=config.kernel_initializer,
             )
             current_shape = (
                 B,
@@ -72,116 +71,111 @@ class RainbowNetwork(nn.Module):
             initial_width = current_shape[1]
 
         if self.has_value_hidden_layers:
-            # (B, width_in) -> (B, value_width_out) -> (B, atom_size)
+            # (B, width_in) -> (B, value_in_features) -> (B, atom_size)
             self.value_hidden_layers = DenseStack(
                 initial_width=initial_width,
                 widths=self.config.value_hidden_layers_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
-                kernel_initializer=config.kernel_initializer,
             )
-            value_output_width = self.value_hidden_layers.output_width
-            if self.config.noisy_sigma != 0:
-                self.value = NoisyDense(
-                    in_features=value_output_width,
-                    out_features=config.atom_size,
-                    sigma=config.noisy_sigma,
-                )
-            else:
-                self.value = nn.Linear(
-                    in_features=value_output_width,
-                    out_features=config.atom_size,
-                )
+            value_in_features = self.value_hidden_layers.output_width
+            self.value_layer = build_dense(
+                in_features=value_in_features,
+                out_features=config.atom_size,
+                sigma=config.noisy_sigma,
+            )
         else:
-            if self.config.noisy_sigma != 0:
-                self.value = NoisyDense(
-                    in_features=self.dense_layers.output_width,
-                    out_features=config.atom_size,
-                    sigma=config.noisy_sigma,
-                )
-            else:
-                self.value = nn.Linear(
-                    in_features=self.dense_layers.output_width,
-                    out_features=config.atom_size,
-                )
-
-        if self.config.kernel_initializer != None:
-            self.config.kernel_initializer(self.value.weight)
+            value_in_features = self.dense_layers.output_width
+        # (B, value_in_features) -> (B, atom_size)
+        self.value_layer = build_dense(
+            in_features=value_in_features,
+            out_features=config.atom_size,
+            sigma=config.noisy_sigma,
+        )
 
         if self.has_advantage_hidden_layers:
-            # (B, width_in) -> (B, advantage_width_out) -> (B, atom_size * output_size)
+            # (B, width_in) -> (B, advantage_in_features)
             self.advantage_hidden_layers = DenseStack(
                 initial_width=initial_width,
                 widths=self.config.advantage_hidden_layers_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
-                kernel_initializer=config.kernel_initializer,
             )
-            advantage_output_width = self.advantage_hidden_layers.output_width
-            if self.config.noisy_sigma != 0:
-                self.advantage = NoisyDense(
-                    in_features=advantage_output_width,
-                    out_features=config.atom_size * output_size,
-                    sigma=config.noisy_sigma,
-                    kernel_initializer=config.kernel_initializer,
-                )
-            else:
-                self.advantage = nn.Linear(
-                    in_features=advantage_output_width,
-                    out_features=config.atom_size * output_size,
-                )
+            advantage_in_features = self.advantage_hidden_layers.output_width
         else:
-            if self.config.noisy_sigma != 0:
-                self.advantage = NoisyDense(
-                    in_features=self.dense_layers.output_width,
-                    out_features=config.atom_size * output_size,
-                    sigma=config.noisy_sigma,
-                )
-            else:
-                self.advantage = nn.Linear(
-                    in_features=self.dense_layers.output_width,
-                    out_features=config.atom_size * output_size,
-                )
-
-        if self.config.kernel_initializer != None:
-            self.config.kernel_initializer(self.advantage.weight)
-        self.softmax = nn.Softmax(1)
+            advantage_in_features = self.dense_layers.output_width
+        # (B, advantage_in_features) -> (B, output_size * atom_size)
+        self.advantage_layer = build_dense(
+            in_features=advantage_in_features,
+            out_features=output_size * config.atom_size,
+        )
 
         # self.outputs = tf.keras.layers.Lambda(
         #     lambda q: tf.reduce_sum(q * config.support, axis=2), name="Q"
         # )
         # ??? config.support not found anywhere
 
-        if config.kernel_initializer != None:
-            self.apply(config.kernel_initializer)
-
-    def call(self, inputs: torch.Tensor, training=False):
-        assert inputs.dim() == 4
-        x = inputs
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_conv_layers:
-            x = self.conv_layers(x)
-        x = self.flatten(x)
+            self.conv_layers.initialize(initializer)
         if self.has_dense_layers:
-            x = self.dense_layers(x)
-
+            self.dense_layers.initialize(initializer)
         if self.has_value_hidden_layers:
-            x = self.value_hidden_layers(x)
-        value = self.value(x)
-
+            self.value_hidden_layers.initialize(initializer)
         if self.has_advantage_hidden_layers:
-            x = self.advantage_hidden_layers(x)
-        advantage: torch.Tensor = self.advantage(x)
-        advantage = advantage.mean(2)
-        q = value + advantage
-        q: torch.Tensor = self.softmax(q)
+            self.advantage_hidden_layers.initialize(initializer)
 
+        self.value_layer.initialize(initializer)
+        self.advantage_layer.initialize(initializer)
+
+    def forward(self, inputs: Tensor) -> Tensor:
+        if self.has_conv_layers:
+            assert inputs.dim() == 4
+
+        # (B, *)
+        S = inputs
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_conv_layers:
+            S = self.conv_layers(S)
+
+        # (B, *) -> (B, dense_features_in)
+        S = S.flatten(1, -1)
+
+        # (B, dense_features_in) -> (B, dense_features_out)
+        if self.has_dense_layers:
+            S = self.dense_layers(S)
+
+        # (B, value_hidden_in) -> (B, value_hidden_out)
+        if self.has_value_hidden_layers:
+            v = self.value_hidden_layers(S)
+
+        # (B, value_hidden_in || dense_features_out) -> (B, atom_size) -> (B, 1, atom_size)
+        v: Tensor = self.value_layer(v).view(-1, 1, self.config.atom_size)
+
+        # (B, adv_hidden_in) -> (B, adv_hidden_out)
+        if self.has_advantage_hidden_layers:
+            A = self.advantage_hidden_layers(S)
+
+        # (B, adv_hidden_out || dense_features_out) -> (B, output_size * atom_size) -> (B, output_size, atom_size)
+        A: Tensor = self.advantage_layer(A).view(
+            -1, self.output_size, self.config.atom_size
+        )
+
+        # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
+        a_mean = A.mean(1, True)
+
+        # (B, 1, atom_size) +
+        # (B, output_size, atom_size) +
+        # (B, 1, atom_size)
+        # is valid broadcasting operation
+        Q = v + A - a_mean
+
+        # -[softmax(2)]-> turns the atom dimension into a valid p.d.f.
         # ONLY CLIP FOR CATEGORICAL CROSS ENTROPY LOSS TO PREVENT NAN
         # MIGHT BE ABLE TO REMOVE CLIPPING ENTIRELY SINCE I DONT THINK THE TENSORFLOW LOSSES CAN RETURN NaN
+        return Q.softmax(2)
         # q.clip(1e-3, 1)
-        # q = self.outputs(q)
-
-        # print(q.shape)
-        return q
 
     def reset_noise(self):
         if self.config.noisy_sigma != 0:
@@ -193,5 +187,5 @@ class RainbowNetwork(nn.Module):
                 self.value_hidden_layers.reset_noise()
             if self.has_advantage_hidden_layers:
                 self.advantage_hidden_layers.reset_noise()
-            self.value.reset_noise()
-            self.advantage.reset_noise()
+            self.value_layer.reset_noise()
+            self.advantage_layer.reset_noise()

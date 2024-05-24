@@ -11,15 +11,13 @@ class Conv2dStack(nn.Module):
         kernel_sizes: list[int],
         strides: list[int],
         activation: nn.Module = nn.ReLU(),
-        kernel_initializer: Callable[[Tensor], None] | None = None,
-        kernel_regularizer: Callable[[Tensor], None] | None = None,
         noisy_sigma: float = 0,
     ):
         super(Conv2dStack, self).__init__()
         self.conv_layers: list[nn.Conv2d] = []
         self.activation = activation
 
-        # [B. C_in H, W]
+        # [B, C_in, H, W]
         assert len(input_shape) == 4
         assert len(filters) == len(kernel_sizes) == len(strides)
         assert len(filters) > 0
@@ -45,13 +43,9 @@ class Conv2dStack(nn.Module):
 
             self._output_len = current_input_channels
 
-        if kernel_initializer != None:
-            for layer in self.conv_layers:
-                kernel_initializer(layer.weight)
-
-        if kernel_regularizer != None:
-            for layer in self.conv_layers:
-                kernel_regularizer(layer.weight)
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        for layer in self.conv_layers:
+            initializer(layer.weight)
 
     def forward(self, inputs):
         x = inputs
