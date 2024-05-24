@@ -19,7 +19,6 @@ class PrioritizedReplayBuffer(BaseDQNReplayBuffer):
     ):
         assert alpha >= 0 and alpha <= 1
         assert beta >= 0 and beta <= 1
-        print("Prioritized Replay Buffer Init")
 
         self.initial_max_priority = max_priority
         super().__init__(observation_dimensions, max_size, batch_size)

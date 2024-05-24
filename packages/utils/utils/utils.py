@@ -179,7 +179,7 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
     axs[row][col].set_xlabel("Game")
     axs[row][col].set_ylabel("Score")
 
-    axs[row][col].set_xlim(1, len(values) + 1)
+    axs[row][col].set_xlim(1, len(values))
 
     if len(scores) > 1:
         best_fit_x, best_fit_y = np.polyfit(x, scores, 1)
@@ -237,7 +237,7 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
     axs[row][col].set_xlabel("Time Step")
     axs[row][col].set_ylabel("Loss")
 
-    axs[row][col].set_xlim(1, len(values) + 1)
+    axs[row][col].set_xlim(1, len(values))
 
     if key in targets and targets[key] is not None:
         axs[row][col].axhline(
@@ -311,9 +311,7 @@ def plot_graphs(
 
     # plt.show()
     assert os.path.exists(dir), f"Directory {dir} does not exist"
-    if not os.path.exists("{}/{}".format(dir, model_name)):
-        os.makedirs("{}/{}".format(dir, model_name))
-    plt.savefig("{}/{}/{}.png".format(dir, model_name, model_name))
+    plt.savefig("{}/{}.png".format(dir, model_name))
 
     plt.close(fig)
 

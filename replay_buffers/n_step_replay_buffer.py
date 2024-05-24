@@ -13,7 +13,6 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
         n_step: int = 1,
         gamma: float = 0.99,
     ):
-        print("NStep Replay Buffer Init")
         self.n_step = n_step
         self.gamma = gamma
         super().__init__(

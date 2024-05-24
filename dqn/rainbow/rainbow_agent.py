@@ -17,8 +17,8 @@ os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
 
 import tensorflow as tf
 
-tf.config.threading.set_intra_op_parallelism_threads(0)
-tf.config.threading.set_inter_op_parallelism_threads(0)
+# tf.config.threading.set_intra_op_parallelism_threads(0)
+# tf.config.threading.set_inter_op_parallelism_threads(0)
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -129,6 +129,16 @@ class RainbowAgent(BaseAgent):
         #     ),
         #     debug=False,
         # )
+
+        self.stats = {
+            "score": [],
+            "loss": [],
+            "test_score": [],
+        }
+        self.targets = {
+            "score": self.env.spec.reward_threshold,
+            "test_score": self.env.spec.reward_threshold,
+        }
 
     def predict_single(self, state, legal_moves=None):
         state_input = self.prepare_states(state)
@@ -371,35 +381,16 @@ class RainbowAgent(BaseAgent):
         else:
             self.target_model.set_weights(self.model.get_weights())
 
-    def save_replay_buffers(self, training_step, dir):
-        with open(
-            Path(
-                dir,
-                f"replay_buffers/step_{training_step}_prioritized_replay_buffer.pkl",
-            ),
-            "wb",
-        ) as f:
-            pickle.dump(self.replay_buffer, f)
-
     def train(self):
         training_time = time()
         self.is_test = False
-        stats = {
-            "score": [],
-            "loss": [],
-            "test_score": [],
-        }
-        targets = {
-            "score": self.env.spec.reward_threshold,
-            "test_score": self.env.spec.reward_threshold,
-        }
 
         self.fill_replay_buffer()
         state, info = self.env.reset()
         score = 0
         target_model_updated = (False, False)  # (score, loss)
-
-        for training_step in range(self.training_steps):
+        self.training_steps += self.start_training_step
+        for training_step in range(self.start_training_step, self.training_steps):
             for _ in range(self.config.replay_interval):
                 action = self.select_action(
                     state,
@@ -411,12 +402,12 @@ class RainbowAgent(BaseAgent):
                 state = next_state
                 score += reward
                 self.replay_buffer.beta = update_per_beta(
-                    self.config.per_beta, 1.0, self.training_steps
+                    self.replay_buffer.beta, 1.0, self.training_steps
                 )
 
                 if done:
                     state, info = self.env.reset()
-                    stats["score"].append(
+                    self.stats["score"].append(
                         {
                             "score": score,
                             "target_model_updated": target_model_updated[0],
@@ -427,7 +418,7 @@ class RainbowAgent(BaseAgent):
 
             for minibatch in range(self.config.num_minibatches):
                 loss = self.learn()
-                stats["loss"].append(
+                self.stats["loss"].append(
                     {"loss": loss, "target_model_updated": target_model_updated[1]}
                 )
                 target_model_updated = (target_model_updated[0], False)
@@ -441,19 +432,19 @@ class RainbowAgent(BaseAgent):
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
-                    stats,
-                    targets,
                     5,
                     training_step,
                     training_step * self.config.replay_interval,
                     time() - training_time,
                 )
         self.save_checkpoint(
-            stats,
-            targets,
             5,
             training_step,
             training_step * self.config.replay_interval,
             time() - training_time,
         )
         self.env.close()
+
+    def load_model_weights(self, weights_path: str):
+        self.model.load_weights(weights_path)
+        self.target_model.load_weights(weights_path)
