@@ -1,6 +1,6 @@
 from typing import Callable
 
-from torch import nn
+from torch import nn, Tensor
 
 from noisy_dense import NoisyDense
 
@@ -11,15 +11,14 @@ class DenseStack(nn.Module):
         initial_width: int,
         widths: list[int],
         activation: nn.Module = nn.ReLU(),
-        kernel_initializer: Callable[[nn.Module], None] | None = None,
+        kernel_initializer: Callable[[Tensor], None] | None = None,
         noisy_sigma: float = 0,
     ):
         super(DenseStack, self).__init__()
-        self.dense_layers: list[nn.Module] = []
+        self.dense_layers: list[nn.Linear] = []
         self.activation = activation
 
         assert len(widths) > 0
-        self.dense_layers = []
         self.noisy = noisy_sigma != 0
 
         current_input_width = initial_width
@@ -42,7 +41,8 @@ class DenseStack(nn.Module):
                 current_input_width = widths[i]
 
         if kernel_initializer != None:
-            self.apply(kernel_initializer)
+            for layer in self.dense_layers:
+                kernel_initializer(layer.weight)
 
         self._output_len = current_input_width
 

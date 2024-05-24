@@ -36,6 +36,7 @@ class RainbowNetwork(nn.Module):
                 strides=strides,
                 activation=self.config.activation,
                 noisy_sigma=config.noisy_sigma,
+                kernel_initializer=config.kernel_initializer,
             )
             current_shape = (
                 B,
@@ -57,6 +58,7 @@ class RainbowNetwork(nn.Module):
                 widths=self.config.dense_layers_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
+                kernel_initializer=config.kernel_initializer,
             )
             current_shape = (
                 B,
@@ -76,6 +78,7 @@ class RainbowNetwork(nn.Module):
                 widths=self.config.value_hidden_layers_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
+                kernel_initializer=config.kernel_initializer,
             )
             value_output_width = self.value_hidden_layers.output_width
             if self.config.noisy_sigma != 0:
@@ -102,6 +105,9 @@ class RainbowNetwork(nn.Module):
                     out_features=config.atom_size,
                 )
 
+        if self.config.kernel_initializer != None:
+            self.config.kernel_initializer(self.value.weight)
+
         if self.has_advantage_hidden_layers:
             # (B, width_in) -> (B, advantage_width_out) -> (B, atom_size * output_size)
             self.advantage_hidden_layers = DenseStack(
@@ -109,6 +115,7 @@ class RainbowNetwork(nn.Module):
                 widths=self.config.advantage_hidden_layers_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
+                kernel_initializer=config.kernel_initializer,
             )
             advantage_output_width = self.advantage_hidden_layers.output_width
             if self.config.noisy_sigma != 0:
@@ -116,6 +123,7 @@ class RainbowNetwork(nn.Module):
                     in_features=advantage_output_width,
                     out_features=config.atom_size * output_size,
                     sigma=config.noisy_sigma,
+                    kernel_initializer=config.kernel_initializer,
                 )
             else:
                 self.advantage = nn.Linear(
@@ -135,6 +143,8 @@ class RainbowNetwork(nn.Module):
                     out_features=config.atom_size * output_size,
                 )
 
+        if self.config.kernel_initializer != None:
+            self.config.kernel_initializer(self.advantage.weight)
         self.softmax = nn.Softmax(1)
 
         # self.outputs = tf.keras.layers.Lambda(

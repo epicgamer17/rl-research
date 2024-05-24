@@ -1,6 +1,6 @@
 from typing import Callable
 
-from torch import nn
+from torch import nn, Tensor
 
 
 class Conv2dStack(nn.Module):
@@ -11,12 +11,12 @@ class Conv2dStack(nn.Module):
         kernel_sizes: list[int],
         strides: list[int],
         activation: nn.Module = nn.ReLU(),
-        kernel_initializer: Callable[[nn.Module], None] | None = None,
-        kernel_regularizer: Callable[[nn.Module], None] | None = None,
+        kernel_initializer: Callable[[Tensor], None] | None = None,
+        kernel_regularizer: Callable[[Tensor], None] | None = None,
         noisy_sigma: float = 0,
     ):
         super(Conv2dStack, self).__init__()
-        self.conv_layers: list[nn.Module] = []
+        self.conv_layers: list[nn.Conv2d] = []
         self.activation = activation
 
         # [B. C_in H, W]
@@ -46,10 +46,12 @@ class Conv2dStack(nn.Module):
             self._output_len = current_input_channels
 
         if kernel_initializer != None:
-            self.apply(kernel_initializer)
+            for layer in self.conv_layers:
+                kernel_initializer(layer.weight)
 
         if kernel_regularizer != None:
-            self.apply(kernel_regularizer)
+            for layer in self.conv_layers:
+                kernel_regularizer(layer.weight)
 
     def forward(self, inputs):
         x = inputs
