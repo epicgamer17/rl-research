@@ -28,7 +28,7 @@ class RainbowNetwork(nn.Module):
             assert len(input_shape) == 4
             filters, kernel_sizes, strides = to_lists(self.conv_layers)
 
-            # (B, H, W, C_in) -> (B, H, W, C_out)
+            # (B, C_in, H, W) -> (B, C_out H, W)
             self.conv_layers = Conv2dStack(
                 input_shape=input_shape,
                 filters=filters,
@@ -39,9 +39,9 @@ class RainbowNetwork(nn.Module):
             )
             current_shape = (
                 B,
-                current_shape[1],
-                current_shape[2],
                 self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
             )
 
         if self.has_dense_layers:

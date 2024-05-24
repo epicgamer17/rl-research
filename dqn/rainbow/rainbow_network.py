@@ -20,7 +20,7 @@ class Network(Model):
         self.config = config
 
         self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = config.dense_layers > 0
+        self.has_dense_layers = config.dense_widths > 0
 
         # Convert the config into a list of filters, kernel_sizes, and strides (could put in utils?)
         filters = []
@@ -42,7 +42,7 @@ class Network(Model):
                 self.config.conv_layers_noisy,
             )
 
-        widths = [config.width] * config.dense_layers
+        widths = [config.width] * config.dense_widths
         if self.has_dense_layers:
             self.dense_layers = DenseStack(
                 widths,

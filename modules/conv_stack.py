@@ -13,13 +13,13 @@ class Conv2dStack(nn.Module):
         activation: nn.Module = nn.ReLU(),
         kernel_initializer: Callable[[nn.Module], None] | None = None,
         kernel_regularizer: Callable[[nn.Module], None] | None = None,
-        noisy_sigma: float = None,
+        noisy_sigma: float = 0,
     ):
         super(Conv2dStack, self).__init__()
         self.conv_layers: list[nn.Module] = []
         self.activation = activation
 
-        # [B. H, W, C_in]
+        # [B. C_in H, W]
         assert len(input_shape) == 4
         assert len(filters) == len(kernel_sizes) == len(strides)
         assert len(filters) > 0
@@ -28,7 +28,7 @@ class Conv2dStack(nn.Module):
         if self.noisy:
             raise NotImplementedError("Noisy convolutions not implemented yet")
         else:
-            current_input_channels = input_shape[-1]
+            current_input_channels = input_shape[1]
 
             for i in range(len(filters)):
                 layer = nn.Conv2d(
@@ -41,7 +41,7 @@ class Conv2dStack(nn.Module):
 
                 self.conv_layers.append(layer)
 
-                current_input_channels *= filters[i]
+                current_input_channels = filters[i]
 
             self._output_len = current_input_channels
 

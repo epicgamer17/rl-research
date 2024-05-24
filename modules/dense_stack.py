@@ -12,7 +12,7 @@ class DenseStack(nn.Module):
         widths: list[int],
         activation: nn.Module = nn.ReLU(),
         kernel_initializer: Callable[[nn.Module], None] | None = None,
-        noisy_sigma: float = None,
+        noisy_sigma: float = 0,
     ):
         super(DenseStack, self).__init__()
         self.dense_layers: list[nn.Module] = []
@@ -31,7 +31,7 @@ class DenseStack(nn.Module):
                     sigma=noisy_sigma,
                 )
                 self.dense_layers.append(layer)
-                current_input_width *= widths[i]
+                current_input_width = widths[i]
         else:
             for i in range(len(widths)):
                 layer = nn.Linear(
@@ -39,7 +39,7 @@ class DenseStack(nn.Module):
                     out_features=widths[i],
                 )
                 self.dense_layers.append(layer)
-                current_input_width *= widths[i]
+                current_input_width = widths[i]
 
         if kernel_initializer != None:
             self.apply(kernel_initializer)
