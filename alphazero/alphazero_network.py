@@ -73,6 +73,9 @@ class Network(tf.keras.Model):
         self.critic = tf.keras.layers.Dense(
             1,
             activation="tanh",
+            kernel_initializer=prepare_kernel_initializers(
+                config.kernel_initializer, output_layer=True
+            ),
             kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
             name="critic",
         )
@@ -115,7 +118,9 @@ class Network(tf.keras.Model):
         self.actor = tf.keras.layers.Dense(
             output_shape,
             name="actor",
-            kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
+            kernel_initializer=prepare_kernel_initializers(
+                config.kernel_initializer, output_layer=True
+            ),
             kernel_regularizer=tf.keras.regularizers.L2(config.weight_decay),
         )
 

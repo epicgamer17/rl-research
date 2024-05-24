@@ -66,7 +66,7 @@ class Network(Model):
                 config.atom_size,
                 sigma=config.noisy_sigma,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="HiddenV",
@@ -75,7 +75,7 @@ class Network(Model):
             self.value = tf.keras.layers.Dense(
                 config.atom_size,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="HiddenV",
@@ -96,7 +96,7 @@ class Network(Model):
                 config.atom_size * output_size,
                 sigma=config.noisy_sigma,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="A",
@@ -105,7 +105,7 @@ class Network(Model):
             self.advantage = tf.keras.layers.Dense(
                 config.atom_size * output_size,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="A",

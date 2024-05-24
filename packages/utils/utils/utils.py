@@ -14,6 +14,7 @@ from keras.initializers import (
     LecunNormal,
     LecunUniform,
     Initializer,
+    Constant,
 )
 
 
@@ -316,7 +317,9 @@ def plot_graphs(
     plt.close(fig)
 
 
-def prepare_kernel_initializers(kernel_initializer: str):
+def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = False):
+    if output_layer:
+        return Constant(value=0.001)
     if kernel_initializer == "glorot_uniform":
         return GlorotUniform(seed=np.random.seed())
     elif kernel_initializer == "glorot_normal":
@@ -532,3 +535,11 @@ def sample_tree_proportional(
         # print(tree[indices[i]])
 
     return indices
+
+
+def reward_clipping(reward: float, lower_bound: float = -1, upper_bound: float = 1):
+    if reward < lower_bound:
+        return lower_bound
+    elif reward > upper_bound:
+        return upper_bound
+    return reward

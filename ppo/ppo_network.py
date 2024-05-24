@@ -85,7 +85,9 @@ class CriticNetwork(tf.keras.Model):
                     )
         self.value = tf.keras.layers.Dense(
             1,
-            kernel_initializer=prepare_kernel_initializers(config.kernel_initializer),
+            kernel_initializer=prepare_kernel_initializers(
+                config.kernel_initializer, output_layer=True
+            ),
             activation=None,
             name="value",
         )
@@ -177,7 +179,7 @@ class ActorNetwork(tf.keras.Model):
             self.actions = tf.keras.layers.Dense(
                 output_shape,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="softmax",
                 name="actions",
@@ -186,7 +188,7 @@ class ActorNetwork(tf.keras.Model):
             self.mean = tf.keras.layers.Dense(
                 output_shape,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="tanh",
                 name="mean",
@@ -194,7 +196,7 @@ class ActorNetwork(tf.keras.Model):
             self.std = tf.keras.layers.Dense(
                 output_shape,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="softplus",
                 name="std",
