@@ -2,6 +2,7 @@ import copy
 import math
 import os
 from matplotlib import pyplot as plt
+import scipy
 import tensorflow as tf
 from tensorflow import keras
 from keras.initializers import (
@@ -492,9 +493,10 @@ def augment_board(
 
 
 def calculate_observation_buffer_shape(max_size, observation_dimensions):
-    observation_buffer_shape = []
-    observation_buffer_shape += [max_size]
-    observation_buffer_shape += list(observation_dimensions)
+    # observation_buffer_shape = []
+    # observation_buffer_shape += [max_size]
+    # observation_buffer_shape += list(observation_dimensions)
+    observation_buffer_shape = (max_size,) + observation_dimensions
     return list(observation_buffer_shape)
 
 
@@ -543,3 +545,8 @@ def reward_clipping(reward: float, lower_bound: float = -1, upper_bound: float =
     elif reward > upper_bound:
         return upper_bound
     return reward
+
+
+def discounted_cumulative_sums(x, discount):
+    # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
+    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]

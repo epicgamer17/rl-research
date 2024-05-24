@@ -1,8 +1,11 @@
 import numpy as np
 from replay_buffers.alphazero_replay_buffer import AlphaZeroReplayBuffer
+from replay_buffers.base_replay_buffer import BaseGameReplayBuffer, Game
 
 
-class MuZeroReplayBuffer(AlphaZeroReplayBuffer):
+class MuZeroReplayBuffer(
+    BaseGameReplayBuffer
+):  # does not inherit from AlphaZeroReplayBuffer but maybe should?
     def __init__(
         self,
         max_size: int,
@@ -15,14 +18,7 @@ class MuZeroReplayBuffer(AlphaZeroReplayBuffer):
         super().__init__(max_size=max_size, batch_size=batch_size)
 
     def sample(self, num_unroll_steps: int, n_step: int):
-        move_sum = float(sum([len(game) for game in self.buffer]))
-        games = np.random.choice(
-            self.buffer,
-            self.batch_size,
-            p=[len(game) / move_sum for game in self.buffer],
-        )
-
-        game_indices = [(game, np.random.randint(len(game))) for game in games]
+        game_indices = super().sample()
 
         values, policies, rewards = [
             self._get_n_step_info(

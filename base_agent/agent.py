@@ -120,10 +120,18 @@ class BaseAgent:
 
         self.on_load()
 
-    def on_load(self):
-        pass
+    def load_replay_buffers(self, dir):
+        # with open(
+        #     Path(dir, f"replay_buffers/step_{training_step}_replay_buffer.pkl"),
+        #     "rb",
+        # ) as f:
+        #     self.replay_buffer = pickle.load(f)
+        raise NotImplementedError
 
-    def save_replay_buffers(self, training_step, dir):
+    def load_from_checkpoint(self, dir):
+        raise NotImplementedError
+
+    def save_replay_buffers(self, dir):
         # with open(
         #     Path(dir, f"replay_buffers/step_{training_step}_replay_buffer.pkl"),
         #     "wb",
@@ -140,36 +148,42 @@ class BaseAgent:
         frames_seen,
         time_taken,
     ):
+        # test model
+
         if self.config.save_intermediate_weights:
             dir = Path("checkpoints", self.model_name)
+            training_step_dir = Path(dir, f"step_{training_step}")
             os.makedirs(dir, exist_ok=True)
-            os.makedirs(Path(dir, "model_weights"), exist_ok=True)
-            os.makedirs(Path(dir, "optimizers"), exist_ok=True)
+            os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
+            os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
             os.makedirs(Path(dir, "configs"), exist_ok=True)
-            os.makedirs(Path(dir, "replay_buffers"), exist_ok=True)
+            os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
             os.makedirs(Path(dir, "graphs"), exist_ok=True)
-            os.makedirs(Path(dir, "videos"), exist_ok=True)
+            os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
             # save the model weights
-            weights_path = str(Path(dir, f"model_weights/step_{training_step}.keras"))
-            self.model.save(weights_path)
+            weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
+            self.model.save_weights(weights_path)
 
             # save optimizer (pickle doesn't work but dill does)
-            with open(
-                Path(dir, f"optimizers/step_{training_step}_optimizer.dill"), "wb"
-            ) as f:
+            with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "wb") as f:
                 dill.dump(self.config.optimizer, f)
 
-            # save config
-            self.config.dump(f"{dir}/configs/config.yaml")
-
             # save replay buffer
-            self.save_replay_buffers(training_step, dir)
+            self.save_replay_buffers(training_step_dir)
 
-        # test model
-        test_score = self.test(num_trials, training_step, dir)
+        # save config
+        self.config.dump(f"{dir}/configs/config.yaml")
+
+        test_score = self.test(num_trials, training_step, training_step_dir)
         stats["test_score"].append(test_score)
-        # plot the graphs
+        # save the graph stats and targets
+        with open(Path(dir, f"graphs/stats.pkl"), "wb") as f:
+            pickle.dump(stats, f)
+        with open(Path(dir, f"graphs/targets.pkl"), "wb") as f:
+            pickle.dump(targets, f)
+
+        # plot the graphs (and save the graph)
         plot_graphs(
             stats,
             targets,

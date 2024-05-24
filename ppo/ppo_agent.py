@@ -39,7 +39,7 @@ if gpus:
 import datetime
 import numpy as np
 from ppo.ppo_network import Network
-from replay_buffers.ppo_replay_buffer import PPOReplayBuffer
+from replay_buffers.base_replay_buffer import BasePPOReplayBuffer
 import tensorflow_probability as tfp
 from base_agent.agent import BaseAgent
 
@@ -72,7 +72,7 @@ class PPOAgent(BaseAgent):
         #     config=config,
         # )
 
-        self.replay_buffer = PPOReplayBuffer(
+        self.replay_buffer = BasePPOReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.config.replay_buffer_size,
             gamma=self.config.discount_factor,

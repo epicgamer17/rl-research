@@ -45,7 +45,6 @@ import gymnasium as gym
 from time import time
 
 # import moviepy
-from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
 from replay_buffers.prioritized_n_step_replay_buffer import (
     PrioritizedNStepReplayBuffer,
     FastPrioritizedReplayBuffer,
@@ -108,14 +107,6 @@ class RainbowAgent(BaseAgent):
             gamma=self.config.discount_factor,
         )
 
-        self.n_step_replay_buffer = NStepReplayBuffer(
-            observation_dimensions=self.observation_dimensions,
-            max_size=self.config.replay_buffer_size,
-            batch_size=self.config.minibatch_size,
-            n_step=self.config.n_step,
-            gamma=self.config.discount_factor,
-        )
-
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
         # self.v_min = self.config.v_min
         # self.v_max = self.config.v_max
@@ -165,19 +156,8 @@ class RainbowAgent(BaseAgent):
             next_state, reward, terminated, truncated, info = self.env.step(action)
             done = terminated or truncated
             self.transition += [reward, next_state, done]
-            # if self.use_n_step:
-            # print(self.transition)
-            one_step_transition = self.n_step_replay_buffer.store(*self.transition)
-            # else:
-            #     one_step_transition = self.transition
 
-            if one_step_transition:
-                self.replay_buffer.store(*one_step_transition)
-
-            # fix?
-            # # if one_step_transition:
-            # #     self.replay_buffer.store(*one_step_transition)
-            # self.replay_buffer.store(*one_step_transition)
+            self.replay_buffer.store(*self.transition)
 
         else:
             next_state, reward, terminated, truncated, info = self.test_env.step(action)
@@ -189,67 +169,37 @@ class RainbowAgent(BaseAgent):
             with tf.GradientTape() as tape:
                 elementwise_loss = 0
                 samples = self.replay_buffer.sample()
-                # actions = samples["actions"]
-                # observations = samples["observations"]
-                # inputs = self.prepare_states(observations)
                 weights = samples["weights"].reshape(-1, 1)
                 indices = samples["indices"]
-                # discount_factor = self.config.discount_factor
-                # target_ditributions = self.compute_target_distributions(
-                #     samples, discount_factor
-                # )
-                # initial_distributions = self.model(inputs)
-                # distributions_to_train = tf.gather_nd(
-                #     initial_distributions,
-                #     list(zip(range(initial_distributions.shape[0]), actions)),
-                # )
-                # changed this from self.model.loss.call to self.config.loss_function.call
-                # elementwise_loss = self.config.loss_function.call(
-                #     y_pred=distributions_to_train,
-                #     y_true=tf.convert_to_tensor(target_ditributions),
-                # )
-                # assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-                #     elementwise_loss
-                # )
-                # if self.use_n_step:
+                actions = samples["actions"]
+                observations = samples["observations"]
                 discount_factor = self.config.discount_factor**self.config.n_step
-                n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
-                actions = n_step_samples["actions"]
-                n_step_observations = n_step_samples["observations"]
-                observations = n_step_observations
                 inputs = self.prepare_states(observations)
                 target_ditributions = self.compute_target_distributions(
-                    n_step_samples, discount_factor
+                    samples, discount_factor
                 )
                 initial_distributions = self.model(inputs)
                 distributions_to_train = tf.gather_nd(
                     initial_distributions,
                     list(zip(range(initial_distributions.shape[0]), actions)),
                 )
-                # print("Distributions to Train", distributions_to_train)
                 # changed this from self.model.loss.call to self.config.loss_function.call
                 elementwise_loss_n_step = self.config.loss_function.call(
                     y_pred=distributions_to_train,
                     y_true=tf.convert_to_tensor(target_ditributions),
                 )
                 # add the losses together to reduce variance (original paper just uses n_step loss)
-                # elementwise_loss += elementwise_loss_n_step
                 elementwise_loss = elementwise_loss_n_step
-                # print("Elementwise Loss ", elementwise_loss)
                 assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                     elementwise_loss
                 )
                 loss = tf.reduce_mean(elementwise_loss * weights)
-                # print("Weights ", weights)
-                # print("Loss ", loss)
 
             # TRAINING WITH GRADIENT TAPE
             gradients = tape.gradient(loss, self.model.trainable_variables)
             self.config.optimizer.apply_gradients(
                 grads_and_vars=zip(gradients, self.model.trainable_variables)
             )
-            # TRAINING WITH tf.train_on_batch
-            # loss = self.model.train_on_batch(samples["observations"], target_ditributions, sample_weight=weights)
 
             prioritized_loss = elementwise_loss + self.config.per_epsilon
             # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
@@ -430,12 +380,6 @@ class RainbowAgent(BaseAgent):
             "wb",
         ) as f:
             pickle.dump(self.replay_buffer, f)
-
-        with open(
-            Path(dir, f"replay_buffers/step_{training_step}_n_step_replay_buffer.pkl"),
-            "wb",
-        ) as f:
-            pickle.dump(self.n_step_replay_buffer, f)
 
     def train(self):
         training_time = time()
