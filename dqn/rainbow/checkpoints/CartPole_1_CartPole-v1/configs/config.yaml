@@ -1,0 +1,41 @@
+config_dict:
+  adam_epsilon: 0.3125
+  advantage_hidden_layers: 0
+  atom_size: 21
+  conv_layers: !!python/tuple []
+  dense_layers: 2
+  discount_factor: 0.1
+  ema_beta: 0.9800405240818774
+  kernel_initializer: lecun_normal
+  learning_rate: 0.1
+  loss_function: !!python/object:keras.src.losses.KLDivergence
+    _allow_sum_over_batch_size: false
+    _fn_kwargs: {}
+    _name_scope: kl_divergence
+    fn: !!python/name:keras.src.losses.kl_divergence ''
+    name: kl_divergence
+    reduction: auto
+  min_replay_buffer_size: 625
+  minibatch_size: 4
+  model_name: CartPole_1
+  n_step: 2
+  per_alpha: 0.8500000000000001
+  per_beta: 0.55
+  per_epsilon: 0.0001
+  replay_buffer_size: 2000
+  replay_interval: 12
+  training_steps: 5000
+  transfer_interval: 2000
+  v_max: 500.0
+  v_min: 0
+  value_hidden_layers: 1
+  width: 256
+game: !!python/object:game_configs.cartpole_config.CartPoleConfig
+  has_legal_moves: false
+  is_deterministic: true
+  is_discrete: true
+  is_image: false
+  max_score: 500
+  min_score: 0
+  multi_agent: false
+  perfect_information: true

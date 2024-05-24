@@ -61,7 +61,7 @@ def make_func():
         )
         m.train()
         print("Training complete")
-        return -m.test(num_trials=10)
+        return -m.test(num_trials=10, step=5000, dir="./checkpoints/")
 
     return run_training
 
@@ -186,7 +186,7 @@ def create_search_space():
             "advantage_hidden_layers", [0, 1, 2, 3, 4]
         ),  #
         "value_hidden_layers": hp.choice("value_hidden_layers", [0, 1, 2, 3, 4]),  #
-        "num_training_steps": hp.choice("num_training_steps", [5000]),
+        "training_steps": hp.choice("training_steps", [5000]),
         "per_epsilon": hp.choice(
             "per_epsilon", [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1]
         ),
