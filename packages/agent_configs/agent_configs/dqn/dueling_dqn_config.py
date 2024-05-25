@@ -1,11 +1,9 @@
-from ..base_config import Config
+from agent_configs.dqn.rainbow_config import RainbowConfig
 
 
-class DuelingDQNConfig(Config):
+class DuelingDQNConfig(RainbowConfig):
     def __init__(self, config_dict, game_config):
         super(DuelingDQNConfig, self).__init__(config_dict, game_config)
-
-        # Network Arcitecture
 
         self.width: int = self.parse_field("width", 128)
         self.noisy_sigma: float = 0

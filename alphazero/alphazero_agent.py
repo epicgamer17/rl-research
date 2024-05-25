@@ -99,7 +99,7 @@ class AlphaZeroAgent(BaseAgent):
 
             # STAT TRACKING
             for minibatch in range(self.config.num_minibatches):
-                value_loss, policy_loss, l2_loss, loss = self.experience_replay()
+                value_loss, policy_loss, l2_loss, loss = self.learn()
                 stats["value_loss"].append(value_loss)
                 stats["policy_loss"].append(policy_loss)
                 stats["l2_loss"].append(l2_loss)
@@ -179,7 +179,7 @@ class AlphaZeroAgent(BaseAgent):
         ]
         return visit_counts
 
-    def experience_replay(self):
+    def learn(self):
         samples = self.replay_buffer.sample()
         observations = samples["observations"]
         target_policies = samples["policy"]
@@ -258,7 +258,7 @@ class AlphaZeroAgent(BaseAgent):
         while not done:
             action, target_policy = self.select_action(
                 state,
-                info["legal_moves"] if self.config.game.has_legal_moves else None,
+                get_legal_moves(info),
                 game=game,
             )
             print("Action ", action)

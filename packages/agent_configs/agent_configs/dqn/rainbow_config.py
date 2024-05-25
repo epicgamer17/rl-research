@@ -5,8 +5,6 @@ class RainbowConfig(Config):
     def __init__(self, config_dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
 
-        # Network Arcitecture
-
         self.width: int = self.parse_field("width", 128)
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
         self.conv_layers: list = self.parse_field("conv_layers", [])

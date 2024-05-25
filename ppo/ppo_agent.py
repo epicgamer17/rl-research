@@ -39,7 +39,7 @@ if gpus:
 import datetime
 import numpy as np
 from ppo.ppo_network import Network
-from replay_buffers.ppo_replay_buffer import ReplayBuffer
+from replay_buffers.base_replay_buffer import BasePPOReplayBuffer
 import tensorflow_probability as tfp
 from base_agent.agent import BaseAgent
 
@@ -72,7 +72,7 @@ class PPOAgent(BaseAgent):
         #     config=config,
         # )
 
-        self.replay_buffer = ReplayBuffer(
+        self.replay_buffer = BasePPOReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.config.replay_buffer_size,
             gamma=self.config.discount_factor,
@@ -80,6 +80,18 @@ class PPOAgent(BaseAgent):
         )
 
         self.transition = list()
+
+        self.stats = {
+            "score": [],
+            "actor_loss": [],
+            "critic_loss": [],
+            "test_score": [],
+        }
+        self.targets = {
+            "score": self.env.spec.reward_threshold,
+            "test_score": self.env.spec.reward_threshold,
+            "actor_loss": self.config.target_kl,
+        }
 
     def predict_single(self, state, legal_moves=None):
         state_input = self.preprocess(state)
@@ -200,20 +212,10 @@ class PPOAgent(BaseAgent):
     def train(self):
         training_time = time()
         self.is_test = False
-        stats = {
-            "score": [],
-            "actor_loss": [],
-            "critic_loss": [],
-            "test_score": [],
-        }
-        targets = {
-            "score": self.env.spec.reward_threshold,
-            "test_score": self.env.spec.reward_threshold,
-            "actor_loss": self.config.target_kl,
-        }
 
         state, _ = self.env.reset()
-        for training_step in range(self.training_steps):
+        self.training_steps += self.start_training_step
+        for training_step in range(self.start_training_step, self.training_steps):
             print("Training Step: ", training_step)
             num_episodes = 0
             total_score = 0
@@ -240,7 +242,7 @@ class PPOAgent(BaseAgent):
                     total_score += score
                     score = 0
 
-            samples = self.replay_buffer.get()
+            samples = self.replay_buffer.sample()
             observations = samples["observations"]
             actions = samples["actions"]
             log_probabilities = samples["log_probabilities"]
@@ -275,7 +277,7 @@ class PPOAgent(BaseAgent):
                         batch_advantages,
                         learning_rate,
                     )
-                    stats["actor_loss"].append(kl_divergence)
+                    self.stats["actor_loss"].append(kl_divergence)
                 if kl_divergence > 1.5 * self.config.target_kl:
                     print("Early stopping at iteration {}".format(_))
                     break
@@ -304,17 +306,15 @@ class PPOAgent(BaseAgent):
                     critic_loss = self.train_critic(
                         batch_observations, batch_returns, learning_rate
                     )
-                    stats["critic_loss"].append(critic_loss)
+                    self.stats["critic_loss"].append(critic_loss)
                 # critic_loss = self.train_critic(inputs, returns, learning_rate)
                 # stat_critic_loss.append(critic_loss)
                 # stat_loss.append(critic_loss)
 
             # self.old_actor.set_weights(self.actor.get_weights())
-            stats["score"].append(total_score / num_episodes)
+            self.stats["score"].append(total_score / num_episodes)
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
-                    stats,
-                    targets,
                     5,
                     training_step,
                     training_step * self.config.steps_per_epoch,
@@ -322,8 +322,6 @@ class PPOAgent(BaseAgent):
                 )
 
         self.save_checkpoint(
-            stats,
-            targets,
             5,
             training_step,
             training_step * self.config.steps_per_epoch,

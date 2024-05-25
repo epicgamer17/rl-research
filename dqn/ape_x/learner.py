@@ -57,6 +57,14 @@ class ApeXLearnerBase(RainbowAgent):
             maxsize=self.config.updates_queue_size
         )
 
+        self.stats = {
+            "loss": [],
+            "test_score": [],
+        }
+        self.targets = {
+            "test_score": self.env.spec.reward_threshold,
+        }
+
     def store_weights(self, weights):
         pass
 
@@ -66,7 +74,7 @@ class ApeXLearnerBase(RainbowAgent):
     def on_done(self):
         pass
 
-    def _experience_replay(self):
+    def _learn(self):
         ti = time.time()
         with tf.GradientTape() as tape:
             samples = self.samples_queue.get()
@@ -137,18 +145,12 @@ class ApeXLearnerBase(RainbowAgent):
 
             logger.info("learner running")
             self.is_test = False
-            stats = {
-                "loss": [],
-                "test_score": [],
-            }
-            targets = {
-                "test_score": self.env.spec.reward_threshold,
-            }
             # target_model_updated = False
             # self.fill_replay_buffer()
             state, info = self.env.reset()
 
-            for training_step in range(self.training_steps):
+            self.training_steps += self.start_training_step
+            for training_step in range(self.start_training_step, self.training_steps):
                 # stop training if going over 1.5 hours
                 if time.time() - start_time > 3600 * 1.5:
                     break
@@ -162,20 +164,18 @@ class ApeXLearnerBase(RainbowAgent):
                     logger.info("pushed params")
 
                 self.replay_buffer.beta = update_per_beta(
-                    self.config.per_beta, 1.0, self.training_steps
+                    self.replay_buffer.beta, 1.0, self.training_steps
                 )
 
-                loss = self._experience_replay()
+                loss = self._learn()
                 logger.info(f"finished exp replay")
-                stats["loss"].append(loss)
+                self.stats["loss"].append(loss)
                 if training_step % self.config.transfer_interval == 0:
                     # target_model_updated = True
                     self.update_target_model(training_step)
 
                 if training_step % self.checkpoint_interval == 0:
                     self.save_checkpoint(
-                        stats,
-                        targets,
                         5,
                         training_step,
                         training_step,
@@ -183,7 +183,7 @@ class ApeXLearnerBase(RainbowAgent):
                     )
 
                     if training_step // self.training_steps > 0.125:
-                        past_scores = stats["test_score"][-5:][
+                        past_scores = self.stats["test_score"][-5:][
                             "score"
                         ]  # this may not work, you might need to convert it to a list first like in utils plots :)
                         avg = np.sum(past_scores) / 5
@@ -193,8 +193,6 @@ class ApeXLearnerBase(RainbowAgent):
             logger.info("loop done")
 
             self.save_checkpoint(
-                stats,
-                targets,
                 5,
                 training_step,
                 training_step,

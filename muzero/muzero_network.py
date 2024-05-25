@@ -397,6 +397,7 @@ class Prediction(tf.keras.Model):
         self.critic = tf.keras.layers.Dense(
             1,
             activation="tanh",
+            kernel_initializer=kernel_initializers.pop(),
             kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
             name="critic",
         )

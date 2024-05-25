@@ -61,7 +61,13 @@ class ApeXActorBase(ActorAgent, PollingActor):
         super().__init__(env, config, name)
         self.config = config
         self.score = 0
-        self.stats = dict(score=list())
+        if self.spectator:
+            self.targets = {
+                "score": self.env.spec.reward_threshold,
+            }
+        self.stats = {
+            "score": [],
+        }
         self.rb = ReplayBuffer(
             observation_dimensions=env.observation_space.shape,
             batch_size=self.config.replay_buffer_size,
@@ -208,17 +214,15 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             self.t_i = time.time()
 
     def on_training_step_end(self, training_step):
-        self.replay_buffer.beta = update_per_beta(
-            training_step, self.config.per_beta, self.config.training_steps
-        )
+        # self.replay_buffer.beta = update_per_beta(
+        #     training_step, self.replay_buffer.beta, self.config.training_steps
+        # ) # i dont think actor should update per beta as it should happen after learning steps
 
         if self.spectator:
-            targets = {
+            self.targets = {
                 "score": self.env.spec.reward_threshold,
             }
             self.plot_graph(
-                self.stats,
-                targets,
                 training_step,
                 training_step,
                 time_taken=time.time() - self.t_i,

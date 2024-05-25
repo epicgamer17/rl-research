@@ -39,7 +39,7 @@ class Network(Model):
                 strides,
                 self.config.activation,
                 self.config.kernel_initializer,
-                self.config.conv_layers_noisy,
+                self.config.noisy_sigma,
             )
 
         widths = [config.width] * config.dense_layers
@@ -129,6 +129,7 @@ class Network(Model):
         self.outputs = tf.keras.layers.Lambda(
             lambda q: tf.reduce_sum(q * config.support, axis=2), name="Q"
         )
+        # print(config.support)
 
         self.flatten = tf.keras.layers.Flatten()
 

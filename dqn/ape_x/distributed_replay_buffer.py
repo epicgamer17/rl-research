@@ -1,7 +1,7 @@
 import argparse
 import signal
 import numpy as np
-import entities.replayMemory_capnp as replay_memory_capnp
+import entities.replayMemory_capnp as replay_buffer_capnp
 import zmq
 import message_codes
 import time
@@ -23,16 +23,16 @@ logger.addHandler(ch)
 import sys
 
 sys.path.append("../")
-from refactored_replay_buffers.prioritized_nstep import ReplayBuffer
+from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
 from storage.compress_utils import compress, decompress
 
 
 class SaveableReplayBuffer:
     def __init__(self, config: ReplayBufferConfig, load=False):
         if load:
-            self.load("replay_memory.xz")
+            self.load("replay_buffer.xz")
         else:
-            self.replay_memory = ReplayBuffer(
+            self.replay_buffer = PrioritizedNStepReplayBuffer(
                 observation_dimensions=config.observation_dimensions,
                 max_size=config.max_size,
                 min_size=config.min_size,
@@ -46,24 +46,24 @@ class SaveableReplayBuffer:
 
     def load(self, path):
         with open(path, "rb") as file:
-            self.replay_memory = decompress(file.read())
+            self.replay_buffer = decompress(file.read())
 
     def save(self, path):
         with open(path, "wb") as file:
-            file.write(compress(self.replay_memory))
+            file.write(compress(self.replay_buffer))
 
-    def sample(self, beta):
-        return self.replay_memory.__sample__(beta)
+    def sample(self):
+        return self.replay_buffer.sample()
 
     def store(self, *args, **kwargs):
-        self.replay_memory.store(*args, **kwargs)
+        self.replay_buffer.store(*args, **kwargs)
 
 
 class ReplayServer:
     def __init__(
-        self, replay_memory: SaveableReplayBuffer, learner_port, actors_port, model_name
+        self, replay_buffer: SaveableReplayBuffer, learner_port, actors_port, model_name
     ):
-        self.replay_memory = replay_memory
+        self.replay_buffer = replay_buffer
         self.ctx = zmq.Context()
 
         self.actors_socket = self.ctx.socket(zmq.PULL)
@@ -84,7 +84,8 @@ class ReplayServer:
 
     def make_sample(self, beta):
         try:
-            samples = self.replay_memory.sample(beta)
+            self.replay_buffer.beta = beta
+            samples = self.replay_buffer.sample()
         except AssertionError as e:
             # if the buffer does not have enough samples, return empty samples
             return b""
@@ -99,7 +100,7 @@ class ReplayServer:
         for i in range(n):
             ids.append(samples.ids[i])
 
-        builder = replay_memory_capnp.TransitionBatch.new_message()
+        builder = replay_buffer_capnp.TransitionBatch.new_message()
         builder.ids = ids
         builder.observations = compress(samples.observations)
         builder.nextObservations = compress(samples.next_observations)
@@ -112,7 +113,7 @@ class ReplayServer:
         return builder.to_bytes_packed()
 
     def cleanup(self):
-        self.replay_memory.save(f"{self.model_name}_episode_{self.current_episode}.xz")
+        self.replay_buffer.save(f"{self.model_name}_episode_{self.current_episode}.xz")
         self.exit = True
 
     def run(self):
@@ -125,7 +126,7 @@ class ReplayServer:
             if self.actors_socket in socks:
                 msg = self.actors_socket.recv()
                 msg = self.actors_socket.recv()
-                batch = replay_memory_capnp.TransitionBatch.from_bytes_packed(msg)
+                batch = replay_buffer_capnp.TransitionBatch.from_bytes_packed(msg)
                 t_i = time.time()
                 n = len(batch.ids)
                 logger.info(f"adding {n} transitions to buffer")
@@ -139,7 +140,7 @@ class ReplayServer:
                 priorities = batch.priorities
 
                 for i in range(len(ids)):
-                    self.replay_memory.store(
+                    self.replay_buffer.store(
                         observations[i],
                         actions[i],
                         rewards[i],
@@ -151,24 +152,26 @@ class ReplayServer:
 
                 dt = time.time() - t_i
                 logger.info(
-                    f"adding transitions took {dt}. New buffer size: {self.replay_memory.replay_memory.size}",
+                    f"adding transitions took {dt}. New buffer size: {self.replay_buffer.replay_buffer.size}",
                 )
 
             if self.learners_socket in socks:
                 msg = self.learners_socket.recv()
                 if msg == message_codes.LEARNER_REQUESTS_BATCH:
-                    beta = float(self.learners_socket.recv_string())
-                    batch = self.make_sample(beta)
+                    self.replay_buffer.replay_buffer.beta = float(
+                        self.learners_socket.recv_string()
+                    )
+                    batch = self.make_sample()
                     self.learners_socket.send(batch)
                 elif msg == message_codes.LEARNER_UPDATE_PRIORITIES:
                     res = self.learners_socket.recv()
                     self.learners_socket.send(b"")
-                    updates = replay_memory_capnp.PriorityUpdate.from_bytes_packed(res)
+                    updates = replay_buffer_capnp.PriorityUpdate.from_bytes_packed(res)
                     indices = np.array(updates.indices)
                     ids = list(updates.ids)
                     losses = np.array(updates.losses)
 
-                    self.replay_memory.replay_memory.update_priorities(
+                    self.replay_buffer.replay_buffer.update_priorities(
                         indices=indices, priorities=losses, ids=ids
                     )
 
@@ -188,9 +191,9 @@ def main():
 
     args = parser.parse_args()
     config = ReplayBufferConfig.load(args.config_file)
-    replay_memory = SaveableReplayBuffer(config, args.load)
+    replay_buffer = SaveableReplayBuffer(config, args.load)
     server = ReplayServer(
-        replay_memory, args.learner_port, args.actors_port, args.model_name
+        replay_buffer, args.learner_port, args.actors_port, args.model_name
     )
     logger.info(
         f"replay buffer started on ports {args.actors_port} (actors) and {args.learner_port} (learner)"

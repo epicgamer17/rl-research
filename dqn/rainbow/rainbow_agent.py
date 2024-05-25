@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+import pickle
 from agent_configs import RainbowConfig
 from utils import update_per_beta, action_mask, get_legal_moves
 
@@ -15,8 +17,8 @@ os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
 
 import tensorflow as tf
 
-tf.config.threading.set_intra_op_parallelism_threads(0)
-tf.config.threading.set_inter_op_parallelism_threads(0)
+# tf.config.threading.set_intra_op_parallelism_threads(0)
+# tf.config.threading.set_inter_op_parallelism_threads(0)
 
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
@@ -43,9 +45,8 @@ import gymnasium as gym
 from time import time
 
 # import moviepy
-from replay_buffers.n_step_replay_buffer import ReplayBuffer
-from replay_buffers.prioritized_replay_buffer import (
-    PrioritizedReplayBuffer,
+from replay_buffers.prioritized_n_step_replay_buffer import (
+    PrioritizedNStepReplayBuffer,
     FastPrioritizedReplayBuffer,
 )
 from dqn.rainbow.rainbow_network import Network
@@ -94,7 +95,7 @@ class RainbowAgent(BaseAgent):
 
         self.target_model.set_weights(self.model.get_weights())
 
-        self.replay_buffer = PrioritizedReplayBuffer(
+        self.replay_buffer = PrioritizedNStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.config.replay_buffer_size,
             batch_size=self.config.minibatch_size,
@@ -102,14 +103,6 @@ class RainbowAgent(BaseAgent):
             alpha=self.config.per_alpha,
             beta=self.config.per_beta,
             # epsilon=config["per_epsilon"],
-            n_step=self.config.n_step,
-            gamma=self.config.discount_factor,
-        )
-
-        self.n_step_replay_buffer = ReplayBuffer(
-            observation_dimensions=self.observation_dimensions,
-            max_size=self.config.replay_buffer_size,
-            batch_size=self.config.minibatch_size,
             n_step=self.config.n_step,
             gamma=self.config.discount_factor,
         )
@@ -137,6 +130,16 @@ class RainbowAgent(BaseAgent):
         #     debug=False,
         # )
 
+        self.stats = {
+            "score": [],
+            "loss": [],
+            "test_score": [],
+        }
+        self.targets = {
+            "score": self.env.spec.reward_threshold,
+            "test_score": self.env.spec.reward_threshold,
+        }
+
     def predict_single(self, state, legal_moves=None):
         state_input = self.prepare_states(state)
         q_distribution = self.model(inputs=state_input).numpy()
@@ -163,19 +166,8 @@ class RainbowAgent(BaseAgent):
             next_state, reward, terminated, truncated, info = self.env.step(action)
             done = terminated or truncated
             self.transition += [reward, next_state, done]
-            # if self.use_n_step:
-            # print(self.transition)
-            one_step_transition = self.n_step_replay_buffer.store(*self.transition)
-            # else:
-            #     one_step_transition = self.transition
 
-            if one_step_transition:
-                self.replay_buffer.store(*one_step_transition)
-
-            # fix?
-            # # if one_step_transition:
-            # #     self.replay_buffer.store(*one_step_transition)
-            # self.replay_buffer.store(*one_step_transition)
+            self.replay_buffer.store(*self.transition)
 
         else:
             next_state, reward, terminated, truncated, info = self.test_env.step(action)
@@ -186,68 +178,38 @@ class RainbowAgent(BaseAgent):
         for training_iteration in range(self.config.training_iterations):
             with tf.GradientTape() as tape:
                 elementwise_loss = 0
-                samples = self.replay_buffer.sample(self.config.per_beta)
-                # actions = samples["actions"]
-                # observations = samples["observations"]
-                # inputs = self.prepare_states(observations)
+                samples = self.replay_buffer.sample()
                 weights = samples["weights"].reshape(-1, 1)
                 indices = samples["indices"]
-                # discount_factor = self.config.discount_factor
-                # target_ditributions = self.compute_target_distributions(
-                #     samples, discount_factor
-                # )
-                # initial_distributions = self.model(inputs)
-                # distributions_to_train = tf.gather_nd(
-                #     initial_distributions,
-                #     list(zip(range(initial_distributions.shape[0]), actions)),
-                # )
-                # changed this from self.model.loss.call to self.config.loss_function.call
-                # elementwise_loss = self.config.loss_function.call(
-                #     y_pred=distributions_to_train,
-                #     y_true=tf.convert_to_tensor(target_ditributions),
-                # )
-                # assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-                #     elementwise_loss
-                # )
-                # if self.use_n_step:
+                actions = samples["actions"]
+                observations = samples["observations"]
                 discount_factor = self.config.discount_factor**self.config.n_step
-                n_step_samples = self.n_step_replay_buffer.sample_from_indices(indices)
-                actions = n_step_samples["actions"]
-                n_step_observations = n_step_samples["observations"]
-                observations = n_step_observations
                 inputs = self.prepare_states(observations)
                 target_ditributions = self.compute_target_distributions(
-                    n_step_samples, discount_factor
+                    samples, discount_factor
                 )
                 initial_distributions = self.model(inputs)
                 distributions_to_train = tf.gather_nd(
                     initial_distributions,
                     list(zip(range(initial_distributions.shape[0]), actions)),
                 )
-                # print("Distributions to Train", distributions_to_train)
                 # changed this from self.model.loss.call to self.config.loss_function.call
                 elementwise_loss_n_step = self.config.loss_function.call(
                     y_pred=distributions_to_train,
                     y_true=tf.convert_to_tensor(target_ditributions),
                 )
                 # add the losses together to reduce variance (original paper just uses n_step loss)
-                # elementwise_loss += elementwise_loss_n_step
                 elementwise_loss = elementwise_loss_n_step
-                # print("Elementwise Loss ", elementwise_loss)
                 assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
                     elementwise_loss
                 )
                 loss = tf.reduce_mean(elementwise_loss * weights)
-                # print("Weights ", weights)
-                # print("Loss ", loss)
 
             # TRAINING WITH GRADIENT TAPE
             gradients = tape.gradient(loss, self.model.trainable_variables)
             self.config.optimizer.apply_gradients(
                 grads_and_vars=zip(gradients, self.model.trainable_variables)
             )
-            # TRAINING WITH tf.train_on_batch
-            # loss = self.model.train_on_batch(samples["observations"], target_ditributions, sample_weight=weights)
 
             prioritized_loss = elementwise_loss + self.config.per_epsilon
             # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
@@ -271,7 +233,10 @@ class RainbowAgent(BaseAgent):
         # print("Rewards ", rewards)
         # print("Dones ", dones)
 
-        next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
+        distributions = self.target_model(inputs)
+        print("Distributions ", distributions)
+        print("Sum Distributions ", np.sum(distributions, axis=2))
+        next_actions = np.argmax(np.sum(distributions, axis=2), axis=1)
         target_network_distributions = self.target_model(next_inputs).numpy()
         # print(next_actions.shape)
         # print(target_distributions.shape)
@@ -422,22 +387,13 @@ class RainbowAgent(BaseAgent):
     def train(self):
         training_time = time()
         self.is_test = False
-        stats = {
-            "score": [],
-            "loss": [],
-            "test_score": [],
-        }
-        targets = {
-            "score": self.env.spec.reward_threshold,
-            "test_score": self.env.spec.reward_threshold,
-        }
 
         self.fill_replay_buffer()
         state, info = self.env.reset()
         score = 0
         target_model_updated = (False, False)  # (score, loss)
-
-        for training_step in range(self.training_steps):
+        self.training_steps += self.start_training_step
+        for training_step in range(self.start_training_step, self.training_steps):
             for _ in range(self.config.replay_interval):
                 action = self.select_action(
                     state,
@@ -449,12 +405,12 @@ class RainbowAgent(BaseAgent):
                 state = next_state
                 score += reward
                 self.replay_buffer.beta = update_per_beta(
-                    self.config.per_beta, 1.0, self.training_steps
+                    self.replay_buffer.beta, 1.0, self.training_steps
                 )
 
                 if done:
                     state, info = self.env.reset()
-                    stats["score"].append(
+                    self.stats["score"].append(
                         {
                             "score": score,
                             "target_model_updated": target_model_updated[0],
@@ -465,7 +421,7 @@ class RainbowAgent(BaseAgent):
 
             for minibatch in range(self.config.num_minibatches):
                 loss = self.learn()
-                stats["loss"].append(
+                self.stats["loss"].append(
                     {"loss": loss, "target_model_updated": target_model_updated[1]}
                 )
                 target_model_updated = (target_model_updated[0], False)
@@ -479,19 +435,19 @@ class RainbowAgent(BaseAgent):
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
-                    stats,
-                    targets,
                     5,
                     training_step,
                     training_step * self.config.replay_interval,
                     time() - training_time,
                 )
         self.save_checkpoint(
-            stats,
-            targets,
             5,
             training_step,
             training_step * self.config.replay_interval,
             time() - training_time,
         )
         self.env.close()
+
+    def load_model_weights(self, weights_path: str):
+        self.model.load_weights(weights_path)
+        self.target_model.load_weights(weights_path)
