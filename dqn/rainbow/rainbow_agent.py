@@ -82,6 +82,15 @@ class RainbowAgent(BaseAgent):
         """
 
         self.transition = list()
+        self.stats = {
+            "score": [],
+            "loss": [],
+            "test_score": [],
+        }
+        self.targets = {
+            "score": self.env.spec.reward_threshold,
+            "test_score": self.env.spec.reward_threshold,
+        }
 
     def predict_single(self, state, legal_moves=None):
         with torch.no_grad():
@@ -223,36 +232,26 @@ class RainbowAgent(BaseAgent):
     def train(self):
         training_time = time()
         self.is_test = False
-        stats = {
-            "score": [],
-            "loss": [],
-            "test_score": [],
-        }
-        targets = {
-            "score": self.env.spec.reward_threshold,
-            "test_score": self.env.spec.reward_threshold,
-        }
-
         self.fill_replay_buffer()
         state, info = self.env.reset()
         score = 0
         target_model_updated = (False, False)  # (score, loss)
+        self.training_steps += self.start_training_step
 
-        for training_step in range(self.training_steps):
+        for training_step in range(self.start_training_step, self.training_steps):
             for _ in range(self.config.replay_interval):
                 action = self.select_action(state, get_legal_moves(info))
-
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated
                 state = next_state
                 score += reward
                 self.replay_buffer.beta = update_per_beta(
-                    self.config.per_beta, 1.0, self.training_steps
+                    self.replay_buffer.beta, 1.0, self.training_steps
                 )
 
                 if done:
                     state, info = self.env.reset()
-                    stats["score"].append(
+                    self.stats["score"].append(
                         {
                             "score": score,
                             "target_model_updated": target_model_updated[0],
@@ -264,7 +263,7 @@ class RainbowAgent(BaseAgent):
             for minibatch in range(self.config.num_minibatches):
                 losses = self.learn()
                 # could do things other than taking the mean here
-                stats["loss"].append(
+                self.stats["loss"].append(
                     {
                         "loss": losses.mean(),
                         "target_model_updated": target_model_updated[1],
@@ -281,19 +280,20 @@ class RainbowAgent(BaseAgent):
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
-                    stats,
-                    targets,
                     5,
                     training_step,
                     training_step * self.config.replay_interval,
                     time() - training_time,
                 )
         self.save_checkpoint(
-            stats,
-            targets,
             5,
             training_step,
             training_step * self.config.replay_interval,
             time() - training_time,
         )
         self.env.close()
+
+    def load_model_weights(self, weights_path: str):
+        state_dict = torch.load(weights_path)
+        self.model.load_state_dict(state_dict)
+        self.target_model.load_state_dict(self.model.state_dict())
