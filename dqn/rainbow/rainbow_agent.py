@@ -1,55 +1,19 @@
-import os
-from pathlib import Path
-import pickle
+from typing import NamedTuple
+from time import time
+import datetime
+import torch
+
 from agent_configs import RainbowConfig
 from utils import update_per_beta, action_mask, get_legal_moves
+import numpy as np
 
 import sys
 
 sys.path.append("../../")
 
 from base_agent.agent import BaseAgent
-
-os.environ["OMP_NUM_THREADS"] = f"{8}"
-os.environ["MKL_NUM_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTEROP_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
-
-import tensorflow as tf
-
-# tf.config.threading.set_intra_op_parallelism_threads(0)
-# tf.config.threading.set_inter_op_parallelism_threads(0)
-
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.list_logical_devices("GPU")
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
-        print(e)
-
-import datetime
-import numpy as np
-import copy
-import matplotlib.pyplot as plt
-from IPython.display import clear_output
-from typing import NamedTuple
-
-# import search
-from typing import Deque, Dict, List, Tuple
-import gymnasium as gym
-from time import time
-
-# import moviepy
-from replay_buffers.prioritized_n_step_replay_buffer import (
-    PrioritizedNStepReplayBuffer,
-    FastPrioritizedReplayBuffer,
-)
-from dqn.rainbow.rainbow_network import Network
+from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
+from dqn.rainbow.rainbow_network import RainbowNetwork
 
 
 class Sample(NamedTuple):
@@ -68,32 +32,29 @@ class RainbowAgent(BaseAgent):
         self,
         env,
         config: RainbowConfig,
+        device: torch.device,
         name=datetime.datetime.now().timestamp(),
     ):
         super(RainbowAgent, self).__init__(env, config, name)
         self.config = config
-        self.model = Network(
-            config, self.num_actions, input_shape=self.observation_dimensions
+        self.model = RainbowNetwork(
+            config=config,
+            output_size=self.num_actions,
+            input_shape=self.observation_dimensions,
+        ).to(device)
+        self.target_model = RainbowNetwork(
+            config=config,
+            output_size=self.num_actions,
+            input_shape=self.observation_dimensions,
+        ).to(device)
+
+        self.model.initialize(self.config.kernel_initializer)
+        self.target_model.load_state_dict(self.model.state_dict())
+        optimizer = self.config.optimizer(
+            params=self.model.parameters,
+            lr=self.config.learning_rate,
+            eps=self.config.adam_epsilon,
         )
-
-        self.target_model = Network(
-            config, self.num_actions, input_shape=self.observation_dimensions
-        )
-
-        # self.model.compile(
-        #     optimizer=self.config.optimizer,
-        #     loss=self.config.loss_function,
-        # )
-
-        # self.target_model.compile(
-        #     optimizer=self.config.optimizer,
-        #     loss=self.config.loss_function,
-        # )
-
-        self.model(np.zeros((1,) + self.observation_dimensions))
-        self.target_model(np.zeros((1,) + self.observation_dimensions))
-
-        self.target_model.set_weights(self.model.get_weights())
 
         self.replay_buffer = PrioritizedNStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
@@ -111,43 +72,33 @@ class RainbowAgent(BaseAgent):
         # self.v_min = self.config.v_min
         # self.v_max = self.config.v_max
 
-        self.support = np.linspace(
-            self.config.v_min, self.config.v_max, self.config.atom_size
+        self.support = torch.linspace(
+            self.config.v_min,
+            self.config.v_max,
+            self.config.atom_size,
+            device=device,
         )
+        """row vector Tensor(atom_size)
+        """
 
         self.transition = list()
-        # self.search = search.Search(
-        #     scoring_function=self.score_state,
-        #     max_depth=config["search_max_depth"],
-        #     max_time=config["search_max_time"],
-        #     transposition_table=search.TranspositionTable(
-        #         buckets=config["search_transposition_table_buckets"],
-        #         bucket_size=config["search_transposition_table_bucket_size"],
-        #         replacement_strategy=search.TranspositionTable.replacement_strategies[
-        #             config["search_transposition_table_replacement_strategy"]
-        #         ],
-        #     ),
-        #     debug=False,
-        # )
-
-        self.stats = {
-            "score": [],
-            "loss": [],
-            "test_score": [],
-        }
-        self.targets = {
-            "score": self.env.spec.reward_threshold,
-            "test_score": self.env.spec.reward_threshold,
-        }
 
     def predict_single(self, state, legal_moves=None):
-        state_input = self.prepare_states(state)
-        q_distribution = self.model(inputs=state_input).numpy()
-        q_values = np.sum(np.multiply(q_distribution, np.array(self.support)), axis=2)[
-            0
-        ]
+        with torch.no_grad():
+            state_input = self.preprocess(state)
+
+        q_distribution: torch.Tensor = self.model(inputs=state_input)
+
+        # (B, output_size, atom_size) *
+        # (                atom_size)
+        # is valid broadcasting
+        q_values = q_distribution * self.support
+
         q_values = action_mask(
-            q_values, legal_moves, self.num_actions, mask_value=-np.inf
+            actions=q_values,
+            legal_moves=legal_moves,
+            num_actions=self.num_actions,
+            mask_value=-torch.inf,
         )
         return q_values
 
@@ -174,190 +125,85 @@ class RainbowAgent(BaseAgent):
 
         return next_state, reward, terminated, truncated, info
 
-    def learn(self):
-        for training_iteration in range(self.config.training_iterations):
-            with tf.GradientTape() as tape:
-                elementwise_loss = 0
-                samples = self.replay_buffer.sample()
-                weights = samples["weights"].reshape(-1, 1)
-                indices = samples["indices"]
-                actions = samples["actions"]
-                observations = samples["observations"]
-                discount_factor = self.config.discount_factor**self.config.n_step
-                inputs = self.prepare_states(observations)
-                target_ditributions = self.compute_target_distributions(
-                    samples, discount_factor
-                )
-                initial_distributions = self.model(inputs)
-                distributions_to_train = tf.gather_nd(
-                    initial_distributions,
-                    list(zip(range(initial_distributions.shape[0]), actions)),
-                )
-                # changed this from self.model.loss.call to self.config.loss_function.call
-                elementwise_loss_n_step = self.config.loss_function.call(
-                    y_pred=distributions_to_train,
-                    y_true=tf.convert_to_tensor(target_ditributions),
-                )
-                # add the losses together to reduce variance (original paper just uses n_step loss)
-                elementwise_loss = elementwise_loss_n_step
-                assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-                    elementwise_loss
-                )
-                loss = tf.reduce_mean(elementwise_loss * weights)
+    def learn(self) -> np.ndarray:
+        losses = np.zeros(self.config.training_iterations)
+        for i in range(self.config.training_iterations):
+            samples = self.replay_buffer.sample()
+            weights, indices, observations, actions = (
+                torch.Tensor(samples["weights"]),
+                samples["indices"],
+                samples["observations"],
+                samples["actions"],
+            )
+            discount_factor = self.config.discount_factor**self.config.n_step
+            inputs = self.preprocess(observations)
 
-            # TRAINING WITH GRADIENT TAPE
-            gradients = tape.gradient(loss, self.model.trainable_variables)
-            self.config.optimizer.apply_gradients(
-                grads_and_vars=zip(gradients, self.model.trainable_variables)
+            # (B, atom_size)
+            target_distributions = self.compute_target_distributions(
+                samples, discount_factor
             )
 
-            prioritized_loss = elementwise_loss + self.config.per_epsilon
-            # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
-            # prioritized_loss = np.clip(
-            #     prioritized_loss, 0.01, tf.reduce_max(prioritized_loss)
-            # )
-            self.replay_buffer.update_priorities(indices, prioritized_loss.numpy())
+            self.config.optimizer.zero_grad()
+            # (B, output_size, atom_size)
+            initial_distributions = self.model(inputs)
+
+            # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
+            predicted_distribution = initial_distributions[
+                range(self.config.minibatch_size), actions
+            ]
+
+            loss = self.config.loss_function(
+                predicted_distribution, target_distributions
+            )
+            assert np.all(loss) >= 0, "Elementwise Loss: {}".format(loss)
+            loss.backwards()
+            self.optimizer.step()
+            self.replay_buffer.update_priorities(indices, loss.numpy())
             self.model.reset_noise()
             self.target_model.reset_noise()
-            loss = loss.numpy()
-        # should return a loss for each iteration
-        return loss
+            losses[i] = loss.detach().numpy()
+        return losses
 
     def compute_target_distributions(self, samples, discount_factor):
-        observations = samples["observations"]
-        inputs = self.prepare_states(observations)
-        next_observations = samples["next_observations"]
-        next_inputs = self.prepare_states(next_observations)
-        rewards = samples["rewards"].reshape(-1, 1)
-        dones = samples["dones"].reshape(-1, 1)
-        # print("Rewards ", rewards)
-        # print("Dones ", dones)
+        with torch.no_grad():
+            inputs, next_inputs, rewards, dones = (
+                self.preprocess(samples["observations"]),
+                self.preprocess(samples["next_observations"]),
+                torch.Tensor(samples["rewards"]).reshape(-1, 1),
+                torch.Tensor(samples["dones"]).reshape(-1, 1),
+            )
+            dist: torch.Tensor = self.model(inputs)
+            # (B, outputs, atom_size) -[sum(2)] -> (B, outputs) -[argmax(1)]-> (B)
+            next_actions = (dist * self.support).sum(dim=2).argmax(dim=1)
 
-        distributions = self.target_model(inputs)
-        print("Distributions ", distributions)
-        print("Sum Distributions ", np.sum(distributions, axis=2))
-        next_actions = np.argmax(np.sum(distributions, axis=2), axis=1)
-        target_network_distributions = self.target_model(next_inputs).numpy()
-        # print(next_actions.shape)
-        # print(target_distributions.shape)
+            next_dist: torch.Tensor = self.target_model(next_inputs)
 
-        target_distributions = target_network_distributions[
-            range(self.config.minibatch_size), next_actions
-        ]
-        target_z = rewards + (1 - dones) * (discount_factor) * self.support
-        target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
-        # print("Target Z ", target_z)
-        b = (
-            (target_z - self.config.v_min) / (self.config.v_max - self.config.v_min)
-        ) * (self.config.atom_size - 1)
-        l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
+            # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
+            p = next_dist[range(self.config.minibatch_size), next_actions]
 
-        # offset = np.broadcast_to(
-        #     np.expand_dims(
-        #         np.linspace(
-        #             0,
-        #             (self.config.minibatch_size - 1) * self.config.atom_size,
-        #             self.config.minibatch_size,
-        #         ).astype(int),
-        #         1,
-        #     ),
-        #     (self.config.minibatch_size, self.config.atom_size),
-        # )
+            # (B, 1) + k(B, atom_size) * (B, atom_size) -> (B, atom_size)
+            Tz = (rewards + self.config.discount_factor * dones * self.support).clamp_(
+                self.config.v_min, self.config.v_max
+            )
 
-        # print("Offset ", offset)
+            # all elementwise
+            b: torch.Tensor = (
+                (Tz - self.config.v_min)
+                * (self.config.atom_size - 1)
+                / (self.config.v_max - self.config.v_min)
+            )
+            l, u = b.floor().long(), b.ceil().long()
 
-        m = np.zeros_like(target_distributions)
-        assert m.shape == l.shape
-        lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
-        upper_distributions = target_distributions * (b - tf.cast(l, tf.float64))
+            m = torch.zeros_like(p)
+            m.scatter_add_(dim=1, index=l, src=p * (u.float()) - b)
+            m.scatter_add_(dim=1, index=u, src=p * (b - u.float()))
 
-        # print("Lower Distributions ", lower_distributions[0])
-        # print("Upper Distributions ", upper_distributions[0])
-        # print("B ", b)
-        # print("L ", l)
-        # print("U ", u)
-        # print("M ", m)
-        for i in range(self.config.minibatch_size):
-            np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
-            np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
-        target_distributions = m
-        # print("Target Distributions ", target_distributions)
-        return target_distributions
-
-    def compute_target_distributions_np(self, samples: Sample, discount_factor):
-        inputs, next_inputs, rewards, dones = (
-            self.prepare_states(samples.observations),
-            self.prepare_states(samples.next_observations),
-            samples.rewards.reshape(-1, 1),
-            samples.dones.reshape(-1, 1),
-        )
-
-        # print("R", rewards)
-        # print("d", dones)
-
-        next_actions = np.argmax(np.sum(self.model(inputs).numpy(), axis=2), axis=1)
-        target_network_distributions = self.target_model(next_inputs).numpy()
-
-        target_distributions = target_network_distributions[
-            range(self.config.minibatch_size), next_actions
-        ]
-        target_z = rewards + (1 - dones) * (discount_factor) * self.support
-        # print("tz b4 clib", target_z)
-        target_z = np.clip(target_z, self.config.v_min, self.config.v_max)
-        # print("tz", target_z)
-
-        b = (
-            (target_z - self.config.v_min) / (self.config.v_max - self.config.v_min)
-        ) * (self.config.atom_size - 1)
-
-        # print("B", b)
-        l, u = tf.cast(tf.math.floor(b), tf.int32), tf.cast(tf.math.ceil(b), tf.int32)
-        # print("L", l)
-        # print("U", u)
-        m = np.zeros_like(target_distributions)
-        # print("S", self.support)
-        assert m.shape == l.shape
-        lower_distributions = target_distributions * (tf.cast(u, tf.float64) - b)
-        upper_distributions = target_distributions * (b - tf.cast(l, tf.float64))
-
-        # print("LD", lower_distributions)
-        # print("HD", upper_distributions)
-
-        for i in range(self.config.minibatch_size):
-            np.add.at(m[i], np.asarray(l)[i], lower_distributions[i])
-            np.add.at(m[i], np.asarray(u)[i], upper_distributions[i])
-        target_distributions = m
-        # print("M", m)
-        return target_distributions
-
-    # def score_state(self, state, turn):
-    #     state_input = self.prepare_state(state)
-    #     q = self.predict(state_input)
-
-    #     if (turn % 2) == 0:
-    #         return q.max(), q.argmax()
-
-    #     return q.min(), q.argmin()
-
-    # def play_optimal_move(
-    #     self, state: bb.Bitboard, turn: int, max_depth: int, with_output=True
-    # ):
-    #     # q_value, action = self.alpha_beta_pruning(state, turn, max_depth=max_depth)
-    #     q_value, action = self.search.iterative_deepening(state, turn, max_depth)
-    #     if with_output:
-    #         print("Evaluation: {}".format(q_value))
-    #         print("Action: {}".format(action + 1))
-    #     state.move(turn % 2, action)
-    #     winner, _ = state.check_victory()
-
-    #     if winner == 0:
-    #         return False
-    #     else:
-    #         return True
+            # print("Target Distributions ", m)
+            return m
 
     def fill_replay_buffer(self):
         state, _ = self.env.reset()
-        for experience in range(self.config.min_replay_buffer_size):
+        for i in range(self.config.min_replay_buffer_size):
             action = self.env.action_space.sample()
             self.transition = [state, action]
 
@@ -367,50 +213,46 @@ class RainbowAgent(BaseAgent):
             if done:
                 state, _ = self.env.reset()
 
-    def update_target_model(self, step):
-
+    def update_target_model(self):
         if self.config.soft_update:
-            new_weights = self.target_model.get_weights()
-
-            counter = 0
-            for wt, wp in zip(
-                self.target_model.get_weights(),
-                self.model.get_weights(),
-            ):
-                wt = (self.config.ema_beta * wt) + ((1 - self.config.ema_beta) * wp)
-                new_weights[counter] = wt
-                counter += 1
-            self.target_model.set_weights(new_weights)
+            for wt, wp in zip(self.target_model.parameters(), self.model.parameters()):
+                wt.copy_(self.config.ema_beta * wt + (1 - self.config.ema_beta) * wp)
         else:
-            self.target_model.set_weights(self.model.get_weights())
+            self.target_model.load_state_dict(self.model.state_dict())
 
     def train(self):
         training_time = time()
         self.is_test = False
+        stats = {
+            "score": [],
+            "loss": [],
+            "test_score": [],
+        }
+        targets = {
+            "score": self.env.spec.reward_threshold,
+            "test_score": self.env.spec.reward_threshold,
+        }
 
         self.fill_replay_buffer()
         state, info = self.env.reset()
         score = 0
         target_model_updated = (False, False)  # (score, loss)
-        self.training_steps += self.start_training_step
-        for training_step in range(self.start_training_step, self.training_steps):
+
+        for training_step in range(self.training_steps):
             for _ in range(self.config.replay_interval):
-                action = self.select_action(
-                    state,
-                    get_legal_moves(info),
-                )
+                action = self.select_action(state, get_legal_moves(info))
 
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated
                 state = next_state
                 score += reward
                 self.replay_buffer.beta = update_per_beta(
-                    self.replay_buffer.beta, 1.0, self.training_steps
+                    self.config.per_beta, 1.0, self.training_steps
                 )
 
                 if done:
                     state, info = self.env.reset()
-                    self.stats["score"].append(
+                    stats["score"].append(
                         {
                             "score": score,
                             "target_model_updated": target_model_updated[0],
@@ -420,9 +262,13 @@ class RainbowAgent(BaseAgent):
                     score = 0
 
             for minibatch in range(self.config.num_minibatches):
-                loss = self.learn()
-                self.stats["loss"].append(
-                    {"loss": loss, "target_model_updated": target_model_updated[1]}
+                losses = self.learn()
+                # could do things other than taking the mean here
+                stats["loss"].append(
+                    {
+                        "loss": losses.mean(),
+                        "target_model_updated": target_model_updated[1],
+                    }
                 )
                 target_model_updated = (target_model_updated[0], False)
 
@@ -435,19 +281,19 @@ class RainbowAgent(BaseAgent):
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
+                    stats,
+                    targets,
                     5,
                     training_step,
                     training_step * self.config.replay_interval,
                     time() - training_time,
                 )
         self.save_checkpoint(
+            stats,
+            targets,
             5,
             training_step,
             training_step * self.config.replay_interval,
             time() - training_time,
         )
         self.env.close()
-
-    def load_model_weights(self, weights_path: str):
-        self.model.load_weights(weights_path)
-        self.target_model.load_weights(weights_path)

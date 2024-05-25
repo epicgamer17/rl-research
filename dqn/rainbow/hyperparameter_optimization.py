@@ -35,7 +35,7 @@ import pickle
 import gymnasium as gym
 from hyperopt import tpe, hp, fmin, space_eval
 import contextlib
-from dqn.rainbow.rainbow_torch import RainbowAgent
+from dqn.rainbow.rainbow_agent import RainbowAgent
 
 
 # MAGIC CODE DO NOT TOUCH

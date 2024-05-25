@@ -11,7 +11,7 @@ from agent_configs import ApeXLearnerConfig
 from utils import update_per_beta
 
 sys.path.append("../")
-from dqn.rainbow.rainbow_torch import RainbowAgent
+from dqn.rainbow.rainbow_agent import RainbowAgent
 from storage.storage import Storage, StorageConfig
 from storage.compress_utils import decompress
 from storage.compress_utils import compress
