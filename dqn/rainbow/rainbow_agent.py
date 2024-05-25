@@ -1,11 +1,9 @@
-from typing import NamedTuple
 from time import time
 import datetime
 import torch
-
-from agent_configs import RainbowConfig
-from utils import update_per_beta, action_mask, get_legal_moves
 import numpy as np
+from agent_configs import RainbowConfig
+from utils import update_per_beta, action_mask, get_legal_moves, current_timestamp
 
 import sys
 
@@ -16,24 +14,15 @@ from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepRepl
 from dqn.rainbow.rainbow_network import RainbowNetwork
 
 
-class Sample(NamedTuple):
-    ids: np.ndarray
-    indices: np.ndarray
-    actions: np.ndarray
-    observations: np.ndarray
-    weights: np.ndarray
-    rewards: np.ndarray
-    next_observations: np.ndarray
-    dones: np.ndarray
-
-
 class RainbowAgent(BaseAgent):
     def __init__(
         self,
         env,
         config: RainbowConfig,
-        device: torch.device,
-        name=datetime.datetime.now().timestamp(),
+        name=f"rainbow_{current_timestamp():.1f}",
+        device: torch.device = (
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        ),
     ):
         super(RainbowAgent, self).__init__(env, config, name)
         self.config = config
@@ -50,8 +39,8 @@ class RainbowAgent(BaseAgent):
 
         self.model.initialize(self.config.kernel_initializer)
         self.target_model.load_state_dict(self.model.state_dict())
-        optimizer = self.config.optimizer(
-            params=self.model.parameters,
+        self.optimizer = self.config.optimizer(
+            params=self.model.parameters(),
             lr=self.config.learning_rate,
             eps=self.config.adam_epsilon,
         )
@@ -165,6 +154,9 @@ class RainbowAgent(BaseAgent):
                 predicted_distribution, target_distributions
             )
             assert np.all(loss) >= 0, "Elementwise Loss: {}".format(loss)
+
+            loss = loss * weights
+            loss = loss.mean()
             loss.backwards()
             self.optimizer.step()
             self.replay_buffer.update_priorities(indices, loss.numpy())
@@ -232,15 +224,19 @@ class RainbowAgent(BaseAgent):
     def train(self):
         training_time = time()
         self.is_test = False
+
         self.fill_replay_buffer()
         state, info = self.env.reset()
         score = 0
         target_model_updated = (False, False)  # (score, loss)
         self.training_steps += self.start_training_step
-
         for training_step in range(self.start_training_step, self.training_steps):
             for _ in range(self.config.replay_interval):
-                action = self.select_action(state, get_legal_moves(info))
+                action = self.select_action(
+                    state,
+                    get_legal_moves(info),
+                )
+
                 next_state, reward, terminated, truncated, info = self.step(action)
                 done = terminated or truncated
                 state = next_state
@@ -261,13 +257,10 @@ class RainbowAgent(BaseAgent):
                     score = 0
 
             for minibatch in range(self.config.num_minibatches):
-                losses = self.learn()
+                loss = self.learn().mean()
                 # could do things other than taking the mean here
                 self.stats["loss"].append(
-                    {
-                        "loss": losses.mean(),
-                        "target_model_updated": target_model_updated[1],
-                    }
+                    {"loss": loss, "target_model_updated": target_model_updated[1]}
                 )
                 target_model_updated = (target_model_updated[0], False)
 
