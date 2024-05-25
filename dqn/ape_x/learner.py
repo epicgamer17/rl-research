@@ -11,7 +11,7 @@ from agent_configs import ApeXLearnerConfig
 from utils import update_per_beta
 
 sys.path.append("../")
-from rainbow.rainbow_agent import RainbowAgent
+from dqn.rainbow.rainbow_torch import RainbowAgent
 from storage.storage import Storage, StorageConfig
 from storage.compress_utils import decompress
 from storage.compress_utils import compress
@@ -79,7 +79,7 @@ class ApeXLearnerBase(RainbowAgent):
             actions = samples.actions
             n_step_observations = samples.observations
             observations = n_step_observations
-            inputs = self.prepare_states(observations)
+            inputs = self.preprocess(observations)
             target_ditributions = self.compute_target_distributions_np(
                 samples, discount_factor
             )

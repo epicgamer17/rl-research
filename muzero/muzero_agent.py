@@ -172,7 +172,7 @@ class MuZeroAgent(AlphaZeroAgent):
         target_values = samples["values"]
         target_rewards = samples["rewards"]
         actions = samples["actions"]
-        inputs = self.prepare_states(observations)
+        inputs = self.preprocess(observations)
         for training_iteration in range(self.config.training_iterations):
             with tf.GradientTape() as tape:
                 loss = 0
@@ -246,7 +246,7 @@ class MuZeroAgent(AlphaZeroAgent):
         )
 
     def predict_single_initial_inference(self, state):
-        state_input = self.prepare_states(state)
+        state_input = self.preprocess(state)
         value, policy, hidden_state = self.model.initial_inference(state_input)
         policy = policy.numpy()[0]
         return value.numpy().item(), policy, hidden_state

@@ -1,19 +1,12 @@
-import math
 import os
 from pathlib import Path
-import gymnasium as gym
-from agent_configs import Config
-import numpy as np
-import matplotlib.pyplot as plt
+from torch import Tensor
 import gymnasium as gym
 import copy
 import dill
-import yaml
-import pickle
+from agent_configs import Config
 
-import sys
-
-from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
+from utils import make_stack, normalize_images_, get_legal_moves, plot_graphs
 
 # Every model should have:
 # 1. A network
@@ -75,18 +68,37 @@ class BaseAgent:
     def train(self):
         raise NotImplementedError
 
-    def prepare_states(self, state):
-        prepared_state = np.array(state)
+    def preprocess(self, state) -> Tensor:
+        """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
+        Does not alter the input state parameter, instead creating a new Tensor.
+        If the input is a single environment step, the returned tensor is outputed as if B = 1
+
+        Args:
+            state (Any): The state returned from self.env.step
+
+        Returns:
+            Tensor: The preprocessed state, a tensor of floats
+        """
+        prepared_state = Tensor(state)
         if self.config.game.is_image:
-            prepared_state = normalize_images(prepared_state)
+            normalize_images_(prepared_state)
         if prepared_state.shape == self.observation_dimensions:
             prepared_state = make_stack(prepared_state)
         return prepared_state
 
-    def predict_single(self, state):
+    def predict_single(self, state: Tensor) -> Tensor:
+        """Run inference on an environment state, applying necessary preprocessing steps
+        and/or necessary postprocessing steps (e.g. masking) to the output of inference
+
+        Args:
+            state (Tensor): A preprocessed environment state
+
+        Returns:
+            Tensor: The predicted values, e.g. Q values for DQN
+        """
         raise NotImplementedError
 
-    def select_action(self, state, legal_moves=None):
+    def select_action(self, state, legal_moves=None) -> int:
         raise NotImplementedError
 
     def calculate_loss(self, batch):

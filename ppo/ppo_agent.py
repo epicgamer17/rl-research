@@ -82,7 +82,7 @@ class PPOAgent(BaseAgent):
         self.transition = list()
 
     def predict_single(self, state, legal_moves=None):
-        state_input = self.prepare_states(state)
+        state_input = self.preprocess(state)
         value = self.model.critic(inputs=state_input).numpy()
         if self.discrete_action_space:
             policy = self.model.actor(inputs=state_input).numpy()[0]
@@ -230,9 +230,7 @@ class PPOAgent(BaseAgent):
 
                 if done or timestep == self.config.steps_per_epoch - 1:
                     last_value = (
-                        0
-                        if done
-                        else self.model.critic(self.prepare_states(next_state))
+                        0 if done else self.model.critic(self.preprocess(next_state))
                     )
                     self.replay_buffer.finish_trajectory(last_value)
                     num_episodes += 1
@@ -248,7 +246,7 @@ class PPOAgent(BaseAgent):
             log_probabilities = samples["log_probabilities"]
             advantages = samples["advantages"]
             returns = samples["returns"]
-            inputs = self.prepare_states(observations)
+            inputs = self.preprocess(observations)
 
             indices = np.arange(len(observations))
             np.random.shuffle(indices)

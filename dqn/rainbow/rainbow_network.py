@@ -20,7 +20,7 @@ class Network(Model):
         self.config = config
 
         self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = config.dense_widths > 0
+        self.has_dense_layers = config.dense_layers > 0
 
         # Convert the config into a list of filters, kernel_sizes, and strides (could put in utils?)
         filters = []
@@ -42,7 +42,7 @@ class Network(Model):
                 self.config.conv_layers_noisy,
             )
 
-        widths = [config.width] * config.dense_widths
+        widths = [config.width] * config.dense_layers
         if self.has_dense_layers:
             self.dense_layers = DenseStack(
                 widths,
@@ -66,7 +66,7 @@ class Network(Model):
                 config.atom_size,
                 sigma=config.noisy_sigma,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="HiddenV",
@@ -75,7 +75,7 @@ class Network(Model):
             self.value = tf.keras.layers.Dense(
                 config.atom_size,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="HiddenV",
@@ -96,7 +96,7 @@ class Network(Model):
                 config.atom_size * output_size,
                 sigma=config.noisy_sigma,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="A",
@@ -105,7 +105,7 @@ class Network(Model):
             self.advantage = tf.keras.layers.Dense(
                 config.atom_size * output_size,
                 kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer
+                    config.kernel_initializer, output_layer=True
                 ),
                 activation="linear",
                 name="A",
@@ -141,13 +141,17 @@ class Network(Model):
             x = self.dense_layers(x)
 
         if self.has_value_hidden_layers:
-            x = self.value_hidden_layers(x)
-        value = self.value(x)
+            value = self.value_hidden_layers(x)
+        else:
+            value = x
+        value = self.value(value)
         value = self.value_reshaped(value)
 
         if self.has_advantage_hidden_layers:
-            x = self.advantage_hidden_layers(x)
-        advantage = self.advantage(x)
+            advantage = self.advantage_hidden_layers(x)
+        else:
+            advantage = x
+        advantage = self.advantage(advantage)
         advantage = self.advantage_reshaped(advantage)
         advantage = self.advantage_reduced_mean(advantage)
 

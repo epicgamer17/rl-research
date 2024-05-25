@@ -75,7 +75,7 @@ class ApeXActorBase(ActorAgent, PollingActor):
         self.env_state, _ = self.env.reset()
 
     def collect_experience(self):
-        state_input = self.prepare_states(self.env_state)
+        state_input = self.preprocess(self.env_state)
         action = self.select_action(state_input)
 
         next_state, reward, terminated, truncated, info = super(ActorAgent, self).step(
@@ -227,7 +227,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
     def calculate_loss(self, batch: TransitionBuffer):
         t = time.time()
         discount_factor = self.config.discount_factor**self.config.n_step
-        inputs, actions = self.prepare_states(batch.observations), batch.actions
+        inputs, actions = self.preprocess(batch.observations), batch.actions
 
         initial_distributions = self.model(inputs)
         distributions_to_train = tf.gather_nd(

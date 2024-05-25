@@ -184,7 +184,7 @@ class AlphaZeroAgent(BaseAgent):
         observations = samples["observations"]
         target_policies = samples["policy"]
         target_values = samples["rewards"]
-        inputs = self.prepare_states(observations)
+        inputs = self.preprocess(observations)
         for training_iteration in range(self.config.training_iterations):
             with tf.GradientTape() as tape:
                 values, policies = self.model(inputs)
@@ -219,7 +219,7 @@ class AlphaZeroAgent(BaseAgent):
         )
 
     def predict_single(self, state, legal_moves=None):
-        state_input = self.prepare_states(state)
+        state_input = self.preprocess(state)
         value, policy = self.model(inputs=state_input)
         policy = policy.numpy()[0]
         value = value.numpy().item()

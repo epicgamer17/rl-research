@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Tuple
 
 from torch import nn, Tensor
 
@@ -10,12 +10,16 @@ from utils.utils import to_lists
 
 class RainbowNetwork(nn.Module):
     def __init__(
-        self, config: RainbowConfig, output_size: int, input_shape, *args, **kwargs
+        self,
+        config: RainbowConfig,
+        output_size: int,
+        input_shape: Tuple[int],
+        *args,
+        **kwargs
     ):
-        super().__init__()
+        super().__init__(*args, **kwargs)
         B = current_shape[0]
         self.config = config
-        self.output_size = output_size
 
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layers_widths) > 0

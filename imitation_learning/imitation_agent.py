@@ -19,7 +19,7 @@ class BaseImitationAgent(BaseAgent):
                 observations = sample["observations"]
                 targets = sample["targets"]
 
-                state_input = self.prepare_states(observations)
+                state_input = self.preprocess(observations)
                 policy = self.model(inputs=state_input)
                 # LEGAL MOVE MASKING?
                 loss = self.loss_function(
