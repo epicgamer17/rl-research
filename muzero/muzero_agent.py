@@ -259,7 +259,7 @@ class MuZeroAgent(AlphaZeroAgent):
         value = value.numpy().item()
         return reward, hidden_state, value, policy
 
-    def select_action(self, state, legal_moves=None, game=None):
+    def select_actions(self, state, legal_moves=None, game=None):
         value, visit_counts = self.monte_carlo_tree_search(self.env, state, legal_moves)
         actions = [action for _, action in visit_counts]
         visit_counts = np.array([count for count, _ in visit_counts], dtype=np.float32)
@@ -286,7 +286,7 @@ class MuZeroAgent(AlphaZeroAgent):
 
         done = False
         while not done:
-            action, target_policy = self.select_action(
+            action, target_policy = self.select_actions(
                 state,
                 info["legal_moves"] if self.config.game.has_legal_moves else None,
                 game=game,

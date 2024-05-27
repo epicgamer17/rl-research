@@ -93,7 +93,7 @@ class PPOAgent(BaseAgent):
             "actor_loss": self.config.target_kl,
         }
 
-    def predict_single(self, state, legal_moves=None):
+    def predict(self, state, legal_moves=None):
         state_input = self.preprocess(state)
         value = self.model.critic(inputs=state_input).numpy()
         if self.discrete_action_space:
@@ -105,12 +105,12 @@ class PPOAgent(BaseAgent):
             mean, std = self.model.actor(inputs=state_input)
             return mean, std, value
 
-    def select_action(self, state, legal_moves=None):
+    def select_actions(self, state, legal_moves=None):
         if self.discrete_action_space:
-            policy, value = self.predict_single(state)
+            policy, value = self.predict(state)
             distribution = tfp.distributions.Categorical(probs=policy)
         else:
-            mean, std, value = self.predict_single(state)
+            mean, std, value = self.predict(state)
             distribution = tfp.distributions.Normal(mean, std)
 
         if self.is_test:
@@ -138,9 +138,7 @@ class PPOAgent(BaseAgent):
 
         return next_state, reward, terminated, truncated, info
 
-    def train_actor(
-        self, inputs, actions, log_probabilities, advantages, learning_rate
-    ):
+    def train_actor(self, inputs, actions, log_probabilities, advantages, learning_rate):
         # print("Training Actor")
         with tf.GradientTape() as tape:
             if self.discrete_action_space:
@@ -164,45 +162,29 @@ class PPOAgent(BaseAgent):
                 1 + self.config.clip_param,
             )
 
-            actor_loss = tf.math.minimum(
-                probability_ratios * advantages, clipped_probability_ratios * advantages
-            )
+            actor_loss = tf.math.minimum(probability_ratios * advantages, clipped_probability_ratios * advantages)
 
             entropy_loss = distribution.entropy()
-            actor_loss = -tf.reduce_mean(actor_loss) - (
-                self.config.entropy_coefficient * entropy_loss
-            )
+            actor_loss = -tf.reduce_mean(actor_loss) - (self.config.entropy_coefficient * entropy_loss)
 
-        actor_gradients = tape.gradient(
-            actor_loss, self.model.actor.trainable_variables
-        )
+        actor_gradients = tape.gradient(actor_loss, self.model.actor.trainable_variables)
         self.config.actor.optimizer.apply_gradients(
             grads_and_vars=zip(actor_gradients, self.model.actor.trainable_variables)
         )
         if self.discrete_action_space:
             kl_divergence = tf.reduce_mean(
-                log_probabilities
-                - tfp.distributions.Categorical(self.model.actor(inputs)).log_prob(
-                    actions
-                )
+                log_probabilities - tfp.distributions.Categorical(self.model.actor(inputs)).log_prob(actions)
             )
         else:
             mean, std = self.model.actor(inputs)
-            kl_divergence = tf.reduce_mean(
-                log_probabilities
-                - tfp.distributions.Normal(mean, std).log_prob(actions)
-            )
+            kl_divergence = tf.reduce_mean(log_probabilities - tfp.distributions.Normal(mean, std).log_prob(actions))
         kl_divergence = tf.reduce_sum(kl_divergence)
         return kl_divergence
 
     def train_critic(self, inputs, returns, learning_rate):
         with tf.GradientTape() as tape:
-            critic_loss = tf.reduce_mean(
-                (returns - self.model.critic(inputs, training=True)) ** 2
-            )
-        critic_gradients = tape.gradient(
-            critic_loss, self.model.critic.trainable_variables
-        )
+            critic_loss = tf.reduce_mean((returns - self.model.critic(inputs, training=True)) ** 2)
+        critic_gradients = tape.gradient(critic_loss, self.model.critic.trainable_variables)
         self.config.critic.optimizer.apply_gradients(
             grads_and_vars=zip(critic_gradients, self.model.critic.trainable_variables)
         )
@@ -221,7 +203,7 @@ class PPOAgent(BaseAgent):
             total_score = 0
             score = 0
             for timestep in range(self.config.steps_per_epoch):
-                action = self.select_action(
+                action = self.select_actions(
                     state,
                     get_legal_moves(info),
                 )
@@ -231,9 +213,7 @@ class PPOAgent(BaseAgent):
                 score += reward
 
                 if done or timestep == self.config.steps_per_epoch - 1:
-                    last_value = (
-                        0 if done else self.model.critic(self.preprocess(next_state))
-                    )
+                    last_value = 0 if done else self.model.critic(self.preprocess(next_state))
                     self.replay_buffer.finish_trajectory(last_value)
                     num_episodes += 1
                     state, _ = self.env.reset()
@@ -303,9 +283,7 @@ class PPOAgent(BaseAgent):
                     batch_indices = indices[start:end]
                     batch_observations = inputs[batch_indices]
                     batch_returns = returns[batch_indices]
-                    critic_loss = self.train_critic(
-                        batch_observations, batch_returns, learning_rate
-                    )
+                    critic_loss = self.train_critic(batch_observations, batch_returns, learning_rate)
                     self.stats["critic_loss"].append(critic_loss)
                 # critic_loss = self.train_critic(inputs, returns, learning_rate)
                 # stat_critic_loss.append(critic_loss)

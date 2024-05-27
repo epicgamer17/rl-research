@@ -22,20 +22,16 @@ class BaseImitationAgent(BaseAgent):
                 state_input = self.preprocess(observations)
                 policy = self.model(inputs=state_input)
                 # LEGAL MOVE MASKING?
-                loss = self.loss_function(
-                    targets, policy
-                )  # catergorical cross entropy for policies
+                loss = self.loss_function(targets, policy)  # catergorical cross entropy for policies
 
                 gradients = tape.gradient(loss, self.model.trainable_variables)
-                self.config.optimizer.apply_gradients(
-                    grads_and_vars=zip(gradients, self.model.trainable_variables)
-                )
+                self.config.optimizer.apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
 
                 # RESET NOISE IF IM DOING THAT
         return loss
 
-    def select_action(self, state, legal_moves=None):
+    def select_actions(self, state, legal_moves=None):
         raise NotImplementedError
 
-    def predict_single(self, state, legal_moves=None):
+    def predict(self, state, legal_moves=None):
         raise NotImplementedError

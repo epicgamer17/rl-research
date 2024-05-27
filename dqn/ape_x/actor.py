@@ -82,7 +82,7 @@ class ApeXActorBase(ActorAgent, PollingActor):
 
     def collect_experience(self):
         state_input = self.preprocess(self.env_state)
-        action = self.select_action(state_input)
+        action = self.select_actions(state_input)
 
         next_state, reward, terminated, truncated, info = super(ActorAgent, self).step(
             action
@@ -206,7 +206,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
     def on_run_start(self):
         logger.info("fetching initial network params from learner...")
         state, info = self.env.reset()
-        self.select_action(state)
+        self.select_actions(state)
         self.update_params()
         self.env_state, info = self.env.reset()
 

@@ -1,40 +1,9 @@
 import os
-
-# os.environ["OMP_NUM_THREADS"] = f"{1}"
-# os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
-# os.environ['TF_NUM_INTRAOP_THREADS'] = f"{1}"
-
-from agent_configs.dqn.rainbow_config import RainbowConfig
-from game_configs.cartpole_config import CartPoleConfig
-import tensorflow as tf
-
-# tf.config.threading.set_intra_op_parallelism_threads(1)
-# tf.config.threading.set_inter_op_parallelism_threads(1)
-
-import gc
-
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.list_logical_devices("GPU")
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
-        print(e)
-
-import concurrent.futures
-import multiprocessing
-from multiprocessing import Pool
 import sys
-import numpy as np
 import pandas
 import pickle
 import gymnasium as gym
 from hyperopt import tpe, hp, fmin, space_eval
-import contextlib
 from dqn.rainbow.rainbow_agent import RainbowAgent
 
 

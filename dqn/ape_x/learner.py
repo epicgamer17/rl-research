@@ -50,12 +50,8 @@ class ApeXLearnerBase(RainbowAgent):
         )
         self.config = config
 
-        self.samples_queue: queue.Queue[Sample] = queue.Queue(
-            maxsize=self.config.samples_queue_size
-        )
-        self.updates_queue: queue.Queue[Update] = queue.Queue(
-            maxsize=self.config.updates_queue_size
-        )
+        self.samples_queue: queue.Queue[Sample] = queue.Queue(maxsize=self.config.samples_queue_size)
+        self.updates_queue: queue.Queue[Update] = queue.Queue(maxsize=self.config.updates_queue_size)
 
         self.stats = {
             "loss": [],
@@ -88,9 +84,7 @@ class ApeXLearnerBase(RainbowAgent):
             n_step_observations = samples.observations
             observations = n_step_observations
             inputs = self.preprocess(observations)
-            target_ditributions = self.compute_target_distributions_np(
-                samples, discount_factor
-            )
+            target_ditributions = self.compute_target_distributions_np(samples, discount_factor)
             initial_distributions = self.model(inputs)
             distributions_to_train = tf.gather_nd(
                 initial_distributions,
@@ -101,18 +95,14 @@ class ApeXLearnerBase(RainbowAgent):
                 y_true=tf.convert_to_tensor(target_ditributions),
             )
             # add the losses together to reduce variance (original paper just uses n_step loss)
-            assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-                elementwise_loss
-            )
+            assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(elementwise_loss)
 
             loss = tf.reduce_mean(elementwise_loss * weights)
 
         logger.info("tape done, training with gradient tape")
         # TRAINING WITH GRADIENT TAPE
         gradients = tape.gradient(loss, self.model.trainable_variables)
-        self.config.optimizer.apply_gradients(
-            grads_and_vars=zip(gradients, self.model.trainable_variables)
-        )
+        self.config.optimizer.apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
         # TRAINING WITH tf.train_on_batch
         # loss = self.model.train_on_batch(samples["observations"], target_ditributions, sample_weight=weights)
 
@@ -155,17 +145,13 @@ class ApeXLearnerBase(RainbowAgent):
                 if time.time() - start_time > 3600 * 1.5:
                     break
 
-                logger.info(
-                    f"learner training step: {training_step}/{self.training_steps}"
-                )
+                logger.info(f"learner training step: {training_step}/{self.training_steps}")
 
                 if training_step % self.config.push_params_interval == 0:
                     self.store_weights()
                     logger.info("pushed params")
 
-                self.replay_buffer.beta = update_per_beta(
-                    self.replay_buffer.beta, 1.0, self.training_steps
-                )
+                self.replay_buffer.beta = update_per_beta(self.replay_buffer.beta, 1.0, self.training_steps)
 
                 loss = self._learn()
                 logger.info(f"finished exp replay")
@@ -308,10 +294,8 @@ class ApeXLearner(ApeXLearnerBase):
         self.flag = threading.Event()
 
         state, info = self.env.reset()
-        self.select_action(state)
-        self.replay_thread = threading.Thread(
-            target=self.handle_replay_socket, args=(self.flag,)
-        )
+        self.select_actions(state)
+        self.replay_thread = threading.Thread(target=self.handle_replay_socket, args=(self.flag,))
         self.replay_thread.daemon = True
         self.replay_thread.start()
 
