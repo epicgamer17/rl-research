@@ -222,7 +222,7 @@ class BaseAgent:
             f"{dir}/graphs",
         )
 
-    def test(self, num_trials, step, dir="./checkpoints") -> None:
+    def test(self, num_trials, step, dir="./checkpoints") -> dict:
         """Test the agent."""
         self.is_test = True
         average_score = 0
