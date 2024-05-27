@@ -5,13 +5,9 @@ from torch import nn, Tensor, functional
 
 
 class Dense(nn.Module):
-    def __init__(
-        self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs
-    ):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs):
         super(Dense, self).__init__(*args, **kwargs)
-        self.layer = nn.Linear(
-            in_features=in_features, out_features=out_features, bias=bias
-        )
+        self.layer = nn.Linear(in_features=in_features, out_features=out_features, bias=bias)
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         initializer(self.layer.weight)
@@ -28,7 +24,7 @@ class NoisyDense(nn.Module):
 
     @staticmethod
     def f(x: Tensor):
-        return x.sgn() * x.abs().sqrt()
+        return x.sgn() * (x.abs().sqrt())
 
     def __init__(
         self,
@@ -47,9 +43,7 @@ class NoisyDense(nn.Module):
 
         self.mu_w = nn.Parameter(torch.empty(out_features, in_features))
         self.sigma_w = nn.Parameter(torch.empty(out_features, in_features))
-        self.eps_w = self.register_buffer(
-            "eps_w", torch.empty(out_features, in_features)
-        )
+        self.eps_w = self.register_buffer("eps_w", torch.empty(out_features, in_features))
         if self.use_bias:
             self.mu_b = nn.Parameter(torch.empty(out_features))
             self.sigma_b = nn.Parameter(torch.empty(out_features))
@@ -66,12 +60,12 @@ class NoisyDense(nn.Module):
         if self.use_factorized:
             eps_i = torch.randn(1, self.in_features).to(self.mu_w.device)
             eps_j = torch.randn(self.out_features, 1).to(self.mu_w.device)
-            self.eps_w = self.f(eps_j) @ self.f(eps_i).to(self.mu_w.device)
-            self.eps_b = eps_j.reshape(self.out_features)
+            self.eps_w = self.f(eps_j) @ self.f(eps_i)
+            self.eps_b = self.f(eps_j).reshape(self.out_features)
         else:
-            self.eps_w = torch.randn(self.mu_w.shape).to(self.mu_w.device)
+            self.eps_w = self.f(torch.randn(self.mu_w.shape)).to(self.mu_w.device)
             if self.use_bias:
-                self.eps_b = torch.randn(size=self.mu_b.shape).to(self.mu_w.device)
+                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(self.mu_w.device)
 
     def remove_noise(self) -> None:
         self.eps_w = torch.zeros_like(self.mu_w).to(self.mu_w.device)
@@ -146,6 +140,7 @@ class DenseStack(nn.Module):
             self.dense_layers.append(layer)
             current_input_width = widths[i]
 
+        self.initial_width = initial_width
         self._output_len = current_input_width
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
@@ -166,7 +161,7 @@ class DenseStack(nn.Module):
         return
 
     def extra_repr(self) -> str:
-        return f"in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, initial_sigma={self.initial_sigma}, use_factorized={self.use_factorized}"
+        return f"in_features={self.initial_width}, out_width={self.output_width}, noisy={self.noisy}"
 
     @property
     def output_width(self):
