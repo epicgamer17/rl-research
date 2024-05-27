@@ -14,7 +14,8 @@ class Conv2dStack(nn.Module):
         noisy_sigma: float = 0,
     ):
         super(Conv2dStack, self).__init__()
-        self.conv_layers: list[nn.Conv2d] = []
+        self.conv_layers = nn.ModuleList()
+
         self.activation = activation
 
         # [B, C_in, H, W]
@@ -24,24 +25,25 @@ class Conv2dStack(nn.Module):
 
         self.noisy = noisy_sigma != 0
         if self.noisy:
-            raise NotImplementedError("Noisy convolutions not implemented yet")
-        else:
-            current_input_channels = input_shape[1]
+            print("warning: Noisy convolutions not implemented yet")
+            # raise NotImplementedError("")
 
-            for i in range(len(filters)):
-                layer = nn.Conv2d(
-                    in_channels=current_input_channels,
-                    out_channels=filters[i],
-                    kernel_size=kernel_sizes[i],
-                    stride=strides[i],
-                    padding="same",
-                )
+        current_input_channels = input_shape[1]
 
-                self.conv_layers.append(layer)
+        for i in range(len(filters)):
+            layer = nn.Conv2d(
+                in_channels=current_input_channels,
+                out_channels=filters[i],
+                kernel_size=kernel_sizes[i],
+                stride=strides[i],
+                padding="same",
+            )
 
-                current_input_channels = filters[i]
+            self.conv_layers.append(layer)
 
-            self._output_len = current_input_channels
+            current_input_channels = filters[i]
+
+        self._output_len = current_input_channels
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         for layer in self.conv_layers:
@@ -56,9 +58,11 @@ class Conv2dStack(nn.Module):
     def reset_noise(self):
         assert self.noisy
 
-        for layer in self.conv_layers:
-            layer.reset_noise()
-        return
+        # noisy not implemented
+
+        # for layer in self.conv_layers:
+        #     # layer.reset_noise()
+        # return
 
     @property
     def output_channels(self):

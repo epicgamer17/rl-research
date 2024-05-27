@@ -4,25 +4,23 @@ import torch
 from torch import nn, Tensor, functional
 
 
-class Dense(nn.Linear):
+class Dense(nn.Module):
     def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        bias: bool = True,
+        self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs
     ):
-        super(Dense, self).__init__(
+        super(Dense, self).__init__(*args, **kwargs)
+        self.layer = nn.Linear(
             in_features=in_features, out_features=out_features, bias=bias
         )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        initializer(self.weight)
+        initializer(self.layer.weight)
 
     def forward(self, inputs: Tensor) -> Tensor:
-        self(inputs)
+        return self.layer(inputs)
 
     def extra_repr(self) -> str:
-        return f"in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}"
+        return self.layer.extra_repr()
 
 
 class NoisyDense(nn.Module):
@@ -39,27 +37,20 @@ class NoisyDense(nn.Module):
         bias: bool = True,
         initial_sigma: float = 0.5,
         use_factorized: bool = True,
-        device=None,
-        dtype=None,
     ):
-        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.initial_sigma = initial_sigma
         self.use_factorized = use_factorized
-        self.bias = bias
+        self.use_bias = bias
 
-        self.mu_w = nn.Parameter(
-            torch.empty(out_features, in_features), **factory_kwargs
-        )
-        self.sigma_w = nn.Parameter(
-            torch.empty(out_features, in_features), **factory_kwargs
-        )
+        self.mu_w = nn.Parameter(torch.empty(out_features, in_features))
+        self.sigma_w = nn.Parameter(torch.empty(out_features, in_features))
         self.eps_w = self.register_buffer(
             "eps_w", torch.empty(out_features, in_features)
         )
-        if self.bias:
+        if self.use_bias:
             self.mu_b = nn.Parameter(torch.empty(out_features))
             self.sigma_b = nn.Parameter(torch.empty(out_features))
             self.eps_b = self.register_buffer("eps_b", torch.empty(out_features))
@@ -73,19 +64,19 @@ class NoisyDense(nn.Module):
 
     def reset_noise(self) -> None:
         if self.use_factorized:
-            eps_i = torch.randn(1, self.in_features)
-            eps_j = torch.randn(self.out_features, 1)
-            self.eps_w = self.f(eps_j) @ self.f(eps_i)
+            eps_i = torch.randn(1, self.in_features).to(self.mu_w.device)
+            eps_j = torch.randn(self.out_features, 1).to(self.mu_w.device)
+            self.eps_w = self.f(eps_j) @ self.f(eps_i).to(self.mu_w.device)
             self.eps_b = eps_j.reshape(self.out_features)
         else:
-            self.eps_w = torch.randn(self.mu_w.shape)
-            if self.bias:
-                self.eps_b = torch.randn(size=self.mu_b.shape)
+            self.eps_w = torch.randn(self.mu_w.shape).to(self.mu_w.device)
+            if self.use_bias:
+                self.eps_b = torch.randn(size=self.mu_b.shape).to(self.mu_w.device)
 
     def remove_noise(self) -> None:
-        self.eps_w = torch.zeros_like(self.mu_w)
-        if self.bias:
-            self.eps_b = torch.zeros_like(self.mu_b)
+        self.eps_w = torch.zeros_like(self.mu_w).to(self.mu_w.device)
+        if self.use_bias:
+            self.eps_b = torch.zeros_like(self.mu_b).to(self.mu_w.device)
 
     def reset_parameters(self) -> None:
         p = self.in_features
@@ -98,7 +89,7 @@ class NoisyDense(nn.Module):
 
         nn.init.constant_(self.sigma_w, sigma_init)
         nn.init.uniform_(self.mu_w, -mu_init, mu_init)
-        if self.bias:
+        if self.use_bias:
             nn.init.constant_(self.sigma_b, sigma_init)
             nn.init.uniform_(self.mu_b, -mu_init, mu_init)
 
@@ -108,7 +99,7 @@ class NoisyDense(nn.Module):
 
     @property
     def bias(self):
-        if self.bias:
+        if self.use_bias:
             return self.mu_b + self.sigma_b * self.eps_b
         else:
             return None
@@ -139,7 +130,7 @@ class DenseStack(nn.Module):
         noisy_sigma: float = 0,
     ):
         super(DenseStack, self).__init__()
-        self.dense_layers: list[Dense | NoisyDense] = []
+        self.dense_layers: nn.ModuleList = nn.ModuleList()
         self.activation = activation
 
         assert len(widths) > 0

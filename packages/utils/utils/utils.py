@@ -3,44 +3,14 @@ import math
 import os
 from matplotlib import pyplot as plt
 import scipy
-import tensorflow as tf
-from tensorflow import keras
-from keras.initializers import (
-    VarianceScaling,
-    Orthogonal,
-    GlorotUniform,
-    GlorotNormal,
-    HeNormal,
-    HeUniform,
-    LecunNormal,
-    LecunUniform,
-    Initializer,
-    Constant,
-)
 
-
-from keras.activations import (
-    relu,
-    sigmoid,
-    softplus,
-    softsign,
-    hard_sigmoid,
-    elu,
-    selu,
-)
-
-from tensorflow.nn import (
-    silu,
-    swish,
-    gelu,
-)
 
 from typing import Iterable, Tuple
 from datetime import datetime
-from torch import nn
+
+from torch import nn, Tensor
 
 import numpy as np
-
 import numpy.typing as npt
 
 # from ....replay_buffers.base_replay_buffer import Game
@@ -48,16 +18,16 @@ import numpy.typing as npt
 
 
 def normalize_policy(policy: np.float16):
-    policy /= tf.reduce_sum(policy, axis=1)
+    policy = policy.sum(axis=1, keepdims=False)
     return policy
 
 
 def action_mask(
-    actions: list[int], legal_moves, num_actions: int, mask_value: float = 0
-):
+    actions: Tensor, legal_moves, num_actions: int, mask_value: float = 0
+) -> Tensor:
     mask = np.zeros(num_actions, dtype=np.int8)
     mask[legal_moves] = 1
-    actions[mask == 0] = mask_value
+    actions[:, mask == 0] = mask_value
     return actions
 
 
@@ -66,15 +36,47 @@ def get_legal_moves(info: dict):
     return info["legal_moves"] if "legal_moves" in info else None
 
 
-def normalize_images(image: np.ndarray):
-    image_copy = np.array(image)
-    normalized_image = image_copy / 255.0
+def normalize_images(image: Tensor) -> Tensor:
+    """Preprocessing step to normalize images with 8-bit (0-255) color.
+
+    Args:
+        image (Tensor): An 8-bit color image
+
+    Returns:
+        Tensor: A copy of the tensor divided by 255
+    """
+    # Return a copy of the tensor divided by 255
+    normalized_image = image / 255
     return normalized_image
 
 
-def make_stack(item: np.ndarray):
-    new_shape = (1,) + item.shape
-    return item.reshape(new_shape)
+def normalize_images_(image: Tensor) -> Tensor:
+    """Preprocessing step to normalize image with 8-bit (0-255) color inplace.
+    Modifys the original tensor
+
+    Args:
+        image (Tensor): An 8-bit color image
+
+    Returns:
+        Tensor: The tensor divided by 255
+    """
+    # Return a copy of the tensor divided by 255
+    normalized_image = image.div_(255)
+    return normalized_image
+
+
+def make_stack(item: Tensor) -> Tensor:
+    """Convert a tensor of shape (*) to (1, *). Does not copy the data; instead,
+    returns a view of the original tensor.
+
+    Args:
+        item (Tensor):
+
+    Returns:
+        Tensor: A view of the original tensor.
+    """
+    #
+    return item.view(1, *item.shape)
 
 
 def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int):
@@ -321,7 +323,7 @@ def plot_graphs(
 
 def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = False):
     if output_layer:
-        return Constant(value=0.001)
+        return lambda x: nn.init.constant_(x, 0.001)
     if kernel_initializer == "glorot_uniform":
         return nn.init.xavier_uniform_
     elif kernel_initializer == "glorot_normal":
@@ -550,17 +552,17 @@ def discounted_cumulative_sums(x, discount):
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
-def to_lists(list: list[Iterable]) -> zip[Tuple]:
+def to_lists(l: list[Iterable]) -> list[Tuple]:
     """Convert a list of iterables to a zip of tuples
 
     Args:
         list (list[Iterable]): A list of iterables, e.g. [(1,1,1),(2,2,2),(3,3,3)]
 
     Returns:
-        zip[Tuple]: A zip of tuples, i.e. (1,2,3), (1,2,3), (1,2,3)
+        list[Tuple]: A list of tuples, i.e. [(1,2,3), (1,2,3), (1,2,3)]
     """
 
-    return zip(*list)
+    return list(zip(*l))
 
 
 def current_timestamp():

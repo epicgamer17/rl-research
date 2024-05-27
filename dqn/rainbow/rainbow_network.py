@@ -9,29 +9,20 @@ from utils.utils import to_lists
 
 
 class RainbowNetwork(nn.Module):
-    def __init__(
-        self,
-        config: RainbowConfig,
-        output_size: int,
-        input_shape: Tuple[int],
-        *args,
-        **kwargs
-    ):
+    def __init__(self, config: RainbowConfig, output_size: int, input_shape: Tuple[int], *args, **kwargs):
         super().__init__(*args, **kwargs)
-        B = current_shape[0]
         self.config = config
-
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layers_widths) > 0
         self.has_value_hidden_layers = len(config.value_hidden_layers_widths) > 0
-        self.has_advantage_hidden_layers = (
-            len(config.advantage_hidden_layers_widths) > 0
-        )
+        self.has_advantage_hidden_layers = len(config.advantage_hidden_layers_widths) > 0
+        self.output_size = output_size
 
         current_shape = input_shape
+        B = current_shape[0]
         if self.has_conv_layers:
             assert len(input_shape) == 4
-            filters, kernel_sizes, strides = to_lists(self.conv_layers)
+            filters, kernel_sizes, strides = to_lists(config.conv_layers)
 
             # (B, C_in, H, W) -> (B, C_out H, W)
             self.conv_layers = Conv2dStack(
@@ -50,7 +41,7 @@ class RainbowNetwork(nn.Module):
             )
 
         if self.has_dense_layers:
-            if len(current_shape == 4):
+            if len(current_shape) == 4:
                 initial_width = current_shape[1] * current_shape[2] * current_shape[3]
             else:
                 assert len(current_shape) == 2
@@ -112,12 +103,8 @@ class RainbowNetwork(nn.Module):
         self.advantage_layer = build_dense(
             in_features=advantage_in_features,
             out_features=output_size * config.atom_size,
+            sigma=self.config.noisy_sigma,
         )
-
-        # self.outputs = tf.keras.layers.Lambda(
-        #     lambda q: tf.reduce_sum(q * config.support, axis=2), name="Q"
-        # )
-        # ??? config.support not found anywhere
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_conv_layers:
@@ -153,6 +140,8 @@ class RainbowNetwork(nn.Module):
         # (B, value_hidden_in) -> (B, value_hidden_out)
         if self.has_value_hidden_layers:
             v = self.value_hidden_layers(S)
+        else:
+            v = S
 
         # (B, value_hidden_in || dense_features_out) -> (B, atom_size) -> (B, 1, atom_size)
         v: Tensor = self.value_layer(v).view(-1, 1, self.config.atom_size)
@@ -160,11 +149,11 @@ class RainbowNetwork(nn.Module):
         # (B, adv_hidden_in) -> (B, adv_hidden_out)
         if self.has_advantage_hidden_layers:
             A = self.advantage_hidden_layers(S)
+        else:
+            A = S
 
         # (B, adv_hidden_out || dense_features_out) -> (B, output_size * atom_size) -> (B, output_size, atom_size)
-        A: Tensor = self.advantage_layer(A).view(
-            -1, self.output_size, self.config.atom_size
-        )
+        A: Tensor = self.advantage_layer(A).view(-1, self.output_size, self.config.atom_size)
 
         # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
         a_mean = A.mean(1, True)

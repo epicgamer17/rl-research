@@ -1,13 +1,8 @@
-from keras.optimizers import Optimizer, Adam
-
-from keras.losses import Loss
+import torch
+import yaml
 
 from game_configs import GameConfig
-
-import yaml
-import sys
-
-from utils import prepare_activations, prepare_kernel_initializers
+from utils import prepare_kernel_initializers, prepare_activations
 
 
 class ConfigBase:
@@ -27,9 +22,7 @@ class ConfigBase:
             return default
 
         if required:
-            raise ValueError(
-                f"Missing required field without default value: {field_name}"
-            )
+            raise ValueError(f"Missing required field without default value: {field_name}")
 
     def __init__(self, config_dict: dict):
         self.config_dict = config_dict
@@ -75,37 +68,25 @@ class Config(ConfigBase):
         self._verify_game()
 
         # not hyperparameters but utility things
-        self.save_intermediate_weights: bool = self.parse_field(
-            "save_intermediate_weights", True
-        )
+        self.save_intermediate_weights: bool = self.parse_field("save_intermediate_weights", True)
 
         # ADD LEARNING RATE SCHEDULES
 
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
-        self.learning_rate: float = self.parse_field("learning_rate", 0.01)
+        self.learning_rate: float = self.parse_field("learning_rate", 0.001)
         self.clipnorm: int | None = self.parse_field("clipnorm", None, required=False)
-        self.optimizer: Optimizer = self.parse_field(
-            "optimizer",
-            Adam,
-            wrapper=lambda optimizer: optimizer(
-                self.learning_rate, epsilon=self.adam_epsilon, clipnorm=self.clipnorm
-            ),
-        )
-        self.loss_function: Loss = self.parse_field(
-            "loss_function", None, required=False
+        self.optimizer: torch.optim.Optimizer = self.parse_field("optimizer", torch.optim.Adam)
+        self.loss_function: torch.nn.CrossEntropyLoss = self.parse_field(
+            "loss_function", torch.nn.CrossEntropyLoss(reduction="none"), required=False
         )
         self.training_iterations: int = self.parse_field("training_iterations", 1)
         self.num_minibatches: int = self.parse_field("num_minibatches", 1)
-        self.minibatch_size: int = self.parse_field("minibatch_size", 32)
-        self.replay_buffer_size: int = self.parse_field("replay_buffer_size", 1024)
-        self.min_replay_buffer_size: int = self.parse_field(
-            "min_replay_buffer_size", self.minibatch_size
-        )
+        self.minibatch_size: int = self.parse_field("minibatch_size", 64)
+        self.replay_buffer_size: int = self.parse_field("replay_buffer_size", 5000)
+        self.min_replay_buffer_size: int = self.parse_field("min_replay_buffer_size", self.minibatch_size)
         self.training_steps: int = self.parse_field("training_steps", 10000)
 
-        self.activation = self.parse_field(
-            "activation", "relu", wrapper=kernel_initializer_wrapper
-        )
+        self.activation = self.parse_field("activation", "relu", wrapper=prepare_activations)
 
         self.kernel_initializer = self.parse_field(
             "kernel_initializer",
