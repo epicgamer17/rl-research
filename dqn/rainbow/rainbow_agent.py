@@ -233,10 +233,12 @@ class RainbowAgent(BaseAgent):
         # print("Rewards ", rewards)
         # print("Dones ", dones)
 
-        distributions = self.target_model(inputs)
-        print("Distributions ", distributions)
-        print("Sum Distributions ", np.sum(distributions, axis=2))
-        next_actions = np.argmax(np.sum(distributions, axis=2), axis=1)
+        # print(self.support)
+        # print("Distributions ", distributions)
+        # print("Sum Distributions ", np.sum(distributions, axis=2))
+        next_actions = np.argmax(
+            np.sum(self.target_model(inputs) * self.support, axis=2), axis=1
+        )
         target_network_distributions = self.target_model(next_inputs).numpy()
         # print(next_actions.shape)
         # print(target_distributions.shape)

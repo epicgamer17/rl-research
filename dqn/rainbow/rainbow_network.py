@@ -123,12 +123,12 @@ class Network(Model):
         self.add = tf.keras.layers.Add()
         # self.softmax = tf.keras.activations.softmax(self.add, axis=-1)
         # ONLY CLIP FOR CATEGORICAL CROSS ENTROPY LOSS TO PREVENT NAN
-        self.clip_qs = tf.keras.layers.Lambda(
-            lambda q: tf.clip_by_value(q, 1e-3, 1), name="ClippedQ"
-        )
-        self.outputs = tf.keras.layers.Lambda(
-            lambda q: tf.reduce_sum(q * config.support, axis=2), name="Q"
-        )
+        # self.clip_qs = tf.keras.layers.Lambda(
+        #     lambda q: tf.clip_by_value(q, 1e-3, 1), name="ClippedQ"
+        # )
+        # self.outputs = tf.keras.layers.Lambda(
+        #     lambda q: tf.reduce_sum(q * config.support, axis=2), name="Q"
+        # )
         # print(config.support)
 
         self.flatten = tf.keras.layers.Flatten()

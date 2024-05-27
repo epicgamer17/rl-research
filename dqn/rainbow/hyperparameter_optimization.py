@@ -33,7 +33,7 @@ import numpy as np
 import pandas
 import pickle
 import gymnasium as gym
-from hyperopt import tpe, hp, fmin, space_eval
+from hyperopt import tpe, hp, fmin, space_eval, STATUS_OK, STATUS_FAIL
 import contextlib
 from rainbow_agent import RainbowAgent
 
@@ -61,7 +61,11 @@ def make_func():
         )
         m.train()
         print("Training complete")
-        return -m.test(num_trials=10, step=5000, dir="./checkpoints/")
+        return -(
+            m.test(
+                num_trials=10, step=5000, dir=f"./checkpoints/{m.model_name}/videos"
+            )["score"]
+        )
 
     return run_training
 
@@ -80,11 +84,11 @@ def objective(params):
     # ]
     env = gym.make("CartPole-v1", render_mode="rgb_array")
 
-    if os.path.exists("./CartPole_trials.p"):
-        trials = pickle.load(open("./CartPole_trials.p", "rb"))
-        name = "CartPole_{}".format(len(trials.trials) + 1)
+    if os.path.exists("./CartPole-v1_trials.p"):
+        trials = pickle.load(open("./CartPole-v1_trials.p", "rb"))
+        name = "CartPole-v1_{}".format(len(trials.trials) + 1)
     else:
-        name = "CartPole_1"
+        name = "CartPole-v1_1"
     # name = datetime.datetime.now().timestamp()
     params["model_name"] = name
     entry = pandas.DataFrame.from_dict(
@@ -93,12 +97,23 @@ def objective(params):
     ).T
 
     entry.to_csv(
-        "classiccontrol_results.csv",
+        "CartPole-v1_results.csv",
         mode="a",
         header=False,
     )
 
-    score = -globalized_training_func([params, env, name])
+    status = STATUS_OK
+    try:
+        # add other illegal hyperparameter combinations here
+        assert params["min_replay_buffer_size"] >= params["minibatch_size"]
+        assert params["replay_buffer_size"] > params["min_replay_buffer_size"]
+    except AssertionError as e:
+        status = STATUS_FAIL
+        print(f"exited due to invalid hyperparameter combination: {e}")
+        return {"status": status, "loss": 0}
+
+    if status != STATUS_FAIL:
+        score = globalized_training_func([params, env, name])
 
     # num_workers = len(environments_list)
     # args_list = np.array(
@@ -114,7 +129,7 @@ def objective(params):
     #     ).get()
     #     print(scores_list)
     print("parallel programs done")
-    return score  # np.mean(scores_list)
+    return {"status": status, "loss": score}  # np.mean(scores_list)
 
 
 globalized_objective = globalize(objective)
@@ -153,7 +168,6 @@ def create_search_space():
             [1, 0.5, 0.3125, 0.03125, 0.003125, 0.0003125, 0.00003125, 0.000003125],
         ),
         # NORMALIZATION?
-        "ema_beta": hp.uniform("ema_beta", 0.95, 0.999),
         "transfer_interval": hp.choice(
             "transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
         ),
@@ -192,8 +206,6 @@ def create_search_space():
         ),
         "per_alpha": hp.choice("per_alpha", [0.05 * i for i in range(1, 21)]),
         "per_beta": hp.choice("per_beta", [0.05 * i for i in range(1, 21)]),
-        "v_min": hp.choice("v_min", [0]),  # MIN GAME SCORE
-        "v_max": hp.choice("v_max", [500.0]),  # MAX GAME SCORE
     }
     initial_best_config = [{}]
 
@@ -202,17 +214,15 @@ def create_search_space():
 
 if __name__ == "__main__":
     search_space, initial_best_config = create_search_space()
-    max_trials = 2
-    trials_step = 2  # how many additional trials to do after loading the last ones
+    max_trials = 64
+    trials_step = 64  # how many additional trials to do after loading the last ones
 
     try:  # try to load an already saved trials object, and increase the max
-        trials = pickle.load(open("./classiccontrol_trials.p", "rb"))
+        trials = pickle.load(open("./CartPole-v1_trials.p", "rb"))
         print("Found saved Trials! Loading...")
-        max_trials = len(trials.trials) + trials_step
+        max_trials = max(len(trials.trials) + trials_step, max_trials + trials_step)
         print(
-            "Rerunning from {} trials to {} (+{}) trials".format(
-                len(trials.trials), max_trials, trials_step
-            )
+            f"Rerunning from {len(trials.trials)} trials to {max_trials} (+{trials_step}) trials"
         )
     except:  # create a new trials object and start searching
         # trials = Trials()
@@ -225,7 +235,7 @@ if __name__ == "__main__":
         max_evals=max_trials,  # Number of optimization attempts
         trials=trials,  # Record the results
         # early_stop_fn=no_progress_loss(5, 1),
-        trials_save_file="./classiccontrol_trials.p",
+        trials_save_file="./CartPole-v1_trials.p",
         # points_to_evaluate=initial_best_config,
         show_progressbar=False,
     )
