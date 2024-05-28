@@ -5,9 +5,13 @@ from torch import nn, Tensor, functional
 
 
 class Dense(nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs):
+    def __init__(
+        self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs
+    ):
         super(Dense, self).__init__(*args, **kwargs)
-        self.layer = nn.Linear(in_features=in_features, out_features=out_features, bias=bias)
+        self.layer = nn.Linear(
+            in_features=in_features, out_features=out_features, bias=bias
+        )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         initializer(self.layer.weight)
@@ -43,7 +47,9 @@ class NoisyDense(nn.Module):
 
         self.mu_w = nn.Parameter(torch.empty(out_features, in_features))
         self.sigma_w = nn.Parameter(torch.empty(out_features, in_features))
-        self.eps_w = self.register_buffer("eps_w", torch.empty(out_features, in_features))
+        self.eps_w = self.register_buffer(
+            "eps_w", torch.empty(out_features, in_features)
+        )
         if self.use_bias:
             self.mu_b = nn.Parameter(torch.empty(out_features))
             self.sigma_b = nn.Parameter(torch.empty(out_features))
@@ -65,7 +71,9 @@ class NoisyDense(nn.Module):
         else:
             self.eps_w = self.f(torch.randn(self.mu_w.shape)).to(self.mu_w.device)
             if self.use_bias:
-                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(self.mu_w.device)
+                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(
+                    self.mu_w.device
+                )
 
     def remove_noise(self) -> None:
         self.eps_w = torch.zeros_like(self.mu_w).to(self.mu_w.device)

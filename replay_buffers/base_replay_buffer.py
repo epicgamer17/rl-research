@@ -1,7 +1,7 @@
 import copy
 
 import numpy as np
-from utils.utils import calculate_observation_buffer_shape, discounted_cumulative_sums
+from utils.utils import discounted_cumulative_sums
 
 
 class BaseReplayBuffer:
@@ -147,9 +147,7 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         self.size = min(self.size + 1, self.max_size)
 
     def clear(self):
-        observation_buffer_shape = calculate_observation_buffer_shape(
-            self.max_size, self.observation_dimensions
-        )
+        observation_buffer_shape = (self.max_size,) + self.observation_dimensions
         self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
         self.next_observation_buffer = np.zeros(
             observation_buffer_shape, dtype=np.float16

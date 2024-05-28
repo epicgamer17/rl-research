@@ -25,7 +25,9 @@ def normalize_policy(policy: np.float16):
     return policy
 
 
-def action_mask(actions: Tensor, legal_moves, num_actions: int, mask_value: float = 0) -> Tensor:
+def action_mask(
+    actions: Tensor, legal_moves, num_actions: int, mask_value: float = 0
+) -> Tensor:
     mask = np.zeros(num_actions, dtype=np.int8)
     mask[legal_moves] = 1
     actions[:, mask == 0] = mask_value
@@ -86,7 +88,9 @@ def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int)
         clamp_func = min
     else:
         clamp_func = max
-    per_beta = clamp_func(per_beta_final, per_beta + (per_beta_final - per_beta) / (per_beta_steps))
+    per_beta = clamp_func(
+        per_beta_final, per_beta + (per_beta_final - per_beta) / (per_beta_steps)
+    )
 
     return per_beta
 
@@ -106,15 +110,22 @@ def update_linear_lr_schedule(
     if initial_value is not None and current_step is not None:
         learning_rate = clamp_func(
             final_value,
-            initial_value + (final_value - initial_value) * (current_step / total_steps),
+            initial_value
+            + (final_value - initial_value) * (current_step / total_steps),
         )
     else:
-        learning_rate = clamp_func(final_value, learning_rate + (final_value - learning_rate) / total_steps)
+        learning_rate = clamp_func(
+            final_value, learning_rate + (final_value - learning_rate) / total_steps
+        )
     return learning_rate
 
 
-def default_plot_func(axs, key: str, values: list[dict], targets: dict, row: int, col: int):
-    axs[row][col].set_title("{} | rolling average: {}".format(key, np.mean(values[-10:])))
+def default_plot_func(
+    axs, key: str, values: list[dict], targets: dict, row: int, col: int
+):
+    axs[row][col].set_title(
+        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
+    )
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
@@ -135,7 +146,9 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
 
     has_max_scores = "max_score" in values[0]
     has_min_scores = "min_score" in values[0]
-    assert has_max_scores == has_min_scores, "Both max_scores and min_scores must be provided or not provided"
+    assert (
+        has_max_scores == has_min_scores
+    ), "Both max_scores and min_scores must be provided or not provided"
 
     if has_max_scores:
         max_scores = [value["max_score"] for value in values]
@@ -167,7 +180,9 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
                     label="Model Weight Update {}".format(i),
                 )
 
-    axs[row][col].set_title(f"{key} | rolling average: {np.mean(scores[-10:])} | latest: {scores[-1]}")
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(scores[-10:])} | latest: {scores[-1]}"
+    )
 
     axs[row][col].set_xlabel("Game")
     axs[row][col].set_ylabel("Score")
@@ -223,7 +238,9 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
                     label="Model Weight Update {}".format(i),
                 )
 
-    axs[row][col].set_title(f"{key} | rolling average: {np.mean(loss[-10:])} | latest: {loss[-1]}")
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(loss[-10:])} | latest: {loss[-1]}"
+    )
 
     axs[row][col].set_xlabel("Time Step")
     axs[row][col].set_ylabel("Loss")
@@ -239,7 +256,9 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
         )
 
 
-def plot_exploitability(axs, key: str, values: list[dict], targets: dict, row: int, col: int):
+def plot_exploitability(
+    axs, key: str, values: list[dict], targets: dict, row: int, col: int
+):
     default_plot_func(axs, key, values, targets, row, col)
 
 
@@ -306,8 +325,6 @@ def plot_graphs(
 
 
 def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = False):
-    if output_layer:
-        return lambda x: nn.init.constant_(x, 0.001)
     if kernel_initializer == "glorot_uniform":
         return nn.init.xavier_uniform_
     elif kernel_initializer == "glorot_normal":
@@ -386,7 +403,9 @@ def epsilon_greedy_policy(q_values: list[float], epsilon: float):
         return np.argmax(q_values)
 
 
-def add_dirichlet_noise(policy: list[float], dirichlet_alpha: float, exploration_fraction: float):
+def add_dirichlet_noise(
+    policy: list[float], dirichlet_alpha: float, exploration_fraction: float
+):
     # MAKE ALPHAZERO USE THIS
     noise = np.random.dirichlet([dirichlet_alpha] * len(policy))
     frac = exploration_fraction
@@ -395,7 +414,9 @@ def add_dirichlet_noise(policy: list[float], dirichlet_alpha: float, exploration
     return policy
 
 
-def augment_board(self, game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False):
+def augment_board(
+    self, game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False
+):
     # augmented_games[0] = rotate 90
     # augmented_games[1] = rotate 180
     # augmented_games[2] = rotate 270
@@ -414,41 +435,68 @@ def augment_board(self, game, flip_y: bool = False, flip_x: bool = False, rot90:
             augemented_games[0].policy_history[i] = np.rot90(policy)
             augemented_games[1].observation_history[i] = np.rot90(np.rot90(board))
             augemented_games[1].policy_history[i] = np.rot90(np.rot90(policy))
-            augemented_games[2].observation_history[i] = np.rot90(np.rot90(np.rot90(board)))
+            augemented_games[2].observation_history[i] = np.rot90(
+                np.rot90(np.rot90(board))
+            )
             augemented_games[2].policy_history[i] = np.rot90(np.rot90(np.rot90(policy)))
             augemented_games[3].observation_history[i] = np.flipud(board)
             augemented_games[3].policy_history[i] = np.flipud(policy)
             augemented_games[4].observation_history[i] = np.flipud(np.rot90(board))
             augemented_games[4].policy_history[i] = np.flipud(np.rot90(policy))
-            augemented_games[5].observation_history[i] = np.flipud(np.rot90(np.rot90(board)))
-            augemented_games[5].policy_history[i] = np.flipud(np.rot90(np.rot90(policy)))
+            augemented_games[5].observation_history[i] = np.flipud(
+                np.rot90(np.rot90(board))
+            )
+            augemented_games[5].policy_history[i] = np.flipud(
+                np.rot90(np.rot90(policy))
+            )
             augemented_games[6].observation_history[i] = np.rot90(np.flipud(board))
             augemented_games[6].policy_history[i] = np.rot90(np.flipud(policy))
     elif rot90 and not flip_y and not flip_x:
         augemented_games = [copy.deepcopy(game) for _ in range(3)]
-        augemented_games[0].observation_history = [np.rot90(board) for board in game.observation_history]
-        augemented_games[0].policy_history = [np.rot90(policy) for policy in game.policy_history]
-        augemented_games[1].observation_history = [np.rot90(np.rot90(board)) for board in game.observation_history]
-        augemented_games[1].policy_history = [np.rot90(np.rot90(policy)) for policy in game.policy_history]
+        augemented_games[0].observation_history = [
+            np.rot90(board) for board in game.observation_history
+        ]
+        augemented_games[0].policy_history = [
+            np.rot90(policy) for policy in game.policy_history
+        ]
+        augemented_games[1].observation_history = [
+            np.rot90(np.rot90(board)) for board in game.observation_history
+        ]
+        augemented_games[1].policy_history = [
+            np.rot90(np.rot90(policy)) for policy in game.policy_history
+        ]
         augemented_games[2].observation_history = [
             np.rot90(np.rot90(np.rot90(board))) for board in game.observation_history
         ]
-        augemented_games[2].policy_history = [np.rot90(np.rot90(np.rot90(policy)) for policy in game.policy_history)]
+        augemented_games[2].policy_history = [
+            np.rot90(np.rot90(np.rot90(policy)) for policy in game.policy_history)
+        ]
     elif flip_y and not rot90 and not flip_x:
         augemented_games = [copy.deepcopy(game)]
-        augemented_games[0].observation_history = [np.flipud(board) for board in game.observation_history]
-        augemented_games[0].policy_history = [np.flipud(policy) for policy in game.policy_history]
+        augemented_games[0].observation_history = [
+            np.flipud(board) for board in game.observation_history
+        ]
+        augemented_games[0].policy_history = [
+            np.flipud(policy) for policy in game.policy_history
+        ]
 
     elif flip_x and not rot90 and not flip_y:
         augemented_games = [copy.deepcopy(game) for _ in range(1)]
-        augemented_games[0].observation_history = [np.fliplr(board) for board in game.observation_history]
-        augemented_games[0].policy_history = [np.fliplr(policy) for policy in game.policy_history]
+        augemented_games[0].observation_history = [
+            np.fliplr(board) for board in game.observation_history
+        ]
+        augemented_games[0].policy_history = [
+            np.fliplr(policy) for policy in game.policy_history
+        ]
 
     augemented_games.append(game)
     return augemented_games
 
 
 def calculate_observation_buffer_shape(max_size, observation_dimensions):
+    raise DeprecationWarning(
+        "This function is deprecated simply use (max_size,) + observation_dimensions"
+    )
     # observation_buffer_shape = []
     # observation_buffer_shape += [max_size]
     # observation_buffer_shape += list(observation_dimensions)
@@ -456,7 +504,9 @@ def calculate_observation_buffer_shape(max_size, observation_dimensions):
     return list(observation_buffer_shape)
 
 
-def sample_by_random_indices(max_index_or_1darray, batch_size: int, with_replacement=False) -> npt.NDArray[np.int64]:
+def sample_by_random_indices(
+    max_index_or_1darray, batch_size: int, with_replacement=False
+) -> npt.NDArray[np.int64]:
     """
     Sample from a numpy array using indices
     """
@@ -472,7 +522,9 @@ def sample_by_indices_probability(
     return np.random.choice(max_index_or_1darray, batch_size, p=probabilities)
 
 
-def sample_tree_proportional(tree, batch_size: int, max_size: int) -> npt.NDArray[np.int64]:
+def sample_tree_proportional(
+    tree, batch_size: int, max_size: int
+) -> npt.NDArray[np.int64]:
     """
     tree: SumSegmentTree
     Sample proportionally from a sum segment tree. Used in prioritized experience replay

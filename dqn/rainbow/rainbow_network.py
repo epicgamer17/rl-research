@@ -9,13 +9,22 @@ from utils.utils import to_lists
 
 
 class RainbowNetwork(nn.Module):
-    def __init__(self, config: RainbowConfig, output_size: int, input_shape: Tuple[int], *args, **kwargs):
+    def __init__(
+        self,
+        config: RainbowConfig,
+        output_size: int,
+        input_shape: Tuple[int],
+        *args,
+        **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.config = config
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layers_widths) > 0
         self.has_value_hidden_layers = len(config.value_hidden_layers_widths) > 0
-        self.has_advantage_hidden_layers = len(config.advantage_hidden_layers_widths) > 0
+        self.has_advantage_hidden_layers = (
+            len(config.advantage_hidden_layers_widths) > 0
+        )
         self.output_size = output_size
 
         current_shape = input_shape
@@ -153,7 +162,9 @@ class RainbowNetwork(nn.Module):
             A = S
 
         # (B, adv_hidden_out || dense_features_out) -> (B, output_size * atom_size) -> (B, output_size, atom_size)
-        A: Tensor = self.advantage_layer(A).view(-1, self.output_size, self.config.atom_size)
+        A: Tensor = self.advantage_layer(A).view(
+            -1, self.output_size, self.config.atom_size
+        )
 
         # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
         a_mean = A.mean(1, keepdim=True)

@@ -20,7 +20,9 @@ class RainbowAgent(BaseAgent):
         env,
         config: RainbowConfig,
         name=f"rainbow_{current_timestamp():.1f}",
-        device: torch.device = (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")),
+        device: torch.device = (
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        ),
     ):
         super(RainbowAgent, self).__init__(env, config, name)
         self.config = config
@@ -125,7 +127,9 @@ class RainbowAgent(BaseAgent):
             # print("actions", actions)
 
             # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
-            online_distributions = self.predict(observations)[range(self.config.minibatch_size), actions]
+            online_distributions = self.predict(observations)[
+                range(self.config.minibatch_size), actions
+            ]
 
             # (B, atom_size)
             target_distributions = self.compute_target_distributions(samples)
@@ -144,7 +148,9 @@ class RainbowAgent(BaseAgent):
 
             self.optimizer.step()
             loss = loss.detach().to("cpu")
-            self.replay_buffer.update_priorities(indices, loss + self.config.per_epsilon)
+            self.replay_buffer.update_priorities(
+                indices, loss + self.config.per_epsilon
+            )
             self.model.reset_noise()
             self.target_model.reset_noise()
             losses[i] = loss.mean().item()
@@ -153,7 +159,9 @@ class RainbowAgent(BaseAgent):
     def compute_target_distributions(self, samples):
         with torch.no_grad():
             discount_factor = self.config.discount_factor**self.config.n_step
-            delta_z = (self.config.v_max - self.config.v_min) / (self.config.atom_size - 1)
+            delta_z = (self.config.v_max - self.config.v_min) / (
+                self.config.atom_size - 1
+            )
             next_observations, rewards, dones = (
                 samples["next_observations"],
                 torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
@@ -163,11 +171,15 @@ class RainbowAgent(BaseAgent):
             target_distributions = self.predict_target(next_observations)
             next_actions = self.select_actions(online_distributions)
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
-            probabilities = target_distributions[range(self.config.minibatch_size), next_actions]
+            probabilities = target_distributions[
+                range(self.config.minibatch_size), next_actions
+            ]
             # print(probabilities)
 
             # (B, 1) + k(B, atom_size) * (B, atom_size) -> (B, atom_size)
-            Tz = (rewards + discount_factor * (~dones) * self.support).clamp(self.config.v_min, self.config.v_max)
+            Tz = (rewards + discount_factor * (~dones) * self.support).clamp(
+                self.config.v_min, self.config.v_max
+            )
             # print("Tz", Tz)
 
             # all elementwise
@@ -218,16 +230,23 @@ class RainbowAgent(BaseAgent):
                     distributions = self.predict(state)
                     actions = self.select_actions(distributions, get_legal_moves(info))
                     action = actions.item()
-                    next_state, reward, terminated, truncated, info = self.env.step(action)
+                    next_state, reward, terminated, truncated, info = self.env.step(
+                        action
+                    )
                     done = terminated or truncated
                     self.replay_buffer.store(state, action, reward, next_state, done)
                     state = next_state
                     score += reward
-                    self.replay_buffer.beta = update_per_beta(self.replay_buffer.beta, 1.0, self.training_steps)
+                    self.replay_buffer.beta = update_per_beta(
+                        self.replay_buffer.beta, 1.0, self.training_steps
+                    )
 
                     if done:
                         state, info = self.env.reset()
-                        score_dict = {"score": score, "target_model_updated": target_model_updated[0]}
+                        score_dict = {
+                            "score": score,
+                            "target_model_updated": target_model_updated[0],
+                        }
                         self.stats["score"].append(score_dict)
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
@@ -236,7 +255,9 @@ class RainbowAgent(BaseAgent):
                 losses = self.learn()
                 loss_mean = losses.mean()
                 # could do things other than taking the mean here
-                self.stats["loss"].append({"loss": loss_mean, "target_model_updated": target_model_updated[1]})
+                self.stats["loss"].append(
+                    {"loss": loss_mean, "target_model_updated": target_model_updated[1]}
+                )
                 target_model_updated = (target_model_updated[0], False)
 
             if training_step % self.config.transfer_interval == 0:
@@ -247,7 +268,7 @@ class RainbowAgent(BaseAgent):
                 self.update_target_model()
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
-                print(self.stats["score"])
+                # print(self.stats["score"])
                 self.save_checkpoint(
                     5,
                     training_step,
