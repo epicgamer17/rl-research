@@ -31,11 +31,12 @@ def objective(params):
     print("Making environments")
     env = gym.make("CartPole-v1", render_mode="rgb_array")
 
-    if os.path.exists("./CartPole_trials.p"):
-        trials = pickle.load(open("./CartPole_trials.p", "rb"))
-        name = "CartPole_{}".format(len(trials.trials) + 1)
+    if os.path.exists("./CartPole-v1_trials.p"):
+        trials = pickle.load(open("./CartPole-v1_trials.p", "rb"))
+        name = "CartPole-v1_{}".format(len(trials.trials) + 1)
     else:
-        name = "CartPole_1"
+        name = "CartPole-v1_1"
+    # name = datetime.datetime.now().timestamp()
     params["model_name"] = name
     entry = pandas.DataFrame.from_dict(
         params,
@@ -43,14 +44,39 @@ def objective(params):
     ).T
 
     entry.to_csv(
-        "classiccontrol_results.csv",
+        "CartPole-v1_results.csv",
         mode="a",
         header=False,
     )
 
-    score = -run_training([params, env, name])
+    status = STATUS_OK
+    try:
+        # add other illegal hyperparameter combinations here
+        assert params["min_replay_buffer_size"] >= params["minibatch_size"]
+        assert params["replay_buffer_size"] > params["min_replay_buffer_size"]
+    except AssertionError as e:
+        status = STATUS_FAIL
+        print(f"exited due to invalid hyperparameter combination: {e}")
+        return {"status": status, "loss": 0}
+
+    if status != STATUS_FAIL:
+        score = globalized_training_func([params, env, name])
+
+    # num_workers = len(environments_list)
+    # args_list = np.array(
+    #     [
+    #         [params for env in environments_list],
+    #         environments_list,
+    #         [name for env in environments_list],
+    #     ]
+    # ).T
+    # with contextlib.closing(multiprocessing.Pool()) as pool:
+    #     scores_list = pool.map_async(
+    #         globalized_training_func, (args for args in args_list)
+    #     ).get()
+    #     print(scores_list)
     print("parallel programs done")
-    return score  # np.mean(scores_list)
+    return {"status": status, "loss": score}  # np.mean(scores_list)
 
 
 widths = [32, 64, 128, 256, 512, 1024]
@@ -77,7 +103,6 @@ def create_search_space():
         "learning_rate": hp.choice("learning_rate", [10, 5, 2, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001]),
         "adam_epsilon": hp.choice("adam_epsilon", [0.3125, 0.03125, 0.003125, 0.0003125]),
         # NORMALIZATION?
-        "ema_beta": hp.uniform("ema_beta", 0.95, 0.999),
         "transfer_interval": hp.choice("transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]),
         "replay_interval": hp.choice("replay_interval", [1, 2, 3, 4, 5, 8, 10, 12]),
         "minibatch_size": hp.choice("minibatch_size", [2**i for i in range(4, 8)]),  ###########
@@ -100,7 +125,6 @@ def create_search_space():
         "per_epsilon": hp.choice("per_epsilon", [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1]),
         "per_alpha": hp.choice("per_alpha", [0.05 * i for i in range(1, 21)]),
         "per_beta": hp.choice("per_beta", [0.05 * i for i in range(1, 21)]),
-        "save_intermediate_weights": hp.choice("save_intermediate_weights", [False]),
     }
     initial_best_config = [{}]
 
@@ -109,11 +133,11 @@ def create_search_space():
 
 if __name__ == "__main__":
     search_space, initial_best_config = create_search_space()
-    max_trials = 2
-    trials_step = 2  # how many additional trials to do after loading the last ones
+    max_trials = 64
+    trials_step = 64  # how many additional trials to do after loading the last ones
 
     try:  # try to load an already saved trials object, and increase the max
-        trials = pickle.load(open("./classiccontrol_trials.p", "rb"))
+        trials = pickle.load(open("./CartPole-v1_trials.p", "rb"))
         print("Found saved Trials! Loading...")
         max_trials = len(trials.trials) + trials_step
         print("Rerunning from {} trials to {} (+{}) trials".format(len(trials.trials), max_trials, trials_step))
@@ -128,7 +152,7 @@ if __name__ == "__main__":
         max_evals=max_trials,  # Number of optimization attempts
         trials=trials,  # Record the results
         # early_stop_fn=no_progress_loss(5, 1),
-        trials_save_file="./classiccontrol_trials.p",
+        trials_save_file="./CartPole-v1_trials.p",
         # points_to_evaluate=initial_best_config,
         show_progressbar=False,
     )

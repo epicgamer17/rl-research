@@ -504,6 +504,17 @@ def discounted_cumulative_sums(x, discount):
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
+def exploitability(env, average_policy, best_response_policies, num_episodes):
+    # play average against best responses and measure the reward the expected value or value
+    pass
+
+
+def nash_convergence(env, average_policies, best_response_policies, num_episodes):
+    # for every player (average policy) play against the corresponding best policies
+    # sum the exploitability of each player and then divide by the number of players
+    pass
+
+
 def to_lists(l: list[Iterable]) -> list[Tuple]:
     """Convert a list of iterables to a zip of tuples
 
