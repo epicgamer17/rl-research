@@ -3,7 +3,7 @@ import itertools
 import pickle
 import pandas
 import gymnasium as gym
-from hyperopt import tpe, hp, fmin, space_eval
+from hyperopt import tpe, hp, fmin, space_eval, STATUS_OK, STATUS_FAIL
 from agent_configs import RainbowConfig
 import gc
 
@@ -60,7 +60,7 @@ def objective(params):
         return {"status": status, "loss": 0}
 
     if status != STATUS_FAIL:
-        score = globalized_training_func([params, env, name])
+        score = run_training([params, env, name])
 
     # num_workers = len(environments_list)
     # args_list = np.array(
