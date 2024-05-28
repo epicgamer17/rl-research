@@ -138,10 +138,16 @@ class RainbowAgent(BaseAgent):
 
             weights_cuda = torch.from_numpy(weights).to(self.device).to(torch.float32)
             # (B)
-            loss = self.config.loss_function(online_distributions, target_distributions)
-            assert torch.all(loss) >= 0, "Elementwise Loss: {}".format(loss)
-            assert loss.shape == weights_cuda.shape, "Loss Shape: {}".format(loss.shape)
-            loss = loss * weights_cuda
+            elementwise_loss = self.config.loss_function(
+                online_distributions, target_distributions
+            )
+            assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
+                elementwise_loss
+            )
+            assert (
+                elementwise_loss.shape == weights_cuda.shape
+            ), "Loss Shape: {}".format(elementwise_loss.shape)
+            loss = elementwise_loss * weights_cuda
             self.optimizer.zero_grad()
             loss.mean().backward()
             if self.config.clipnorm:
@@ -149,8 +155,9 @@ class RainbowAgent(BaseAgent):
 
             self.optimizer.step()
             loss = loss.detach().to("cpu")
+            loss_for_prior = elementwise_loss.detach().to("cpu").numpy()
             self.replay_buffer.update_priorities(
-                indices, loss + self.config.per_epsilon
+                indices, loss_for_prior + self.config.per_epsilon
             )
             self.model.reset_noise()
             self.target_model.reset_noise()
