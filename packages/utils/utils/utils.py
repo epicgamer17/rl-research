@@ -548,3 +548,14 @@ def reward_clipping(reward: float, lower_bound: float = -1, upper_bound: float =
 def discounted_cumulative_sums(x, discount):
     # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
+
+
+def exploitability(env, average_policy, best_response_policies, num_episodes):
+    # play average against best responses and measure the reward the expected value or value
+    pass
+
+
+def nash_convergence(env, average_policies, best_response_policies, num_episodes):
+    # for every player (average policy) play against the corresponding best policies
+    # sum the exploitability of each player and then divide by the number of players
+    pass

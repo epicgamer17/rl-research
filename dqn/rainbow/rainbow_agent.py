@@ -204,13 +204,16 @@ class RainbowAgent(BaseAgent):
                     elementwise_loss
                 )
                 loss = tf.reduce_mean(elementwise_loss * weights)
-
+                # print("Weights ", weights)
+                # print("Elementwise Loss ", elementwise_loss)
+                # print("Loss ", loss)
             # TRAINING WITH GRADIENT TAPE
             gradients = tape.gradient(loss, self.model.trainable_variables)
             self.config.optimizer.apply_gradients(
                 grads_and_vars=zip(gradients, self.model.trainable_variables)
             )
-
+            # print("Gradients")
+            # print(gradients)
             prioritized_loss = elementwise_loss + self.config.per_epsilon
             # CLIPPING PRIORITIZED LOSS FOR ROUNDING ERRORS OR NEGATIVE LOSSES (IDK HOW WE ARE GETTING NEGATIVE LSOSES)
             # prioritized_loss = np.clip(

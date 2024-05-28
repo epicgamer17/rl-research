@@ -99,7 +99,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             assert len(priorities) == len(ids) == len(indices)
 
             for index, id, priority in zip(indices, ids, priorities):
-                assert priority > 0, "Negative priority: {}".format(priority)
+                assert (
+                    priority > 0
+                ), "Negative priority: {} \n All priorities {}".format(
+                    priority, priorities
+                )
                 assert 0 <= index < len(self)
 
                 if self.id_buffer[index] != id:
