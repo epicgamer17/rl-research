@@ -110,8 +110,7 @@ def update_linear_lr_schedule(
     if initial_value is not None and current_step is not None:
         learning_rate = clamp_func(
             final_value,
-            initial_value
-            + (final_value - initial_value) * (current_step / total_steps),
+            initial_value + (final_value - initial_value) * (current_step / total_steps),
         )
     else:
         learning_rate = clamp_func(
@@ -123,9 +122,7 @@ def update_linear_lr_schedule(
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    axs[row][col].set_title(
-        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
-    )
+    axs[row][col].set_title("{} | rolling average: {}".format(key, np.mean(values[-10:])))
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
@@ -446,9 +443,7 @@ def augment_board(
             augemented_games[5].observation_history[i] = np.flipud(
                 np.rot90(np.rot90(board))
             )
-            augemented_games[5].policy_history[i] = np.flipud(
-                np.rot90(np.rot90(policy))
-            )
+            augemented_games[5].policy_history[i] = np.flipud(np.rot90(np.rot90(policy)))
             augemented_games[6].observation_history[i] = np.rot90(np.flipud(board))
             augemented_games[6].policy_history[i] = np.rot90(np.flipud(policy))
     elif rot90 and not flip_y and not flip_x:
@@ -624,3 +619,21 @@ class KLDivergence:
 from typing import Callable
 
 Loss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+
+def calculate_padding(i: int, k: int, s: int) -> Tuple[int, int]:
+    """Calculate both padding sizes along 1 dimension for a given input length, kernel length, and stride
+
+    Args:
+        i (int): input length
+        k (int): kernel length
+        s (int): stride
+
+    Returns:
+        (p_1, p_2): where p_1 = p_2 - 1 for uneven padding and p_1 == p_2 for even padding
+    """
+
+    p = (i - 1) * s - i + k
+    p_1 = p // 2
+    p_2 = (p + 1) // 2
+    return (p_1, p_2)
