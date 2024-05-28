@@ -140,7 +140,8 @@ class RainbowAgent(BaseAgent):
             # (B)
             loss = self.config.loss_function(online_distributions, target_distributions)
             assert torch.all(loss) >= 0, "Elementwise Loss: {}".format(loss)
-            loss = loss.sum(-1) * weights_cuda
+            assert loss.shape == weights_cuda.shape, "Loss Shape: {}".format(loss.shape)
+            loss = loss * weights_cuda
             self.optimizer.zero_grad()
             loss.mean().backward()
             if self.config.clipnorm:
@@ -184,11 +185,19 @@ class RainbowAgent(BaseAgent):
 
             # all elementwise
             b: torch.Tensor = (Tz - self.config.v_min) / delta_z
-            l, u = b.floor().long(), b.ceil().long()
+            l, u = (
+                torch.clamp(b.floor().long(), 0, self.config.atom_size - 1),
+                torch.clamp(b.ceil().long(), 0, self.config.atom_size - 1),
+            )
+            # print("b", b)
+            # print("l", l)
+            # print("u", u)
 
             # Fix disappearing probability mass when l = b = u (b is int)
             l[(u > 0) * (l == u)] -= 1
             u[(l < (self.config.atom_size - 1)) * (l == u)] += 1
+            # print("fixed l", l)
+            # print("fixed u", u)
 
             m = torch.zeros_like(probabilities)
             m.scatter_add_(dim=1, index=l, src=probabilities * ((u.float()) - b))

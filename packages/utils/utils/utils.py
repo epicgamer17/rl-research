@@ -591,9 +591,9 @@ _epsilon = 1e-7
 
 def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
     predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
-    predicted = torch.clip(predicted, _epsilon, 1.0 - _epsilon)
+    predicted = torch.clamp(predicted, _epsilon, 1.0 - _epsilon)
     log_prob = torch.log(predicted)
-    return -log_prob * target
+    return -torch.sum(log_prob * target, axis=axis)
 
 
 class CategoricalCrossentropy:
@@ -607,8 +607,8 @@ class CategoricalCrossentropy:
 
 def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
     predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
-    predicted = torch.clip(predicted, _epsilon, 1.0)
-    target = torch.clip(target, _epsilon, 1.0)
+    predicted = torch.clamp(predicted, _epsilon, 1.0)
+    target = torch.clamp(target, _epsilon, 1.0)
     return torch.sum(target * torch.log(target / predicted), axis=axis)
 
 
