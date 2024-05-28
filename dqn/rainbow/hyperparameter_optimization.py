@@ -9,6 +9,8 @@ import gc
 
 import sys
 
+from utils import CategoricalCrossentropy, KLDivergence
+
 sys.path.append("../..")
 from dqn.rainbow.rainbow_agent import RainbowAgent
 from game_configs import CartPoleConfig
@@ -100,15 +102,26 @@ def create_search_space():
                 "orthogonal",
             ],
         ),
-        "learning_rate": hp.choice("learning_rate", [10, 5, 2, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001]),
-        "adam_epsilon": hp.choice("adam_epsilon", [0.3125, 0.03125, 0.003125, 0.0003125]),
+        "learning_rate": hp.choice(
+            "learning_rate", [10, 5, 2, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001]
+        ),
+        "adam_epsilon": hp.choice(
+            "adam_epsilon", [0.3125, 0.03125, 0.003125, 0.0003125]
+        ),
+        "loss_function": hp.choice(
+            "loss_function", [CategoricalCrossentropy(), KLDivergence()]
+        ),
         # NORMALIZATION?
-        "transfer_interval": hp.choice("transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]),
+        "transfer_interval": hp.choice(
+            "transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
+        ),
         "replay_interval": hp.choice("replay_interval", [1, 2, 3, 4, 5, 8, 10, 12]),
-        "minibatch_size": hp.choice("minibatch_size", [2**i for i in range(4, 8)]),  ###########
+        "minibatch_size": hp.choice(
+            "minibatch_size", [2**i for i in range(4, 8)]
+        ),  ###########
         "replay_buffer_size": hp.choice(
             "replay_buffer_size",
-            [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000],
+            [2000, 3000, 5000, 7500, 10000],
         ),  #############
         "min_replay_buffer_size": hp.choice(
             "min_replay_buffer_size",
@@ -119,10 +132,14 @@ def create_search_space():
         "atom_size": hp.choice("atom_size", [51, 61, 71, 81]),  #
         "conv_layers": hp.choice("conv_layers", [[]]),
         "dense_layers_widths": hp.choice("dense_layers_widths", width_combinations),
-        "advantage_hidden_layers_widths": hp.choice("advantage_hidden_layers_widths", width_combinations),  #
-        "value_hidden_layers_widths": hp.choice("value_hidden_layers_widths", width_combinations),  #
-        "training_steps": hp.choice("training_steps", [5000]),
-        "per_epsilon": hp.choice("per_epsilon", [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1]),
+        "advantage_hidden_layers_widths": hp.choice(
+            "advantage_hidden_layers_widths", width_combinations
+        ),  #
+        "value_hidden_layers_widths": hp.choice(
+            "value_hidden_layers_widths", width_combinations
+        ),  #
+        "training_steps": hp.choice("training_steps", [10000]),
+        "per_epsilon": hp.choice("per_epsilon", [0.00001, 0.0001, 0.001, 0.01, 0.1]),
         "per_alpha": hp.choice("per_alpha", [0.05 * i for i in range(1, 21)]),
         "per_beta": hp.choice("per_beta", [0.05 * i for i in range(1, 21)]),
     }
@@ -140,7 +157,11 @@ if __name__ == "__main__":
         trials = pickle.load(open("./CartPole-v1_trials.p", "rb"))
         print("Found saved Trials! Loading...")
         max_trials = len(trials.trials) + trials_step
-        print("Rerunning from {} trials to {} (+{}) trials".format(len(trials.trials), max_trials, trials_step))
+        print(
+            "Rerunning from {} trials to {} (+{}) trials".format(
+                len(trials.trials), max_trials, trials_step
+            )
+        )
     except:  # create a new trials object and start searching
         # trials = Trials()
         trials = None

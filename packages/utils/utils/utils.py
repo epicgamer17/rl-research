@@ -605,6 +605,22 @@ class CategoricalCrossentropy:
         return categorical_crossentropy(predicted, target, self.axis)
 
 
+def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
+    predicted = torch.clip(predicted, _epsilon, 1.0)
+    target = torch.clip(target, _epsilon, 1.0)
+    return torch.sum(target * torch.log(target / predicted), axis=axis)
+
+
+class KLDivergence:
+    def __init__(self, from_logits=False, axis=-1):
+        self.from_logits = from_logits
+        self.axis = axis
+
+    def __call__(self, predicted, target):
+        return kl_divergence(predicted, target, self.axis)
+
+
 from typing import Callable
 
 Loss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
