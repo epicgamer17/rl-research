@@ -47,9 +47,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         id=None,
         priority: float = None,
     ):
-        transition = super().store(
-            observation, action, reward, next_observation, done, id
-        )
+        transition = super().store(observation, action, reward, next_observation, done, id)
 
         if priority is None:
             priority = self.max_priority**self.alpha
@@ -65,9 +63,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         return transition
 
     def sample(self):
-        assert (
-            len(self) >= self.batch_size
-        ), "Only {} elements in buffer expected at least {}".format(
+        assert len(self) >= self.batch_size, "Only {} elements in buffer expected at least {}".format(
             len(self), self.batch_size
         )
 
@@ -216,9 +212,7 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
             indices[i] = index - self.tree.capacity + 1
 
         # max_weight = max(weights)
-        max_weight = (
-            len(self) * self.min_priority / self.tree.total_priority
-        ) ** -self.beta
+        max_weight = (len(self) * self.min_priority / self.tree.total_priority) ** -self.beta
         weights = weights / max_weight
 
         # print(weights)

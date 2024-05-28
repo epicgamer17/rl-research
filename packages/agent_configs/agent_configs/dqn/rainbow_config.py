@@ -1,12 +1,13 @@
 from ..base_config import Config
+from utils import Loss, CategoricalCrossentropy
 
 
 class RainbowConfig(Config):
-    def __init__(self, config_dict, game_config):
+    def __init__(self, config_dict: dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
 
         self.conv_layers: list = self.parse_field("conv_layers", [])
-        self.dense_layers_widths: int = self.parse_field("dense_layers", [128])
+        self.dense_layers_widths: int = self.parse_field("dense_layers_widths", [128])
         self.value_hidden_layers_widths = self.parse_field("value_hidden_layers_widths", [])
         self.advantage_hidden_layers_widths: int = self.parse_field("advantage_hidden_layers_widths", [])
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
@@ -39,6 +40,10 @@ class RainbowConfig(Config):
 
         if self.atom_size != 1:
             assert self.v_min != None and self.v_max != None
+
+        if self.loss_function == None:
+            print("Manually setting rainbow loss function to categorical crossentropy")
+            self.loss_function: Loss = CategoricalCrossentropy()
 
     def _verify_game(self):
         assert self.game.is_discrete, "Rainbow only supports discrete action spaces"

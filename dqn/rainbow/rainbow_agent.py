@@ -1,10 +1,9 @@
 from time import time
-import datetime
 import torch
+from torch.nn.utils import clip_grad_norm_
 import numpy as np
 from agent_configs import RainbowConfig
-from utils import update_per_beta, action_mask, get_legal_moves, current_timestamp
-from torch.nn.utils import clip_grad_norm_
+from utils import update_per_beta, get_legal_moves, current_timestamp
 
 import sys
 
@@ -37,10 +36,13 @@ class RainbowAgent(BaseAgent):
             input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
         )
 
-        self.model.initialize(self.config.kernel_initializer)
+        if not self.config.kernel_initializer == None:
+            self.model.initialize(self.config.kernel_initializer)
+
         self.model.to(device)
         self.target_model.to(device)
         self.target_model.load_state_dict(self.model.state_dict())
+        self.target_model.eval()
         self.optimizer: torch.optim.Optimizer = self.config.optimizer(
             params=self.model.parameters(),
             lr=self.config.learning_rate,
@@ -105,6 +107,7 @@ class RainbowAgent(BaseAgent):
         #     num_actions=self.num_actions,
         #     mask_value=-torch.inf,
         # )
+        # print(q_values)
         selected_actions = q_values.sum(2, keepdim=False).argmax(1, keepdim=False)
         return selected_actions
 
@@ -119,7 +122,7 @@ class RainbowAgent(BaseAgent):
                 # actions as ndarray of shape (B) to tensor of shape (B, 1)
                 torch.from_numpy(samples["actions"]).to(self.device).long(),
             )
-            print("actions", actions)
+            # print("actions", actions)
 
             # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
             online_distributions = self.predict(observations)[range(self.config.minibatch_size), actions]
@@ -131,20 +134,20 @@ class RainbowAgent(BaseAgent):
 
             weights_cuda = torch.from_numpy(weights).to(self.device).to(torch.float32)
             # (B)
-            loss = self.config.loss_function(online_distributions, target_distributions) * weights_cuda
+            loss = self.config.loss_function(online_distributions, target_distributions)
             assert torch.all(loss) >= 0, "Elementwise Loss: {}".format(loss)
+            loss = loss.sum(-1) * weights_cuda
             self.optimizer.zero_grad()
             loss.mean().backward()
             if self.config.clipnorm:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-            self.optimizer.step()
 
+            self.optimizer.step()
             loss = loss.detach().to("cpu")
-            self.replay_buffer.update_priorities(indices, loss.numpy())
+            self.replay_buffer.update_priorities(indices, loss + self.config.per_epsilon)
             self.model.reset_noise()
             self.target_model.reset_noise()
-            losses[i] = loss.mean().numpy()
-            print("losses:", loss)
+            losses[i] = loss.mean().item()
         return losses
 
     def compute_target_distributions(self, samples):
@@ -170,9 +173,6 @@ class RainbowAgent(BaseAgent):
             # all elementwise
             b: torch.Tensor = (Tz - self.config.v_min) / delta_z
             l, u = b.floor().long(), b.ceil().long()
-            print("b: ", b)
-            print("l: ", l)
-            print("u: ", u)
 
             # Fix disappearing probability mass when l = b = u (b is int)
             l[(u > 0) * (l == u)] -= 1
@@ -181,19 +181,20 @@ class RainbowAgent(BaseAgent):
             m = torch.zeros_like(probabilities)
             m.scatter_add_(dim=1, index=l, src=probabilities * ((u.float()) - b))
             m.scatter_add_(dim=1, index=u, src=probabilities * ((b - l.float())))
-            # print("m", m)
             return m
 
     def fill_replay_buffer(self):
-        state, _ = self.env.reset()
-        for i in range(self.config.min_replay_buffer_size):
-            action = self.env.action_space.sample()
-            next_state, reward, terminated, truncated, info = self.env.step(action)
-            done = terminated or truncated
-            self.replay_buffer.store(state, action, reward, next_state, done)
-            state = next_state
-            if done:
-                state, _ = self.env.reset()
+        with torch.no_grad():
+            state, _ = self.env.reset()
+            for i in range(self.config.min_replay_buffer_size + self.config.n_step - 1):
+                dist = self.predict(state)
+                action = self.select_actions(dist).item()
+                next_state, reward, terminated, truncated, info = self.env.step(action)
+                done = terminated or truncated
+                self.replay_buffer.store(state, action, reward, next_state, done)
+                state = next_state
+                if done:
+                    state, _ = self.env.reset()
 
     def update_target_model(self):
         if self.config.soft_update:
@@ -216,7 +217,7 @@ class RainbowAgent(BaseAgent):
                 for _ in range(self.config.replay_interval):
                     distributions = self.predict(state)
                     actions = self.select_actions(distributions, get_legal_moves(info))
-                    action = actions[0].item()
+                    action = actions.item()
                     next_state, reward, terminated, truncated, info = self.env.step(action)
                     done = terminated or truncated
                     self.replay_buffer.store(state, action, reward, next_state, done)
@@ -231,10 +232,11 @@ class RainbowAgent(BaseAgent):
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
 
-            for minibatch in range(self.config.num_minibatches):
-                loss = self.learn().mean()
+            for _ in range(self.config.num_minibatches):
+                losses = self.learn()
+                loss_mean = losses.mean()
                 # could do things other than taking the mean here
-                self.stats["loss"].append({"loss": loss, "target_model_updated": target_model_updated[1]})
+                self.stats["loss"].append({"loss": loss_mean, "target_model_updated": target_model_updated[1]})
                 target_model_updated = (target_model_updated[0], False)
 
             if training_step % self.config.transfer_interval == 0:
@@ -245,6 +247,7 @@ class RainbowAgent(BaseAgent):
                 self.update_target_model()
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
+                print(self.stats["score"])
                 self.save_checkpoint(
                     5,
                     training_step,

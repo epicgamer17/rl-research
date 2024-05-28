@@ -1,6 +1,6 @@
 from agent_configs.sl_config import SupervisedConfig
-from .base_config import Config, ConfigBase
-from keras.optimizers import Optimizer, Adam
+from .base_config import Config
+from torch.optim import Optimizer, Adam
 
 
 class NFSPDQNConfig(Config):
@@ -8,12 +8,8 @@ class NFSPDQNConfig(Config):
         # Config type should be a DQN Type
         super(NFSPDQNConfig, self).__init__(config_dict, game_config)
         self.num_players = self.parse_field("num_players", required=True)
-        self.rl_configs = [
-            rl_config_type(config_dict, game_config) for _ in range(self.num_players)
-        ]
-        self.sl_configs = [
-            SupervisedConfig(config_dict) for _ in range(self.num_players)
-        ]
+        self.rl_configs = [rl_config_type(config_dict, game_config) for _ in range(self.num_players)]
+        self.sl_configs = [SupervisedConfig(config_dict) for _ in range(self.num_players)]
         for c in self.sl_configs:
             c.game = game_config
 

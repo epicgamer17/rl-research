@@ -156,7 +156,7 @@ class RainbowNetwork(nn.Module):
         A: Tensor = self.advantage_layer(A).view(-1, self.output_size, self.config.atom_size)
 
         # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
-        a_mean = A.mean(1, True)
+        a_mean = A.mean(1, keepdim=True)
 
         # (B, 1, atom_size) +
         # (B, output_size, atom_size) +

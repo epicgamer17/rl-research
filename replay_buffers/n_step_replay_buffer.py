@@ -32,6 +32,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
         legal_moves=None,
     ):
         transition = (observation, action, reward, next_observation, done)
+        # print("store t:", transition)
         self.n_step_buffer.append(transition)
 
         if len(self.n_step_buffer) < self.n_step:

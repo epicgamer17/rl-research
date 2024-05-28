@@ -24,38 +24,24 @@ class AlphaZeroConfig(Config):
         self.weight_decay: float = self.parse_field("weight_decay", 1e-4)
 
         # MCTS
-        self.root_dirichlet_alpha: float = self.parse_field(
-            "root_dirichlet_alpha", required=False
-        )
+        self.root_dirichlet_alpha: float = self.parse_field("root_dirichlet_alpha", required=False)
         if self.root_dirichlet_alpha is None:
             print("Root dirichlet alpha should be defined to a game specific value")
 
-        self.root_exploration_fraction: float = self.parse_field(
-            "root_exploration_fraction", 0.25
-        )
+        self.root_exploration_fraction: float = self.parse_field("root_exploration_fraction", 0.25)
         self.num_simulations: int = self.parse_field("num_simulations", 800)
         self.num_sampling_moves: int = self.parse_field("num_sampling_moves", 30)
-        self.exploration_temperature: float = self.parse_field(
-            "exploration_temperature", 1.0
-        )
-        self.exploitation_temperature: float = self.parse_field(
-            "exploitation_temperature", 0.1
-        )
+        self.exploration_temperature: float = self.parse_field("exploration_temperature", 1.0)
+        self.exploitation_temperature: float = self.parse_field("exploitation_temperature", 0.1)
         self.pb_c_base: int = self.parse_field("pb_c_base", 19652)
         self.pb_c_init: float = self.parse_field("pb_c_init", 1.25)
 
     def _verify_game(self):
-        assert (
-            self.game.is_deterministic
-        ), "AlphaZero only works for deterministic games (board games)"
+        assert self.game.is_deterministic, "AlphaZero only works for deterministic games (board games)"
 
-        assert (
-            self.game.is_discrete
-        ), "AlphaZero only works for discrete action space games (board games)"
+        assert self.game.is_discrete, "AlphaZero only works for discrete action space games (board games)"
 
-        assert (
-            self.game.is_image
-        ), "AlphaZero only works for image based games (board games)"
+        assert self.game.is_image, "AlphaZero only works for image based games (board games)"
 
         assert (
             self.game.has_legal_moves

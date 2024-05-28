@@ -56,7 +56,7 @@ class BaseAgent:
 
         self.start_training_step = 0
         self.training_steps = self.config.training_steps
-        self.checkpoint_interval = self.training_steps // 30
+        self.checkpoint_interval = max(self.training_steps // 30, 1)
 
     def train(self):
         raise NotImplementedError
@@ -194,21 +194,21 @@ class BaseAgent:
     ):
         # test model
 
+        dir = Path("checkpoints", self.model_name)
+        training_step_dir = Path(dir, f"step_{training_step}")
+        os.makedirs(dir, exist_ok=True)
+        os.makedirs(Path(dir, "graphs"), exist_ok=True)
+        os.makedirs(Path(dir, "configs"), exist_ok=True)
         if self.config.save_intermediate_weights:
-            dir = Path("checkpoints", self.model_name)
-            training_step_dir = Path(dir, f"step_{training_step}")
-            os.makedirs(dir, exist_ok=True)
+            weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
             os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
-            os.makedirs(Path(dir, "configs"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
-            os.makedirs(Path(dir, "graphs"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "graphs_stats"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
             # save the model weights
-            weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
-            # self.model.save_weights(weights_path)
+            self.model.save_weights(weights_path)
 
             # save optimizer (pickle doesn't work but dill does)
             with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "wb") as f:
@@ -223,6 +223,8 @@ class BaseAgent:
         test_score = self.test(num_trials, training_step, training_step_dir)
         self.stats["test_score"].append(test_score)
         # save the graph stats and targets
+        stats_path = Path(training_step_dir, f"graphs_stats", exist_ok=True)
+        os.makedirs(stats_path, exist_ok=True)
         with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
             pickle.dump(self.stats, f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:

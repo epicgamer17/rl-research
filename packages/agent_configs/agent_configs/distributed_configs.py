@@ -19,9 +19,7 @@ class DistributedLearnerConfig(DistributedConfig):
 
         self.samples_queue_size: int = self.parse_field("samples_queue_size", 16)
         self.updates_queue_size: int = self.parse_field("updates_queue_size", 16)
-        self.remove_old_experiences_interval: int = self.parse_field(
-            "remove_old_experiences_interval", 1000
-        )
+        self.remove_old_experiences_interval: int = self.parse_field("remove_old_experiences_interval", 1000)
 
         self.push_params_interval: int = self.parse_field("push_params_interval", 100)
         self.replay_port: int = self.parse_field("learner_replay_port", required=True)

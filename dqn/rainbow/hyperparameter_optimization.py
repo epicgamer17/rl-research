@@ -1,52 +1,34 @@
 import os
-import sys
-import pandas
+import itertools
 import pickle
+import pandas
 import gymnasium as gym
 from hyperopt import tpe, hp, fmin, space_eval
+from agent_configs import RainbowConfig
+import gc
+
+import sys
+
+sys.path.append("../..")
 from dqn.rainbow.rainbow_agent import RainbowAgent
+from game_configs import CartPoleConfig
 
 
-# MAGIC CODE DO NOT TOUCH
-def globalize(func):
-    def result(*args, **kwargs):
-        return func(*args, **kwargs)
-
-    result.__name__ = result.__qualname__ = (
-        os.path.abspath(func.__code__.co_filename).replace(".", "")
-        + "\0"
-        + str(func.__code__.co_firstlineno)
+def run_training(args):
+    m = RainbowAgent(
+        env=args[1],
+        config=RainbowConfig(args[0], CartPoleConfig()),
+        name="{}_{}".format(args[2], args[1].unwrapped.spec.id),
     )
-    setattr(sys.modules[result.__module__], result.__name__, result)
-    return result
-
-
-def make_func():
-    def run_training(args):
-        m = RainbowAgent(
-            env=args[1],
-            config=RainbowConfig(args[0], CartPoleConfig()),
-            name="{}_{}".format(args[2], args[1].unwrapped.spec.id),
-        )
-        m.train()
-        print("Training complete")
-        return -m.test(num_trials=10, step=5000, dir="./checkpoints/")
-
-    return run_training
-
-
-globalized_training_func = globalize(make_func())
+    m.train()
+    print("Training complete")
+    return -m.test(num_trials=10, step=5000, dir="./checkpoints/")["score"]
 
 
 def objective(params):
-    # gc.collect()
+    gc.collect()
     print("Params: ", params)
     print("Making environments")
-    # environments_list = [
-    # gym.make("CartPole-v1", render_mode="rgb_array"),
-    # gym.make("Acrobot-v1", render_mode="rgb_array"),
-    # gym.make("MountainCar-v0", render_mode="rgb_array"),
-    # ]
     env = gym.make("CartPole-v1", render_mode="rgb_array")
 
     if os.path.exists("./CartPole_trials.p"):
@@ -54,7 +36,6 @@ def objective(params):
         name = "CartPole_{}".format(len(trials.trials) + 1)
     else:
         name = "CartPole_1"
-    # name = datetime.datetime.now().timestamp()
     params["model_name"] = name
     entry = pandas.DataFrame.from_dict(
         params,
@@ -67,30 +48,18 @@ def objective(params):
         header=False,
     )
 
-    score = -globalized_training_func([params, env, name])
-
-    # num_workers = len(environments_list)
-    # args_list = np.array(
-    #     [
-    #         [params for env in environments_list],
-    #         environments_list,
-    #         [name for env in environments_list],
-    #     ]
-    # ).T
-    # with contextlib.closing(multiprocessing.Pool()) as pool:
-    #     scores_list = pool.map_async(
-    #         globalized_training_func, (args for args in args_list)
-    #     ).get()
-    #     print(scores_list)
+    score = -run_training([params, env, name])
     print("parallel programs done")
     return score  # np.mean(scores_list)
 
 
-globalized_objective = globalize(objective)
+widths = [32, 64, 128, 256, 512, 1024]
+width_combinations = []
+
+for i in range(0, 5):
+    width_combinations.extend(itertools.combinations_with_replacement(widths, i))
 
 from hyperopt import hp
-import tensorflow as tf
-from hyperopt.pyll import scope
 
 
 def create_search_space():
@@ -102,67 +71,36 @@ def create_search_space():
                 "he_normal",
                 "glorot_uniform",
                 "glorot_normal",
-                "lecun_uniform",
-                "lecun_normal",
                 "orthogonal",
-                "variance_baseline",
-                "variance_0.1",
-                "variance_0.3",
-                "variance_0.8",
-                "variance_3",
-                "variance_5",
-                "variance_10",
             ],
         ),
-        "learning_rate": hp.choice(
-            "learning_rate", [10, 5, 2, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001]
-        ),  #
-        "adam_epsilon": hp.choice(
-            "adam_epsilon",
-            [1, 0.5, 0.3125, 0.03125, 0.003125, 0.0003125, 0.00003125, 0.000003125],
-        ),
+        "learning_rate": hp.choice("learning_rate", [10, 5, 2, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001]),
+        "adam_epsilon": hp.choice("adam_epsilon", [0.3125, 0.03125, 0.003125, 0.0003125]),
         # NORMALIZATION?
         "ema_beta": hp.uniform("ema_beta", 0.95, 0.999),
-        "transfer_interval": hp.choice(
-            "transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
-        ),
+        "transfer_interval": hp.choice("transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]),
         "replay_interval": hp.choice("replay_interval", [1, 2, 3, 4, 5, 8, 10, 12]),
-        "minibatch_size": hp.choice(
-            "minibatch_size", [2**i for i in range(0, 8)]
-        ),  ###########
+        "minibatch_size": hp.choice("minibatch_size", [2**i for i in range(4, 8)]),  ###########
         "replay_buffer_size": hp.choice(
             "replay_buffer_size",
             [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000],
         ),  #############
         "min_replay_buffer_size": hp.choice(
             "min_replay_buffer_size",
-            [0, 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000],
+            [125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000],
         ),  # 125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000
-        "n_step": hp.choice("n_step", [1, 2, 3, 4, 5, 8, 10]),
-        "discount_factor": hp.choice(
-            "discount_factor", [0.1, 0.5, 0.9, 0.99, 0.995, 0.999]
-        ),
-        "atom_size": hp.choice("atom_size", [11, 21, 31, 41, 51, 61, 71, 81]),  #
+        "n_step": hp.choice("n_step", [3, 4, 5, 8, 10]),
+        "discount_factor": hp.choice("discount_factor", [0.9, 0.99, 0.995, 0.999]),
+        "atom_size": hp.choice("atom_size", [51, 61, 71, 81]),  #
         "conv_layers": hp.choice("conv_layers", [[]]),
-        "width": hp.choice("width", [32, 64, 128, 256, 512, 1024]),
-        "dense_layers": hp.choice("dense_layers", [0, 1, 2, 3, 4]),
-        # REWARD CLIPPING
-        "loss_function": hp.choice(
-            "loss_function",
-            [tf.keras.losses.CategoricalCrossentropy(), tf.keras.losses.KLDivergence()],
-        ),
-        "advantage_hidden_layers": hp.choice(
-            "advantage_hidden_layers", [0, 1, 2, 3, 4]
-        ),  #
-        "value_hidden_layers": hp.choice("value_hidden_layers", [0, 1, 2, 3, 4]),  #
+        "dense_layers_widths": hp.choice("dense_layers_widths", width_combinations),
+        "advantage_hidden_layers_widths": hp.choice("advantage_hidden_layers_widths", width_combinations),  #
+        "value_hidden_layers_widths": hp.choice("value_hidden_layers_widths", width_combinations),  #
         "training_steps": hp.choice("training_steps", [5000]),
-        "per_epsilon": hp.choice(
-            "per_epsilon", [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1]
-        ),
+        "per_epsilon": hp.choice("per_epsilon", [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1]),
         "per_alpha": hp.choice("per_alpha", [0.05 * i for i in range(1, 21)]),
         "per_beta": hp.choice("per_beta", [0.05 * i for i in range(1, 21)]),
-        "v_min": hp.choice("v_min", [0]),  # MIN GAME SCORE
-        "v_max": hp.choice("v_max", [500.0]),  # MAX GAME SCORE
+        "save_intermediate_weights": hp.choice("save_intermediate_weights", [False]),
     }
     initial_best_config = [{}]
 
@@ -178,17 +116,13 @@ if __name__ == "__main__":
         trials = pickle.load(open("./classiccontrol_trials.p", "rb"))
         print("Found saved Trials! Loading...")
         max_trials = len(trials.trials) + trials_step
-        print(
-            "Rerunning from {} trials to {} (+{}) trials".format(
-                len(trials.trials), max_trials, trials_step
-            )
-        )
+        print("Rerunning from {} trials to {} (+{}) trials".format(len(trials.trials), max_trials, trials_step))
     except:  # create a new trials object and start searching
         # trials = Trials()
         trials = None
 
     best = fmin(
-        fn=globalized_objective,  # Objective Function to optimize
+        fn=objective,  # Objective Function to optimize
         space=search_space,  # Hyperparameter's Search Space
         algo=tpe.suggest,  # Optimization algorithm (representative TPE)
         max_evals=max_trials,  # Number of optimization attempts
