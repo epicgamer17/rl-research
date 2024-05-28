@@ -208,7 +208,7 @@ class BaseAgent:
             os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
             # save the model weights
-            self.model.save_weights(weights_path)
+            torch.save(self.model.state_dict(), weights_path)
 
             # save optimizer (pickle doesn't work but dill does)
             with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "wb") as f:
@@ -249,7 +249,9 @@ class BaseAgent:
             min_score = float("inf")
             if self.test_env.render_mode == "rgb_array":
                 self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
-                self.test_env.video_folder = "{}/videos/{}/{}".format(dir, self.model_name, step)
+                self.test_env.video_folder = "{}/videos/{}/{}".format(
+                    dir, self.model_name, step
+                )
                 if not os.path.exists(self.test_env.video_folder):
                     os.makedirs(self.test_env.video_folder)
             for trials in range(num_trials):
@@ -263,7 +265,9 @@ class BaseAgent:
                 while not done:
                     prediction = self.predict(state)
                     action = self.select_actions(prediction, legal_moves).item()
-                    next_state, reward, terminated, truncated, info = self.test_env.step(action)
+                    next_state, reward, terminated, truncated, info = (
+                        self.test_env.step(action)
+                    )
                     # self.test_env.render()
                     done = terminated or truncated
                     legal_moves = get_legal_moves(info)
@@ -279,4 +283,8 @@ class BaseAgent:
                 self.test_env.render()
             self.test_env.close()
             average_score /= num_trials
-            return {"score": average_score, "max_score": max_score, "min_score": min_score}
+            return {
+                "score": average_score,
+                "max_score": max_score,
+                "min_score": min_score,
+            }
