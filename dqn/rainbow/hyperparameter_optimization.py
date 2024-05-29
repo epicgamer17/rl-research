@@ -142,6 +142,7 @@ def create_search_space():
         "per_epsilon": hp.choice("per_epsilon", [0.00001, 0.0001, 0.001, 0.01, 0.1]),
         "per_alpha": hp.choice("per_alpha", [0.05 * i for i in range(1, 21)]),
         "per_beta": hp.choice("per_beta", [0.05 * i for i in range(1, 21)]),
+        "clipnorm": hp.choice("clipnorm", [None, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]),
     }
     initial_best_config = [{}]
 

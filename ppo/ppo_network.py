@@ -1,98 +1,103 @@
-import tensorflow as tf
-from layers.noisy_dense import NoisyDense
-import numpy as np
-from utils import prepare_kernel_initializers
+from typing import Callable, Tuple
+from agent_configs.ppo_config import PPOConfig
+from torch import Tensor
+from utils.utils import to_lists
+
+from modules.conv import Conv2dStack
+from modules.dense import DenseStack, build_dense
+import torch.nn as nn
 
 
-class Network(tf.keras.Model):
-    def __init__(self, config, input_shape, output_shape, discrete):
+class Network(nn.Module):
+    def __init__(
+        self, config: PPOConfig, input_shape: Tuple[int], output_size: int, discrete
+    ):
+        if discrete:
+            assert output_size > 0
+
         super(Network, self).__init__()
-        self.actor = ActorNetwork(config, input_shape, output_shape, discrete)
+        self.actor = ActorNetwork(config, input_shape, output_size, discrete)
         self.critic = CriticNetwork(config, input_shape)
 
-    def call(self, inputs):
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        self.actor.initialize(initializer)
+        self.critic.initialize(initializer)
+
+    def forward(self, inputs: Tensor):
         return self.actor(inputs), self.critic(inputs)
 
 
-class CriticNetwork(tf.keras.Model):
-    def __init__(self, config, input_shape):
-        super(CriticNetwork, self).__init__()
-
-        self.inputs = tf.keras.layers.Input(shape=input_shape, name="my_input")
+class CriticNetwork(nn.Module):
+    def __init__(self, config: PPOConfig, input_shape: Tuple[int], *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config = config
         self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = config.critic_dense_layers > 0
+        self.has_dense_layers = len(config.dense_layers_widths) > 0
+
+        current_shape = input_shape
+        B = current_shape[0]
         if self.has_conv_layers:
-            self.conv_layers = []
-            for i, (filters, kernel_size, strides) in enumerate(config.conv_layers):
-                if config.conv_layers_noisy:
-                    # if i == 0:
-                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=kernel_initializers.pop(), activation=activation, input_shape=input_shape))
-                    # else:
-                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=kernel_initializers.pop(), activation=activation))
-                    pass
-                else:
-                    if i == 0:
-                        self.conv_layers.append(
-                            tf.keras.layers.Conv2D(
-                                filters,
-                                kernel_size,
-                                strides=strides,
-                                kernel_initializer=prepare_kernel_initializers(
-                                    config.kernel_initializer
-                                ),
-                                activation=config.activation,
-                                input_shape=input_shape,
-                                padding="same",
-                            )
-                        )
-                    else:
-                        self.conv_layers.append(
-                            tf.keras.layers.Conv2D(
-                                filters,
-                                kernel_size,
-                                strides=strides,
-                                kernel_initializer=prepare_kernel_initializers(
-                                    config.kernel_initializer
-                                ),
-                                activation=config.activation,
-                                padding="same",
-                            )
-                        )
-            self.conv_layers.append(tf.keras.layers.Flatten())
+            assert len(input_shape) == 4
+            filters, kernel_sizes, strides = to_lists(config.conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
         if self.has_dense_layers:
-            self.dense_layers = []
-            for i in range(config.critic_dense_layers):
-                if config.critic_dense_layers_noisy:
-                    self.dense_layers.append(
-                        NoisyDense(
-                            config.critic_width,
-                            sigma=config.noisy_sigma,
-                            kernel_initializer=prepare_kernel_initializers(
-                                config.kernel_initializer
-                            ),
-                            activation=config.activation,
-                        )
-                    )
-                else:
-                    self.dense_layers.append(
-                        tf.keras.layers.Dense(
-                            config.critic_width,
-                            kernel_initializer=prepare_kernel_initializers(
-                                config.kernel_initializer
-                            ),
-                            activation=config.activation,
-                        )
-                    )
-        self.value = tf.keras.layers.Dense(
-            1,
-            kernel_initializer=prepare_kernel_initializers(
-                config.kernel_initializer, output_layer=True
-            ),
-            activation=None,
-            name="value",
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.dense_layers_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        if len(current_shape) == 4:
+            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+        else:
+            assert len(current_shape) == 2
+            initial_width = current_shape[1]
+
+        self.value = build_dense(
+            in_features=initial_width,
+            out_features=1,
+            sigma=config.noisy_sigma,
         )
 
-    def call(self, inputs):
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+        self.value.initialize(initializer)  # OUTPUT LAYER
+
+    def forward(self, inputs: Tensor):
+        if self.has_conv_layers:
+            assert inputs.dim() == 4
+
         x = inputs
         if self.has_conv_layers:
             for layer in self.conv_layers:
@@ -103,106 +108,111 @@ class CriticNetwork(tf.keras.Model):
         value = self.value(x)
         return value
 
+    def reset_noise(self):
+        if self.has_conv_layers:
+            self.conv_layers.reset_noise()
+        if self.has_dense_layers:
+            self.dense_layers.reset_noise()
+        self.value.reset_noise()
 
-class ActorNetwork(tf.keras.Model):
-    def __init__(self, config, input_shape, output_shape, discrete=True):
-        super(ActorNetwork, self).__init__()
+
+class ActorNetwork(nn.Module):
+    def __init__(
+        self,
+        config: PPOConfig,
+        output_size: int,
+        input_shape: Tuple[int],
+        discrete: bool,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
         self.config = config
+        self.has_conv_layers = len(config.conv_layers) > 0
+        self.has_dense_layers = len(config.dense_layers_widths) > 0
         self.discrete = discrete
 
-        self.inputs = tf.keras.layers.Input(shape=input_shape, name="my_input")
-        self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = config.actor_dense_layers > 0
+        current_shape = input_shape
+        B = current_shape[0]
         if self.has_conv_layers:
-            self.conv_layers = []
-            for i, (filters, kernel_size, strides) in enumerate(config.conv_layers):
-                if config.conv_layers_noisy:
-                    # if i == 0:
-                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=kernel_initializers.pop(), activation=activation, input_shape=input_shape))
-                    # else:
-                    #     self.conv_layers.append(NoisyConv2D(filters, kernel_size, strides=strides, kernel_initializer=kernel_initializers.pop(), activation=activation))
-                    pass
-                else:
-                    if i == 0:
-                        self.conv_layers.append(
-                            tf.keras.layers.Conv2D(
-                                filters,
-                                kernel_size,
-                                strides=strides,
-                                kernel_initializer=prepare_kernel_initializers(
-                                    config.kernel_initializer
-                                ),
-                                activation=config.activation,
-                                input_shape=input_shape,
-                                padding="same",
-                            )
-                        )
-                    else:
-                        self.conv_layers.append(
-                            tf.keras.layers.Conv2D(
-                                filters,
-                                kernel_size,
-                                strides=strides,
-                                kernel_initializer=prepare_kernel_initializers(
-                                    config.kernel_initializer
-                                ),
-                                activation=config.activation,
-                                padding="same",
-                            )
-                        )
-            self.conv_layers.append(tf.keras.layers.Flatten())
-        if self.has_dense_layers:
-            self.dense_layers = []
-            for i in range(config.actor_dense_layers):
-                if config.actor_dense_layers_noisy:
-                    self.dense_layers.append(
-                        NoisyDense(
-                            config.actor_width,
-                            sigma=config.noisy_sigma,
-                            kernel_initializer=prepare_kernel_initializers(
-                                config.kernel_initializer
-                            ),
-                            activation=config.activation,
-                        )
-                    )
-                else:
-                    self.dense_layers.append(
-                        tf.keras.layers.Dense(
-                            config.actor_width,
-                            kernel_initializer=prepare_kernel_initializers(
-                                config.kernel_initializer
-                            ),
-                            activation=config.activation,
-                        )
-                    )
-        if self.discrete:
-            self.actions = tf.keras.layers.Dense(
-                output_shape,
-                kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer, output_layer=True
-                ),
-                activation="softmax",
-                name="actions",
+            assert len(input_shape) == 4
+            filters, kernel_sizes, strides = to_lists(config.conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
             )
-        else:
-            self.mean = tf.keras.layers.Dense(
-                output_shape,
-                kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer, output_layer=True
-                ),
-                activation="tanh",
-                name="mean",
-            )
-            self.std = tf.keras.layers.Dense(
-                output_shape,
-                kernel_initializer=prepare_kernel_initializers(
-                    config.kernel_initializer, output_layer=True
-                ),
-                activation="softplus",
-                name="std",
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
             )
 
-    def call(self, inputs):
+        if self.has_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.dense_layers_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        if len(current_shape) == 4:
+            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+        else:
+            assert len(current_shape) == 2
+            initial_width = current_shape[1]
+
+        if self.discrete:
+            self.actions = build_dense(
+                in_features=initial_width,
+                out_features=output_size,
+                sigma=self.config.noisy_sigma,
+            )
+        else:
+            self.mean = build_dense(
+                in_features=initial_width,
+                out_features=output_size,
+                sigma=self.config.noisy_sigma,
+            )
+
+            self.std = build_dense(
+                in_features=initial_width,
+                out_features=output_size,
+                sigma=self.config.noisy_sigma,
+            )
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+        if self.discrete:
+            self.actions.initialize(initializer)  # OUTPUT LAYER
+        else:
+            self.mean.initialize(initializer)  # OUTPUT LAYER
+            self.std.initialize(initializer)  # OUTPUT LAYER
+
+    def forward(self, inputs: Tensor):
+        if self.has_conv_layers:
+            assert inputs.dim() == 4
+
         x = inputs
         if self.has_conv_layers:
             for layer in self.conv_layers:
@@ -212,8 +222,19 @@ class ActorNetwork(tf.keras.Model):
                 x = layer(x)
         if self.discrete:
             actions = self.actions(x)
-            return actions
+            return actions.softmax(dim=-1)
         else:
-            mean = self.mean(x)
-            std = self.std(x)
+            mean = self.mean(x).tanh(dim=-1)
+            std = self.std(x).softplus(dim=-1)
             return mean, std
+
+    def reset_noise(self):
+        if self.has_conv_layers:
+            self.conv_layers.reset_noise()
+        if self.has_dense_layers:
+            self.dense_layers.reset_noise()
+        if self.discrete:
+            self.actions.reset_noise()
+        else:
+            self.mean.reset_noise()
+            self.std.reset_noise()

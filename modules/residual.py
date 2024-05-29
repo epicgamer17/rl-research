@@ -1,15 +1,3 @@
-# From tensorflow_addons
-import tensorflow as tf
-from tensorflow.keras import (
-    activations,
-    initializers,
-    regularizers,
-    constraints,
-)
-from tensorflow.keras import backend as K
-from tensorflow.keras.layers import InputSpec
-
-
 class Residual(tf.keras.Model):
     def __init__(
         self,

@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 
-from layers.residual import Residual
+from modules.residual import Residual
 from utils import prepare_kernel_initializers
 
 

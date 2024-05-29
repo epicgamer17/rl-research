@@ -45,9 +45,5 @@ class RainbowConfig(Config):
         if self.atom_size != 1:
             assert self.v_min != None and self.v_max != None
 
-        if self.loss_function == None:
-            print("Manually setting rainbow loss function to categorical crossentropy")
-            self.loss_function: Loss = CategoricalCrossentropy()
-
     def _verify_game(self):
         assert self.game.is_discrete, "Rainbow only supports discrete action spaces"

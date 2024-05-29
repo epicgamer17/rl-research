@@ -81,11 +81,6 @@ class RainbowNetwork(nn.Module):
                 noisy_sigma=self.config.noisy_sigma,
             )
             value_in_features = self.value_hidden_layers.output_width
-            self.value_layer = build_dense(
-                in_features=value_in_features,
-                out_features=config.atom_size,
-                sigma=config.noisy_sigma,
-            )
         else:
             value_in_features = self.dense_layers.output_width
         # (B, value_in_features) -> (B, atom_size)

@@ -2,7 +2,12 @@ import torch
 import yaml
 
 from game_configs import GameConfig
-from utils import prepare_kernel_initializers, prepare_activations, Loss, CategoricalCrossentropy
+from utils import (
+    prepare_kernel_initializers,
+    prepare_activations,
+    Loss,
+    CategoricalCrossentropy,
+)
 
 
 class ConfigBase:
@@ -22,7 +27,9 @@ class ConfigBase:
             return default
 
         if required:
-            raise ValueError(f"Missing required field without default value: {field_name}")
+            raise ValueError(
+                f"Missing required field without default value: {field_name}"
+            )
         else:
             print(f"Using         {field_name:30}: {default}")
 
@@ -75,7 +82,9 @@ class Config(ConfigBase):
         self._verify_game()
 
         # not hyperparameters but utility things
-        self.save_intermediate_weights: bool = self.parse_field("save_intermediate_weights", True)
+        self.save_intermediate_weights: bool = self.parse_field(
+            "save_intermediate_weights", True
+        )
 
         # ADD LEARNING RATE SCHEDULES
         self.training_steps: int = self.parse_field("training_steps", 10000)
@@ -83,16 +92,25 @@ class Config(ConfigBase):
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
         self.learning_rate: float = self.parse_field("learning_rate", 0.001)
         self.clipnorm: int | None = self.parse_field("clipnorm", None, required=False)
-        self.optimizer: torch.optim.Optimizer = self.parse_field("optimizer", torch.optim.Adam)
-        self.loss_function: Loss = self.parse_field("loss_function", None, required=False)
-        self.activation = self.parse_field("activation", "relu", wrapper=prepare_activations)
+        self.optimizer: torch.optim.Optimizer = self.parse_field(
+            "optimizer", torch.optim.Adam
+        )
+        self.loss_function: Loss = self.parse_field("loss_function", required=True)
+        self.activation = self.parse_field(
+            "activation", "relu", wrapper=prepare_activations
+        )
         self.kernel_initializer = self.parse_field(
-            "kernel_initializer", None, required=False, wrapper=kernel_initializer_wrapper
+            "kernel_initializer",
+            None,
+            required=False,
+            wrapper=kernel_initializer_wrapper,
         )
 
         self.minibatch_size: int = self.parse_field("minibatch_size", 64)
         self.replay_buffer_size: int = self.parse_field("replay_buffer_size", 5000)
-        self.min_replay_buffer_size: int = self.parse_field("min_replay_buffer_size", self.minibatch_size)
+        self.min_replay_buffer_size: int = self.parse_field(
+            "min_replay_buffer_size", self.minibatch_size
+        )
         self.num_minibatches: int = self.parse_field("num_minibatches", 1)
         self.training_iterations: int = self.parse_field("training_iterations", 1)
 
