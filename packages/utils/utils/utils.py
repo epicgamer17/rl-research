@@ -16,6 +16,8 @@ from torch import nn, Tensor
 import numpy as np
 import numpy.typing as npt
 
+import itertools
+
 # from ....replay_buffers.base_replay_buffer import Game
 # from replay_buffers.segment_tree import SumSegmentTree
 
@@ -110,7 +112,8 @@ def update_linear_lr_schedule(
     if initial_value is not None and current_step is not None:
         learning_rate = clamp_func(
             final_value,
-            initial_value + (final_value - initial_value) * (current_step / total_steps),
+            initial_value
+            + (final_value - initial_value) * (current_step / total_steps),
         )
     else:
         learning_rate = clamp_func(
@@ -122,7 +125,9 @@ def update_linear_lr_schedule(
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    axs[row][col].set_title("{} | rolling average: {}".format(key, np.mean(values[-10:])))
+    axs[row][col].set_title(
+        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
+    )
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
@@ -130,11 +135,6 @@ def default_plot_func(
 
 
 def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col: int):
-    # assert (
-    #     "score" in values[0]
-    # ), "Values must be a list of dicts with a 'score' key and optionally a max and min scores key. Values was {}".format(
-    #     values
-    # )
     if len(values) == 0:
         return
     scores = [value["score"] for value in values]
@@ -163,7 +163,7 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
                     x=i,
                     color="black",
                     linestyle="dotted",
-                    label="Target Model Weight Update {}".format(i),
+                    # label="Target Model Weight Update",
                 )
 
     if has_model_updates:
@@ -174,7 +174,7 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
                     x=i,
                     color="gray",
                     linestyle="dotted",
-                    label="Model Weight Update {}".format(i),
+                    # label="Model Weight Update",
                 )
 
     axs[row][col].set_title(
@@ -201,8 +201,10 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
             y=targets[key],
             color="r",
             linestyle="dashed",
-            label="Target Score {}".format(targets[key]),
+            label="Target Score: {}".format(targets[key]),
         )
+
+    axs[row][col].legend()
 
 
 def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: int):
@@ -221,7 +223,7 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
                     x=i,
                     color="black",
                     linestyle="dotted",
-                    label="Target Model Weight Update {}".format(i),
+                    # label="Target Model Weight Update",
                 )
 
     if has_model_updates:
@@ -232,7 +234,7 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
                     x=i,
                     color="gray",
                     linestyle="dotted",
-                    label="Model Weight Update {}".format(i),
+                    # label="Model Weight Update",
                 )
 
     axs[row][col].set_title(
@@ -249,14 +251,43 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
             y=targets[key],
             color="r",
             linestyle="dashed",
-            label="Target Score {}".format(targets[key]),
+            label="Target Score: {}".format(targets[key]),
         )
+
+    axs[row][col].legend()
 
 
 def plot_exploitability(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
     default_plot_func(axs, key, values, targets, row, col)
+
+
+def plot_trials(trials: dict, file_name: str):
+    fig, axs = plt.subplots(
+        1,
+        1,
+        figsize=(10, 5),
+        squeeze=False,
+    )
+    x = np.arange(1, len(trials.trials) + 1)
+    scores = [-trial["result"]["loss"] for trial in trials.trials]
+    axs[0][0].scatter(x, scores)
+    best_fit_x, best_fit_y = np.polyfit(x, scores, 1)
+    axs[0][0].plot(
+        x,
+        best_fit_x * x + best_fit_y,
+        color="g",
+        label="Best Fit Line",
+        linestyle="dotted",
+    )
+
+    fig.suptitle("Score of Hyperopt trials over time for Rainbow DQN on CartPole-v1")
+    axs[0][0].set_xlabel("Trial")
+    axs[0][0].set_ylabel("Score")
+    plt.savefig(f"./graphs/{file_name}.png")
+    plt.show()
+    plt.close(fig)
 
 
 stat_keys_to_plot_funcs = {
@@ -443,7 +474,9 @@ def augment_board(
             augemented_games[5].observation_history[i] = np.flipud(
                 np.rot90(np.rot90(board))
             )
-            augemented_games[5].policy_history[i] = np.flipud(np.rot90(np.rot90(policy)))
+            augemented_games[5].policy_history[i] = np.flipud(
+                np.rot90(np.rot90(policy))
+            )
             augemented_games[6].observation_history[i] = np.rot90(np.flipud(board))
             augemented_games[6].policy_history[i] = np.rot90(np.flipud(policy))
     elif rot90 and not flip_y and not flip_x:
@@ -637,3 +670,13 @@ def calculate_padding(i: int, k: int, s: int) -> Tuple[int, int]:
     p_1 = p // 2
     p_2 = (p + 1) // 2
     return (p_1, p_2)
+
+
+def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[int]]:
+    """Create all possible combinations of widths for a given number of layers"""
+    width_combinations = []
+
+    for i in range(0, max_num_layers):
+        width_combinations.extend(itertools.combinations_with_replacement(widths, i))
+
+    return width_combinations

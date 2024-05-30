@@ -21,8 +21,14 @@ class RainbowNetwork(nn.Module):
         self.config = config
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layers_widths) > 0
+        assert (
+            self.has_conv_layers or self.has_dense_layers
+        ), "At least one of the layers should be present."
+
         self.has_value_hidden_layers = len(config.value_hidden_layers_widths) > 0
-        self.has_advantage_hidden_layers = len(config.advantage_hidden_layers_widths) > 0
+        self.has_advantage_hidden_layers = (
+            len(config.advantage_hidden_layers_widths) > 0
+        )
         self.output_size = output_size
 
         current_shape = input_shape

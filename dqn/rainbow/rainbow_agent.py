@@ -21,7 +21,13 @@ class RainbowAgent(BaseAgent):
         config: RainbowConfig,
         name=f"rainbow_{current_timestamp():.1f}",
         device: torch.device = (
-            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            else (
+                torch.device("mps")
+                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+                else torch.device("cpu")
+            )
         ),
     ):
         super(RainbowAgent, self).__init__(env, config, name)
@@ -135,7 +141,7 @@ class RainbowAgent(BaseAgent):
             # print("predicted", online_distributions)
             # print("target", target_distributions)
 
-            weights_cuda = torch.from_numpy(weights).to(self.device).to(torch.float32)
+            weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
             # (B)
             elementwise_loss = self.config.loss_function(
                 online_distributions, target_distributions
