@@ -1,6 +1,19 @@
+from typing import NamedTuple, Any
+import torch
+
 from base_agent.agent import BaseAgent
 from agent_configs import Config, ConfigBase
 from gymnasium import Env
+from utils import get_legal_moves
+
+
+class DistreteTransition(NamedTuple):
+    state: Any
+    action: int
+    reward: float
+    next_state: Any
+    done: bool
+    legal_moves: list
 
 
 class ActorAgent(BaseAgent):
@@ -11,25 +24,29 @@ class ActorAgent(BaseAgent):
     def __init__(self, env: Env, config: Config, name):
         super().__init__(env, config, name)
 
-    def collect_experience(self):
-        raise NotImplementedError
-
-    def send_experience_batch(self):
-        raise NotImplementedError
-
-    def should_send_experience_batch(self, training_step: int):
-        raise NotImplementedError
-
-    def update_params(self):
-        raise NotImplementedError
-
-    def should_update_params(self, training_step: int):
-        raise NotImplementedError
-
-    def on_run_start(self):
+    def setup(self):
+        """This method is called before starting of the training/collecting experiences loop.
+        It is used for things such as fetching the initial weights from the learner.
+        """
         pass
 
-    def on_run_end(self):
+    def cleanup(self, failed: bool):
+        """This method is called after the training/collecting experiences loop finishes or errors.
+        It is used for any cleanup that may be necessary.
+        """
+        pass
+
+    def collect_experience(self, state, into) -> tuple[DistreteTransition, Any]:
+        legal_moves = get_legal_moves(info)
+        state_input = self.preprocess(state)
+        action = self.select_actions(state_input).item()
+        next_state, reward, terminated, truncated, info = self.env.step(action)
+        done = truncated or terminated
+
+        t = (state, action, reward, next_state, done, legal_moves)
+        return DistreteTransition(*t), info
+
+    def on_experience_collected(self, t):
         pass
 
     def on_training_step_start(self, training_step: int):
@@ -38,25 +55,28 @@ class ActorAgent(BaseAgent):
     def on_training_step_end(self, training_step: int):
         pass
 
-    def run(self):
-        print("ACTOR RUN")
-        self.is_test = False
-        self.on_run_start()
+    def learn(self):
+        with torch.no_grad():
+            failed = False
+            try:
+                self.setup()
+                state, info = self.env.reset()
 
-        for training_step in range(self.config.training_steps + 1):
-            self.on_training_step_start(training_step)
+                for training_step in range(self.config.training_steps + 1):
+                    t, info = self.collect_experience(state, info)
+                    self.on_experience_collected(t)
 
-            if self.should_send_experience_batch(training_step):
-                self.send_experience_batch()
+                    if t.done:
+                        state, info = self.env.reset()
 
-            if self.should_update_params(training_step):
-                self.update_params()
-
-            self.collect_experience()
-            self.on_training_step_end(training_step)
-
-        self.on_run_end()
-        self.env.close()
+                    self.on_training_step_end(training_step)
+            except Exception as e:
+                print(e)
+                failed = True
+                pass
+            finally:
+                self.env.close()
+                self.cleanup(failed)
 
 
 # Config class for PollingActor

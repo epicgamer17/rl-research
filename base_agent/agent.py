@@ -114,10 +114,6 @@ class BaseAgent:
         # raise NotImplementedError, "Every agent should have a learn method. (Previously experience_replay)"
         pass
 
-    def collect_experience(self):
-        # raise NotImplementedError
-        pass
-
     def load(self, dir, training_step):
         """load the model from a directory and training step. The name of the directory will be the name of the model, and should contain the following files:
         - episode_{training_step}_optimizer.dill
@@ -265,8 +261,8 @@ class BaseAgent:
                 while not done:
                     prediction = self.predict(state)
                     action = self.select_actions(prediction, legal_moves).item()
-                    next_state, reward, terminated, truncated, info = (
-                        self.test_env.step(action)
+                    next_state, reward, terminated, truncated, info = self.test_env.step(
+                        action
                     )
                     # self.test_env.render()
                     done = terminated or truncated

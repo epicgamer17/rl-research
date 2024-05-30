@@ -1,4 +1,5 @@
 import io
+from typing import Any
 import torch
 import time
 import numpy as np
@@ -21,11 +22,12 @@ import sys
 
 sys.path.append("../../")
 from rainbow.rainbow_agent import RainbowAgent
-from base_agent.distributed_agents import ActorAgent, PollingActor
+from base_agent.distributed_agents import ActorAgent, PollingActor, DistreteTransition
 from storage.compress_utils import compress_bytes, decompress_bytes
 from storage.storage import Storage, StorageConfig
 
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
+from utils import plot_graphs
 
 
 class Batch(NamedTuple):
@@ -38,7 +40,7 @@ class Batch(NamedTuple):
     priorities: np.ndarray
 
 
-class ApeXActorBase(ActorAgent, PollingActor):
+class ApeXActorBase(ActorAgent):
     """
     Apex Actor base class
     """
@@ -51,14 +53,6 @@ class ApeXActorBase(ActorAgent, PollingActor):
     ):
         super().__init__(env, config, name)
         self.config = config
-        self.score = 0
-        if self.spectator:
-            self.targets = {
-                "score": self.env.spec.reward_threshold,
-            }
-        self.stats = {
-            "score": [],
-        }
         self.rb = NStepReplayBuffer(
             observation_dimensions=env.observation_space.shape,
             batch_size=self.config.replay_buffer_size,
@@ -66,43 +60,27 @@ class ApeXActorBase(ActorAgent, PollingActor):
             n_step=self.config.n_step,
             gamma=0.99,  # self.config.gamma,
         )
-        self.bootstrapped_q_buffer = np.zeros(self.config.replay_buffer_size)
-
-    def on_run_start(self):
-        super().on_run_start()
-        self.env_state, _ = self.env.reset()
+        self.precalculated_q = np.zeros(self.config.replay_buffer_size)
 
     def predict_target_q(self, state, action) -> float:
         pass
 
-    def collect_experience(self):
-        with torch.no_grad():
-            state_input = self.preprocess(self.env_state)
-            action = self.select_actions(state_input)
+    def collect_experience(self, state, info) -> tuple[DistreteTransition, Any]:
+        t, info = super().collect_experience(state, info)
 
-            next_state, reward, terminated, truncated, info = self.env.step(action)
-            done = truncated or terminated
-            self.score += reward
+        p = self.rb.pointer
+        n_step_t = self.rb.store(
+            t.state, t.action, t.reward, t.next_state, t.done, None, t.legal_moves
+        )
 
-            p = self.rb.pointer
-            t = self.rb.store(self.env_state, action, reward, next_state, done)
-            if t != None:
-                predicted_q = self.predict(next_state)
-                action = self.select_actions(predicted_q).item()
-                self.bootstrapped_q_buffer[p] = (
-                    self.config.n_step ** self.predict_target_q(next_state, action)
-                )
+        if n_step_t != None:
+            predicted_q = self.predict(t.next_state)
+            action = self.select_actions(predicted_q).item()
+            self.precalculated_q[p] = self.config.n_step ** self.predict_target_q(
+                t.next_state, action
+            )
 
-            if done:
-                self.env_state, _ = self.env.reset()
-                score_dict = {
-                    "score": self.score,
-                    # "target_model_updated": target_model_updated[0],
-                }
-                self.stats["score"].append(score_dict)
-                self.score = 0
-            else:
-                self.env_state = next_state
+        return t, info
 
     def should_send_experience_batch(self):
         return self.rb.size == self.rb.max_size
@@ -140,10 +118,33 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         logger.info(f"connected to replay buffer at {replay_url}")
 
         self.spectator = spectator
+
         if spectator:
+            self.score = 0
             self.model_name = "spectator"
             self.t_i = None
             self.stats = {"score": []}
+            self.targets = {
+                "score": self.env.spec.reward_threshold,
+            }
+
+    def predict_target_q(self, state, action) -> float:
+        input = self.preprocess(state, device=self.device)
+        target_distributions = self.target_model(input)
+        q_value = (target_distributions * self.support)[0, action].sum().item()
+        return q_value
+
+    def collect_experience(self, state, info) -> tuple[DistreteTransition, Any]:
+        t, info = super().collect_experience(state, info)
+
+        if self.spectator:
+            self.score += t.reward
+            if t.done:
+                score_dict = {"score": self.score}
+                self.stats["score"].append(score_dict)
+                self.score = 0
+
+        return t, info
 
     def predict_target_q(self, state, action) -> float:
         target_q_values = self.predict_target(state) * self.support
@@ -166,15 +167,12 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             predicted_distributions = self.predict(self.rb.observation_buffer)
 
             # (B, output_size, atoms) -> (B, atoms) -> (B)
-            predicted = (predicted_distributions * self.support)[
+            predicted_q = (predicted_distributions * self.support)[
                 range(self.config.minibatch_size), actions
-            ].sum(2, keepdim=False)
+            ].sum(1)
 
             # (B)
-            predicted = predicted
-
-            # (B)
-            batched_loss = 1 / 2 * (Gt - predicted_distributions).square()
+            batched_loss = 1 / 2 * (Gt - predicted_q).square()
             return batched_loss.detach().cpu().numpy()
 
     def send_experience_batch(self):
@@ -229,7 +227,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             with io.BytesIO(decompressed_target) as buf:
                 state_dict = torch.load(buf, self.device)
                 self.target_model.load_state_dict(state_dict)
-                return True
+            return True
 
         except Exception as e:
             logger.warning("error loading weights from storage:", e)
@@ -238,12 +236,11 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         finally:
             logger.info(f"fetching weights took {time.time() - ti} s")
 
-    def on_run_start(self):
-        logger.info("fetching initial network params from learner...")
-        state, info = self.env.reset()
-        self.select_actions(state)
-
+    def setup(self):
+        if self.spectator:
+            self.t_i = time.time()
         # wait for initial network parameters
+        logger.info("fetching initial network params from learner...")
         has_weights = self.update_params()
         while not has_weights:
             time.sleep(2)
@@ -251,20 +248,22 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
         self.env_state, info = self.env.reset()
 
-        if self.spectator:
-            self.t_i = time.time()
-
     def on_training_step_end(self, training_step):
-        # self.replay_buffer.beta = update_per_beta(
-        #     training_step, self.replay_buffer.beta, self.config.training_steps
-        # ) # i dont think actor should update per beta as it should happen after learning steps
+        if self.should_send_experience_batch():
+            self.send_experience_batch()
+
+        if self.should_update_params(training_step):
+            self.update_params()
 
         if self.spectator:
             self.targets = {
                 "score": self.env.spec.reward_threshold,
             }
-            self.plot_graph(
+            plot_graphs(
+                self.stats,
+                self.targets,
                 training_step,
                 training_step,
-                time_taken=time.time() - self.t_i,
+                time.time() - self.t_i,
+                "spectator",
             )
