@@ -1,8 +1,11 @@
 from typing import NamedTuple
 import logging
+import torch
 from pymongo import MongoClient
 import gridfs
 import hashlib
+import io
+from compress_utils import compress
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +29,8 @@ class Storage:
         except ConnectionError as e:
             logger.exception(e)
 
-        self.latest_id = ""
-        self.same_latest = 0
+        self.latest_online_id = ""
+        self.latest_target_id = ""
 
         print("storage connected.")
         if reset:
@@ -36,55 +39,70 @@ class Storage:
             db.drop_collection(db["fs.files"])
             print("dropped existing collections")
 
-    def get_latest_weights_id(self):
+    def get_latest_weights_id(self, key):
         db = self.client["model_weights"]
         ids = db["ids"]
-        id = ids.find_one()
+        id = ids.find_one({key: {"$exists": True}})
 
         if id:
-            return id["weights_id"]
+            return id[key]
         return None
 
-    def update_weights_id(self, id):
+    def update_weights_id(self, key: str, id: str):
         db = self.client["model_weights"]
         ids = db["ids"]
         ids.update_one(
-            filter={},
-            update={"$set": {"weights_id": id}},
+            filter={{key: {"$exists": True}}},
+            update={"$set": {key: id}},
             upsert=True,
         )
 
-    def store_weights(self, bytes: bytes):
+    def _store(self, model: torch.nn.Module, id_key: str) -> str:
         db = self.client["model_weights"]
         fs = gridfs.GridFS(db)
-        id = fs.put(bytes)
-        logger.info(f"weights id: {id}")
-        hash = hashlib.md5(bytes).hexdigest()
-        logger.info(f"weights hash: {hash}")
 
-        # delete previous weights if they exist
-        prev_id = self.get_latest_weights_id()
-        if prev_id is not None:
-            fs.delete(self.get_latest_weights_id())
+        with io.BytesIO() as buffer:
+            torch.save(model.state_dict(), buffer)
+            buffer.seek(0)
+            compressed = compress(buffer)
+            logger.info(f"{id_key} hash: {hashlib.md5(compressed).hexdigest()}")
+            id = fs.put(compressed)
 
-        # update the latest weights id
-        self.update_weights_id(id)
+        prev_id = self.get_latest_weights_id(id_key)
+        if not prev_id is None:
+            fs.delete(prev_id)
+
+        self.update_weights_id(id_key, id)
+
+    def store_models(self, online_model: torch.nn.Module, target_model: torch.nn.Module):
+        self._store(online_model, "online_weights")
+        self._store(target_model, "target_weights")
 
     def get_weights(self):
         while True:
             try:
-                id = self.get_latest_weights_id()
-                logger.info(f"weights id: {id}")
-                if not id or id == self.latest_id:
-                    return None
+                online_id = self.get_latest_weights_id("online_weights")
+                target_id = self.get_latest_weights_id("target_weights")
+                logger.info(f"weights ids: {online_id}, {target_id}")
 
-                self.latest_id = id
+                if (
+                    (not online_id)
+                    or (not target_id)
+                    or online_id == self.latest_online_id
+                    or target_id == self.latest_target_id
+                ):
+                    return None, None
+
+                self.latest_online_id = online_id
+                self.latest_target_id = target_id
 
                 db = self.client["model_weights"]
                 fs = gridfs.GridFS(db)
 
-                weights = fs.get(id).read()
-                logger.info(f"weights hash: {hashlib.md5(weights).hexdigest()}")
-                return weights
+                online_weights = fs.get(online_id).read()
+                target_weights = fs.get(target_id).read()
+                logger.info(f"online hash: {hashlib.md5(online_weights).hexdigest()}")
+                logger.info(f"target hash: {hashlib.md5(target_weights).hexdigest()}")
+                return online_weights, target_weights
             except Exception as e:
                 logger.warning("error getting weights: ", e)
