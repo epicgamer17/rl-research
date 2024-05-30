@@ -22,7 +22,7 @@ import sys
 sys.path.append("../../")
 from rainbow.rainbow_agent import RainbowAgent
 from base_agent.distributed_agents import ActorAgent, PollingActor
-from storage.compress_utils import compress, decompress
+from storage.compress_utils import compress_bytes, decompress_bytes
 from storage.storage import Storage, StorageConfig
 
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
@@ -197,19 +197,17 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             priorities=prioritized_losses,
         )
         builder = replayMemory_capnp.TransitionBatch.new_message()
-        builder.observations = compress(batch.observations)
-        builder.nextObservations = compress(batch.next_observations)
-        builder.rewards = batch.rewards.astype(np.float32).tolist()
-        builder.actions = batch.actions.astype(np.int32).tolist()
-        builder.dones = batch.dones.astype(bool).tolist()
-        builder.ids = batch.ids.astype(str).tolist()
-        builder.priorities = batch.priorities.astype(np.float32).tolist()
+        builder.observations = compress_bytes(batch.observations.tobytes())
+        builder.nextObservations = compress_bytes(batch.next_observations.tobytes())
+        builder.rewards = batch.rewards.tobytes()
+        builder.actions = batch.actions.tobytes()
+        builder.dones = batch.dones.tobytes()
+        builder.ids = batch.ids.tobytes()
+        builder.priorities = batch.priorities.tobytes()
+        res = builder.to_bytes_packed()
 
         self.replay_socket.send(message_codes.ACTOR_SEND_BATCH, zmq.SNDMORE)
-
-        res = builder.to_bytes_packed()
         self.replay_socket.send(res)
-
         self.rb.clear()
 
     def update_params(self):
@@ -222,12 +220,12 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             return False
 
         try:
-            decompressed_online = decompress(online_bytes)
+            decompressed_online = decompress_bytes(online_bytes)
             with io.BytesIO(decompressed_online) as buf:
                 state_dict = torch.load(buf, self.device)
                 self.model.load_state_dict(state_dict)
 
-            decompressed_target = decompress(target_bytes)
+            decompressed_target = decompress_bytes(target_bytes)
             with io.BytesIO(decompressed_target) as buf:
                 state_dict = torch.load(buf, self.device)
                 self.target_model.load_state_dict(state_dict)

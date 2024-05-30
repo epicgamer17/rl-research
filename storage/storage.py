@@ -5,7 +5,7 @@ from pymongo import MongoClient
 import gridfs
 import hashlib
 import io
-from compress_utils import compress
+from compress_utils import compress_buffer
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,9 @@ class Storage:
             db.drop_collection(db["ids"])
             db.drop_collection(db["fs.files"])
             print("dropped existing collections")
+        else:
+            self.latest_online_id = self.get_latest_weights_id("online_weights")
+            self.latest_target_id = self.get_latest_weights_id("target_weights")
 
     def get_latest_weights_id(self, key):
         db = self.client["model_weights"]
@@ -64,7 +67,7 @@ class Storage:
         with io.BytesIO() as buffer:
             torch.save(model.state_dict(), buffer)
             buffer.seek(0)
-            compressed = compress(buffer)
+            compressed = compress_buffer(buffer)
             logger.info(f"{id_key} hash: {hashlib.md5(compressed).hexdigest()}")
             id = fs.put(compressed)
 

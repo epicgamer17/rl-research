@@ -15,8 +15,7 @@ from utils import update_per_beta
 sys.path.append("../")
 from dqn.rainbow.rainbow_agent import RainbowAgent
 from storage.storage import Storage, StorageConfig
-from storage.compress_utils import decompress
-from storage.compress_utils import compress
+from storage.compress_utils import decompress_bytes
 
 import matplotlib
 
@@ -65,6 +64,8 @@ class ApeXLearnerBase(RainbowAgent):
         self.targets = {
             "test_score": self.env.spec.reward_threshold,
         }
+
+        self.per_sample_beta = self.config.per_beta
 
     def store_weights(self, weights):
         pass
@@ -152,15 +153,14 @@ class ApeXLearnerBase(RainbowAgent):
                     self.store_weights()
                     logger.info("pushed params")
 
-                # TODO - remote update PER beta
-                self.replay_buffer.beta = update_per_beta(
-                    self.replay_buffer.beta, 1.0, self.training_steps
+                # This beta gets send over to the remote replay buffer
+                self.per_sample_beta = update_per_beta(
+                    self.per_sample_beta, 1.0, self.training_steps
                 )
 
                 loss = self._learn()
                 target_model_updated = False
                 if training_step % self.config.transfer_interval == 0:
-                    # target_model_updated = True
                     self.update_target_model(training_step)
                     target_model_updated = True
 
@@ -212,7 +212,10 @@ class ApeXLearner(ApeXLearnerBase):
         )
 
         # the learner will reset the storage's model weights on initialization
-        self.storage = Storage(storage_config, reset=True)
+        reset = True
+        if self.start_training_step != 0:
+            reset = False
+        self.storage = Storage(storage_config, reset)
 
     def handle_replay_socket(self, flag: threading.Event):
         ctx = zmq.Context()
@@ -229,7 +232,7 @@ class ApeXLearner(ApeXLearnerBase):
             if self.samples_queue.qsize() < self.config.samples_queue_size:
                 logger.info("requesting batch")
                 replay_socket.send(message_codes.LEARNER_REQUESTS_BATCH, zmq.SNDMORE)
-                replay_socket.send_string(str(self.config.per_beta))
+                replay_socket.send_string(str(self.per_sample_beta))
 
                 logger.info("wating for batch")
                 res = replay_socket.recv()
@@ -243,14 +246,18 @@ class ApeXLearner(ApeXLearnerBase):
 
                 self.samples_queue.put(
                     Sample(
-                        ids=np.array(samples.ids, dtype=np.object_),
-                        indices=np.array(samples.indices),
-                        actions=np.array(samples.actions),
-                        observations=decompress(samples.observations),
-                        next_observations=decompress(samples.nextObservations),
-                        weights=np.array(samples.weights),
-                        rewards=np.array(samples.rewards),
-                        dones=np.array(samples.dones),
+                        ids=np.frombuffer(samples.ids, dtype=np.object_),
+                        indices=np.frombuffer(samples.indices),
+                        actions=np.frombuffer(samples.actions),
+                        observations=np.frombuffer(
+                            decompress_bytes(samples.observations)
+                        ),
+                        next_observations=np.frombuffer(
+                            decompress_bytes(samples.nextObservations)
+                        ),
+                        weights=np.frombuffer(samples.weights),
+                        rewards=np.frombuffer(samples.rewards),
+                        dones=np.frombuffer(samples.dones),
                     )
                 )
                 active = True
@@ -262,10 +269,9 @@ class ApeXLearner(ApeXLearnerBase):
                 active = True
                 ids, indices, losses = t
                 update = replayMemory_capnp.PriorityUpdate.new_message()
-                update.ids = ids.tolist()
-                update.indices = indices.astype(int).tolist()
-
-                update.losses = losses.astype(float).tolist()
+                update.ids = ids.tobytes()
+                update.indices = indices.tobytes()
+                update.losses = losses.tobytes()
 
                 replay_socket.send(message_codes.LEARNER_UPDATE_PRIORITIES, zmq.SNDMORE)
                 replay_socket.send(update.to_bytes_packed())

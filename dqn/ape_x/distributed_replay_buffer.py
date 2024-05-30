@@ -24,7 +24,7 @@ import sys
 
 sys.path.append("../")
 from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
-from storage.compress_utils import compress, decompress
+from storage.compress_utils import compress_buffer, decompress_bytes
 
 
 class SaveableReplayBuffer:
@@ -46,11 +46,11 @@ class SaveableReplayBuffer:
 
     def load(self, path):
         with open(path, "rb") as file:
-            self.replay_buffer = decompress(file.read())
+            self.replay_buffer = decompress_bytes(file.read())
 
     def save(self, path):
         with open(path, "wb") as file:
-            file.write(compress(self.replay_buffer))
+            file.write(compress_buffer(self.replay_buffer))
 
     def sample(self):
         return self.replay_buffer.sample()
@@ -102,8 +102,8 @@ class ReplayServer:
 
         builder = replay_buffer_capnp.TransitionBatch.new_message()
         builder.ids = ids
-        builder.observations = compress(samples.observations)
-        builder.nextObservations = compress(samples.next_observations)
+        builder.observations = compress_buffer(samples.observations)
+        builder.nextObservations = compress_buffer(samples.next_observations)
         builder.actions = samples.actions.astype(int).tolist()
         builder.rewards = samples.rewards.astype(float).tolist()
         builder.dones = samples.dones.astype(bool).tolist()
@@ -132,8 +132,8 @@ class ReplayServer:
                 logger.info(f"adding {n} transitions to buffer")
 
                 ids = batch.ids
-                observations = decompress(batch.observations)
-                nextObservations = decompress(batch.nextObservations)
+                observations = decompress_bytes(batch.observations)
+                nextObservations = decompress_bytes(batch.nextObservations)
                 actions = batch.actions
                 rewards = batch.rewards
                 dones = batch.dones
@@ -177,9 +177,7 @@ class ReplayServer:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run a distributed Ape-X replay buffer"
-    )
+    parser = argparse.ArgumentParser(description="Run a distributed Ape-X replay buffer")
     parser.add_argument("--learner_port", type=str, default="5554")
     parser.add_argument("--actors_port", type=str, default="5555")
     parser.add_argument("--load", default=False, action="store_true")

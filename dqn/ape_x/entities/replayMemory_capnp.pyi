@@ -3,18 +3,18 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from io import BufferedWriter
-from typing import Iterator, Sequence
+from typing import Iterator
 
 class TransitionBatch:
-    ids: Sequence[str]
+    ids: bytes
     observations: bytes
     nextObservations: bytes
-    actions: Sequence[int]
-    rewards: Sequence[float]
-    dones: Sequence[bool]
-    priorities: Sequence[float]
-    indices: Sequence[int]
-    weights: Sequence[float]
+    actions: bytes
+    rewards: bytes
+    dones: bytes
+    priorities: bytes
+    indices: bytes
+    weights: bytes
     @staticmethod
     @contextmanager
     def from_bytes(
@@ -45,9 +45,9 @@ class TransitionBatchBuilder(TransitionBatch):
     def write_packed(file: BufferedWriter) -> None: ...
 
 class PriorityUpdate:
-    ids: Sequence[str]
-    indices: Sequence[int]
-    losses: Sequence[float]
+    ids: bytes
+    indices: bytes
+    losses: bytes
     @staticmethod
     @contextmanager
     def from_bytes(
