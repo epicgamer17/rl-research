@@ -1,9 +1,9 @@
+import io
+import torch
 import time
-import tensorflow as tf
 import numpy as np
 from typing import NamedTuple
 from uuid import uuid4
-from utils.utils import update_per_beta
 import zmq
 from gymnasium import Env
 from agent_configs import ApeXActorConfig
@@ -25,16 +25,7 @@ from base_agent.distributed_agents import ActorAgent, PollingActor
 from storage.compress_utils import compress, decompress
 from storage.storage import Storage, StorageConfig
 
-# from refactored_replay_buffers.prioritized_nstep import ReplayBuffer
-from replay_buffers.n_step_replay_buffer import ReplayBuffer
-
-
-class TransitionBuffer(NamedTuple):
-    observations: np.ndarray
-    next_observations: np.ndarray
-    actions: np.ndarray
-    rewards: np.ndarray
-    dones: np.ndarray
+from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
 
 
 class Batch(NamedTuple):
@@ -68,38 +59,52 @@ class ApeXActorBase(ActorAgent, PollingActor):
         self.stats = {
             "score": [],
         }
-        self.rb = ReplayBuffer(
+        self.rb = NStepReplayBuffer(
             observation_dimensions=env.observation_space.shape,
             batch_size=self.config.replay_buffer_size,
             max_size=self.config.replay_buffer_size,
             n_step=self.config.n_step,
             gamma=0.99,  # self.config.gamma,
         )
+        self.bootstrapped_q_buffer = np.zeros(self.config.replay_buffer_size)
 
     def on_run_start(self):
         super().on_run_start()
         self.env_state, _ = self.env.reset()
 
+    def predict_target_q(self, state, action) -> float:
+        pass
+
     def collect_experience(self):
-        state_input = self.preprocess(self.env_state)
-        action = self.select_actions(state_input)
+        with torch.no_grad():
+            state_input = self.preprocess(self.env_state)
+            action = self.select_actions(state_input)
 
-        next_state, reward, terminated, truncated, info = super(ActorAgent, self).step(
-            action
-        )
-        done = terminated or truncated
-        self.score += reward
+            next_state, reward, terminated, truncated, info = self.env.step(action)
+            done = truncated or terminated
+            self.score += reward
 
-        self.rb.store(self.env_state, action, reward, next_state, done)
+            p = self.rb.pointer
+            t = self.rb.store(self.env_state, action, reward, next_state, done)
+            if t != None:
+                predicted_q = self.predict(next_state)
+                action = self.select_actions(predicted_q).item()
+                self.bootstrapped_q_buffer[p] = (
+                    self.config.n_step ** self.predict_target_q(next_state, action)
+                )
 
-        if done:
-            self.env_state, _ = self.env.reset()
-            self.stats["score"].append(self.score)
-            self.score = 0
-        else:
-            self.env_state = next_state
+            if done:
+                self.env_state, _ = self.env.reset()
+                score_dict = {
+                    "score": self.score,
+                    # "target_model_updated": target_model_updated[0],
+                }
+                self.stats["score"].append(score_dict)
+                self.score = 0
+            else:
+                self.env_state = next_state
 
-    def should_send_experience_batch(self, training_step: int):
+    def should_send_experience_batch(self):
         return self.rb.size == self.rb.max_size
 
     def should_update_params(self, training_step: int):
@@ -115,6 +120,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
         self.socket_ctx = zmq.Context()
 
+        self.bootstrapped_q_buffer = np.zeros(self.config.replay_buffer_size)
         storage_config = StorageConfig(
             hostname=self.config.storage_hostname,
             port=self.config.storage_port,
@@ -139,6 +145,38 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             self.t_i = None
             self.stats = {"score": []}
 
+    def predict_target_q(self, state, action) -> float:
+        target_q_values = self.predict_target(state) * self.support
+        q = target_q_values.sum(2, keepdim=False)[1, action].item()
+        return q
+
+    def calculate_losses(self):
+        with torch.no_grad():
+            # (B)
+            bootstrapped_qs = torch.from_numpy(self.bootstrapped_q_buffer).to(self.device)
+            # (B)
+            rewards = torch.from_numpy(self.replay_buffer.reward_buffer).to(self.device)
+
+            # (B)
+            Gt = rewards + bootstrapped_qs  # already discounted
+
+            # (B)
+            actions = torch.from_numpy(self.replay_buffer.action_buffer).to(self.device)
+            # (B, output_size, atoms)
+            predicted_distributions = self.predict(self.rb.observation_buffer)
+
+            # (B, output_size, atoms) -> (B, atoms) -> (B)
+            predicted = (predicted_distributions * self.support)[
+                range(self.config.minibatch_size), actions
+            ].sum(2, keepdim=False)
+
+            # (B)
+            predicted = predicted
+
+            # (B)
+            batched_loss = 1 / 2 * (Gt - predicted_distributions).square()
+            return batched_loss.detach().cpu().numpy()
+
     def send_experience_batch(self):
         if self.spectator:
             return
@@ -147,15 +185,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         for i in range(self.config.replay_buffer_size):
             ids[i] = uuid4().hex
 
-        prioritized_losses = self.calculate_loss(
-            TransitionBuffer(
-                observations=self.rb.observation_buffer,
-                actions=self.rb.action_buffer,
-                rewards=self.rb.reward_buffer,
-                next_observations=self.rb.next_observation_buffer,
-                dones=self.rb.done_buffer,
-            )
-        )
+        prioritized_losses = self.calculate_losses()
 
         batch = Batch(
             observations=self.rb.observation_buffer,
@@ -166,10 +196,6 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             ids=ids,
             priorities=prioritized_losses,
         )
-        # print(batch.actions)
-
-        # print(batch.observations)
-
         builder = replayMemory_capnp.TransitionBatch.new_message()
         builder.observations = compress(batch.observations)
         builder.nextObservations = compress(batch.next_observations)
@@ -189,25 +215,42 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
     def update_params(self):
         ti = time.time()
         logger.info("fetching weights from storage...")
-        res = self.storage.get_weights()
+        online_bytes, target_bytes = self.storage.get_weights()
 
-        if res == None:
+        if online_bytes == None or target_bytes == None:
             logger.info("no weights recieved from learner")
-            return
+            return False
 
-        decompressed = decompress(res)
         try:
-            self.model.set_weights(decompressed)
+            decompressed_online = decompress(online_bytes)
+            with io.BytesIO(decompressed_online) as buf:
+                state_dict = torch.load(buf, self.device)
+                self.model.load_state_dict(state_dict)
+
+            decompressed_target = decompress(target_bytes)
+            with io.BytesIO(decompressed_target) as buf:
+                state_dict = torch.load(buf, self.device)
+                self.target_model.load_state_dict(state_dict)
+                return True
+
         except Exception as e:
-            print(e)
-            logger.info("not enough weights received from learner")
-        logger.info(f"fetching weights took {time.time() - ti} s")
+            logger.warning("error loading weights from storage:", e)
+            return False
+
+        finally:
+            logger.info(f"fetching weights took {time.time() - ti} s")
 
     def on_run_start(self):
         logger.info("fetching initial network params from learner...")
         state, info = self.env.reset()
         self.select_actions(state)
-        self.update_params()
+
+        # wait for initial network parameters
+        has_weights = self.update_params()
+        while not has_weights:
+            time.sleep(2)
+            has_weights = self.update_params()
+
         self.env_state, info = self.env.reset()
 
         if self.spectator:
@@ -227,35 +270,3 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
                 training_step,
                 time_taken=time.time() - self.t_i,
             )
-
-    def calculate_loss(self, batch: TransitionBuffer):
-        t = time.time()
-        discount_factor = self.config.discount_factor**self.config.n_step
-        inputs, actions = self.preprocess(batch.observations), batch.actions
-
-        initial_distributions = self.model(inputs)
-        distributions_to_train = tf.gather_nd(
-            initial_distributions,
-            list(zip(range(initial_distributions.shape[0]), actions)),
-        )
-
-        # print(distributions_to_train)
-        # print(tf.convert_to_tensor(target_distributions))
-        # print()
-
-        target_distributions = self.compute_target_distributions_np(
-            batch, discount_factor
-        )
-        elementwise_loss = self.config.loss_function.call(
-            y_pred=distributions_to_train,
-            y_true=tf.convert_to_tensor(target_distributions),
-        )
-        assert np.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-            elementwise_loss
-        )
-
-        prioritized_loss = elementwise_loss + self.config.per_epsilon
-
-        delta_t = time.time() - t
-        logger.info(f"calculate_losses took: {delta_t} s.")
-        return prioritized_loss.numpy()

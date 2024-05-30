@@ -1,16 +1,16 @@
-import pickle
+import io
 import lzma
 
 
-def compress(o):
-    bytes = pickle.dumps(o, protocol=5)
+def compress(buffer: io.BytesIO) -> bytes:
     compressor = lzma.LZMACompressor()
-    ret = compressor.compress(bytes)
+    ret = compressor.compress(buffer.read())
     ret += compressor.flush()
     return ret
 
 
-def decompress(o):
+def decompress(o: bytes) -> io.BytesIO:
     decompressor = lzma.LZMADecompressor()
     ret = decompressor.decompress(o)
-    return pickle.loads(ret)
+    buffer = io.BytesIO(ret)
+    return buffer

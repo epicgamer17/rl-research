@@ -21,7 +21,7 @@ def test_storage():
 
     weights = np.arange(1000000)
 
-    client.store_weights(compress(weights))
+    client.store_target(compress(weights))
     weights_id = client.get_latest_weights_id()
 
     print(weights_id)
@@ -34,7 +34,7 @@ def test_storage():
 
     weights = weights * 2
 
-    client.store_weights(compress(weights))
+    client.store_target(compress(weights))
     new_weights_id = client.get_latest_weights_id()
 
     print(weights_id)

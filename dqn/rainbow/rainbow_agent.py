@@ -121,7 +121,6 @@ class RainbowAgent(BaseAgent):
                 samples["observations"],
                 samples["weights"],
                 samples["indices"],
-                # actions as ndarray of shape (B) to tensor of shape (B, 1)
                 torch.from_numpy(samples["actions"]).to(self.device).long(),
             )
             # print("actions", actions)
