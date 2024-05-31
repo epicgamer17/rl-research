@@ -1,12 +1,14 @@
+from collections import defaultdict
 import copy
 import math
+from operator import itemgetter
 import os
 import matplotlib
 
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import scipy
-
+import pickle
 
 from typing import Iterable, Tuple
 from datetime import datetime
@@ -17,6 +19,10 @@ import numpy as np
 import numpy.typing as npt
 
 import itertools
+from hyperopt import space_eval
+
+import pandas as pd
+
 
 # from ....replay_buffers.base_replay_buffer import Game
 # from replay_buffers.segment_tree import SumSegmentTree
@@ -263,15 +269,19 @@ def plot_exploitability(
     default_plot_func(axs, key, values, targets, row, col)
 
 
-def plot_trials(trials: dict, file_name: str):
+def plot_trials(trials: dict, file_name: str, final_trial: int = 0):
     fig, axs = plt.subplots(
         1,
         1,
         figsize=(10, 5),
         squeeze=False,
     )
-    x = np.arange(1, len(trials.trials) + 1)
     scores = [-trial["result"]["loss"] for trial in trials.trials]
+    if final_trial > 0:
+        x = np.arange(1, final_trial + 1)
+        scores = scores[:final_trial]
+    else:
+        x = np.arange(1, len(trials.trials) + 1)
     axs[0][0].scatter(x, scores)
     best_fit_x, best_fit_y = np.polyfit(x, scores, 1)
     axs[0][0].plot(
@@ -680,3 +690,176 @@ def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[
         width_combinations.extend(itertools.combinations_with_replacement(widths, i))
 
     return width_combinations
+
+
+def hyperopt_analysis(
+    data_dir: str, trials_file_name: str, viable_trial_threshold: int, step: int
+):
+    trials = pickle.load(open(f"{data_dir}/{trials_file_name}", "rb"))
+    print("Number of trials: {}".format(len(trials.trials)))
+    # losses.sort()
+    # print(len(os.listdir(f"{data_dir}/checkpoints")) - 1)
+    # print(len(trials.trials))
+
+    checkpoints = os.listdir(f"{data_dir}/checkpoints")
+    checkpoints.remove("videos")
+    checkpoints.remove(".DS_Store") if ".DS_Store" in checkpoints else None
+    checkpoints.sort(key=lambda x: int(x.split("_")[-1]))
+    viable_throughout_trials = []
+    final_rolling_averages = []
+    final_std_devs = []
+    losses = []
+    failed_trials = 0
+    for i, trial in enumerate(trials.trials):
+        loss = trial["result"]["loss"]
+        # print(trial["result"]["status"])
+        if trial["result"]["status"] == "fail":
+            failed_trials += 1
+            final_rolling_averages.append(loss)
+            final_std_devs.append(0)
+        else:
+            # print(checkpoints[i - failed_trials])
+            # print(failed_trials)
+            # if os.path.exists(
+            #     f"{data_dir}/checkpoints/{checkpoints[i - failed_trials]}/step_{step}/graphs_stats/stats.pkl"
+            # ):
+            stats = pickle.load(
+                open(
+                    f"{data_dir}/checkpoints/{checkpoints[i - failed_trials]}/step_{step}/graphs_stats/stats.pkl",
+                    "rb",
+                )
+            )
+            max_score = 0
+
+            # print([stat_dict["score"] for stat_dict in stats["test_score"][-10:]])
+            final_rolling_averages.append(
+                np.around(
+                    np.mean(
+                        [stat_dict["score"] for stat_dict in stats["test_score"][-10:]]
+                    ),
+                    1,
+                )
+            )
+
+            final_std_devs.append(
+                np.around(
+                    np.std(
+                        [stat_dict["score"] for stat_dict in stats["test_score"][-10:]]
+                    ),
+                    1,
+                )
+            )
+
+            for stat_dict in stats["test_score"]:
+                if stat_dict["max_score"] > max_score:
+                    max_score = stat_dict["max_score"]
+
+            if max_score > viable_trial_threshold:
+                viable_throughout_trials.append(max_score)
+
+        losses.append(-loss)
+
+    res = [
+        list(x)
+        for x in zip(
+            *sorted(
+                zip(losses, final_rolling_averages, final_std_devs), key=itemgetter(0)
+            )
+        )
+    ]
+    losses = res[0]
+    final_rolling_averages = res[1]
+    final_std_devs = res[2]
+    viable_trials = [loss for loss in losses if loss > viable_trial_threshold]
+
+    print("Failed trials: ~{}%".format(round(failed_trials / len(losses) * 100)))
+
+    print(
+        "Viable trials (based on final score): ~{}%".format(
+            round(len(viable_trials) / len(losses) * 100)
+        )
+    )
+    print(
+        "Viable trials (throughout training): ~{}%".format(
+            round(len(viable_throughout_trials) / len(losses) * 100)
+        )
+    )
+
+    print("Scores: {}".format(losses))
+    print("Final rolling averages: {}".format(final_rolling_averages))
+    print("Final standard deviations: {}".format(final_std_devs))
+
+    print("Max score: {}".format(max(losses)))
+    print("Max final rolling average: {}".format(max(final_rolling_averages)))
+    print("Max final standard deviation: {}".format(max(final_std_devs)))
+
+    print("Average score: {}".format(np.mean(losses)))
+    print("Average final rolling average: {}".format(np.mean(final_rolling_averages)))
+    print("Average final standard deviation: {}".format(np.mean(final_std_devs)))
+
+    viable_final_rolling_averages = [
+        final_rolling_averages[i]
+        for i, loss in enumerate(losses)
+        if loss > viable_trial_threshold
+    ]
+
+    viable_std_devs = [
+        final_std_devs[i]
+        for i, loss in enumerate(losses)
+        if loss > viable_trial_threshold
+    ]
+
+    print(
+        "Average score of viable trials (based on final score): {}".format(
+            np.mean(viable_trials)
+        )
+    )
+    print(
+        "Average final rolling average of viable trials (based on final score): {}".format(
+            np.mean(viable_final_rolling_averages)
+        )
+    )
+    print(
+        "Average final standard deviation of viable trials (based on final score): {}".format(
+            np.mean(viable_std_devs)
+        )
+    )
+
+
+def graph_hyperparameter_importance(
+    data_dir: str, trials_file: str, search_space_file: str, viable_trial_threshold: int
+):
+    with open(f"{data_dir}/{trials_file}", "rb") as f:
+        trials = pickle.load(f)
+    print(trials)
+
+    search_space = pickle.load(open(f"./search_spaces/{search_space_file}", "rb"))
+
+    values_dict = defaultdict(list)
+    scores = []
+    for trial in trials.trials:
+        for key, value in space_eval(trial["misc"]["vals"], search_space).items():
+            values_dict[key].append(value[0])
+        scores.append(-trial["result"]["loss"])
+
+    df = pd.DataFrame(values_dict)
+    x_cols = df.columns
+    df["scores"] = scores
+    # print(df)
+    df = df[df["scores"] > viable_trial_threshold]
+
+    for col in x_cols:
+        if col == "loss_function":
+            continue
+        plt = df.plot(x=col, y="scores", kind="scatter")
+        grouped = df.groupby(col)["scores"]
+        medians = grouped.median()
+        means = grouped.mean()
+        stddev = grouped.std()
+
+        if not (col == "kernel_initializer" or col == "activation"):
+            # plt.fill_between(medians.index, medians.values-stddev, medians.values+stddev, color="#00F0F0")
+            plt.plot(means.index, means.values, color="#00FFFF")
+        else:
+            plt.scatter(means.index, means.values, c="#00FFFF")
+        # plt.add_line

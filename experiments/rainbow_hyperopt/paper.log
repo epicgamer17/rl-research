@@ -1,10 +1,10 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.26 (TeX Live 2024) (preloaded format=pdflatex 2024.5.26)  28 MAY 2024 13:13
+This is pdfTeX, Version 3.141592653-2.6-1.40.26 (TeX Live 2024) (preloaded format=pdflatex 2024.5.26)  30 MAY 2024 22:49
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
  %&-line parsing enabled.
-**/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/experiments/torch_rainbow_hyperopt/paper
-(/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/experiments/torch_rainbow_hyperopt/paper.tex
+**/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/experiments/rainbow_hyperopt/paper
+(/Users/jonathanlamontange-kratz/Documents/GitHub/rl-stuff/experiments/rainbow_hyperopt/paper.tex
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-02-20>
 (/usr/local/texlive/2024/texmf-dist/tex/latex/base/article.cls
@@ -459,9 +459,6 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `cmtt' (encoding: T1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
-
-Underfull \vbox (badness 2418) has occurred while \output is active []
-
  [1
 
 
@@ -487,41 +484,22 @@ Package natbib Warning: There were undefined citations.
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-02-20>
  ***********
-
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
-
-Package rerunfilecheck Warning: File `paper.out' has changed.
-(rerunfilecheck)                Rerun to get outlines right
-(rerunfilecheck)                or use package `bookmark'.
-
-Package rerunfilecheck Info: Checksums for `paper.out':
-(rerunfilecheck)             Before: F3B43E861DE10DBB754C2038041D9DD4;1602
-(rerunfilecheck)             After:  8A2E301B848048978C63F31F236B7BB2;1696.
+Package rerunfilecheck Info: File `paper.out' has not changed.
+(rerunfilecheck)             Checksum: 8A2E301B848048978C63F31F236B7BB2;1696.
  ) 
 Here is how much of TeX's memory you used:
- 14834 strings out of 474116
- 248729 string characters out of 5743682
+ 14829 strings out of 474116
+ 248653 string characters out of 5743682
  1939187 words of memory out of 5000000
- 36788 multiletter control sequences out of 15000+600000
- 609222 words of font info for 173 fonts, out of 8000000 for 9000
+ 36789 multiletter control sequences out of 15000+600000
+ 609092 words of font info for 171 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 79i,12n,93p,1091b,528s stack positions out of 10000i,1000n,20000p,200000b,200000s
-
-pdfTeX warning (dest): name{subsection.4.3} has been referenced but does not exist, replaced by a fixed one
-
-
-pdfTeX warning (dest): name{subsection.4.2} has been referenced but does not exist, replaced by a fixed one
-
-
-pdfTeX warning (dest): name{subsection.4.1} has been referenced but does not exist, replaced by a fixed one
-
+ 79i,12n,93p,1149b,528s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/cm-super/sftt1000.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/urw/times/utmr8a.pfb>
-Output written on paper.pdf (5 pages, 156356 bytes).
+Output written on paper.pdf (5 pages, 156551 bytes).
 PDF statistics:
  168 PDF objects out of 1000 (max. 8388607)
  137 compressed objects within 2 object streams
- 30 named destinations out of 1000 (max. 500000)
- 51313 words of extra memory for PDF output out of 51595 (max. 10000000)
+ 27 named destinations out of 1000 (max. 500000)
+ 51321 words of extra memory for PDF output out of 51595 (max. 10000000)
 
