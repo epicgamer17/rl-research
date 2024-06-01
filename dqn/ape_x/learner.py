@@ -1,9 +1,6 @@
-import io
 import sys
 import logging
 import time
-import torch
-from torch.nn.utils import clip_grad_norm_
 import numpy as np
 import queue
 import threading
@@ -14,8 +11,6 @@ from utils import update_per_beta
 
 sys.path.append("../")
 from dqn.rainbow.rainbow_agent import RainbowAgent
-from storage.storage import Storage, StorageConfig
-from storage.compress_utils import decompress_bytes
 
 import matplotlib
 
@@ -37,9 +32,9 @@ class Sample(NamedTuple):
 
 
 class Update(NamedTuple):
-    ids: np.ndarray
     indices: np.ndarray
-    losses: np.ndarray
+    priorities: np.ndarray
+    ids: np.ndarray
 
 
 class ApeXLearnerBase(RainbowAgent):
@@ -70,67 +65,25 @@ class ApeXLearnerBase(RainbowAgent):
     def store_weights(self, weights):
         pass
 
+    def on_training_step_end(self):
+        pass
+
     def on_run(self):
         pass
 
     def on_done(self):
         pass
 
-    def _learn(self):
+    def learn(self):
         ti = time.time()
-
         samples = self.samples_queue.get()
-        observations, actions, weights, indices, ids = (
-            samples.observations,
-            torch.from_numpy(samples.actions).to(self.device).long(),
-            torch.from_numpy(samples.weights).to(self.device).to(torch.float32),
-            samples.indices,
-            samples.ids,
-        )
-        compute_target_distributions_input = {
-            "next_observations": samples.next_observations,
-            "rewards": samples.rewards,
-            "dones": samples.dones,
-        }
-        online_distributions = self.predict(observations)[
-            range(self.config.minibatch_size), actions
-        ]
-        target_distributions = self.compute_target_distributions(
-            compute_target_distributions_input
-        )
-        elementwise_loss = self.config.loss_function(
-            online_distributions, target_distributions
-        )
-        assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-            elementwise_loss
-        )
-        assert elementwise_loss.shape == weights.shape, "Loss Shape: {}".format(
-            elementwise_loss.shape
-        )
-        weighted_loss = elementwise_loss * weights
-        self.optimizer.zero_grad()
-        weighted_loss.mean().backward()
-        if self.config.clipnorm:
-            clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-
-        self.optimizer.step()
-        loss_for_prior: torch.Tensor = (
-            elementwise_loss.detach().to("cpu").numpy() + self.config.per_epsilon
-        )
-
-        try:
-            self.updates_queue.put(
-                Update(ids=ids, indices=indices, losses=loss_for_prior.numpy()),
-                block=False,
-            )
-        except queue.Full:
-            logger.warning("updates queue full, dropping update")
-            pass
-
-        self.model.reset_noise()
-        self.target_model.reset_noise()
+        loss = super().learn_from_sample(samples)
         logger.info(f"experience replay took {time.time()-ti} s")
-        return weighted_loss.detach().to("cpu").mean().item()
+        return loss
+
+    def update_replay_priorities(self, samples, priorities):
+        # return super().update_replay_priorities(samples, priorities)
+        pass
 
     def run(self):
         try:
@@ -153,12 +106,7 @@ class ApeXLearnerBase(RainbowAgent):
                     self.store_weights()
                     logger.info("pushed params")
 
-                # This beta gets send over to the remote replay buffer
-                self.per_sample_beta = update_per_beta(
-                    self.per_sample_beta, 1.0, self.training_steps
-                )
-
-                loss = self._learn()
+                loss = self.learn()
                 target_model_updated = False
                 if training_step % self.config.transfer_interval == 0:
                     self.update_target_model(training_step)
@@ -180,6 +128,8 @@ class ApeXLearnerBase(RainbowAgent):
                         if avg < 10:
                             return  # could do stopping param as the slope of line of best fit
 
+                self.on_training_step_end()
+
             logger.info("loop done")
 
             self.save_checkpoint(
@@ -192,10 +142,13 @@ class ApeXLearnerBase(RainbowAgent):
             self.on_done()
 
 
-import zmq
-import message_codes
+import torch.distributed.rpc as rpc
+import os
+import socket
 
-import entities.replayMemory_capnp as replayMemory_capnp
+
+from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
+from dqn.rainbow.rainbow_network import RainbowNetwork
 
 
 class ApeXLearner(ApeXLearnerBase):
@@ -204,102 +157,82 @@ class ApeXLearner(ApeXLearnerBase):
         self.updates_queue = queue.Queue()
         self.config = config
 
-        storage_config = StorageConfig(
-            hostname=self.config.storage_hostname,
-            port=self.config.storage_port,
-            username=self.config.storage_username,
-            password=self.config.storage_password,
+        # torch rpc initialization
+        os.environ["MASTER_ADDR"] = socket.getfqdn()  # learner is the master
+        os.environ["MASTER_PORT"] = self.config.rpc_port
+
+        # for cuda to cuda rpc
+        options = rpc.TensorPipeRpcBackendOptions()
+        for callee in ["parameter_server", "replay_server"]:
+            options.set_device_map(callee, {"cuda:0": "cuda:0"})
+
+        # +1 spectator, +1 parameter server, +1 replay server
+        rpc.init_rpc("learner", options, 0, self.config.num_actors + 3)
+
+        # use WorkerInfo instead of expensive strings, "Use this WorkerInfo to avoid passing an expensive string on every invocation."
+        self.replay_worker_info = rpc.get_worker_info("replay_server")
+        self.parameter_worker_info = rpc.get_worker_info("parameter_server")
+
+        # create remote references (rref)s to the online_network, target_network, (parameter server) and replay buffer (replay memory server)
+        rainbow_network_args = (
+            config,
+            self.num_actions,
+            (self.config.minibatch_size,) + self.observation_dimensions,
+        )
+        replay_buffer_args = (
+            self.observation_dimensions,
+            self.config.replay_buffer_size,
+            self.config.minibatch_size,
+            1.0,
+            self.config.per_alpha,
+            self.config.per_beta,
+            self.config.n_step,
+            self.config.discount_factor,
+        )
+        self.online_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
+            self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+        )
+        self.target_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
+            self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+        )
+        self.replay_rref: rpc.RRef[PrioritizedNStepReplayBuffer] = rpc.remote(
+            self.replay_worker_info, PrioritizedNStepReplayBuffer, replay_buffer_args
         )
 
-        # the learner will reset the storage's model weights on initialization
-        reset = True
+        # if the start training step is not zero, attempt to load states from a checkpoint onto the remote server
         if self.start_training_step != 0:
-            reset = False
-        self.storage = Storage(storage_config, reset)
+            raise "starting from checkpoint not implemented yet"
+            # self.load_from_checkpoint() ...
 
-    def handle_replay_socket(self, flag: threading.Event):
-        ctx = zmq.Context()
-
-        replay_socket = ctx.socket(zmq.REQ)
-        replay_url = f"tcp://{self.config.replay_addr}:{self.config.replay_port}"
-
-        logger.info(f"learner connecting to replay buffer at {replay_url}")
-        replay_socket.connect(replay_url)
-
-        # alternate between getting samples and updating priorities
-        while not flag.is_set():
-            active = False
-            if self.samples_queue.qsize() < self.config.samples_queue_size:
-                logger.info("requesting batch")
-                replay_socket.send(message_codes.LEARNER_REQUESTS_BATCH, zmq.SNDMORE)
-                replay_socket.send_string(str(self.per_sample_beta))
-
-                logger.info("wating for batch")
-                res = replay_socket.recv()
-                if res == b"":  # empty message
-                    logger.info("no batch recieved, continuing and waiting")
-                    time.sleep(1)
-                    continue
-                logger.info("recieved batch")
-
-                samples = replayMemory_capnp.TransitionBatch.from_bytes_packed(res)
-
-                self.samples_queue.put(
-                    Sample(
-                        ids=np.frombuffer(samples.ids, dtype=np.object_),
-                        indices=np.frombuffer(samples.indices),
-                        actions=np.frombuffer(samples.actions),
-                        observations=np.frombuffer(
-                            decompress_bytes(samples.observations)
-                        ),
-                        next_observations=np.frombuffer(
-                            decompress_bytes(samples.nextObservations)
-                        ),
-                        weights=np.frombuffer(samples.weights),
-                        rewards=np.frombuffer(samples.rewards),
-                        dones=np.frombuffer(samples.dones),
-                    )
-                )
-                active = True
-            else:
-                logger.debug("queue full")
-
-            try:
-                t = self.updates_queue.get(block=False)
-                active = True
-                ids, indices, losses = t
-                update = replayMemory_capnp.PriorityUpdate.new_message()
-                update.ids = ids.tobytes()
-                update.indices = indices.tobytes()
-                update.losses = losses.tobytes()
-
-                replay_socket.send(message_codes.LEARNER_UPDATE_PRIORITIES, zmq.SNDMORE)
-                replay_socket.send(update.to_bytes_packed())
-                replay_socket.recv()
-            except queue.Empty:
-                logger.debug("no updates to send, continuing")
-
-            if not active:
-                time.sleep(1)
+        # update the remote references with the current weights
+        self.store_weights()
 
     def on_save(self):
-        pass
-        # trigger replay buffer save to file with zmq
+        self.replay_buffer = self.replay_rref.to_here(0)
 
     def on_load(self):
         self.store_weights()
-        # trigger replay buffer load from file with zmq
+        # TODO - send a copy of the replay buffer state to the remote replay server
+        # self.replay_rref.rpc_sync()...
 
     def store_weights(self):
-        self.storage.store_models(self.model, self.target_model)
+        self.target_network_rref.rpc_async().load_state_dict(
+            self.target_model.state_dict()
+        )
+        self.online_network_rref.rpc_async().load_state_dict(
+            self.target_model.state_dict()
+        )
+
+    def update_replay_priorities(self, samples, priorities):
+        self.updates_queue.put(
+            Update(ids=samples["ids"], indices=samples["indices"], priorities=priorities)
+        )
 
     def on_run(self):
         self.flag = threading.Event()
 
-        state, info = self.env.reset()
-        self.select_actions(state)
         self.replay_thread = threading.Thread(
-            target=self.handle_replay_socket, args=(self.flag,)
+            target=self._handle_replay_socket, args=(self.flag,)
         )
         self.replay_thread.daemon = True
         self.replay_thread.start()
@@ -307,3 +240,39 @@ class ApeXLearner(ApeXLearnerBase):
     def on_done(self):
         self.flag.set()
         self.replay_thread.join()
+
+    def on_training_step_end(self):
+        super().on_training_step_end()
+
+        # This beta gets send over to the remote replay buffer
+        self.replay_rref.rpc_async(30).set_beta(
+            update_per_beta(self.per_sample_beta, 1.0, self.training_steps)
+        )
+
+    def _handle_replay_socket(self, flag: threading.Event):
+        while not flag.is_set():
+            active = False
+            if self.samples_queue.qsize() < self.config.samples_queue_size:
+                logger.info("requesting batch")
+                samples = self.replay_rref.rpc_async().sample()
+                logger.info("wating for batch")
+                if samples == None:  # empty message
+                    logger.info("no batch recieved, continuing and waiting")
+                    time.sleep(1)
+                    continue
+                logger.info("recieved batch")
+
+                self.samples_queue.put(samples)
+                active = True
+            else:
+                logger.debug("queue full")
+
+            try:
+                t = self.updates_queue.get(block=False)  # (indices, priorities, ids)
+                active = True
+                self.replay_rref.rpc_async().update_priorities(*t)
+            except queue.Empty:
+                logger.debug("no updates to send, continuing")
+
+            if not active:
+                time.sleep(1)

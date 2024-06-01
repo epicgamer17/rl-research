@@ -49,6 +49,9 @@ class PrioritizedReplayBuffer(BaseDQNReplayBuffer):
         self.min_tree[self.tree_pointer] = priority**self.alpha
         self.tree_pointer = (self.tree_pointer + 1) % self.max_size
 
+    def set_beta(self, beta: float):
+        self.beta = beta
+
     def sample(self):
         assert (
             len(self) >= self.batch_size
