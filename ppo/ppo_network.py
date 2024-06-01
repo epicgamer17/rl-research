@@ -222,7 +222,6 @@ class ActorNetwork(nn.Module):
             x = self.dense_layers(x)
         if self.discrete:
             actions = self.actions(x)
-            print(actions.shape)
             return actions.softmax(dim=-1)
         else:
             mean = self.mean(x).tanh(dim=-1)

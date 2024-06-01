@@ -109,6 +109,31 @@ def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int)
     return per_beta
 
 
+def update_linear_lr_schedule(
+    learning_rate: float,
+    final_value: float,
+    total_steps: int,
+    initial_value: float = None,
+    current_step: int = None,
+):
+    # learning_rate = initial_value
+    if initial_value < final_value or learning_rate < final_value:
+        clamp_func = min
+    else:
+        clamp_func = max
+    if initial_value is not None and current_step is not None:
+        learning_rate = clamp_func(
+            final_value,
+            initial_value
+            + (final_value - initial_value) * (current_step / total_steps),
+        )
+    else:
+        learning_rate = clamp_func(
+            final_value, learning_rate + (final_value - learning_rate) / total_steps
+        )
+    return learning_rate
+
+
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
