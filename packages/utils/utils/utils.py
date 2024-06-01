@@ -29,16 +29,22 @@ import pandas as pd
 
 
 def normalize_policy(policy: np.float16):
-    policy = policy.sum(axis=1, keepdims=False)
+    policy /= policy.sum(axis=-1, keepdims=False)
     return policy
 
 
 def action_mask(
     actions: Tensor, legal_moves, num_actions: int, mask_value: float = 0
 ) -> Tensor:
+    """
+    Mask actions that are not legal moves
+    actions: Tensor, probabilities of actions or q-values
+    """
+    # print(legal_moves)
     mask = np.zeros(num_actions, dtype=np.int8)
     mask[legal_moves] = 1
-    actions[:, mask == 0] = mask_value
+    # print(mask)
+    actions[mask == 0] = mask_value
     return actions
 
 
@@ -101,31 +107,6 @@ def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int)
     )
 
     return per_beta
-
-
-def update_linear_lr_schedule(
-    learning_rate: float,
-    final_value: float,
-    total_steps: int,
-    initial_value: float = None,
-    current_step: int = None,
-):
-    # learning_rate = initial_value
-    if initial_value < final_value or learning_rate < final_value:
-        clamp_func = min
-    else:
-        clamp_func = max
-    if initial_value is not None and current_step is not None:
-        learning_rate = clamp_func(
-            final_value,
-            initial_value
-            + (final_value - initial_value) * (current_step / total_steps),
-        )
-    else:
-        learning_rate = clamp_func(
-            final_value, learning_rate + (final_value - learning_rate) / total_steps
-        )
-    return learning_rate
 
 
 def default_plot_func(
@@ -693,30 +674,43 @@ def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[
 
 
 def hyperopt_analysis(
-    data_dir: str, trials_file_name: str, viable_trial_threshold: int, step: int
+    data_dir: str,
+    trials_file_name: str,
+    viable_trial_threshold: int,
+    step: int,
+    final_trial: int = 0,
+    eval_method: str = "final_score",
 ):
     trials = pickle.load(open(f"{data_dir}/{trials_file_name}", "rb"))
-    print("Number of trials: {}".format(len(trials.trials)))
+    if final_trial > 0:
+        print("Number of trials: {}".format(final_trial))
+    else:
+        print("Number of trials: {}".format(len(trials.trials)))
     # losses.sort()
     # print(len(os.listdir(f"{data_dir}/checkpoints")) - 1)
     # print(len(trials.trials))
 
     checkpoints = os.listdir(f"{data_dir}/checkpoints")
-    checkpoints.remove("videos")
+    checkpoints.remove("videos") if "videos" in checkpoints else None
     checkpoints.remove(".DS_Store") if ".DS_Store" in checkpoints else None
     checkpoints.sort(key=lambda x: int(x.split("_")[-1]))
+    if final_trial > 0:
+        checkpoints = checkpoints[:final_trial]
+
     viable_throughout_trials = []
     final_rolling_averages = []
     final_std_devs = []
+    scores = []
     losses = []
     failed_trials = 0
     for i, trial in enumerate(trials.trials):
-        loss = trial["result"]["loss"]
+        losses.append(trial["result"]["loss"])
+        if final_trial > 0 and i >= final_trial:
+            break
         # print(trial["result"]["status"])
         if trial["result"]["status"] == "fail":
             failed_trials += 1
-            final_rolling_averages.append(loss)
-            final_std_devs.append(0)
+            final_rolling_averages.append(trial["result"]["loss"])
         else:
             # print(checkpoints[i - failed_trials])
             # print(failed_trials)
@@ -756,56 +750,67 @@ def hyperopt_analysis(
 
             if max_score > viable_trial_threshold:
                 viable_throughout_trials.append(max_score)
-
-        losses.append(-loss)
+        if eval_method == "final_score":
+            score = -trial["result"]["loss"]
+        elif (
+            eval_method == "rolling_average"
+            or eval_method == "final_score_rolling_average"
+        ):
+            score = stats["test_score"][-1]["score"]
+        scores.append(score)
 
     res = [
         list(x)
         for x in zip(
             *sorted(
-                zip(losses, final_rolling_averages, final_std_devs), key=itemgetter(0)
+                zip(losses, scores, final_rolling_averages, final_std_devs),
+                key=itemgetter(0),
             )
         )
     ]
     losses = res[0]
-    final_rolling_averages = res[1]
-    final_std_devs = res[2]
-    viable_trials = [loss for loss in losses if loss > viable_trial_threshold]
+    scores = res[1]
+    final_rolling_averages = res[2]
+    final_std_devs = res[3]
+    viable_trials = [score for score in scores if score > viable_trial_threshold]
 
-    print("Failed trials: ~{}%".format(round(failed_trials / len(losses) * 100)))
+    print("Failed trials: ~{}%".format(round(failed_trials / len(scores) * 100)))
 
     print(
         "Viable trials (based on final score): ~{}%".format(
-            round(len(viable_trials) / len(losses) * 100)
+            round(len(viable_trials) / len(scores) * 100)
         )
     )
     print(
         "Viable trials (throughout training): ~{}%".format(
-            round(len(viable_throughout_trials) / len(losses) * 100)
+            round(len(viable_throughout_trials) / len(scores) * 100)
         )
     )
 
-    print("Scores: {}".format(losses))
+    print("Losses: {}".format(losses))
+    print("Scores: {}".format(scores))
     print("Final rolling averages: {}".format(final_rolling_averages))
     print("Final standard deviations: {}".format(final_std_devs))
 
-    print("Max score: {}".format(max(losses)))
+    print("Max loss: {}".format(max(losses)))
+    print("Max score: {}".format(max(scores)))
     print("Max final rolling average: {}".format(max(final_rolling_averages)))
     print("Max final standard deviation: {}".format(max(final_std_devs)))
 
-    print("Average score: {}".format(np.mean(losses)))
+    print("Average loss: {}".format(np.mean(losses)))
+    print("Average score: {}".format(np.mean(scores)))
     print("Average final rolling average: {}".format(np.mean(final_rolling_averages)))
     print("Average final standard deviation: {}".format(np.mean(final_std_devs)))
 
     viable_final_rolling_averages = [
         final_rolling_averages[i]
-        for i, loss in enumerate(losses)
+        for i, loss in enumerate(scores)
         if loss > viable_trial_threshold
     ]
 
     viable_std_devs = [
         final_std_devs[i]
-        for i, loss in enumerate(losses)
+        for i, loss in enumerate(scores)
         if loss > viable_trial_threshold
     ]
 

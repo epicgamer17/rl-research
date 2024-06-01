@@ -22,9 +22,25 @@ from utils import make_stack, normalize_images_, get_legal_moves, plot_graphs
 
 
 class BaseAgent:
-    def __init__(self, env: gym.Env, config: Config, name):
+    def __init__(
+        self,
+        env: gym.Env,
+        config: Config,
+        name,
+        device: torch.device = (
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
+            # else (
+            #     torch.device("mps")
+            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+            else torch.device("cpu")
+            # )
+        ),
+    ):
         self.model_name = name
         self.config = config
+        self.device = device
 
         self.env = env
         # self.test_env = copy.deepcopy(env)
@@ -261,8 +277,8 @@ class BaseAgent:
                 while not done:
                     prediction = self.predict(state)
                     action = self.select_actions(prediction, legal_moves).item()
-                    next_state, reward, terminated, truncated, info = self.test_env.step(
-                        action
+                    next_state, reward, terminated, truncated, info = (
+                        self.test_env.step(action)
                     )
                     # self.test_env.render()
                     done = terminated or truncated

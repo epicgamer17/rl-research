@@ -15,9 +15,11 @@ class Network(nn.Module):
         if discrete:
             assert output_size > 0
 
+        print(input_shape)
+
         super(Network, self).__init__()
-        self.actor = ActorNetwork(config, input_shape, output_size, discrete)
         self.critic = CriticNetwork(config, input_shape)
+        self.actor = ActorNetwork(config, input_shape, output_size, discrete)
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         self.actor.initialize(initializer)
@@ -31,14 +33,14 @@ class CriticNetwork(nn.Module):
     def __init__(self, config: PPOConfig, input_shape: Tuple[int], *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = config
-        self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = len(config.dense_layers_widths) > 0
+        self.has_conv_layers = len(config.critic_conv_layers) > 0
+        self.has_dense_layers = len(config.critic_dense_layer_widths) > 0
 
         current_shape = input_shape
         B = current_shape[0]
         if self.has_conv_layers:
             assert len(input_shape) == 4
-            filters, kernel_sizes, strides = to_lists(config.conv_layers)
+            filters, kernel_sizes, strides = to_lists(config.critic_conv_layers)
 
             # (B, C_in, H, W) -> (B, C_out H, W)
             self.conv_layers = Conv2dStack(
@@ -66,7 +68,7 @@ class CriticNetwork(nn.Module):
             # (B, width_in) -> (B, width_out)
             self.dense_layers = DenseStack(
                 initial_width=initial_width,
-                widths=self.config.dense_layers_widths,
+                widths=self.config.critic_dense_layer_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
             )
@@ -100,11 +102,9 @@ class CriticNetwork(nn.Module):
 
         x = inputs
         if self.has_conv_layers:
-            for layer in self.conv_layers:
-                x = layer(x)
+            x = self.conv_layers(x)
         if self.has_dense_layers:
-            for layer in self.dense_layers:
-                x = layer(x)
+            x = self.dense_layers(x)
         value = self.value(x)
         return value
 
@@ -120,23 +120,23 @@ class ActorNetwork(nn.Module):
     def __init__(
         self,
         config: PPOConfig,
-        output_size: int,
         input_shape: Tuple[int],
+        output_size: int,
         discrete: bool,
         *args,
         **kwargs
     ):
         super().__init__(*args, **kwargs)
         self.config = config
-        self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = len(config.dense_layers_widths) > 0
+        self.has_conv_layers = len(config.actor_conv_layers) > 0
+        self.has_dense_layers = len(config.actor_dense_layer_widths) > 0
         self.discrete = discrete
 
         current_shape = input_shape
         B = current_shape[0]
         if self.has_conv_layers:
             assert len(input_shape) == 4
-            filters, kernel_sizes, strides = to_lists(config.conv_layers)
+            filters, kernel_sizes, strides = to_lists(config.actor_conv_layers)
 
             # (B, C_in, H, W) -> (B, C_out H, W)
             self.conv_layers = Conv2dStack(
@@ -164,7 +164,7 @@ class ActorNetwork(nn.Module):
             # (B, width_in) -> (B, width_out)
             self.dense_layers = DenseStack(
                 initial_width=initial_width,
-                widths=self.config.dense_layers_widths,
+                widths=self.config.actor_dense_layer_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
             )
@@ -204,7 +204,9 @@ class ActorNetwork(nn.Module):
         if self.has_dense_layers:
             self.dense_layers.initialize(initializer)
         if self.discrete:
-            self.actions.initialize(initializer)  # OUTPUT LAYER
+            self.actions.initialize(
+                initializer
+            )  # OUTPUT LAYER TO IMPLIMENT INTIALIZING WITH CONSTANT OF 0.01
         else:
             self.mean.initialize(initializer)  # OUTPUT LAYER
             self.std.initialize(initializer)  # OUTPUT LAYER
@@ -215,13 +217,12 @@ class ActorNetwork(nn.Module):
 
         x = inputs
         if self.has_conv_layers:
-            for layer in self.conv_layers:
-                x = layer(x)
+            x = self.conv_layers(x)
         if self.has_dense_layers:
-            for layer in self.dense_layers:
-                x = layer(x)
+            x = self.dense_layers(x)
         if self.discrete:
             actions = self.actions(x)
+            print(actions.shape)
             return actions.softmax(dim=-1)
         else:
             mean = self.mean(x).tanh(dim=-1)

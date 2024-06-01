@@ -237,9 +237,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         )
 
     def clear(self):
-        observation_buffer_shape = calculate_observation_buffer_shape(
-            self.observation_dimensions, self.max_size
-        )
+        observation_buffer_shape = (self.max_size,) + self.observation_dimensions
         self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
         self.action_buffer = np.zeros(self.max_size, dtype=np.int8)
         self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)

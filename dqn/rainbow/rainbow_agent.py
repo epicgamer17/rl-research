@@ -31,9 +31,7 @@ class RainbowAgent(BaseAgent):
             # )
         ),
     ):
-        super(RainbowAgent, self).__init__(env, config, name)
-        self.config = config
-        self.device = device
+        super(RainbowAgent, self).__init__(env, config, name, device=device)
         self.model = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
@@ -156,7 +154,7 @@ class RainbowAgent(BaseAgent):
             loss = elementwise_loss * weights_cuda
             self.optimizer.zero_grad()
             loss.mean().backward()
-            if self.config.clipnorm:
+            if self.config.clipnorm > 0:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
 
             self.optimizer.step()
