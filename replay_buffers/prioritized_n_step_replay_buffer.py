@@ -64,12 +64,17 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
 
         return transition
 
-    def sample(self):
-        assert (
-            len(self) >= self.batch_size
-        ), "Only {} elements in buffer expected at least {}".format(
-            len(self), self.batch_size
-        )
+    def set_beta(self, beta: float):
+        self.beta = beta
+
+    def sample(self, throw_exception=True) -> dict:
+        if len(self) < self.batch_size:
+            if throw_exception:
+                raise "Only {} elements in buffer expected at least {}".format(
+                    len(self), self.batch_size
+                )
+            else:
+                return None
 
         indices = self._sample_proportional()
         weights = np.array([self._calculate_weight(i) for i in indices])
@@ -100,9 +105,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             assert priorities.shape == ids.shape == indices.shape
 
             for index, id, priority in zip(indices, ids, priorities):
-                assert (
-                    priority > 0
-                ), "Negative priority: {} \n All priorities {}".format(
+                assert priority > 0, "Negative priority: {} \n All priorities {}".format(
                     priority, priorities
                 )
                 assert 0 <= index < len(self)

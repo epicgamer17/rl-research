@@ -122,23 +122,27 @@ class RainbowAgent(BaseAgent):
         losses = np.zeros(self.config.training_iterations)
         for i in range(self.config.training_iterations):
             samples = self.replay_buffer.sample()
-            observations, weights, indices, actions = (
-                samples["observations"],
-                samples["weights"],
-                samples["indices"],
-                torch.from_numpy(samples["actions"]).to(self.device).long(),
-            )
-            # print("actions", actions)
+            loss = self.learn_from_sample(samples)
+            losses[i] = loss
+        return losses
 
-            # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
-            online_distributions = self.predict(observations)[
-                range(self.config.minibatch_size), actions
-            ]
+    def learn_from_sample(self, samples: dict):
+        observations, weights, actions = (
+            samples["observations"],
+            samples["weights"],
+            torch.from_numpy(samples["actions"]).to(self.device).long(),
+        )
+        # print("actions", actions)
 
-            # (B, atom_size)
-            target_distributions = self.compute_target_distributions(samples)
-            # print("predicted", online_distributions)
-            # print("target", target_distributions)
+        # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
+        online_distributions = self.predict(observations)[
+            range(self.config.minibatch_size), actions
+        ]
+
+        # (B, atom_size)
+        target_distributions = self.compute_target_distributions(samples)
+        # print("predicted", online_distributions)
+        # print("target", target_distributions)
 
             weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
             # (B)
@@ -157,16 +161,18 @@ class RainbowAgent(BaseAgent):
             if self.config.clipnorm > 0:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
 
-            self.optimizer.step()
-            loss = loss.detach().to("cpu")
-            loss_for_prior = elementwise_loss.detach().to("cpu").numpy()
-            self.replay_buffer.update_priorities(
-                indices, loss_for_prior + self.config.per_epsilon
-            )
-            self.model.reset_noise()
-            self.target_model.reset_noise()
-            losses[i] = loss.mean().item()
-        return losses
+        self.optimizer.step()
+        self.update_replay_priorities(
+            samples=samples,
+            priorities=elementwise_loss.detach().to("cpu").numpy()
+            + self.config.per_epsilon,
+        )
+        self.model.reset_noise()
+        self.target_model.reset_noise()
+        return loss.detach().to("cpu").mean().item()
+
+    def update_replay_priorities(self, samples, priorities):
+        self.replay_buffer.update_priorities(samples["indices"], priorities)
 
     def compute_target_distributions(self, samples):
         with torch.no_grad():
@@ -257,8 +263,8 @@ class RainbowAgent(BaseAgent):
                     self.replay_buffer.store(state, action, reward, next_state, done)
                     state = next_state
                     score += reward
-                    self.replay_buffer.beta = update_per_beta(
-                        self.replay_buffer.beta, 1.0, self.training_steps
+                    self.replay_buffer.set_beta(
+                        update_per_beta(self.replay_buffer.beta, 1.0, self.training_steps)
                     )
 
                     if done:

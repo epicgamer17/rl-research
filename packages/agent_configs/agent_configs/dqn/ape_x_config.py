@@ -19,6 +19,8 @@ class ApeXLearnerConfig(ApeXConfig, DistributedLearnerConfig):
         super(ApeXLearnerConfig, self).__init__(config_dict, game_config)
         super(DistributedLearnerConfig, self).__init__(config_dict)
 
+        self.num_actors: int = self.parse_field("num_actors", required=True)
+
 
 class ApeXActorConfig(ApeXConfig, DistributedActorConfig):
     def __init__(self, config_dict, game_config):
