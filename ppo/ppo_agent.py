@@ -131,11 +131,11 @@ class PPOAgent(BaseAgent):
             mean, std = self.model.actor(inputs)
             distribution = torch.distributions.Normal(mean, std)
 
-        tensor_actions = (
-            torch.clone(actions).to(torch.float16).detach().requires_grad_(True)
-        )
+        # tensor_actions = (
+        #     torch.clone(actions).to(torch.float16).detach().requires_grad_(True)
+        # )
 
-        log_ratios = distribution.log_prob(tensor_actions) - log_probabilities
+        log_ratios = distribution.log_prob(actions) - log_probabilities
 
         probability_ratios = torch.exp(log_ratios)
         # min_advantages = tf.where(
@@ -162,7 +162,7 @@ class PPOAgent(BaseAgent):
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         if self.config.actor.clipnorm > 0:
-            clip_grad_norm_(self.model.actor.parameters(), self.config.clipnorm)
+            clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
 
         self.actor_optimizer.step()
         with torch.no_grad():
@@ -185,15 +185,17 @@ class PPOAgent(BaseAgent):
 
         critic_loss = (
             self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
-        )
+        ).mean()
 
+        print("critic loss", critic_loss)
+        print(critic_loss.requires_grad)
         self.critic_optimizer.zero_grad()
-        critic_loss.mean().backward()
+        critic_loss.backward()
         if self.config.critic.clipnorm > 0:
-            clip_grad_norm_(self.model.critic.parameters(), self.config.clipnorm)
+            clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
 
         self.critic_optimizer.step()
-        return critic_loss.mean().detach()
+        return critic_loss.detach()
 
     def train(self):
         training_time = time()
@@ -312,6 +314,8 @@ class PPOAgent(BaseAgent):
                     batch_indices = indices[start:end]
                     batch_observations = inputs[batch_indices]
                     batch_returns = returns[batch_indices]
+                    print("indices batch", batch_indices)
+                    print("returns batch", batch_returns)
                     critic_loss = self.critic_learn(
                         batch_observations,
                         batch_returns,

@@ -159,6 +159,7 @@ class RainbowAgent(BaseAgent):
         self.optimizer.zero_grad()
         loss.mean().backward()
         if self.config.clipnorm > 0:
+            print("clipnorm", self.config.clipnorm)
             clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
 
         self.optimizer.step()

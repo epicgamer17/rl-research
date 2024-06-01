@@ -418,6 +418,8 @@ def prepare_activations(activation: str):
         return nn.Softsign()
     elif activation == "silu" or activation == "swish":
         return nn.SiLU()
+    elif activation == "tanh":
+        return nn.Tanh()
     # elif activation == "log_sigmoid":
     #     return nn.LogSigmoid()
     elif activation == "hard_sigmoid":
