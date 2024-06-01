@@ -23,11 +23,12 @@ class RainbowAgent(BaseAgent):
         device: torch.device = (
             torch.device("cuda")
             if torch.cuda.is_available()
-            else (
-                torch.device("mps")
-                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-                else torch.device("cpu")
-            )
+            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
+            # else (
+            #     torch.device("mps")
+            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+            else torch.device("cpu")
+            # )
         ),
     ):
         super(RainbowAgent, self).__init__(env, config, name)

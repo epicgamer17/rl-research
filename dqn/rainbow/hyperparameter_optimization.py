@@ -8,9 +8,10 @@ import gc
 
 import sys
 
-# sys.path.append("../..")
-# from dqn.rainbow.rainbow_agent import RainbowAgent
-from rainbow_agent import RainbowAgent
+sys.path.append("../..")
+from dqn.rainbow.rainbow_agent import RainbowAgent
+
+# from rainbow_agent import RainbowAgent
 from game_configs import CartPoleConfig
 
 global file_name
@@ -21,11 +22,11 @@ def run_training(args):
     m = RainbowAgent(
         env=args[1],
         config=RainbowConfig(args[0], CartPoleConfig()),
-        name="{}_{}".format(args[2], args[1].unwrapped.spec.id),
+        name="{}".format(args[2]),
     )
     m.train()
     print("Training complete")
-    return -m.test(num_trials=10, step=5000, dir=f"{home_dir}/checkpoints/")["score"]
+    return -m.test(num_trials=10, step=5000, dir=f"./checkpoints/")["score"]
 
 
 def objective(params):
@@ -33,10 +34,11 @@ def objective(params):
     print("Params: ", params)
     print("Making environments")
     env = gym.make("CartPole-v1", render_mode="rgb_array")
-
-    if os.path.exists("./{file_name}_trials.p"):
-        trials = pickle.load(open(f"{home_dir}/{file_name}_trials.p", "rb"))
-        name = "{}_{}".format(len(file_name, trials.trials) + 1)
+    print(file_name)
+    # print(home_dir)
+    if os.path.exists(f"./{file_name}_trials.p"):
+        trials = pickle.load(open(f"./{file_name}_trials.p", "rb"))
+        name = "{}_{}".format(file_name, len(trials.trials) + 1)
     else:
         name = f"{file_name}_1"
     # name = datetime.datetime.now().timestamp()
@@ -47,7 +49,7 @@ def objective(params):
     ).T
 
     entry.to_csv(
-        f"{home_dir}/{file_name}_results.csv",
+        f"./{file_name}_results.csv",
         mode="a",
         header=False,
     )
@@ -87,12 +89,12 @@ if __name__ == "__main__":
     search_space = pickle.load(open(search_space_path, "rb"))
     initial_best_config = pickle.load(open(initial_best_config_path, "rb"))
     file_name = sys.argv[3]
-    home_dir = sys.argv[4]
+    # home_dir = sys.argv[4]
     max_trials = 64
     trials_step = 64  # how many additional trials to do after loading the last ones
 
     try:  # try to load an already saved trials object, and increase the max
-        trials = pickle.load(open(f"{home_dir}/{file_name}_trials.p", "rb"))
+        trials = pickle.load(open(f"./{file_name}_trials.p", "rb"))
         print("Found saved Trials! Loading...")
         max_trials = len(trials.trials) + trials_step
         print(
@@ -110,7 +112,7 @@ if __name__ == "__main__":
         max_evals=max_trials,  # Number of optimization attempts
         trials=trials,  # Record the results
         # early_stop_fn=no_progress_loss(5, 1),
-        trials_save_file=f"{home_dir}/{file_name}_trials.p",
+        trials_save_file=f"./{file_name}_trials.p",
         # points_to_evaluate=initial_best_config,
         show_progressbar=False,
     )
