@@ -144,22 +144,22 @@ class RainbowAgent(BaseAgent):
         # print("predicted", online_distributions)
         # print("target", target_distributions)
 
-            weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
-            # (B)
-            elementwise_loss = self.config.loss_function(
-                online_distributions, target_distributions
-            )
-            assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-                elementwise_loss
-            )
-            assert (
-                elementwise_loss.shape == weights_cuda.shape
-            ), "Loss Shape: {}".format(elementwise_loss.shape)
-            loss = elementwise_loss * weights_cuda
-            self.optimizer.zero_grad()
-            loss.mean().backward()
-            if self.config.clipnorm > 0:
-                clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+        weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
+        # (B)
+        elementwise_loss = self.config.loss_function(
+            online_distributions, target_distributions
+        )
+        assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
+            elementwise_loss
+        )
+        assert elementwise_loss.shape == weights_cuda.shape, "Loss Shape: {}".format(
+            elementwise_loss.shape
+        )
+        loss = elementwise_loss * weights_cuda
+        self.optimizer.zero_grad()
+        loss.mean().backward()
+        if self.config.clipnorm > 0:
+            clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
 
         self.optimizer.step()
         self.update_replay_priorities(
@@ -264,7 +264,9 @@ class RainbowAgent(BaseAgent):
                     state = next_state
                     score += reward
                     self.replay_buffer.set_beta(
-                        update_per_beta(self.replay_buffer.beta, 1.0, self.training_steps)
+                        update_per_beta(
+                            self.replay_buffer.beta, 1.0, self.training_steps
+                        )
                     )
 
                     if done:
