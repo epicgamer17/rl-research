@@ -275,19 +275,18 @@ def plot_exploitability(
     default_plot_func(axs, key, values, targets, row, col)
 
 
-def plot_trials(trials: dict, file_name: str, final_trial: int = 0):
+def plot_trials(scores: list, file_name: str, final_trial: int = 0):
     fig, axs = plt.subplots(
         1,
         1,
         figsize=(10, 5),
         squeeze=False,
     )
-    scores = [-trial["result"]["loss"] for trial in trials.trials]
     if final_trial > 0:
         x = np.arange(1, final_trial + 1)
         scores = scores[:final_trial]
     else:
-        x = np.arange(1, len(trials.trials) + 1)
+        x = np.arange(1, len(scores) + 1)
     axs[0][0].scatter(x, scores)
     best_fit_x, best_fit_y = np.polyfit(x, scores, 1)
     axs[0][0].plot(
@@ -702,13 +701,13 @@ def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[
 
 def hyperopt_analysis(
     data_dir: str,
-    trials_file_name: str,
+    file_name: str,
     viable_trial_threshold: int,
     step: int,
     final_trial: int = 0,
     eval_method: str = "final_score",
 ):
-    trials = pickle.load(open(f"{data_dir}/{trials_file_name}", "rb"))
+    trials = pickle.load(open(f"{data_dir}/{file_name}.p", "rb"))
     if final_trial > 0:
         print("Number of trials: {}".format(final_trial))
     else:
@@ -785,6 +784,12 @@ def hyperopt_analysis(
         ):
             score = stats["test_score"][-1]["score"]
         scores.append(score)
+
+    plot_trials(
+        scores,
+        file_name,
+        final_trial=final_trial,
+    )
 
     res = [
         list(x)

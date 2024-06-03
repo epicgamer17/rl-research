@@ -159,7 +159,7 @@ class RainbowAgent(BaseAgent):
         self.optimizer.zero_grad()
         loss.mean().backward()
         if self.config.clipnorm > 0:
-            print("clipnorm", self.config.clipnorm)
+            # print("clipnorm", self.config.clipnorm)
             clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
 
         self.optimizer.step()
@@ -250,7 +250,7 @@ class RainbowAgent(BaseAgent):
         self.fill_replay_buffer()
         state, info = self.env.reset()
 
-        self.training_steps += self.start_training_step
+        # self.training_steps += self.start_training_step
         for training_step in range(self.start_training_step, self.training_steps):
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):

@@ -314,8 +314,6 @@ class PPOAgent(BaseAgent):
                     batch_indices = indices[start:end]
                     batch_observations = inputs[batch_indices]
                     batch_returns = returns[batch_indices]
-                    print("indices batch", batch_indices)
-                    print("returns batch", batch_returns)
                     critic_loss = self.critic_learn(
                         batch_observations,
                         batch_returns,
