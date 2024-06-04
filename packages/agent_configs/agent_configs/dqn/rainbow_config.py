@@ -21,11 +21,11 @@ class RainbowConfig(Config):
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.transfer_interval: int = self.parse_field("transfer_interval", 512)
         self.ema_beta: float = self.parse_field("ema_beta", 0.99)
-        self.replay_interval: int = self.parse_field("replay_interval", 4)
+        self.replay_interval: int = self.parse_field("replay_interval", 1)
         self.per_alpha: float = self.parse_field("per_alpha", 0.6)
         self.per_beta: float = self.parse_field("per_beta", 0.5)
         self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
-        self.n_step: int = self.parse_field("n_step", 5)
+        self.n_step: int = self.parse_field("n_step", 3)
         self.atom_size: int = self.parse_field("atom_size", 51)
 
         assert not (

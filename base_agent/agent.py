@@ -44,7 +44,10 @@ class BaseAgent:
 
         self.env = env
         # self.test_env = copy.deepcopy(env)
-        if hasattr(self.env, "render_mode") and self.env.render_mode == "rgb_array":
+        if hasattr(self.env, "render_mode"):
+            assert (
+                self.env.render_mode == "rgb_array"
+            ), "Video recording for test_env requires render_mode to be 'rgb_array'"
             self.test_env = gym.wrappers.RecordVideo(
                 copy.deepcopy(env),
                 ".",
