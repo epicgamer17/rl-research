@@ -72,15 +72,16 @@ def objective(params):
     status = STATUS_OK
     try:
         # add other illegal hyperparameter combinations here
-        assert params["min_replay_buffer_size"] >= params["minibatch_size"]
-        assert params["replay_buffer_size"] > params["min_replay_buffer_size"]
+        # assert params["min_replay_buffer_size"] >= params["minibatch_size"]
+        # assert params["replay_buffer_size"] > params["min_replay_buffer_size"]
+        score = run_training([params, env, name])
     except AssertionError as e:
         status = STATUS_FAIL
         print(f"exited due to invalid hyperparameter combination: {e}")
         return {"status": status, "loss": 0}
 
-    if status != STATUS_FAIL:
-        score = run_training([params, env, name])
+    # if status != STATUS_FAIL:
+    # score = run_training([params, env, name])
 
     # num_workers = len(environments_list)
     # args_list = np.array(

@@ -737,6 +737,8 @@ def hyperopt_analysis(
         if trial["result"]["status"] == "fail":
             failed_trials += 1
             final_rolling_averages.append(trial["result"]["loss"])
+            scores.append(trial["result"]["loss"])
+            final_std_devs.append(trial["result"]["loss"])
         else:
             # print(checkpoints[i - failed_trials])
             # print(failed_trials)
@@ -776,14 +778,15 @@ def hyperopt_analysis(
 
             if max_score > viable_trial_threshold:
                 viable_throughout_trials.append(max_score)
-        if eval_method == "final_score":
-            score = -trial["result"]["loss"]
-        elif (
-            eval_method == "rolling_average"
-            or eval_method == "final_score_rolling_average"
-        ):
-            score = stats["test_score"][-1]["score"]
-        scores.append(score)
+
+            if eval_method == "final_score":
+                score = -trial["result"]["loss"]
+            elif (
+                eval_method == "rolling_average"
+                or eval_method == "final_score_rolling_average"
+            ):
+                score = stats["test_score"][-1]["score"]
+            scores.append(score)
 
     plot_trials(
         scores,
