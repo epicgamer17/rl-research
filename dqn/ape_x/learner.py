@@ -241,18 +241,15 @@ class ApeXLearner(ApeXLearnerBase):
     def _start_actor(self, rank):
         env_copy = copy.deepcopy(self.env)
         config = ApeXActorConfig(self.config, self.config.game)
-        remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(
-            rank,
-            ApeXActor,
-            (
-                env_copy,
-                config,
-                f"actor_{rank}",
-                self.replay_rref,
-                self.online_network_rref,
-                self.target_network_rref,
-            ),
+        args = (
+            env_copy,
+            config,
+            f"actor_{rank}",
+            self.replay_rref,
+            self.online_network_rref,
+            self.target_network_rref,
         )
+        remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(rank, ApeXActor, args)
 
         # no timeout
         remote_actor_rref.rpc_async(-1).train().add_done_callback(
