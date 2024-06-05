@@ -8,7 +8,7 @@ import dill
 from agent_configs import Config
 import pickle
 
-from utils import make_stack, normalize_images_, get_legal_moves, plot_graphs
+from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
 
 # Every model should have:
 # 1. A network
@@ -31,11 +31,11 @@ class BaseAgent:
             torch.device("cuda")
             if torch.cuda.is_available()
             # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
-            # else (
-            #     torch.device("mps")
-            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-            else torch.device("cpu")
-            # )
+            else (
+                torch.device("mps")
+                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+                else torch.device("cpu")
+            )
         ),
     ):
         self.model_name = name
@@ -80,7 +80,7 @@ class BaseAgent:
     def train(self):
         raise NotImplementedError
 
-    def preprocess(self, states, device="cpu", dtype=torch.float32) -> torch.Tensor:
+    def preprocess(self, states, device="cpu", dtype=torch.uint8) -> torch.Tensor:
         """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
         Does not alter the input state parameter, instead creating a new Tensor on the inputted device (default cpu)
 
@@ -96,8 +96,8 @@ class BaseAgent:
 
         # convert to np.array first for performance, recoommnded by pytorch
         prepared_state = torch.from_numpy(np.array(states)).to(dtype).to(device)
-        if self.config.game.is_image:
-            normalize_images_(prepared_state)
+        # if self.config.game.is_image:
+        # normalize_images(prepared_state)
         if prepared_state.shape == self.observation_dimensions:
             prepared_state = make_stack(prepared_state)
         # print(prepared_state)

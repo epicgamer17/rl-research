@@ -1,3 +1,4 @@
+import gc
 from time import time
 import torch
 from torch.nn.utils import clip_grad_norm_
@@ -24,11 +25,11 @@ class RainbowAgent(BaseAgent):
             torch.device("cuda")
             if torch.cuda.is_available()
             # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
-            # else (
-            #     torch.device("mps")
-            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-            else torch.device("cpu")
-            # )
+            else (
+                torch.device("mps")
+                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+                else torch.device("cpu")
+            )
         ),
     ):
         super(RainbowAgent, self).__init__(env, config, name, device=device)
@@ -58,6 +59,7 @@ class RainbowAgent(BaseAgent):
 
         self.replay_buffer = PrioritizedNStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
+            observation_dtype=self.env.observation_space.dtype,
             max_size=self.config.replay_buffer_size,
             batch_size=self.config.minibatch_size,
             max_priority=1.0,
@@ -224,16 +226,19 @@ class RainbowAgent(BaseAgent):
 
     def fill_replay_buffer(self):
         with torch.no_grad():
-            state, _ = self.env.reset()
+            state, info = self.env.reset()
             for i in range(self.config.min_replay_buffer_size + self.config.n_step - 1):
-                dist = self.predict(state)
-                action = self.select_actions(dist).item()
+                print("filling replay buffer", i)
+                # dist = self.predict(state)
+                # action = self.select_actions(dist).item()
+                action = self.env.action_space.sample()
                 next_state, reward, terminated, truncated, info = self.env.step(action)
                 done = terminated or truncated
                 self.replay_buffer.store(state, action, reward, next_state, done)
                 state = next_state
                 if done:
-                    state, _ = self.env.reset()
+                    state, info = self.env.reset()
+                gc.collect()
 
     def update_target_model(self):
         if self.config.soft_update:
@@ -252,6 +257,7 @@ class RainbowAgent(BaseAgent):
 
         # self.training_steps += self.start_training_step
         for training_step in range(self.start_training_step, self.training_steps):
+            print("training step", training_step)
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     distributions = self.predict(state)
@@ -304,6 +310,8 @@ class RainbowAgent(BaseAgent):
                     training_step * self.config.replay_interval,
                     time() - start_time,
                 )
+            gc.collect()
+
         self.save_checkpoint(
             5,
             training_step,

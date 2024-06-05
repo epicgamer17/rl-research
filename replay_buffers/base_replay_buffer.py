@@ -116,10 +116,13 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
     def __init__(
         self,
         observation_dimensions: tuple,
+        observation_dtype: np.dtype,
         max_size: int,
         batch_size: int = 32,
     ):
         self.observation_dimensions = observation_dimensions
+        self._observation_dtype = observation_dtype
+        print(observation_dtype)
         super().__init__(max_size=max_size, batch_size=batch_size)
 
     def store(
@@ -148,16 +151,18 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
 
     def clear(self):
         observation_buffer_shape = (self.max_size,) + self.observation_dimensions
-        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
+        self.observation_buffer = np.zeros(
+            observation_buffer_shape, self._observation_dtype
+        )
         self.next_observation_buffer = np.zeros(
-            observation_buffer_shape, dtype=np.float16
+            observation_buffer_shape, dtype=self._observation_dtype
         )
 
         self.id_buffer = np.zeros(self.max_size, dtype=np.object_)
-        self.action_buffer = np.zeros(self.max_size, dtype=np.int16)
+        self.action_buffer = np.zeros(self.max_size, dtype=np.uint8)
         self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.done_buffer = np.zeros(self.max_size, dtype=np.bool_)
-        self.legal_moves_buffer = np.zeros(self.max_size, dtype=np.int8)
+        self.legal_moves_buffer = np.zeros(self.max_size, dtype=np.uint8)
 
         self.pointer = 0
         self.size = 0

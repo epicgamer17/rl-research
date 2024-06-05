@@ -10,6 +10,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
+        observation_dtype: np.dtype,
         max_size: int,
         batch_size: int = 32,
         max_priority: float = 1.0,
@@ -27,6 +28,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self.initial_max_priority = max_priority
         super(PrioritizedNStepReplayBuffer, self).__init__(
             observation_dimensions,
+            observation_dtype,
             max_size,
             batch_size,
             n_step=n_step,
@@ -105,7 +107,9 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             assert priorities.shape == ids.shape == indices.shape
 
             for index, id, priority in zip(indices, ids, priorities):
-                assert priority > 0, "Negative priority: {} \n All priorities {}".format(
+                assert (
+                    priority > 0
+                ), "Negative priority: {} \n All priorities {}".format(
                     priority, priorities
                 )
                 assert 0 <= index < len(self)
