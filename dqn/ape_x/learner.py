@@ -5,8 +5,9 @@ import numpy as np
 import queue
 import threading
 from typing import NamedTuple
-from agent_configs import ApeXLearnerConfig
-
+import copy
+from agent_configs import ApeXLearnerConfig, ApeXActorConfig
+from actor import ApeXActor
 from utils import update_per_beta
 
 sys.path.append("../")
@@ -236,6 +237,24 @@ class ApeXLearner(ApeXLearnerBase):
         )
         self.replay_thread.daemon = True
         self.replay_thread.start()
+
+    def _start_actor(self, rank):
+        env_copy = copy.deepcopy(self.env)
+        config = ApeXActorConfig(self.config, self.config.game)
+        args = (
+            env_copy,
+            config,
+            f"actor_{rank}",
+            self.replay_rref,
+            self.online_network_rref,
+            self.target_network_rref,
+        )
+        remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(rank, ApeXActor, args)
+
+        # no timeout
+        remote_actor_rref.rpc_async(-1).train().add_done_callback(
+            lambda: print(f"actor {rank} finished")
+        )
 
     def on_done(self):
         self.flag.set()
