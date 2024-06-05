@@ -31,6 +31,10 @@ class PPOConfig(Config):
         ), "Minibatch size must not be set for PPO as it is the same as steps per epoch"
         config_dict["minibatch_size"] = config_dict["steps_per_epoch"]
 
+        assert (
+            "training_iterations" not in config_dict
+        ), "Please set train_policy_iterations and train_value_iterations instead of training_iterations"
+
         # could change to just storing a config and accessing it as ppo_config.actor_config.learning_rate etc
         # self.actor_optimizer = actor_config.optimizer
         # self.actor_epsilon = actor_config.adam_epsilon
@@ -51,27 +55,24 @@ class PPOConfig(Config):
 
         # Network Arcitecture
         # COULD SET ALL ACTOR STUFF IN ACTOR CONFIG AND CRITIC STUFF IN CRITIC CONFIG FOR NETWORK ARCHITECTURE
-        self.conv_layers = self.parse_field("conv_layers", None)
-        self.conv_layers_noisy = self.parse_field("conv_layers_noisy", False)
-        self.critic_width = self.parse_field("critic_width", 128)
-        self.critic_dense_layers = self.parse_field("critic_dense_layers", 1)
-        self.critic_dense_layers_noisy = self.parse_field(
-            "critic_dense_layers_noisy", False
-        )
-        self.actor_width = self.parse_field("actor_width", 128)
-        self.actor_dense_layers = self.parse_field("actor_dense_layers", 1)
-        self.actor_dense_layers_noisy = self.parse_field(
-            "actor_dense_layers_noisy", False
-        )
+        self.noisy_sigma = self.parse_field("noisy_sigma", 0.0)
+        self.critic_conv_layers = self.parse_field("conv_layers", [])
+        self.actor_conv_layers = self.parse_field("conv_layers", [])
+        self.critic_dense_layer_widths = self.parse_field("critic_dense_layers", [])
+        self.actor_dense_layer_widths = self.parse_field("actor_dense_layers", [])
 
         self.clip_param = self.parse_field("clip_param", 0.2)
         self.steps_per_epoch = self.parse_field("steps_per_epoch", 4800)
+        self.replay_buffer_size = self.parse_field(
+            "replay_buffer_size", self.steps_per_epoch
+        )
         self.train_policy_iterations = self.parse_field("train_policy_iterations", 5)
         self.train_value_iterations = self.parse_field("train_value_iterations", 5)
         self.target_kl = self.parse_field("target_kl", 0.02)
         self.discount_factor = self.parse_field("discount_factor", 0.99)
         self.gae_lambda = self.parse_field("gae_lambda", 0.98)
         self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
+        self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
 
         assert not (
             self.game.is_image and self.conv_layers is not None

@@ -91,7 +91,7 @@ class Config(ConfigBase):
 
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
         self.learning_rate: float = self.parse_field("learning_rate", 0.001)
-        self.clipnorm: int | None = self.parse_field("clipnorm", None, required=False)
+        self.clipnorm: int = self.parse_field("clipnorm", 0)
         self.optimizer: torch.optim.Optimizer = self.parse_field(
             "optimizer", torch.optim.Adam
         )

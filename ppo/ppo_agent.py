@@ -1,6 +1,9 @@
 import sys
 from time import time
 
+import torch
+from torch.nn.utils import clip_grad_norm_
+
 from agent_configs import PPOConfig
 
 from utils import (
@@ -12,35 +15,9 @@ from utils import (
 
 sys.path.append("../")
 
-import os
-
-os.environ["OMP_NUM_THREADS"] = f"{8}"
-os.environ["MKL_NUM_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTEROP_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
-
-import tensorflow as tf
-
-tf.config.threading.set_intra_op_parallelism_threads(0)
-tf.config.threading.set_inter_op_parallelism_threads(0)
-
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.list_logical_devices("GPU")
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # memory growth must be set before GPUs have been initialized
-        print(e)
-
 import datetime
-import numpy as np
 from ppo.ppo_network import Network
 from replay_buffers.base_replay_buffer import BasePPOReplayBuffer
-import tensorflow_probability as tfp
 from base_agent.agent import BaseAgent
 
 
@@ -50,14 +27,35 @@ class PPOAgent(BaseAgent):
         env,
         config: PPOConfig,
         name=datetime.datetime.now().timestamp(),
+        device: torch.device = (
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
+            # else (
+            #     torch.device("mps")
+            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+            else torch.device("cpu")
+            # )
+        ),
     ):
-        super(PPOAgent, self).__init__(env, config, name)
-
+        super(PPOAgent, self).__init__(env, config, name, device=device)
         self.model = Network(
             config=config,
             output_size=self.num_actions,
             input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
+        )
+
+        self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
+            params=self.model.actor.parameters(),
+            lr=self.config.learning_rate,
+            eps=self.config.adam_epsilon,
+        )
+
+        self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
+            params=self.model.critic.parameters(),
+            lr=self.config.learning_rate,
+            eps=self.config.adam_epsilon,
         )
 
         # self.actor = ActorNetwork(
@@ -79,8 +77,6 @@ class PPOAgent(BaseAgent):
             gae_lambda=self.config.gae_lambda,
         )
 
-        self.transition = list()
-
         self.stats = {
             "score": [],
             "actor_loss": [],
@@ -95,172 +91,183 @@ class PPOAgent(BaseAgent):
 
     def predict(self, state, legal_moves=None):
         state_input = self.preprocess(state)
-        value = self.model.critic(inputs=state_input).numpy()
+        value = self.model.critic(inputs=state_input)
         if self.discrete_action_space:
-            policy = self.model.actor(inputs=state_input).numpy()[0]
+            policy = self.model.actor(inputs=state_input)[0]
+            # print(policy)
             policy = action_mask(policy, legal_moves, self.num_actions, mask_value=0)
+            # print(policy)
             policy = normalize_policy(policy)
-            return policy, value
+            # print(policy)
+            distribution = torch.distributions.Categorical(probs=policy)
         else:
             mean, std = self.model.actor(inputs=state_input)
-            return mean, std, value
+            distribution = torch.distributions.Normal(mean, std)
+        return distribution, value
 
-    def select_actions(self, state, legal_moves=None):
-        if self.discrete_action_space:
-            policy, value = self.predict(state)
-            distribution = tfp.distributions.Categorical(probs=policy)
-        else:
-            mean, std, value = self.predict(state)
-            distribution = tfp.distributions.Normal(mean, std)
+    def select_actions(self, predictions, legal_moves=None):
+        distribution = predictions[0]
+        # if self.is_test:
+        #     selected_action = distribution.mode
+        # else:
+        #     selected_action = distribution.sample().numpy()
+        selected_action = distribution.sample()
+        # if len(selected_action) == 1:
+        #     selected_action = selected_action[0]
 
-        if self.is_test:
-            selected_action = distribution.mode().numpy()
-        else:
-            selected_action = distribution.sample().numpy()
-
-        if len(selected_action) == 1:
-            selected_action = selected_action[0]
-        log_probability = distribution.log_prob(selected_action)
-
-        value = value[0][0]
-
-        if not self.is_test:
-            self.transition = [state, selected_action, value, log_probability]
         return selected_action
 
-    def step(self, action):
-        if not self.is_test:
-            next_state, reward, terminated, truncated, info = self.env.step(action)
-            self.transition += [reward]
-            self.replay_buffer.store(*self.transition)
-        else:
-            next_state, reward, terminated, truncated, info = self.test_env.step(action)
-
-        return next_state, reward, terminated, truncated, info
-
-    def train_actor(
-        self, inputs, actions, log_probabilities, advantages, learning_rate
-    ):
+    def actor_learn(self, inputs, actions, log_probabilities, advantages):
         # print("Training Actor")
-        with tf.GradientTape() as tape:
-            if self.discrete_action_space:
-                distribution = tfp.distributions.Categorical(self.model.actor(inputs))
-            else:
-                mean, std = self.model.actor(inputs)
-                distribution = tfp.distributions.Normal(mean, std)
+        inputs = inputs.to(self.device)
+        actions = actions.to(self.device)
+        log_probabilities = log_probabilities.to(self.device)
+        advantages = advantages.to(self.device)
 
-            log_ratios = distribution.log_prob(actions) - log_probabilities
-
-            probability_ratios = tf.exp(log_ratios)
-            # min_advantages = tf.where(
-            #     advantages > 0,
-            #     (1 + self.clip_param) * advantages,
-            #     (1 - self.clip_param) * advantages,
-            # )
-
-            clipped_probability_ratios = tf.clip_by_value(
-                probability_ratios,
-                1 - self.config.clip_param,
-                1 + self.config.clip_param,
-            )
-
-            actor_loss = tf.math.minimum(
-                probability_ratios * advantages, clipped_probability_ratios * advantages
-            )
-
-            entropy_loss = distribution.entropy()
-            actor_loss = -tf.reduce_mean(actor_loss) - (
-                self.config.entropy_coefficient * entropy_loss
-            )
-
-        actor_gradients = tape.gradient(
-            actor_loss, self.model.actor.trainable_variables
-        )
-        self.config.actor.optimizer.apply_gradients(
-            grads_and_vars=zip(actor_gradients, self.model.actor.trainable_variables)
-        )
         if self.discrete_action_space:
-            kl_divergence = tf.reduce_mean(
-                log_probabilities
-                - tfp.distributions.Categorical(self.model.actor(inputs)).log_prob(
-                    actions
-                )
-            )
+            probabilities = self.model.actor(inputs)
+            distribution = torch.distributions.Categorical(probabilities)
         else:
             mean, std = self.model.actor(inputs)
-            kl_divergence = tf.reduce_mean(
-                log_probabilities
-                - tfp.distributions.Normal(mean, std).log_prob(actions)
-            )
-        kl_divergence = tf.reduce_sum(kl_divergence)
-        return kl_divergence
+            distribution = torch.distributions.Normal(mean, std)
 
-    def train_critic(self, inputs, returns, learning_rate):
-        with tf.GradientTape() as tape:
-            critic_loss = tf.reduce_mean(
-                (returns - self.model.critic(inputs, training=True)) ** 2
-            )
-        critic_gradients = tape.gradient(
-            critic_loss, self.model.critic.trainable_variables
-        )
-        self.config.critic.optimizer.apply_gradients(
-            grads_and_vars=zip(critic_gradients, self.model.critic.trainable_variables)
+        # tensor_actions = (
+        #     torch.clone(actions).to(torch.float16).detach().requires_grad_(True)
+        # )
+
+        log_ratios = distribution.log_prob(actions) - log_probabilities
+
+        probability_ratios = torch.exp(log_ratios)
+        # min_advantages = tf.where(
+        #     advantages > 0,
+        #     (1 + self.clip_param) * advantages,
+        #     (1 - self.clip_param) * advantages,
+        # )
+
+        clipped_probability_ratios = torch.clamp(
+            probability_ratios,
+            1 - self.config.clip_param,
+            1 + self.config.clip_param,
         )
 
-        return critic_loss
+        # print((probability_ratios * advantages).shape)
+        # print((clipped_probability_ratios * advantages).shape)
+
+        actor_loss = torch.max(
+            -probability_ratios * advantages, -clipped_probability_ratios * advantages
+        ).mean()
+
+        entropy_loss = distribution.entropy().mean()
+        actor_loss = actor_loss - (self.config.entropy_coefficient * entropy_loss)
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        if self.config.actor.clipnorm > 0:
+            clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
+
+        self.actor_optimizer.step()
+        with torch.no_grad():
+            kl_divergence = torch.mean(
+                log_probabilities - distribution.log_prob(actions)
+            )
+            kl_divergence = torch.sum(kl_divergence)
+            print("Open AI Spinning Up KL Divergence", kl_divergence)
+            approx_kl = ((probability_ratios - 1) - log_ratios).mean()
+            print(
+                "37 Implimentation Details KL Divergence",
+                approx_kl,
+            )
+
+        return approx_kl.detach()
+
+    def critic_learn(self, inputs, returns):
+        inputs = inputs.to(self.device)
+        returns = returns.to(self.device)
+
+        critic_loss = (
+            self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
+        ).mean()
+
+        print("critic loss", critic_loss)
+        print(critic_loss.requires_grad)
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        if self.config.critic.clipnorm > 0:
+            clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
+
+        self.critic_optimizer.step()
+        return critic_loss.detach()
 
     def train(self):
         training_time = time()
-        self.is_test = False
 
-        state, _ = self.env.reset()
+        state, info = self.env.reset()
         self.training_steps += self.start_training_step
         for training_step in range(self.start_training_step, self.training_steps):
-            print("Training Step: ", training_step)
-            num_episodes = 0
-            total_score = 0
-            score = 0
-            for timestep in range(self.config.steps_per_epoch):
-                action = self.select_actions(
-                    state,
-                    get_legal_moves(info),
-                )
-                next_state, reward, terminated, truncated, info = self.step(action)
-                done = terminated or truncated
-                state = next_state
-                score += reward
+            with torch.no_grad():
+                print("Training Step: ", training_step)
+                num_episodes = 0
+                score = 0
+                for timestep in range(self.config.steps_per_epoch):
+                    predictions = self.predict(state)
+                    action = self.select_actions(
+                        predictions,
+                        get_legal_moves(info),
+                    ).item()
 
-                if done or timestep == self.config.steps_per_epoch - 1:
-                    last_value = (
-                        0 if done else self.model.critic(self.preprocess(next_state))
+                    next_state, reward, terminated, truncated, info = self.env.step(
+                        action
                     )
-                    self.replay_buffer.finish_trajectory(last_value)
-                    num_episodes += 1
-                    state, _ = self.env.reset()
-                    # if score >= self.env.spec.reward_threshold:
-                    #     print("Your agent has achieved the env's reward threshold.")
-                    total_score += score
-                    score = 0
+
+                    distribution, value = predictions
+                    log_probability = distribution.log_prob(torch.tensor(action))
+                    value = value[0][0]
+
+                    self.replay_buffer.store(
+                        state, action, value, log_probability, reward
+                    )
+
+                    done = terminated or truncated
+                    state = next_state
+                    score += reward
+
+                    if done or timestep == self.config.steps_per_epoch - 1:
+                        last_value = (
+                            0
+                            if done
+                            else self.model.critic(self.preprocess(next_state))
+                        )
+                        self.replay_buffer.finish_trajectory(last_value)
+                        num_episodes += 1
+                        state, info = self.env.reset()
+                        score_dict = {"score": score}
+                        self.stats["score"].append(score_dict)
+                        score = 0
 
             samples = self.replay_buffer.sample()
             observations = samples["observations"]
-            actions = samples["actions"]
-            log_probabilities = samples["log_probabilities"]
-            advantages = samples["advantages"]
-            returns = samples["returns"]
+            actions = torch.from_numpy(samples["actions"])
+            log_probabilities = torch.from_numpy(samples["log_probabilities"])
+            advantages = torch.from_numpy(samples["advantages"])
+            returns = torch.from_numpy(samples["returns"])
             inputs = self.preprocess(observations)
 
-            indices = np.arange(len(observations))
-            np.random.shuffle(indices)
+            indices = torch.randperm(len(observations))
             minibatch_size = len(observations) // self.config.num_minibatches
 
+            # actor_scheduler = torch.optim.lr_scheduler.LinearLR(
+            #     self.actor_optimizer,
+            #     self.config.actor.learning_rate,
+            #     0,
+            #     total_iters=self.config.train_policy_iterations,
+            # )
+
             for iteration in range(self.config.train_policy_iterations):
-                learning_rate = max(learning_rate, 0)
-                learning_rate = update_linear_lr_schedule(
-                    learning_rate,
-                    0,
-                    self.training_steps,
+                # actor_scheduler.step()
+                # print(actor_scheduler.get_last_lr())
+                self.actor_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
                     self.config.actor.learning_rate,
+                    0,
+                    self.config.train_policy_iterations,
                     iteration,
                 )
                 for start in range(0, len(observations), minibatch_size):
@@ -270,16 +277,15 @@ class PPOAgent(BaseAgent):
                     batch_actions = actions[batch_indices]
                     batch_log_probabilities = log_probabilities[batch_indices]
                     batch_advantages = advantages[batch_indices]
-                    kl_divergence = self.train_actor(
+                    kl_divergence = self.actor_learn(
                         batch_observations,
                         batch_actions,
                         batch_log_probabilities,
                         batch_advantages,
-                        learning_rate,
                     )
                     self.stats["actor_loss"].append(kl_divergence)
                 if kl_divergence > 1.5 * self.config.target_kl:
-                    print("Early stopping at iteration {}".format(_))
+                    print("Early stopping at iteration {}".format(iteration))
                     break
                 # kl_divergence = self.train_actor(
                 #     inputs, actions, log_probabilities, advantages, learning_rate
@@ -288,31 +294,36 @@ class PPOAgent(BaseAgent):
                 # if kl_divergence > 1.5 * self.target_kl:
                 #     print("Early stopping at iteration {}".format(_))
                 #     break
-
+            # critic_scheduler = torch.optim.lr_scheduler.LinearLR(
+            #     self.critic_optimizer,
+            #     self.config.critic.learning_rate,
+            #     0,
+            #     total_iters=self.config.train_value_iterations,
+            # )
             for iteration in range(self.config.train_value_iterations):
-                learning_rate = update_linear_lr_schedule(
-                    learning_rate,
-                    0,
-                    self.training_steps,
+                # critic_scheduler.step()
+                # print(critic_scheduler.get_last_lr())
+                self.critic_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
                     self.config.critic.learning_rate,
+                    0,
+                    self.config.train_value_iterations,
                     iteration,
                 )
-                learning_rate = max(learning_rate, 0)
                 for start in range(0, len(observations), minibatch_size):
                     end = start + minibatch_size
                     batch_indices = indices[start:end]
                     batch_observations = inputs[batch_indices]
                     batch_returns = returns[batch_indices]
-                    critic_loss = self.train_critic(
-                        batch_observations, batch_returns, learning_rate
+                    critic_loss = self.critic_learn(
+                        batch_observations,
+                        batch_returns,
                     )
                     self.stats["critic_loss"].append(critic_loss)
-                # critic_loss = self.train_critic(inputs, returns, learning_rate)
-                # stat_critic_loss.append(critic_loss)
-                # stat_loss.append(critic_loss)
+                    # critic_loss = self.train_critic(inputs, returns, learning_rate)
+                    # stat_critic_loss.append(critic_loss)
+                    # stat_loss.append(critic_loss)
 
-            # self.old_actor.set_weights(self.actor.get_weights())
-            self.stats["score"].append(total_score / num_episodes)
+                # self.old_actor.set_weights(self.actor.get_weights())
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
                     5,
