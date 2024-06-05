@@ -67,6 +67,19 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
     def set_beta(self, beta: float):
         self.beta = beta
 
+    def store_batch(self, batch):
+        observations, actions, rewards, next_observations, dones, ids, priorities = batch
+        for i in range(len(observations)):
+            self.store(
+                observations[i],
+                actions[i],
+                rewards[i],
+                next_observations[i],
+                dones[i],
+                ids[i],
+                priorities[i],
+            )
+
     def sample(self, throw_exception=True) -> dict:
         if len(self) < self.batch_size:
             if throw_exception:

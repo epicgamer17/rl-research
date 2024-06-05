@@ -5,16 +5,15 @@ import time
 import numpy as np
 from typing import NamedTuple
 from uuid import uuid4
-import zmq
+import torch.distributed.rpc as rpc
 from gymnasium import Env
 from agent_configs import ApeXActorConfig
-import entities.replayMemory_capnp as replayMemory_capnp
-import message_codes
+from utils import plot_graphs
 
 import matplotlib
+import logging
 
 matplotlib.use("Agg")
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +21,10 @@ import sys
 
 sys.path.append("../../")
 from rainbow.rainbow_agent import RainbowAgent
-from base_agent.distributed_agents import ActorAgent, PollingActor, DistreteTransition
-from storage.compress_utils import compress_bytes, decompress_bytes
-from storage.storage import Storage, StorageConfig
-
+from rainbow.rainbow_network import RainbowNetwork
+from base_agent.distributed_agents import ActorAgent, DistreteTransition
+from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
-from utils import plot_graphs
 
 
 class Batch(NamedTuple):
@@ -92,30 +89,22 @@ class ApeXActorBase(ActorAgent):
 
 
 class ApeXActor(ApeXActorBase, RainbowAgent):
-    def __init__(self, env: Env, config: ApeXActorConfig, name, spectator=False):
+    def __init__(
+        self,
+        env: Env,
+        config: ApeXActorConfig,
+        name,
+        remote_replay: rpc.RRef[PrioritizedNStepReplayBuffer],
+        remote_online_params: rpc.RRef[RainbowNetwork],
+        remote_target_params: rpc.RRef[RainbowNetwork],
+        spectator=False,
+    ):
         super().__init__(env, config, name)
         self.config = config
 
-        self.socket_ctx = zmq.Context()
-
-        self.bootstrapped_q_buffer = np.zeros(self.config.replay_buffer_size)
-        storage_config = StorageConfig(
-            hostname=self.config.storage_hostname,
-            port=self.config.storage_port,
-            username=self.config.storage_username,
-            password=self.config.storage_password,
-        )
-
-        self.storage = Storage(storage_config)
-
-        replay_address = self.config.replay_addr
-        replay_port = self.config.replay_port
-        replay_url = f"tcp://{replay_address}:{replay_port}"
-
-        self.replay_socket = self.socket_ctx.socket(zmq.PUSH)
-
-        self.replay_socket.connect(replay_url)
-        logger.info(f"connected to replay buffer at {replay_url}")
+        self.remote_online_params = remote_online_params
+        self.remote_target_params = remote_target_params
+        self.remote_replay = remote_replay
 
         self.spectator = spectator
 
@@ -154,7 +143,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
     def calculate_losses(self):
         with torch.no_grad():
             # (B)
-            bootstrapped_qs = torch.from_numpy(self.bootstrapped_q_buffer).to(self.device)
+            bootstrapped_qs = torch.from_numpy(self.precalculated_q).to(self.device)
             # (B)
             rewards = torch.from_numpy(self.replay_buffer.reward_buffer).to(self.device)
 
@@ -178,6 +167,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
     def send_experience_batch(self):
         if self.spectator:
             return
+
         ids = np.zeros(self.config.replay_buffer_size, dtype=np.object_)
 
         for i in range(self.config.replay_buffer_size):
@@ -194,47 +184,19 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             ids=ids,
             priorities=prioritized_losses,
         )
-        builder = replayMemory_capnp.TransitionBatch.new_message()
-        builder.observations = compress_bytes(batch.observations.tobytes())
-        builder.nextObservations = compress_bytes(batch.next_observations.tobytes())
-        builder.rewards = batch.rewards.tobytes()
-        builder.actions = batch.actions.tobytes()
-        builder.dones = batch.dones.tobytes()
-        builder.ids = batch.ids.tobytes()
-        builder.priorities = batch.priorities.tobytes()
-        res = builder.to_bytes_packed()
 
-        self.replay_socket.send(message_codes.ACTOR_SEND_BATCH, zmq.SNDMORE)
-        self.replay_socket.send(res)
-        self.rb.clear()
+        self.remote_replay.rpc_async().store_batch(batch).add_done_callback(
+            lambda: print("sent batch")
+        )
 
     def update_params(self):
         ti = time.time()
         logger.info("fetching weights from storage...")
-        online_bytes, target_bytes = self.storage.get_weights()
-
-        if online_bytes == None or target_bytes == None:
-            logger.info("no weights recieved from learner")
-            return False
-
-        try:
-            decompressed_online = decompress_bytes(online_bytes)
-            with io.BytesIO(decompressed_online) as buf:
-                state_dict = torch.load(buf, self.device)
-                self.model.load_state_dict(state_dict)
-
-            decompressed_target = decompress_bytes(target_bytes)
-            with io.BytesIO(decompressed_target) as buf:
-                state_dict = torch.load(buf, self.device)
-                self.target_model.load_state_dict(state_dict)
-            return True
-
-        except Exception as e:
-            logger.warning("error loading weights from storage:", e)
-            return False
-
-        finally:
-            logger.info(f"fetching weights took {time.time() - ti} s")
+        self.model.load_state_dict(self.remote_online_params.rpc_sync().state_dict())
+        self.target_model.load_state_dict(
+            self.remote_target_params.rpc_sync().state_dict()
+        )
+        logger.info(f"fetching weights took {time.time() - ti} s")
 
     def setup(self):
         if self.spectator:
