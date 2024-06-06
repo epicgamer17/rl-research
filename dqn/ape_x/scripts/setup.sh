@@ -64,9 +64,3 @@ echo "Creating new conda environment..."
 conda env create -f ./scripts/environment.yml
 conda init bash
 conda activate ml
-
-echo "installing additional dependencies"
-pip install zmq
-pip install gymnasium[classic-control]
-pip install moviepy
-pip install pymango
