@@ -6,7 +6,7 @@ import queue
 import threading
 from typing import NamedTuple
 import copy
-from agent_configs import ApeXLearnerConfig, ApeXActorConfig
+from agent_configs import ApeXLearnerConfig
 from actor import ApeXActor
 from utils import update_per_beta
 
@@ -160,7 +160,7 @@ class ApeXLearner(ApeXLearnerBase):
 
         # torch rpc initialization
         os.environ["MASTER_ADDR"] = socket.getfqdn()  # learner is the master
-        os.environ["MASTER_PORT"] = self.config.rpc_port
+        os.environ["MASTER_PORT"] = str(self.config.rpc_port)
 
         # for cuda to cuda rpc
         options = rpc.TensorPipeRpcBackendOptions()

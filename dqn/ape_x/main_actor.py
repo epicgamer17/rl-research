@@ -31,7 +31,7 @@ def main():
     args = parser.parse_args()
 
     os.environ["MASTER_ADDR"] = args.master_addr  # learner is the master
-    os.environ["MASTER_PORT"] = args.rpc_port
+    os.environ["MASTER_PORT"] = str(args.rpc_port)
 
     options = rpc.TensorPipeRpcBackendOptions()
 

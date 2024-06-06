@@ -12,7 +12,7 @@ def main():
     parser.add_argument("--rpc_port", type=int, default=3333)
 
     os.environ["MASTER_ADDR"] = args.master_addr  # learner is the master
-    os.environ["MASTER_PORT"] = args.rpc_port
+    os.environ["MASTER_PORT"] = str(args.rpc_port)
 
     args = parser.parse_args()
 
