@@ -167,7 +167,12 @@ class ApeXLearner(ApeXLearnerBase):
         for callee in ["parameter_server", "replay_server"]:
             options.set_device_map(callee, {"cuda:0": "cuda:0"})
 
-        rpc.init_rpc("learner", options, 0, self.config.world_size)
+        rpc.init_rpc(
+            name="learner",
+            rank=0,
+            world_size=self.config.world_size,
+            rpc_backend_options=options,
+        )
 
         # use WorkerInfo instead of expensive strings, "Use this WorkerInfo to avoid passing an expensive string on every invocation."
         self.replay_worker_info = rpc.get_worker_info("replay_server")

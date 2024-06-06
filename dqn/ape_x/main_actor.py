@@ -23,9 +23,9 @@ logging.basicConfig(
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X actor")
 
-    parser.add_argument("--rank", type=int, default=4)
-    parser.add_argument("--world_size", type=int, default=2)
-    parser.add_argument("--master_addr", type=str, default="")
+    parser.add_argument("--rank", type=int, default=3)
+    parser.add_argument("--world_size", type=int, default=4)
+    parser.add_argument("--master_addr", type=str, default="127.0.0.1")
     parser.add_argument("--rpc_port", type=int, default=3333)
 
     args = parser.parse_args()
@@ -35,7 +35,12 @@ def main():
 
     options = rpc.TensorPipeRpcBackendOptions()
 
-    rpc.init_rpc(f"actor_f{args.rank}", options, args.rank, args.world_size)
+    rpc.init_rpc(
+        name=f"actor_{args.rank}",
+        rank=args.rank,
+        world_size=args.world_size,
+        rpc_backend_options=options,
+    )
 
 
 if __name__ == "__main__":
