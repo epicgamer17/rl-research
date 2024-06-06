@@ -239,10 +239,12 @@ class ApeXLearner(ApeXLearnerBase):
 
     def _start_actor(self, rank):
         env_copy = copy.deepcopy(self.env)
-        config = ApeXActorConfig(self.config, self.config.game)
+        config_copy = copy.deepcopy(self.config.actor_config)
+        config_copy.config_dict["rank"] = rank
+        config_copy.rank = rank
         args = (
             env_copy,
-            config,
+            config_copy,
             f"actor_{rank}",
             self.replay_rref,
             self.online_network_rref,

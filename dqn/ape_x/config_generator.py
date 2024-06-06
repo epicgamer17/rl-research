@@ -40,12 +40,14 @@ def main():
     learner_conf = ApeXLearnerConfig.load(args.learner_base)
 
     injected_actor_conf = actor_conf.config_dict | {**distributed_dict | {"rank": 0}}
-    injected_learner_conf = learner_conf.config_dict | {**distributed_dict | {"rank": 3}}
-
     actor_config = ApeXActorConfig(injected_actor_conf, actor_conf.game)
-    learner_config = ApeXLearnerConfig(injected_learner_conf, learner_conf.game)
-
     actor_config.dump(args.actor_output)
+
+    injected_learner_conf = learner_conf.config_dict | {
+        **distributed_dict
+        | {"rank": 3, "distributed_actor_config_file": args.actor_output}
+    }
+    learner_config = ApeXLearnerConfig(injected_learner_conf, learner_conf.game)
     learner_config.dump(args.learner_output)
 
 

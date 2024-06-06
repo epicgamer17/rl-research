@@ -6,7 +6,7 @@ import torch.distributed.rpc as rpc
 def main():
     parser = argparse.ArgumentParser
 
-    parser.add_argument("--rank", type=int, default=2)
+    parser.add_argument("--rank", type=int, default=2)  # 2 for params, 1 for replay
     parser.add_argument("--world_size", type=int, default=4)
     parser.add_argument("--master_addr", type=str, default="127.0.0.1")
     parser.add_argument("--rpc_port", type=int, default=3333)
