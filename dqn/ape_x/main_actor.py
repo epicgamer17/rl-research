@@ -1,9 +1,8 @@
+import os
 import argparse
-import gymnasium as gym
+import torch.distributed.rpc as rpc
 
 import logging
-
-from agent_configs import ApeXActorConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -20,43 +19,23 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(threadName)s %(levelname)s: %(message)s",
 )
 
-import sys
-
-sys.path.append("..")
-from actor import ApeXActor
-
-
-def make_cartpole_env():
-    env = gym.make("CartPole-v1", render_mode="rgb_array")
-    return env
-
 
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X actor")
-    parser.add_argument(
-        "--config_file", type=str, default="configs/actor_config_example.yaml"
-    )
-    parser.add_argument("--noisy_sigma", type=float)
-    parser.add_argument("--name", type=str, default="actor_0")
-    parser.add_argument("--spectator", default=False, action="store_true")
+
+    parser.add_argument("--rank", type=int, default=4)
+    parser.add_argument("--world_size", type=int, default=2)
+    parser.add_argument("--master_addr", type=str, default="")
+    parser.add_argument("--rpc_port", type=int, default=3333)
 
     args = parser.parse_args()
-    config = ApeXActorConfig.load(args.config_file)
 
-    if args.noisy_sigma is not None:
-        config.noisy_sigma = args.noisy_sigma  # noisy_sigma override
-    else:
-        # for spectators
-        config.conv_layers_noisy = False
-        config.dense_layers_noisy = False
+    os.environ["MASTER_ADDR"] = args.master_addr  # learner is the master
+    os.environ["MASTER_PORT"] = args.rpc_port
 
-    actor = ApeXActor(
-        env=make_cartpole_env(),
-        config=config,
-        name=args.name,
-        spectator=args.spectator,
-    )
-    actor.run()
+    options = rpc.TensorPipeRpcBackendOptions()
+
+    rpc.init_rpc(f"actor_f{args.rank}", options, args.rank, args.world_size)
 
 
 if __name__ == "__main__":

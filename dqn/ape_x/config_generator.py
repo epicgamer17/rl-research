@@ -1,23 +1,18 @@
 # script to generate configs for actors and learners by injecting base configurations
-# with ip addresses and ports of both the replay buffer server and model weights storage server,
-# and the password of the model weights storage server
+# with distributed info
 
-import pathlib
 import argparse
-
 from agent_configs import ApeXActorConfig, ApeXLearnerConfig
 
 
 def main():
     parser = argparse.ArgumentParser(description="generate configs")
+    parser.add_argument("--rpc_port", type=int, default=3333)
+    parser.add_argument("--world_size", type=int, default=4)
+
+    parser.add_argument("--master_addr", type=str, default="127.0.0.1")
     parser.add_argument("--replay_addr", type=str, default="127.0.0.1")
-    parser.add_argument("--replay_learner_port", type=int, default=5554)
-    parser.add_argument("--replay_actors_port", type=int, default=5555)
-
-    parser.add_argument("--storage_hostname", type=str, default="127.0.0.1")
-    parser.add_argument("--storage_port", type=int, default=5553)
-    parser.add_argument("--storage_username", type=str, default="ezra")
-
+    parser.add_argument("--storage_addr", type=str, default="127.0.0.1")
     parser.add_argument(
         "--actor_base", type=str, default="configs/actor_config_example.yaml"
     )
@@ -32,28 +27,20 @@ def main():
 
     args = parser.parse_args()
 
-    with open(f"{pathlib.Path.home()}/mongodb/mongodb_admin_password", "r") as f:
-        password = f.read()
-
-    storage_dict = dict(
+    distributed_dict = dict(
+        # "rank": int = self.parse_field("rank", required=True)
+        # "worker_name": int = self.parse_field("worker_name", required=True)
+        world_size=args.world_size,
+        rpc_port=args.rpc_port,
         replay_addr=args.replay_addr,
-        storage_hostname=args.storage_hostname,
-        storage_port=args.storage_port,
-        storage_username=args.storage_username,
-        storage_password=password.strip(),
+        storage_addr=args.storage_addr,
     )
-    actor_dict = dict(actor_replay_port=args.replay_actors_port)
-    learner_dict = dict(learner_replay_port=args.replay_learner_port)
 
     actor_conf = ApeXActorConfig.load(args.actor_base)
     learner_conf = ApeXLearnerConfig.load(args.learner_base)
 
-    injected_actor_conf = dict(
-        **actor_conf.config_dict | {**storage_dict, **actor_dict}
-    )
-    injected_learner_conf = dict(
-        **learner_conf.config_dict | {**storage_dict, **learner_dict}
-    )
+    injected_actor_conf = actor_conf.config_dict | {**distributed_dict | {"rank": 0}}
+    injected_learner_conf = learner_conf.config_dict | {**distributed_dict | {"rank": 3}}
 
     actor_config = ApeXActorConfig(injected_actor_conf, actor_conf.game)
     learner_config = ApeXLearnerConfig(injected_learner_conf, learner_conf.game)
