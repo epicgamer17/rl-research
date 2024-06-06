@@ -10,6 +10,7 @@ class PrioritizedReplayBuffer(BaseDQNReplayBuffer):
     def __init__(
         self,
         observation_dimensions: tuple,
+        observation_dtype: np.dtype,
         max_size: int,
         batch_size: int = 32,
         max_priority: float = 1.0,
@@ -21,7 +22,9 @@ class PrioritizedReplayBuffer(BaseDQNReplayBuffer):
         assert beta >= 0 and beta <= 1
 
         self.initial_max_priority = max_priority
-        super().__init__(observation_dimensions, max_size, batch_size)
+        super().__init__(
+            observation_dimensions, observation_dtype, max_size, batch_size
+        )
 
         self.alpha = alpha  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
         self.beta = beta

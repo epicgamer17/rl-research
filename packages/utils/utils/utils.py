@@ -54,20 +54,6 @@ def get_legal_moves(info: dict):
 
 
 def normalize_images(image: Tensor) -> Tensor:
-    """Preprocessing step to normalize images with 8-bit (0-255) color.
-
-    Args:
-        image (Tensor): An 8-bit color image
-
-    Returns:
-        Tensor: A copy of the tensor divided by 255
-    """
-    # Return a copy of the tensor divided by 255
-    normalized_image = image / 255
-    return normalized_image
-
-
-def normalize_images_(image: Tensor) -> Tensor:
     """Preprocessing step to normalize image with 8-bit (0-255) color inplace.
     Modifys the original tensor
 

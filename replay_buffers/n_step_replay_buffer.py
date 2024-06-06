@@ -8,6 +8,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
     def __init__(
         self,
         observation_dimensions: tuple,
+        observation_dtype: np.dtype,
         max_size: int,
         batch_size: int = 32,
         n_step: int = 1,
@@ -17,6 +18,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
         self.gamma = gamma
         super().__init__(
             observation_dimensions,
+            observation_dtype,
             max_size,
             batch_size,
         )

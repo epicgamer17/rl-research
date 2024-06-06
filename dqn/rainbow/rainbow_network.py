@@ -5,7 +5,7 @@ from torch import nn, Tensor
 from agent_configs import RainbowConfig
 from modules.conv import Conv2dStack
 from modules.dense import DenseStack, build_dense
-from utils.utils import to_lists
+from utils import to_lists
 
 
 class RainbowNetwork(nn.Module):
@@ -34,7 +34,9 @@ class RainbowNetwork(nn.Module):
         current_shape = input_shape
         B = current_shape[0]
         if self.has_conv_layers:
-            assert len(input_shape) == 4
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
             filters, kernel_sizes, strides = to_lists(config.conv_layers)
 
             # (B, C_in, H, W) -> (B, C_out H, W)
