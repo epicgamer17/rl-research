@@ -99,6 +99,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         spectator=False,
     ):
         super().__init__(env, config, name)
+        self.agent_rref = rpc.RRef(self)
         self.config = config
 
         self.remote_online_params = remote_online_params
@@ -184,7 +185,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             priorities=prioritized_losses,
         )
 
-        self.remote_replay.rpc_async().store_batch(batch).add_done_callback(
+        self.remote_replay.remote().store_batch(batch).add_done_callback(
             lambda: print("sent batch")
         )
 

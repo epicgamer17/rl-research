@@ -2,7 +2,9 @@ config_dict:
   rank: 3
   worker_name: 'actor'
   world_size: 4
+  pg_port: 3334
   rpc_port: 3333
+  master_addr: 127.0.0.1
   replay_addr: 127.0.0.1
   storage_addr: 127.0.0.1
   loss_function: !!python/object:utils.utils.CategoricalCrossentropy
