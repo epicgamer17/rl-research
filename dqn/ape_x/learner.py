@@ -1,3 +1,4 @@
+import torch
 import sys
 import logging
 import time
@@ -9,6 +10,7 @@ import copy
 from agent_configs import ApeXLearnerConfig
 from actor import ApeXActor
 from utils import update_per_beta
+import torch.distributed
 
 sys.path.append("../")
 from dqn.rainbow.rainbow_agent import RainbowAgent
@@ -19,17 +21,6 @@ matplotlib.use("Agg")
 
 
 logger = logging.getLogger(__name__)
-
-
-class Sample(NamedTuple):
-    observations: np.ndarray
-    actions: np.ndarray
-    next_observations: np.ndarray
-    rewards: np.ndarray
-    ids: np.ndarray
-    indices: np.ndarray
-    weights: np.ndarray
-    dones: np.ndarray
 
 
 class Update(NamedTuple):
@@ -46,7 +37,7 @@ class ApeXLearnerBase(RainbowAgent):
             name,
         )
         self.config = config
-        self.samples_queue: queue.Queue[Sample] = queue.Queue(
+        self.samples_queue: queue.Queue[dict] = queue.Queue(
             maxsize=self.config.samples_queue_size
         )
         self.updates_queue: queue.Queue[Update] = queue.Queue(
@@ -63,7 +54,12 @@ class ApeXLearnerBase(RainbowAgent):
 
         self.per_sample_beta = self.config.per_beta
 
+    # apex learner methods
     def store_weights(self, weights):
+        pass
+
+    def update_replay_priorities(self, samples, priorities):
+        # return super().update_replay_priorities(samples, priorities)
         pass
 
     def on_training_step_end(self):
@@ -81,10 +77,6 @@ class ApeXLearnerBase(RainbowAgent):
         loss = super().learn_from_sample(samples)
         logger.info(f"experience replay took {time.time()-ti} s")
         return loss
-
-    def update_replay_priorities(self, samples, priorities):
-        # return super().update_replay_priorities(samples, priorities)
-        pass
 
     def run(self):
         try:
@@ -105,7 +97,6 @@ class ApeXLearnerBase(RainbowAgent):
 
                 if training_step % self.config.push_params_interval == 0:
                     self.store_weights()
-                    logger.info("pushed params")
 
                 loss = self.learn()
                 target_model_updated = False
@@ -137,7 +128,7 @@ class ApeXLearnerBase(RainbowAgent):
                 5, training_step, training_step, time.time() - start_time
             )
         except Exception as e:
-            print(e)
+            logger.exception(f"run method ended by error: {e}")
         finally:
             self.env.close()
             self.on_done()
@@ -155,6 +146,8 @@ from dqn.rainbow.rainbow_network import RainbowNetwork
 class ApeXLearner(ApeXLearnerBase):
     def __init__(self, env, config: ApeXLearnerConfig, name: str):
         super().__init__(env, config, name)
+        assert torch.distributed.is_available()
+        assert torch.distributed.is_nccl_available()
         self.updates_queue = queue.Queue()
         self.config = config
 
@@ -163,10 +156,30 @@ class ApeXLearner(ApeXLearnerBase):
         os.environ["MASTER_PORT"] = str(self.config.rpc_port)
 
         # for cuda to cuda rpc
-        options = rpc.TensorPipeRpcBackendOptions()
-        for callee in ["parameter_server", "replay_server"]:
-            options.set_device_map(callee, {"cuda:0": "cuda:0"})
+        options = rpc.TensorPipeRpcBackendOptions(
+            num_worker_threads=32, devices=[torch.device(self.device)]
+        )
 
+        for callee in ["parameter_server", "replay_server"]:
+            options.set_device_map(callee, {0: 0})
+
+        print("initializing rpc...")
+        torch.distributed.init_process_group(
+            backend=torch.distributed.Backend.NCCL,
+            world_size=self.config.world_size,
+            rank=0,
+            store=torch.distributed.TCPStore(
+                host_name=self.config.master_addr,
+                port=self.config.pg_port,
+                world_size=self.config.world_size,
+                is_master=True,
+                wait_for_workers=True,
+            ),
+            pg_options=None,
+            device_id=None,
+        )
+        assert torch.distributed.is_initialized()
+        assert torch.distributed.get_backend() == torch.distributed.Backend.NCCL
         rpc.init_rpc(
             name="learner",
             rank=0,
@@ -184,15 +197,17 @@ class ApeXLearner(ApeXLearnerBase):
             self.num_actions,
             (self.config.minibatch_size,) + self.observation_dimensions,
         )
-        replay_buffer_args = (
-            self.observation_dimensions,
-            self.config.replay_buffer_size,
-            self.config.minibatch_size,
-            1.0,
-            self.config.per_alpha,
-            self.config.per_beta,
-            self.config.n_step,
-            self.config.discount_factor,
+        replay_buffer_args = dict(
+            observation_dimensions=self.observation_dimensions,
+            observation_dtype=self.env.observation_space.dtype,
+            max_size=self.config.replay_buffer_size,
+            batch_size=self.config.minibatch_size,
+            max_priority=1.0,
+            alpha=self.config.per_alpha,
+            beta=self.config.per_beta,
+            # epsilon=config["per_epsilon"],
+            n_step=self.config.n_step,
+            gamma=self.config.discount_factor,
         )
         self.online_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
             self.parameter_worker_info, RainbowNetwork, rainbow_network_args
@@ -201,8 +216,28 @@ class ApeXLearner(ApeXLearnerBase):
             self.parameter_worker_info, RainbowNetwork, rainbow_network_args
         )
         self.replay_rref: rpc.RRef[PrioritizedNStepReplayBuffer] = rpc.remote(
-            self.replay_worker_info, PrioritizedNStepReplayBuffer, replay_buffer_args
+            self.replay_worker_info,
+            PrioritizedNStepReplayBuffer,
+            args=None,
+            kwargs=replay_buffer_args,
         )
+
+        print("running tests...")
+        # print("target network owner", self.target_network_rref.owner_name())
+        # print("online network owner", self.online_network_rref.owner_name())
+        # print("replay owner", self.replay_rref.owner_name())
+        print("target network confirmed: ", self.target_network_rref.confirmed_by_owner())
+        print("online network confirmed: ", self.online_network_rref.confirmed_by_owner())
+        print("replay confirmed: ", self.replay_rref.confirmed_by_owner())
+
+        while (
+            (not self.target_network_rref.confirmed_by_owner)
+            or (not self.online_network_rref.confirmed_by_owner())
+            or (not self.replay_rref.confirmed_by_owner())
+        ):
+            print("waiting for confirmation")
+            time.sleep(1)
+        print("confirmed.")
 
         # if the start training step is not zero, attempt to load states from a checkpoint onto the remote server
         if self.start_training_step != 0:
@@ -221,12 +256,25 @@ class ApeXLearner(ApeXLearnerBase):
         # self.replay_rref.rpc_sync()...
 
     def store_weights(self):
-        self.target_network_rref.rpc_async().load_state_dict(
-            self.target_model.state_dict()
-        )
-        self.online_network_rref.rpc_async().load_state_dict(
-            self.target_model.state_dict()
-        )
+        # TODO - async
+        logger.info("storing weights")
+        failed = True
+        while failed:
+            try:
+                rpc.rpc_sync(
+                    self.target_network_rref,
+                    self.target_network_rref.load_state_dict,
+                    (self.target_model.state_dict(),),
+                )
+                rpc.rpc_sync(
+                    self.online_network_rref,
+                    self.online_network_rref.load_state_dict,
+                    (self.model.state_dict(),),
+                )
+                failed = False
+            except Exception as e:
+                logger.exception(f"error setting weights: {e}")
+                time.sleep(1)
 
     def update_replay_priorities(self, samples, priorities):
         self.updates_queue.put(
@@ -242,7 +290,7 @@ class ApeXLearner(ApeXLearnerBase):
         self.replay_thread.daemon = True
         self.replay_thread.start()
 
-    def _start_actor(self, rank):
+    def _start_actor(self, rank) -> torch.Future:
         env_copy = copy.deepcopy(self.env)
         config_copy = copy.deepcopy(self.config.actor_config)
         config_copy.config_dict["rank"] = rank
@@ -250,7 +298,7 @@ class ApeXLearner(ApeXLearnerBase):
         args = (
             env_copy,
             config_copy,
-            f"actor_{rank}",
+            f"{rank}_actor",
             self.replay_rref,
             self.online_network_rref,
             self.target_network_rref,
@@ -258,9 +306,10 @@ class ApeXLearner(ApeXLearnerBase):
         remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(rank, ApeXActor, args)
 
         # no timeout
-        remote_actor_rref.rpc_async(-1).train().add_done_callback(
-            lambda: print(f"actor {rank} finished")
+        res: torch.Future[None] = rpc.rpc_async(
+            remote_actor_rref, remote_actor_rref.train, timeout=0
         )
+        return res
 
     def on_done(self):
         self.flag.set()
@@ -270,34 +319,44 @@ class ApeXLearner(ApeXLearnerBase):
         super().on_training_step_end()
 
         # This beta gets send over to the remote replay buffer
-        self.replay_rref.rpc_async(30).set_beta(
-            update_per_beta(self.per_sample_beta, 1.0, self.training_steps)
-        )
+        try:
+            self.replay_rref.remote(30).set_beta(
+                update_per_beta(self.per_sample_beta, 1.0, self.training_steps)
+            )
+        except Exception as e:
+            logger.exception(f"error updating remote PER beta: {e}")
 
     def _handle_replay_socket(self, flag: threading.Event):
+        active = False
         while not flag.is_set():
             active = False
-            if self.samples_queue.qsize() < self.config.samples_queue_size:
-                logger.info("requesting batch")
-                samples = self.replay_rref.rpc_async().sample()
-                logger.info("wating for batch")
-                if samples == None:  # empty message
-                    logger.info("no batch recieved, continuing and waiting")
-                    time.sleep(1)
-                    continue
-                logger.info("recieved batch")
+            try:
+                if self.samples_queue.qsize() < self.config.samples_queue_size:
+                    logger.info("requesting batch")
+                    samples_rref: rpc.RRef[dict | None] = rpc.remote(
+                        self.replay_rref, self.replay_rref.sample, (False,)
+                    )
+                    samples = samples_rref.to_here()
+                    if samples_rref == None:  # replay buffer size < min_size
+                        logger.info("no batch recieved, continuing and waiting")
+                    else:
+                        logger.info("recieved batch")
 
-                self.samples_queue.put(samples)
-                active = True
-            else:
-                logger.debug("queue full")
+                        self.samples_queue.put(samples)
+                        active = True
+                else:
+                    logger.debug("queue full")
+            except Exception as e:
+                logger.exception(f"error getting batch: {e}")
 
             try:
                 t = self.updates_queue.get(block=False)  # (indices, priorities, ids)
                 active = True
-                self.replay_rref.rpc_async().update_priorities(*t)
+                rpc.rpc_sync(self.replay_rref, self.replay_rref.update_priorities, (*t,))
             except queue.Empty:
                 logger.debug("no updates to send, continuing")
+            except Exception as e:
+                logger.exception(f"error updating priorities: {e}")
 
             if not active:
                 time.sleep(1)

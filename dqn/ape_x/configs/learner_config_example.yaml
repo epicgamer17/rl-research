@@ -2,7 +2,9 @@ config_dict:
   rank: 0
   worker_name: 'learner'
   world_size: 4
+  pg_port: 3334
   rpc_port: 3333
+  master_addr: 127.0.0.1
   replay_addr: 127.0.0.1
   storage_addr: 127.0.0.1
   distributed_actor_config_file: './configs/actor_config_example.yaml'
