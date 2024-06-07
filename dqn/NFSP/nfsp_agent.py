@@ -82,7 +82,7 @@ class NFSPDQN(BaseAgent):
                 # for current_player in range(self.config.num_players):
                 current_player = state["current_player"]
                 current_agent = self.nfsp_agents[current_player]
-                action = current_agent.select_action(
+                action = current_agent.select_actions(
                     state,
                     get_legal_moves(info),
                 )
