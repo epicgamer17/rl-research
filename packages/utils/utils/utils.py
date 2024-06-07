@@ -627,7 +627,7 @@ def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis
     return -torch.sum(log_prob * target, axis=axis)
 
 
-class CategoricalCrossentropy:
+class CategoricalCrossentropyLoss:
     def __init__(self, from_logits=False, axis=-1):
         self.from_logits = from_logits
         self.axis = axis
@@ -643,13 +643,29 @@ def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
     return torch.sum(target * torch.log(target / predicted), axis=axis)
 
 
-class KLDivergence:
+class KLDivergenceLoss:
     def __init__(self, from_logits=False, axis=-1):
         self.from_logits = from_logits
         self.axis = axis
 
     def __call__(self, predicted, target):
         return kl_divergence(predicted, target, self.axis)
+
+
+def huber(predicted: torch.Tensor, target: torch.Tensor, axis=-1, delta: float = 1.0):
+    diff = torch.abs(predicted - target)
+    return torch.where(
+        diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)
+    ).view(-1)
+
+
+class HuberLoss:
+    def __init__(self, axis=-1, delta: float = 1.0):
+        self.axis = axis
+        self.delta = delta
+
+    def __call__(self, predicted, target):
+        return huber(predicted, target, axis=self.axis, delta=self.delta)
 
 
 from typing import Callable

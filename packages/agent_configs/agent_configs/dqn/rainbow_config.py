@@ -1,5 +1,5 @@
 from ..base_config import Config
-from utils import Loss, CategoricalCrossentropy
+from utils import CategoricalCrossentropyLoss
 
 
 class RainbowConfig(Config):
@@ -16,7 +16,7 @@ class RainbowConfig(Config):
         )
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
 
-        self.deuling: bool = self.parse_field("deuling", True)
+        self.dueling: bool = self.parse_field("dueling", True)
         self.discount_factor: float = self.parse_field("discount_factor", 0.99)
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.transfer_interval: int = self.parse_field("transfer_interval", 512)
@@ -24,9 +24,13 @@ class RainbowConfig(Config):
         self.replay_interval: int = self.parse_field("replay_interval", 1)
         self.per_alpha: float = self.parse_field("per_alpha", 0.6)
         self.per_beta: float = self.parse_field("per_beta", 0.5)
+        self.per_beta_final: float = self.parse_field("per_beta_final", 1.0)
         self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
         self.n_step: int = self.parse_field("n_step", 3)
         self.atom_size: int = self.parse_field("atom_size", 51)
+        assert (
+            self.atom_size > 1
+        ), "Atom size must be greater than 1, as softmax and Q distribution to Q value calculation requires more than 1 atom"
 
         assert not (
             self.game.is_image and len(self.conv_layers) == 0

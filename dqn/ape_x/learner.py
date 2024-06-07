@@ -124,7 +124,9 @@ class ApeXLearnerBase(RainbowAgent):
 
                     if training_step // self.training_steps > 0.125:
                         past_scores_dicts = self.stats["test_score"][-5:]
-                        scores = [score_dict["score"] for score_dict in past_scores_dicts]
+                        scores = [
+                            score_dict["score"] for score_dict in past_scores_dicts
+                        ]
                         avg = np.sum(scores) / 5
                         if avg < 10:
                             return  # could do stopping param as the slope of line of best fit
@@ -230,7 +232,9 @@ class ApeXLearner(ApeXLearnerBase):
 
     def update_replay_priorities(self, samples, priorities):
         self.updates_queue.put(
-            Update(ids=samples["ids"], indices=samples["indices"], priorities=priorities)
+            Update(
+                ids=samples["ids"], indices=samples["indices"], priorities=priorities
+            )
         )
 
     def on_run(self):
@@ -271,7 +275,9 @@ class ApeXLearner(ApeXLearnerBase):
 
         # This beta gets send over to the remote replay buffer
         self.replay_rref.rpc_async(30).set_beta(
-            update_per_beta(self.per_sample_beta, 1.0, self.training_steps)
+            update_per_beta(
+                self.per_sample_beta, self.config.per_beta_final, self.training_steps
+            )
         )
 
     def _handle_replay_socket(self, flag: threading.Event):

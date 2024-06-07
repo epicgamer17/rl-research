@@ -8,10 +8,12 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
+        observation_dtype: np.dtype,
         max_size: int,
         batch_size: int = 32,
     ):
         self.observation_dimensions = observation_dimensions
+        self.observation_dtype = observation_dtype
         super().__init__(max_size=max_size, batch_size=batch_size)
 
     def store(self, observation, target_policy: list[int], id=None):
@@ -60,7 +62,9 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         observation_buffer_shape = calculate_observation_buffer_shape(
             self.max_size, self.observation_dimensions
         )
-        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
-        self.target_policy_buffer = np.zeros(self.max_size, dtype=np.int8)
+        self.observation_buffer = np.zeros(
+            observation_buffer_shape, dtype=self.observation_dtype
+        )
+        self.target_policy_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.size = 0
         self.pointer = 0

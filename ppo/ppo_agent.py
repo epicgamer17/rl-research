@@ -72,6 +72,7 @@ class PPOAgent(BaseAgent):
 
         self.replay_buffer = BasePPOReplayBuffer(
             observation_dimensions=self.observation_dimensions,
+            observation_dtype=self.env.observation_space.dtype,
             max_size=self.config.replay_buffer_size,
             gamma=self.config.discount_factor,
             gae_lambda=self.config.gae_lambda,

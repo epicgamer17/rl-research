@@ -199,12 +199,13 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
+        observation_dtype: np.dtype,
         max_size: int,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
     ):
         self.observation_dimensions = observation_dimensions
-
+        self.observation_dtype = (observation_dtype,)
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         super().__init__(max_size=max_size)
@@ -243,7 +244,9 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
 
     def clear(self):
         observation_buffer_shape = (self.max_size,) + self.observation_dimensions
-        self.observation_buffer = np.zeros(observation_buffer_shape, dtype=np.float16)
+        self.observation_buffer = np.zeros(
+            observation_buffer_shape, dtype=self.observation_dtype
+        )
         self.action_buffer = np.zeros(self.max_size, dtype=np.int8)
         self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.advantage_buffer = np.zeros(self.max_size, dtype=np.float16)

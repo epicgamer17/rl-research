@@ -44,16 +44,19 @@ class BaseAgent:
 
         self.env = env
         # self.test_env = copy.deepcopy(env)
-        if hasattr(self.env, "render_mode"):
-            assert (
-                self.env.render_mode == "rgb_array"
-            ), "Video recording for test_env requires render_mode to be 'rgb_array'"
+        if hasattr(self.env, "render_mode") and self.env.render_mode == "rgb_array":
+            # assert (
+            #     self.env.render_mode == "rgb_array"
+            # ), "Video recording for test_env requires render_mode to be 'rgb_array'"
             self.test_env = gym.wrappers.RecordVideo(
                 copy.deepcopy(env),
                 ".",
                 name_prefix="{}".format(self.model_name),
             )
         else:
+            print(
+                "Warning: test_env will not record videos as render_mode is not 'rgb_array'"
+            )
             self.test_env = copy.deepcopy(env)
 
         if isinstance(env.observation_space, gym.spaces.Box):
@@ -80,13 +83,12 @@ class BaseAgent:
     def train(self):
         raise NotImplementedError
 
-    def preprocess(self, states, device="cpu", dtype=torch.uint8) -> torch.Tensor:
+    def preprocess(self, states, device="cpu") -> torch.Tensor:
         """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
         Does not alter the input state parameter, instead creating a new Tensor on the inputted device (default cpu)
 
         Args:
             state (Any): A or a list of state returned from self.env.step
-            dtype (dtype, optional): The datatype for the returned tensor
             device (str, optional): The device to send the preprocessed states to. Defaults to "cpu".
 
         Returns:
@@ -95,7 +97,7 @@ class BaseAgent:
         """
 
         # convert to np.array first for performance, recoommnded by pytorch
-        prepared_state = torch.from_numpy(np.array(states)).to(dtype).to(device)
+        prepared_state = torch.from_numpy(np.array(states)).to(device)
         # if self.config.game.is_image:
         # normalize_images(prepared_state)
         if prepared_state.shape == self.observation_dimensions:
@@ -220,7 +222,8 @@ class BaseAgent:
             os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "graphs_stats"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
+            if self.env.render_mode == "rgb_array":
+                os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
             # save the model weights
             torch.save(self.model.state_dict(), weights_path)

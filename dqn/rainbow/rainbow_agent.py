@@ -95,13 +95,13 @@ class RainbowAgent(BaseAgent):
 
     def predict(self, states) -> torch.Tensor:
         # could change type later
-        state_input = self.preprocess(states, device=self.device).to(torch.float32)
+        state_input = self.preprocess(states, device=self.device)
         q_distribution: torch.Tensor = self.model(state_input)
         return q_distribution
 
     def predict_target(self, states) -> torch.Tensor:
         # could change type later
-        state_input = self.preprocess(states, device=self.device).to(torch.float32)
+        state_input = self.preprocess(states, device=self.device)
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
@@ -140,7 +140,6 @@ class RainbowAgent(BaseAgent):
         online_distributions = self.predict(observations)[
             range(self.config.minibatch_size), actions
         ]
-
         # (B, atom_size)
         target_distributions = self.compute_target_distributions(samples)
         # print("predicted", online_distributions)
@@ -154,8 +153,10 @@ class RainbowAgent(BaseAgent):
         assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
             elementwise_loss
         )
-        assert elementwise_loss.shape == weights_cuda.shape, "Loss Shape: {}".format(
-            elementwise_loss.shape
+        assert (
+            elementwise_loss.shape == weights_cuda.shape
+        ), "Loss Shape: {}, Weights Shape: {}".format(
+            elementwise_loss.shape, weights_cuda.shape
         )
         loss = elementwise_loss * weights_cuda
         self.optimizer.zero_grad()
@@ -180,8 +181,10 @@ class RainbowAgent(BaseAgent):
     def compute_target_distributions(self, samples):
         with torch.no_grad():
             discount_factor = self.config.discount_factor**self.config.n_step
-            delta_z = (self.config.v_max - self.config.v_min) / (
-                self.config.atom_size - 1
+            delta_z = (
+                (self.config.v_max - self.config.v_min) / (self.config.atom_size - 1)
+                if self.config.atom_size > 1
+                else (self.config.v_max - self.config.v_min)
             )
             next_observations, rewards, dones = (
                 samples["next_observations"],
@@ -228,7 +231,7 @@ class RainbowAgent(BaseAgent):
         with torch.no_grad():
             state, info = self.env.reset()
             for i in range(self.config.min_replay_buffer_size + self.config.n_step - 1):
-                print("filling replay buffer", i)
+                # print("filling replay buffer", i)
                 # dist = self.predict(state)
                 # action = self.select_actions(dist).item()
                 action = self.env.action_space.sample()
@@ -238,7 +241,7 @@ class RainbowAgent(BaseAgent):
                 state = next_state
                 if done:
                     state, info = self.env.reset()
-                gc.collect()
+                # gc.collect()
 
     def update_target_model(self):
         if self.config.soft_update:
@@ -257,7 +260,7 @@ class RainbowAgent(BaseAgent):
 
         # self.training_steps += self.start_training_step
         for training_step in range(self.start_training_step, self.training_steps):
-            print("training step", training_step)
+            # print("training step", training_step)
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     distributions = self.predict(state)
@@ -272,7 +275,9 @@ class RainbowAgent(BaseAgent):
                     score += reward
                     self.replay_buffer.set_beta(
                         update_per_beta(
-                            self.replay_buffer.beta, 1.0, self.training_steps
+                            self.replay_buffer.beta,
+                            self.config.per_beta_final,
+                            self.training_steps,
                         )
                     )
 
@@ -310,7 +315,7 @@ class RainbowAgent(BaseAgent):
                     training_step * self.config.replay_interval,
                     time() - start_time,
                 )
-            gc.collect()
+            # gc.collect()
 
         self.save_checkpoint(
             5,
