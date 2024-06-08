@@ -310,7 +310,6 @@ class RainbowAgent(BaseAgent):
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 # print(self.stats["score"])
                 self.save_checkpoint(
-                    5,
                     training_step,
                     training_step * self.config.replay_interval,
                     time() - start_time,
@@ -318,7 +317,6 @@ class RainbowAgent(BaseAgent):
             # gc.collect()
 
         self.save_checkpoint(
-            5,
             training_step,
             training_step * self.config.replay_interval,
             time() - start_time,

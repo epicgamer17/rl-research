@@ -6,3 +6,5 @@ from .cartpole_config import CartPoleConfig
 from .mississippi_marbles_config import MississippiMarblesConfig
 from .leduc_holdem_config import LeducHoldemConfig
 from .classiccontrol_config import ClassicControlConfig
+from .blackjack_config import BlackjackConfig
+from .toytext_config import ToyTextConfig

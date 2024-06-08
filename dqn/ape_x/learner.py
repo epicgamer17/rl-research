@@ -110,7 +110,7 @@ class ApeXLearnerBase(RainbowAgent):
 
                 if training_step % self.checkpoint_interval == 0:
                     self.save_checkpoint(
-                        5, training_step, training_step, time.time() - start_time
+                        training_step, training_step, time.time() - start_time
                     )
 
                     if training_step // self.training_steps > 0.125:
@@ -126,9 +126,7 @@ class ApeXLearnerBase(RainbowAgent):
 
             logger.info("loop done")
 
-            self.save_checkpoint(
-                5, training_step, training_step, time.time() - start_time
-            )
+            self.save_checkpoint(training_step, training_step, time.time() - start_time)
         except Exception as e:
             logger.exception(f"run method ended by error: {e}")
         finally:

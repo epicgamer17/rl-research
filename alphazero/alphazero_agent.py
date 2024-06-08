@@ -57,7 +57,9 @@ class AlphaZeroAgent(BaseAgent):
 
         self.model = Network(config, self.observation_dimensions, self.num_actions)
 
-        self.replay_buffer = ReplayBuffer(self.config.replay_buffer_size, self.config.minibatch_size)
+        self.replay_buffer = ReplayBuffer(
+            self.config.replay_buffer_size, self.config.minibatch_size
+        )
 
     def step(self, action):
         if not self.is_test:
@@ -129,12 +131,16 @@ class AlphaZeroAgent(BaseAgent):
         value, policy = self.predict(state, legal_moves)
         print("Predicted Policy ", policy)
         print("Predicted Value ", value)
-        root.to_play = int(state[0][0][2])  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
+        root.to_play = int(
+            state[0][0][2]
+        )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
         # print("Root Turn", root.to_play)
         root.expand(policy, env)
 
         if not self.is_test:
-            root.add_noise(self.config.root_dirichlet_alpha, self.config.root_exploration_fraction)
+            root.add_noise(
+                self.config.root_dirichlet_alpha, self.config.root_exploration_fraction
+            )
 
         for _ in range(self.config.num_simulations):
             node = root
@@ -143,7 +149,9 @@ class AlphaZeroAgent(BaseAgent):
 
             # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
-                action, node = node.select_child(self.config.pb_c_base, self.config.pb_c_init)
+                action, node = node.select_child(
+                    self.config.pb_c_base, self.config.pb_c_init
+                )
                 _, reward, terminated, truncated, info = mcts_env.step(action)
                 search_path.append(node)
                 legal_moves = get_legal_moves(info)
@@ -151,7 +159,9 @@ class AlphaZeroAgent(BaseAgent):
             # Turn of the leaf node
             leaf_node_turn = node.state[0][0][2]
             # print("Leaf Turn", leaf_node_turn)
-            node.to_play = int(leaf_node_turn)  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
+            node.to_play = int(
+                leaf_node_turn
+            )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
 
             if terminated or truncated:
                 value = -reward
@@ -164,7 +174,9 @@ class AlphaZeroAgent(BaseAgent):
                 node.value_sum += value if node.to_play != leaf_node_turn else -value
                 node.visits += 1
 
-        visit_counts = [(child.visits, action) for action, child in root.children.items()]
+        visit_counts = [
+            (child.visits, action) for action, child in root.children.items()
+        ]
         return visit_counts
 
     def learn(self):
@@ -179,17 +191,25 @@ class AlphaZeroAgent(BaseAgent):
                 # Set illegal moves probability to zero and renormalize
                 legal_moves_mask = (np.array(target_policies) > 0).astype(int)
                 policies = tf.math.multiply(policies, legal_moves_mask)
-                policies = tf.math.divide(policies, tf.reduce_sum(policies, axis=1, keepdims=True))
+                policies = tf.math.divide(
+                    policies, tf.reduce_sum(policies, axis=1, keepdims=True)
+                )
 
                 # compute losses
-                value_loss = self.config.value_loss_factor * tf.losses.MSE(target_values, values)
-                policy_loss = tf.losses.categorical_crossentropy(target_policies, policies)
+                value_loss = self.config.value_loss_factor * tf.losses.MSE(
+                    target_values, values
+                )
+                policy_loss = tf.losses.categorical_crossentropy(
+                    target_policies, policies
+                )
                 l2_loss = sum(self.model.losses)
                 loss = (value_loss + policy_loss) + l2_loss
                 loss = tf.reduce_mean(loss)
 
             gradients = tape.gradient(loss, self.model.trainable_variables)
-            self.config.optimizer.apply_gradients(grads_and_vars=zip(gradients, self.model.trainable_variables))
+            self.config.optimizer.apply_gradients(
+                grads_and_vars=zip(gradients, self.model.trainable_variables)
+            )
         # RIGHT NOW THIS RETURNS THE LAST ITERATION OF THE LOSSES BUT SHOULD RETURN ONE FOR EACH ITERATION
         return (
             tf.reduce_mean(value_loss),

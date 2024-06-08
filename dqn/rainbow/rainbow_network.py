@@ -142,7 +142,6 @@ class RainbowNetwork(nn.Module):
 
         # (B, *)
         S = inputs
-
         # (B, C_in, H, W) -> (B, C_out, H, W)
         if self.has_conv_layers:
             S = self.conv_layers(S)
