@@ -78,19 +78,19 @@ def get_current_host():
 def run_training(config, env: gym.Env, name):
     global SSH_USERNAME
     print("=================== Run Training ======================")
-    with open(f"{pathlib.Path.home()}/mongodb/mongodb_admin_password", "r") as f:
-        password = f.read()
 
     distributed_config_placeholder = {
-        "actor_replay_port": 5554,
-        "learner_replay_port": 5555,
-        "replay_addr": "127.0.0.1",
-        "storage_hostname": "127.0.0.1",
-        "storage_port": 5553,
-        "storage_username": "ezra",
-        "storage_password": password.strip(),
+        "rank": 0,
+        "worker_name": '',
+        "world_size": 0,
+        "rpc_port": 0,
+        "pg_port": 0,
+        "master_addr": '',
+        "replay_addr": '',
+        "storage_addr": '',
     }
 
+    # combined learner and actor config
     conf = (config | distributed_config_placeholder) | {
         "num_actors": 1,
         "training_steps": 2000,
@@ -100,42 +100,27 @@ def run_training(config, env: gym.Env, name):
         "noisy_sigma": config["learner_noisy_sigma"],
     }
 
-    replay_conf = dict(
-        observation_dimensions=env.observation_space.shape,
-        max_size=conf["replay_buffer_size"],
-        min_size=conf["min_replay_buffer_size"],
-        batch_size=conf["minibatch_size"],
-        max_priority=1.0,
-        per_alpha=config["per_alpha"],
-        # we don't need n-step because the actors give n-step transitions already
-        n_step=1,
-        gamma=config["discount_factor"],
-    )
-
     generated_dir = "generated"
     os.makedirs(generated_dir, exist_ok=True)
 
     learner_config_path = Path(Path.cwd(), "configs", "learner_config.yaml")
     actor_config_path = Path(Path.cwd(), "configs", "actor_config.yaml")
-    replay_config_path = Path(Path.cwd(), "configs", "replay_config.yaml")
 
     hosts_file_path = Path(Path.cwd(), generated_dir, "hosts.yaml")
     learner_output_path = Path(Path.cwd(), generated_dir, "learner_output.yaml")
     actor_output_path = Path(Path.cwd(), generated_dir, "actor_output.yaml")
-    replay_output_path = Path(Path.cwd(), generated_dir, "replay_output.yaml")
     distributed_output_path = Path(Path.cwd(), generated_dir, "distributed_output.yaml")
+
     learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
     actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
-    replay_conf = ReplayBufferConfig(replay_conf)
 
     learner_config.dump(learner_config_path)
     actor_config.dump(actor_config_path)
-    replay_conf.dump(replay_config_path)
 
     current_host = get_current_host()
 
-    num_actors = config["num_actors"] + 3  # +mongo, replay, spectator
-    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME} -num_actors={num_actors}"
+    machines = config["num_actors"] +3 # +mongo, replay, spectator
+    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME} -machines={machines}"
     print("running cmd:", cmd)
     proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
 
@@ -143,7 +128,7 @@ def run_training(config, env: gym.Env, name):
     if proc.returncode != 0:
         return {"status": STATUS_FAIL, "loss": 0}
 
-    cmd = f'./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -replay_config={replay_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -replay_output={replay_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]} -actors_sigma_alpha={config["actors_sigma_alpha"]}'
+    cmd = f'./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]} -actors_sigma_alpha={config["actors_sigma_alpha"]}'
     print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
@@ -180,7 +165,6 @@ def run_training(config, env: gym.Env, name):
 
 
 def objective(params):
-    gc.collect()
     logger.info(f"Params: {params}")
     logger.info("Making environments")
     environments_list = [
@@ -366,7 +350,6 @@ def main():
 
     logger.info(best)
     best_trial = space_eval(search_space, best)
-    gc.collect()
 
 
 # objective function - needs to launch

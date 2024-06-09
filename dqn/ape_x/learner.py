@@ -11,6 +11,7 @@ from agent_configs import ApeXLearnerConfig
 from actor import ApeXActor
 from utils import update_per_beta
 import torch.distributed
+from torch.nn.utils import clip_grad_norm_
 
 sys.path.append("../")
 from dqn.rainbow.rainbow_agent import RainbowAgent
@@ -115,9 +116,7 @@ class ApeXLearnerBase(RainbowAgent):
 
                     if training_step // self.training_steps > 0.125:
                         past_scores_dicts = self.stats["test_score"][-5:]
-                        scores = [
-                            score_dict["score"] for score_dict in past_scores_dicts
-                        ]
+                        scores = [score_dict["score"] for score_dict in past_scores_dicts]
                         avg = np.sum(scores) / 5
                         if avg < 10:
                             return  # could do stopping param as the slope of line of best fit
@@ -157,7 +156,7 @@ class ApeXLearner(ApeXLearnerBase):
 
         # for cuda to cuda rpc
         options = rpc.TensorPipeRpcBackendOptions(
-            num_worker_threads=32, devices=['cuda:0']
+            num_worker_threads=32, devices=["cuda:0"]
         )
 
         for callee in ["parameter_server", "replay_server"]:
@@ -210,7 +209,6 @@ class ApeXLearner(ApeXLearnerBase):
             gamma=self.config.discount_factor,
         )
 
-
         self.online_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
             self.parameter_worker_info, RainbowNetwork, rainbow_network_args
         )
@@ -228,12 +226,8 @@ class ApeXLearner(ApeXLearnerBase):
         # print("target network owner", self.target_network_rref.owner_name())
         # print("online network owner", self.online_network_rref.owner_name())
         # print("replay owner", self.replay_rref.owner_name())
-        print(
-            "target network confirmed: ", self.target_network_rref.confirmed_by_owner()
-        )
-        print(
-            "online network confirmed: ", self.online_network_rref.confirmed_by_owner()
-        )
+        print("target network confirmed: ", self.target_network_rref.confirmed_by_owner())
+        print("online network confirmed: ", self.online_network_rref.confirmed_by_owner())
         print("replay confirmed: ", self.replay_rref.confirmed_by_owner())
 
         while (
@@ -267,8 +261,12 @@ class ApeXLearner(ApeXLearnerBase):
         failed = True
         while failed:
             try:
-                self.target_network_rref.rpc_sync().load_state_dict(self.target_model.state_dict())
-                self.online_network_rref.rpc_sync().load_state_dict(self.model.state_dict())
+                self.target_network_rref.rpc_async().load_state_dict(
+                    self.target_model.state_dict()
+                )
+                self.online_network_rref.rpc_async().load_state_dict(
+                    self.model.state_dict()
+                )
                 failed = False
             except Exception as e:
                 logger.exception(f"error setting weights: {e}")
@@ -277,7 +275,9 @@ class ApeXLearner(ApeXLearnerBase):
     def update_replay_priorities(self, samples, priorities):
         self.updates_queue.put(
             Update(
-                ids=np.array(samples["ids"]), indices=np.array(samples["indices"]), priorities=np.array(priorities)
+                ids=np.array(samples["ids"]),
+                indices=np.array(samples["indices"]),
+                priorities=np.array(priorities),
             )
         )
 
@@ -290,22 +290,27 @@ class ApeXLearner(ApeXLearnerBase):
         self.replay_thread.daemon = True
         self.replay_thread.start()
 
-        for i in range(self.config.num_actors):
-            self._start_actor(i)
+        # actors
+        for i in range(1, self.config.num_actors):
+            self._start_actor(i, False)
 
-    def _start_actor(self, actor_num) -> torch.Future:
+        # spectator
+        self._start_actor(0, True)
+
+    def _start_actor(self, actor_num: int, spectator: bool) -> torch.Future:
         env_copy = copy.deepcopy(self.env)
         config_copy = copy.deepcopy(self.config.actor_config)
-        config_copy.config_dict["rank"] = actor_num+3
+        config_copy.config_dict["rank"] = actor_num + 3
         config_copy.rank = actor_num
         worker_info = rpc.get_worker_info(f"actor_{actor_num}")
         args = (
             env_copy,
             config_copy,
-            f"actor_{actor_num}",
+            f"actor_{actor_num}" if not spectator else "spectator",
             self.replay_rref,
             self.online_network_rref,
             self.target_network_rref,
+            spectator,
         )
         remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(worker_info, ApeXActor, args)
 
@@ -341,7 +346,9 @@ class ApeXLearner(ApeXLearnerBase):
             try:
                 if self.samples_queue.qsize() < self.config.samples_queue_size:
                     logger.info("requesting batch")
-                    samples_rref: rpc.RRef[dict | None] = self.replay_rref.remote().sample(False)
+                    samples_rref: rpc.RRef[dict | None] = (
+                        self.replay_rref.remote().sample(False)
+                    )
                     samples = samples_rref.to_here()
                     if samples == None:  # replay buffer size < min_size
                         logger.info("no batch recieved, continuing and waiting")
@@ -366,3 +373,45 @@ class ApeXLearner(ApeXLearnerBase):
 
             if not active:
                 time.sleep(1)
+
+    def learn_from_sample(self, samples: dict):
+        ids, indices, observations, next_observations, rewards, weights, actions = (
+            samples["ids"],
+            samples["indices"],
+            samples["observations"],
+            samples["next_observations"],
+            samples["rewards"],
+            samples["weights"],
+            torch.from_numpy(samples["actions"]).to(self.device).long(),
+        )
+        predicted_distributions = self.predict(
+            self.preprocess(next_observations, device=self.device)
+        )
+        bootstrapped = (self.config.discount_factor**self.config.n_step) * (
+            self.predict_target(self.preprocess(observations, device=self.device))
+            * self.support
+        )[0, self.select_actions(predicted_distributions)].sum(dim=1)
+        Gt = rewards + bootstrapped  # already discounted
+
+        predicted_q = (predicted_distributions * self.support)[
+            range(self.config.minibatch_size), actions
+        ].sum(dim=1)
+
+        weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
+        elementwise_loss = 1 / 2 * (Gt - predicted_q).square()
+        loss = elementwise_loss * weights_cuda
+        self.optimizer.zero_grad()
+        loss.mean().backward()
+        if self.config.clipnorm > 0:
+            # print("clipnorm", self.config.clipnorm)
+            clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+
+        self.optimizer.step()
+        self.update_replay_priorities(
+            samples=samples,
+            priorities=elementwise_loss.detach().to("cpu").numpy()
+            + self.config.per_epsilon,
+        )
+        self.model.reset_noise()
+        self.target_model.reset_noise()
+        return loss.detach().to("cpu").mean().item()

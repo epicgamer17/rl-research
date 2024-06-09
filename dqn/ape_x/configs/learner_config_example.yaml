@@ -1,5 +1,6 @@
 config_dict:
   rank: 0
+  atoms: 1
   worker_name: 'learner'
   world_size: 4
   pg_port: 3334

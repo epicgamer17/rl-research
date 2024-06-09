@@ -2,12 +2,15 @@
 # with distributed info
 
 import argparse
+import os
+import pathlib
 from agent_configs import ApeXActorConfig, ApeXLearnerConfig
 
 
 def main():
     parser = argparse.ArgumentParser(description="generate configs")
     parser.add_argument("--rpc_port", type=int, default=3333)
+    parser.add_argument("--pg_port", type=int, default=3334)
     parser.add_argument("--world_size", type=int, default=4)
 
     parser.add_argument("--master_addr", type=str, default="127.0.0.1")
@@ -22,16 +25,24 @@ def main():
         default="configs/learner_config_example.yaml",
     )
 
-    parser.add_argument("--learner_output", type=str, default="generated")
-    parser.add_argument("--actor_output", type=str, default="generated")
+    parser.add_argument("--learner_output", type=str, default="generated/learner_config.yaml")
+    parser.add_argument("--actor_output", type=str, default="generated/actor_config.yaml")
 
     args = parser.parse_args()
 
+    learner_path = pathlib.Path(args.learner_output)
+    actor_path = pathlib.Path(args.actor_output)
+
+    os.makedirs(os.path.basename(learner_path), exist_ok=True)
+    os.makedirs(os.path.basename(actor_path), exist_ok=True)
+
     distributed_dict = dict(
-        # "rank": int = self.parse_field("rank", required=True)
-        # "worker_name": int = self.parse_field("worker_name", required=True)
+        rank=0,
+        worker_name="",
         world_size=args.world_size,
         rpc_port=args.rpc_port,
+        pg_port=args.pg_port,
+        master_addr=args.master_addr,
         replay_addr=args.replay_addr,
         storage_addr=args.storage_addr,
     )
@@ -39,13 +50,13 @@ def main():
     actor_conf = ApeXActorConfig.load(args.actor_base)
     learner_conf = ApeXLearnerConfig.load(args.learner_base)
 
-    injected_actor_conf = actor_conf.config_dict | {**distributed_dict | {"rank": 0}}
+    injected_actor_conf = actor_conf.config_dict | {**distributed_dict | {"rank": -1, "worker_name": "actor_uninitialized"}}
     actor_config = ApeXActorConfig(injected_actor_conf, actor_conf.game)
     actor_config.dump(args.actor_output)
 
     injected_learner_conf = learner_conf.config_dict | {
         **distributed_dict
-        | {"rank": 3, "distributed_actor_config_file": args.actor_output}
+        | {"rank": 0, "worker_name": "learner","distributed_actor_config_file": args.actor_output}
     }
     learner_config = ApeXLearnerConfig(injected_learner_conf, learner_conf.game)
     learner_config.dump(args.learner_output)

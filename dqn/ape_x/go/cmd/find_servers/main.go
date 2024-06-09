@@ -99,14 +99,12 @@ func main() {
 	flag.Var(&excludeFlag, "exclude", "")
 	outputFilenameFlag := flag.String("output", "../generated/hosts.yaml", "")
 	usernameFlag := flag.String("ssh_username", USERNAME, "")
-	numActorsFlag := flag.Int("num_actors", 4, "")
+	machinesFlag := flag.Int("machines", 4, "")
 
 	flag.Parse()
 
 	indicesToExclude := make(map[int]bool)
 
-	// open-gpu-17 doesn't exist, open-gpu-5/7/24 have cuda driver issues
-	// open-gpu-13 throws tensorflow.python.framework.errors_impl.InternalError: cudaSetDevice() on GPU:0 failed. Status: CUDA-capable device(s) is/are busy or unavailable
 	for _, i := range []int{5, 7, 13, 17, 24} {
 		indicesToExclude[i] = true
 	}
@@ -128,11 +126,11 @@ func main() {
 
 	<-done
 
-	if len(hosts) < *numActorsFlag {
+	if len(hosts) < *machinesFlag {
 		fmt.Println("not enough actors to run.")
 		os.Exit(1)
 	}
-	truncated := hosts[:*numActorsFlag]
+	truncated := hosts[:*machinesFlag]
 	enc, err := yaml.Marshal(truncated)
 	if err != nil {
 		panic(err)
