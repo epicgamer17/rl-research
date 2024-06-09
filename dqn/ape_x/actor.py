@@ -73,7 +73,8 @@ class ApeXActorBase(ActorAgent):
         if n_step_t != None:
             predicted_q = self.predict(t.next_state)
             action = self.select_actions(predicted_q).item()
-            self.precalculated_q[p] = self.config.n_step ** self.predict_target_q(
+
+            self.precalculated_q[p] = (self.config.discount_factor ** self.config.n_step) * self.predict_target_q(
                 t.next_state, action
             )
 
@@ -140,24 +141,30 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         with torch.no_grad():
             # (B)
             bootstrapped_qs = torch.from_numpy(self.precalculated_q).to(self.device)
+            print("BS",bootstrapped_qs)
             # (B)
             rewards = torch.from_numpy(self.replay_buffer.reward_buffer).to(self.device)
+            print("rewards",rewards)
 
             # (B)
             Gt = rewards + bootstrapped_qs  # already discounted
+            print("Gt",Gt)
 
             # (B)
             actions = torch.from_numpy(self.replay_buffer.action_buffer).to(self.device).long()
             # (B, output_size, atoms)
             predicted_distributions = self.predict(self.rb.observation_buffer)
+            print("pred-dist",predicted_distributions)
 
             # (B, output_size, atoms) -> (B, atoms) -> (B)
             predicted_q = (predicted_distributions * self.support)[
                 range(self.config.minibatch_size), actions
             ].sum(1)
+            print("pred-q",predicted_q)
 
             # (B)
             batched_loss = 1 / 2 * (Gt - predicted_q).square()
+            print("BL",batched_loss)
             return batched_loss.detach().cpu().numpy()
 
     def send_experience_batch(self):
