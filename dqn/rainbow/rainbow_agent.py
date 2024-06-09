@@ -293,6 +293,7 @@ class RainbowAgent(BaseAgent):
 
             for _ in range(self.config.num_minibatches):
                 losses = self.learn()
+                print(losses)
                 loss_mean = losses.mean()
                 # could do things other than taking the mean here
                 self.stats["loss"].append(

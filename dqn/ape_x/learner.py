@@ -75,7 +75,7 @@ class ApeXLearnerBase(RainbowAgent):
         ti = time.time()
         samples = self.samples_queue.get()
         loss = super().learn_from_sample(samples)
-        logger.info(f"experience replay took {time.time()-ti} s")
+        logger.info(f"experience replay took {time.time()-ti}. loss: {loss} s")
         return loss
 
     def run(self):
@@ -101,7 +101,7 @@ class ApeXLearnerBase(RainbowAgent):
                 loss = self.learn()
                 target_model_updated = False
                 if training_step % self.config.transfer_interval == 0:
-                    self.update_target_model(training_step)
+                    self.update_target_model()
                     target_model_updated = True
 
                 self.stats["loss"].append(
@@ -277,7 +277,7 @@ class ApeXLearner(ApeXLearnerBase):
     def update_replay_priorities(self, samples, priorities):
         self.updates_queue.put(
             Update(
-                ids=samples["ids"], indices=samples["indices"], priorities=priorities
+                ids=np.array(samples["ids"]), indices=np.array(samples["indices"]), priorities=np.array(priorities)
             )
         )
 
@@ -310,7 +310,7 @@ class ApeXLearner(ApeXLearnerBase):
         remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(worker_info, ApeXActor, args)
 
         # no timeout
-        res: torch.Future[None] = remote_actor_rref.rpc_async(timeout=0).train()
+        res: torch.Future[None] = remote_actor_rref.rpc_async(timeout=0).learn()
         return res
 
     def on_done(self):

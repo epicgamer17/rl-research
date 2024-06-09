@@ -136,11 +136,6 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
         return t, info
 
-    def predict_target_q(self, state, action) -> float:
-        target_q_values = self.predict_target(state) * self.support
-        q = target_q_values.sum(2, keepdim=False)[1, action].item()
-        return q
-
     def calculate_losses(self):
         with torch.no_grad():
             # (B)
@@ -152,7 +147,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             Gt = rewards + bootstrapped_qs  # already discounted
 
             # (B)
-            actions = torch.from_numpy(self.replay_buffer.action_buffer).to(self.device)
+            actions = torch.from_numpy(self.replay_buffer.action_buffer).to(self.device).long()
             # (B, output_size, atoms)
             predicted_distributions = self.predict(self.rb.observation_buffer)
 
@@ -186,18 +181,21 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             priorities=prioritized_losses,
         )
 
-        self.remote_replay.remote().store_batch(batch).add_done_callback(
-            lambda: print("sent batch")
-        )
-
+        self.remote_replay.rpc_sync().store_batch(batch)
     def update_params(self):
         ti = time.time()
         logger.info("fetching weights from storage...")
-        self.model.load_state_dict(self.remote_online_params.rpc_sync().state_dict())
-        self.target_model.load_state_dict(
-            self.remote_target_params.rpc_sync().state_dict()
-        )
+        try:
+            remote_model_params = self.remote_online_params.remote().state_dict().to_here()
+            remote_target_params = self.remote_target_params.remote().state_dict().to_here()
+
+            self.model.load_state_dict(remote_model_params)
+            self.target_model.load_state_dict(remote_target_params)
+        except Exception as e:
+            logger.info(f"failed to fetch weights: {e}")
+            return False
         logger.info(f"fetching weights took {time.time() - ti} s")
+        return True
 
     def setup(self):
         if self.spectator:
@@ -206,8 +204,9 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         logger.info("fetching initial network params from learner...")
         has_weights = self.update_params()
         while not has_weights:
-            time.sleep(2)
+            print("no weights, trying again")
             has_weights = self.update_params()
+            time.sleep(2)
 
         self.env_state, info = self.env.reset()
 

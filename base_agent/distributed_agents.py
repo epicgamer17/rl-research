@@ -5,6 +5,10 @@ from base_agent.agent import BaseAgent
 from agent_configs import Config, ConfigBase
 from gymnasium import Env
 from utils import get_legal_moves
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 
 class DistreteTransition(NamedTuple):
@@ -36,10 +40,10 @@ class ActorAgent(BaseAgent):
         """
         pass
 
-    def collect_experience(self, state, into) -> tuple[DistreteTransition, Any]:
-        legal_moves = get_legal_moves(info)
-        state_input = self.preprocess(state)
-        action = self.select_actions(state_input).item()
+    def collect_experience(self, state, info) -> tuple[DistreteTransition, Any]:
+        legal_moves = None # sget_legal_moves(info)
+        values = self.predict(state)
+        action = self.select_actions(values).item()
         next_state, reward, terminated, truncated, info = self.env.step(action)
         done = truncated or terminated
 
@@ -71,7 +75,7 @@ class ActorAgent(BaseAgent):
 
                     self.on_training_step_end(training_step)
             except Exception as e:
-                print(e)
+                logger.exception(e)
                 failed = True
                 pass
             finally:
