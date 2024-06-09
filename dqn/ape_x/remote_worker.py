@@ -1,8 +1,18 @@
 import os
 import argparse
 import torch
+import copy
 import torch.distributed.rpc as rpc
 import torch.distributed
+
+import sys
+sys.path.append('../..')
+import dqn
+import dqn.rainbow
+import dqn.ape_x
+import replay_buffers
+import replay_buffers.prioritized_n_step_replay_buffer
+
 
 
 def main():
@@ -45,6 +55,8 @@ def main():
         rpc_backend_options=options,
     )
 
+
+    rpc.shutdown()
 
 if __name__ == "__main__":
     main()

@@ -43,6 +43,7 @@ def main():
     )
     assert torch.distributed.is_initialized()
     assert torch.distributed.get_backend() == torch.distributed.Backend.NCCL
+
     os.environ["MASTER_ADDR"] = args.master_addr  # learner is the master
     os.environ["MASTER_PORT"] = str(args.rpc_port)
 
@@ -56,6 +57,8 @@ def main():
         world_size=args.world_size,
         rpc_backend_options=options,
     )
+
+    rpc.shutdown()
 
 
 if __name__ == "__main__":

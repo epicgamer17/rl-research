@@ -157,7 +157,7 @@ class ApeXLearner(ApeXLearnerBase):
 
         # for cuda to cuda rpc
         options = rpc.TensorPipeRpcBackendOptions(
-            num_worker_threads=32, devices=[torch.device(self.device)]
+            num_worker_threads=32, devices=['cuda:0']
         )
 
         for callee in ["parameter_server", "replay_server"]:
@@ -209,6 +209,8 @@ class ApeXLearner(ApeXLearnerBase):
             n_step=self.config.n_step,
             gamma=self.config.discount_factor,
         )
+
+
         self.online_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
             self.parameter_worker_info, RainbowNetwork, rainbow_network_args
         )
@@ -314,6 +316,8 @@ class ApeXLearner(ApeXLearnerBase):
     def on_done(self):
         self.flag.set()
         self.replay_thread.join()
+
+        rpc.shutdown()
 
     def on_training_step_end(self):
         super().on_training_step_end()
