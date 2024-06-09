@@ -80,41 +80,48 @@ class RainbowNetwork(nn.Module):
             assert len(current_shape) == 2
             initial_width = current_shape[1]
 
-        if self.has_value_hidden_layers:
-            # (B, width_in) -> (B, value_in_features) -> (B, atom_size)
-            self.value_hidden_layers = DenseStack(
-                initial_width=initial_width,
-                widths=self.config.value_hidden_layers_widths,
-                activation=self.config.activation,
-                noisy_sigma=self.config.noisy_sigma,
+        if self.config.dueling:
+            if self.has_value_hidden_layers:
+                # (B, width_in) -> (B, value_in_features) -> (B, atom_size)
+                self.value_hidden_layers = DenseStack(
+                    initial_width=initial_width,
+                    widths=self.config.value_hidden_layers_widths,
+                    activation=self.config.activation,
+                    noisy_sigma=self.config.noisy_sigma,
+                )
+                value_in_features = self.value_hidden_layers.output_width
+            else:
+                value_in_features = self.dense_layers.output_width
+            # (B, value_in_features) -> (B, atom_size)
+            self.value_layer = build_dense(
+                in_features=value_in_features,
+                out_features=config.atom_size,
+                sigma=config.noisy_sigma,
             )
-            value_in_features = self.value_hidden_layers.output_width
-        else:
-            value_in_features = self.dense_layers.output_width
-        # (B, value_in_features) -> (B, atom_size)
-        self.value_layer = build_dense(
-            in_features=value_in_features,
-            out_features=config.atom_size,
-            sigma=config.noisy_sigma,
-        )
 
-        if self.has_advantage_hidden_layers:
-            # (B, width_in) -> (B, advantage_in_features)
-            self.advantage_hidden_layers = DenseStack(
-                initial_width=initial_width,
-                widths=self.config.advantage_hidden_layers_widths,
-                activation=self.config.activation,
-                noisy_sigma=self.config.noisy_sigma,
+            if self.has_advantage_hidden_layers:
+                # (B, width_in) -> (B, advantage_in_features)
+                self.advantage_hidden_layers = DenseStack(
+                    initial_width=initial_width,
+                    widths=self.config.advantage_hidden_layers_widths,
+                    activation=self.config.activation,
+                    noisy_sigma=self.config.noisy_sigma,
+                )
+                advantage_in_features = self.advantage_hidden_layers.output_width
+            else:
+                advantage_in_features = self.dense_layers.output_width
+            # (B, advantage_in_features) -> (B, output_size * atom_size)
+            self.advantage_layer = build_dense(
+                in_features=advantage_in_features,
+                out_features=output_size * config.atom_size,
+                sigma=self.config.noisy_sigma,
             )
-            advantage_in_features = self.advantage_hidden_layers.output_width
         else:
-            advantage_in_features = self.dense_layers.output_width
-        # (B, advantage_in_features) -> (B, output_size * atom_size)
-        self.advantage_layer = build_dense(
-            in_features=advantage_in_features,
-            out_features=output_size * config.atom_size,
-            sigma=self.config.noisy_sigma,
-        )
+            self.distribution_layer = build_dense(
+                in_features=initial_width,
+                out_features=self.output_size * self.config.atom_size,
+                sigma=self.config.noisy_sigma,
+            )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_conv_layers:
@@ -135,7 +142,6 @@ class RainbowNetwork(nn.Module):
 
         # (B, *)
         S = inputs
-
         # (B, C_in, H, W) -> (B, C_out, H, W)
         if self.has_conv_layers:
             S = self.conv_layers(S)
@@ -147,40 +153,46 @@ class RainbowNetwork(nn.Module):
         if self.has_dense_layers:
             S = self.dense_layers(S)
 
-        # (B, value_hidden_in) -> (B, value_hidden_out)
-        if self.has_value_hidden_layers:
-            v = self.value_hidden_layers(S)
+        if self.config.dueling:
+            # (B, value_hidden_in) -> (B, value_hidden_out)
+            if self.has_value_hidden_layers:
+                v = self.value_hidden_layers(S)
+            else:
+                v = S
+
+            # (B, value_hidden_in || dense_features_out) -> (B, atom_size) -> (B, 1, atom_size)
+            v: Tensor = self.value_layer(v).view(-1, 1, self.config.atom_size)
+
+            # (B, adv_hidden_in) -> (B, adv_hidden_out)
+            if self.has_advantage_hidden_layers:
+                A = self.advantage_hidden_layers(S)
+            else:
+                A = S
+
+            # (B, adv_hidden_out || dense_features_out) -> (B, output_size * atom_size) -> (B, output_size, atom_size)
+            A: Tensor = self.advantage_layer(A).view(
+                -1, self.output_size, self.config.atom_size
+            )
+
+            # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
+            a_mean = A.mean(1, keepdim=True)
+
+            # (B, 1, atom_size) +
+            # (B, output_size, atom_size) +
+            # (B, 1, atom_size)
+            # is valid broadcasting operation
+            Q = v + A - a_mean
+
+            # -[softmax(2)]-> turns the atom dimension into a valid p.d.f.
+            # ONLY CLIP FOR CATEGORICAL CROSS ENTROPY LOSS TO PREVENT NAN
+            # MIGHT BE ABLE TO REMOVE CLIPPING ENTIRELY SINCE I DONT THINK THE TENSORFLOW LOSSES CAN RETURN NaN
+            # q.clip(1e-3, 1)
         else:
-            v = S
-
-        # (B, value_hidden_in || dense_features_out) -> (B, atom_size) -> (B, 1, atom_size)
-        v: Tensor = self.value_layer(v).view(-1, 1, self.config.atom_size)
-
-        # (B, adv_hidden_in) -> (B, adv_hidden_out)
-        if self.has_advantage_hidden_layers:
-            A = self.advantage_hidden_layers(S)
-        else:
-            A = S
-
-        # (B, adv_hidden_out || dense_features_out) -> (B, output_size * atom_size) -> (B, output_size, atom_size)
-        A: Tensor = self.advantage_layer(A).view(
-            -1, self.output_size, self.config.atom_size
-        )
-
-        # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
-        a_mean = A.mean(1, keepdim=True)
-
-        # (B, 1, atom_size) +
-        # (B, output_size, atom_size) +
-        # (B, 1, atom_size)
-        # is valid broadcasting operation
-        Q = v + A - a_mean
-
-        # -[softmax(2)]-> turns the atom dimension into a valid p.d.f.
-        # ONLY CLIP FOR CATEGORICAL CROSS ENTROPY LOSS TO PREVENT NAN
-        # MIGHT BE ABLE TO REMOVE CLIPPING ENTIRELY SINCE I DONT THINK THE TENSORFLOW LOSSES CAN RETURN NaN
-        return Q.softmax(2)
-        # q.clip(1e-3, 1)
+            # (B, dense_features_out) -> (B, output_size, atom_size)
+            Q = self.distribution_layer(S).view(
+                -1, self.output_size, self.config.atom_size
+            )
+        return Q.softmax(dim=-1)
 
     def reset_noise(self):
         if self.config.noisy_sigma != 0:

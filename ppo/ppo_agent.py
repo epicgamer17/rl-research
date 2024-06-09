@@ -72,6 +72,7 @@ class PPOAgent(BaseAgent):
 
         self.replay_buffer = BasePPOReplayBuffer(
             observation_dimensions=self.observation_dimensions,
+            observation_dtype=self.env.observation_space.dtype,
             max_size=self.config.replay_buffer_size,
             gamma=self.config.discount_factor,
             gae_lambda=self.config.gae_lambda,
@@ -326,14 +327,12 @@ class PPOAgent(BaseAgent):
                 # self.old_actor.set_weights(self.actor.get_weights())
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
-                    5,
                     training_step,
                     training_step * self.config.steps_per_epoch,
                     time() - training_time,
                 )
 
         self.save_checkpoint(
-            5,
             training_step,
             training_step * self.config.steps_per_epoch,
             time() - training_time,

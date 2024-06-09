@@ -44,22 +44,29 @@ class BaseAgent:
 
         self.env = env
         # self.test_env = copy.deepcopy(env)
-        if hasattr(self.env, "render_mode"):
-            assert (
-                self.env.render_mode == "rgb_array"
-            ), "Video recording for test_env requires render_mode to be 'rgb_array'"
+        if hasattr(self.env, "render_mode") and self.env.render_mode == "rgb_array":
+            # assert (
+            #     self.env.render_mode == "rgb_array"
+            # ), "Video recording for test_env requires render_mode to be 'rgb_array'"
             self.test_env = gym.wrappers.RecordVideo(
                 copy.deepcopy(env),
                 ".",
                 name_prefix="{}".format(self.model_name),
             )
         else:
+            print(
+                "Warning: test_env will not record videos as render_mode is not 'rgb_array'"
+            )
             self.test_env = copy.deepcopy(env)
 
         if isinstance(env.observation_space, gym.spaces.Box):
             self.observation_dimensions = env.observation_space.shape
         elif isinstance(env.observation_space, gym.spaces.Discrete):
-            self.observation_dimensions = (env.observation_space.n,)
+            self.observation_dimensions = (1,)
+        elif isinstance(env.observation_space, gym.spaces.Tuple):
+            self.observation_dimensions = (
+                len(env.observation_space.spaces),
+            )  # for tuple of discretes
         else:
             raise ValueError("Observation space not supported")
 
@@ -76,17 +83,17 @@ class BaseAgent:
         self.start_training_step = 0
         self.training_steps = self.config.training_steps
         self.checkpoint_interval = max(self.training_steps // 30, 1)
+        self.checkpoint_trials = 5
 
     def train(self):
         raise NotImplementedError
 
-    def preprocess(self, states, device="cpu", dtype=torch.uint8) -> torch.Tensor:
+    def preprocess(self, states, device="cpu") -> torch.Tensor:
         """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
         Does not alter the input state parameter, instead creating a new Tensor on the inputted device (default cpu)
 
         Args:
             state (Any): A or a list of state returned from self.env.step
-            dtype (dtype, optional): The datatype for the returned tensor
             device (str, optional): The device to send the preprocessed states to. Defaults to "cpu".
 
         Returns:
@@ -95,9 +102,14 @@ class BaseAgent:
         """
 
         # convert to np.array first for performance, recoommnded by pytorch
-        prepared_state = torch.from_numpy(np.array(states)).to(dtype).to(device)
+        prepared_state = torch.from_numpy(np.array(states)).to(torch.float32).to(device)
         # if self.config.game.is_image:
         # normalize_images(prepared_state)
+
+        # if the state is a single number, add a dimension (not the batch dimension!, just wrapping it in []s basically)
+        if prepared_state.shape == torch.Size([]):
+            prepared_state = prepared_state.unsqueeze(0)
+
         if prepared_state.shape == self.observation_dimensions:
             prepared_state = make_stack(prepared_state)
         # print(prepared_state)
@@ -202,7 +214,6 @@ class BaseAgent:
 
     def save_checkpoint(
         self,
-        num_trials,
         training_step,
         frames_seen,
         time_taken,
@@ -220,7 +231,8 @@ class BaseAgent:
             os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
             os.makedirs(Path(training_step_dir, "graphs_stats"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
+            if self.env.render_mode == "rgb_array":
+                os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
             # save the model weights
             torch.save(self.model.state_dict(), weights_path)
@@ -235,7 +247,7 @@ class BaseAgent:
         # save config
         self.config.dump(f"{dir}/configs/config.yaml")
 
-        test_score = self.test(num_trials, training_step, training_step_dir)
+        test_score = self.test(self.checkpoint_trials, training_step, training_step_dir)
         self.stats["test_score"].append(test_score)
         # save the graph stats and targets
         stats_path = Path(training_step_dir, f"graphs_stats", exist_ok=True)
@@ -296,7 +308,7 @@ class BaseAgent:
             # reset
             if self.test_env.render_mode != "rgb_array":
                 self.test_env.render()
-            self.test_env.close()
+            # self.test_env.close()
             average_score /= num_trials
             return {
                 "score": average_score,

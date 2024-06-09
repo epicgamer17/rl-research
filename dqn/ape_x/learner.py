@@ -110,12 +110,14 @@ class ApeXLearnerBase(RainbowAgent):
 
                 if training_step % self.checkpoint_interval == 0:
                     self.save_checkpoint(
-                        5, training_step, training_step, time.time() - start_time
+                        training_step, training_step, time.time() - start_time
                     )
 
                     if training_step // self.training_steps > 0.125:
                         past_scores_dicts = self.stats["test_score"][-5:]
-                        scores = [score_dict["score"] for score_dict in past_scores_dicts]
+                        scores = [
+                            score_dict["score"] for score_dict in past_scores_dicts
+                        ]
                         avg = np.sum(scores) / 5
                         if avg < 10:
                             return  # could do stopping param as the slope of line of best fit
@@ -124,9 +126,7 @@ class ApeXLearnerBase(RainbowAgent):
 
             logger.info("loop done")
 
-            self.save_checkpoint(
-                5, training_step, training_step, time.time() - start_time
-            )
+            self.save_checkpoint(training_step, training_step, time.time() - start_time)
         except Exception as e:
             logger.exception(f"run method ended by error: {e}")
         finally:
@@ -228,8 +228,12 @@ class ApeXLearner(ApeXLearnerBase):
         # print("target network owner", self.target_network_rref.owner_name())
         # print("online network owner", self.online_network_rref.owner_name())
         # print("replay owner", self.replay_rref.owner_name())
-        print("target network confirmed: ", self.target_network_rref.confirmed_by_owner())
-        print("online network confirmed: ", self.online_network_rref.confirmed_by_owner())
+        print(
+            "target network confirmed: ", self.target_network_rref.confirmed_by_owner()
+        )
+        print(
+            "online network confirmed: ", self.online_network_rref.confirmed_by_owner()
+        )
         print("replay confirmed: ", self.replay_rref.confirmed_by_owner())
 
         while (
@@ -280,7 +284,9 @@ class ApeXLearner(ApeXLearnerBase):
 
     def update_replay_priorities(self, samples, priorities):
         self.updates_queue.put(
-            Update(ids=samples["ids"], indices=samples["indices"], priorities=priorities)
+            Update(
+                ids=samples["ids"], indices=samples["indices"], priorities=priorities
+            )
         )
 
     def on_run(self):
@@ -325,7 +331,11 @@ class ApeXLearner(ApeXLearnerBase):
         # This beta gets send over to the remote replay buffer
         try:
             self.replay_rref.remote(30).set_beta(
-                update_per_beta(self.per_sample_beta, 1.0, self.training_steps)
+                update_per_beta(
+                    self.per_sample_beta,
+                    self.config.per_beta_final,
+                    self.training_steps,
+                )
             )
         except Exception as e:
             logger.exception(f"error updating remote PER beta: {e}")
@@ -356,7 +366,9 @@ class ApeXLearner(ApeXLearnerBase):
             try:
                 t = self.updates_queue.get(block=False)  # (indices, priorities, ids)
                 active = True
-                rpc.rpc_sync(self.replay_rref, self.replay_rref.update_priorities, (*t,))
+                rpc.rpc_sync(
+                    self.replay_rref, self.replay_rref.update_priorities, (*t,)
+                )
             except queue.Empty:
                 logger.debug("no updates to send, continuing")
             except Exception as e:

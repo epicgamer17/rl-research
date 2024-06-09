@@ -5,8 +5,6 @@ from game_configs import GameConfig
 from utils import (
     prepare_kernel_initializers,
     prepare_activations,
-    Loss,
-    CategoricalCrossentropy,
 )
 
 
@@ -83,7 +81,7 @@ class Config(ConfigBase):
 
         # not hyperparameters but utility things
         self.save_intermediate_weights: bool = self.parse_field(
-            "save_intermediate_weights", True
+            "save_intermediate_weights", False
         )
 
         # ADD LEARNING RATE SCHEDULES
