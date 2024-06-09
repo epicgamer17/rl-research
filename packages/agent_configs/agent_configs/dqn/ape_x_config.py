@@ -21,6 +21,11 @@ class ApeXLearnerConfig(ApeXConfig, DistributedLearnerConfig):
 
         self.num_actors: int = self.parse_field("num_actors", required=True)
 
+        print("Loading actor config:")
+        self.actor_config: ApeXActorConfig = ApeXActorConfig.load(
+            self.parse_field("distributed_actor_config_file", required=True)
+        )
+
 
 class ApeXActorConfig(ApeXConfig, DistributedActorConfig):
     def __init__(self, config_dict, game_config):

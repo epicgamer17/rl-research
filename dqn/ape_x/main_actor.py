@@ -52,7 +52,7 @@ def main():
         options.set_device_map(callee, {0: 0})
 
     rpc.init_rpc(
-        name=f"actor_{args.rank}",
+        name=f"actor_{args.rank-3}",
         rank=args.rank,
         world_size=args.world_size,
         rpc_backend_options=options,

@@ -51,6 +51,7 @@ class ApeXActorBase(ActorAgent):
         self.config = config
         self.rb = NStepReplayBuffer(
             observation_dimensions=env.observation_space.shape,
+            observation_dtype=env.observation_space.dtype,
             batch_size=self.config.replay_buffer_size,
             max_size=self.config.replay_buffer_size,
             n_step=self.config.n_step,

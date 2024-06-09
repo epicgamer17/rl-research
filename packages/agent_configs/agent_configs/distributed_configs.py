@@ -24,11 +24,6 @@ class DistributedLearnerConfig(DistributedConfig):
         self.updates_queue_size: int = self.parse_field("updates_queue_size", 16)
         self.push_params_interval: int = self.parse_field("push_params_interval", 100)
 
-        print("Loading actor config:")
-        self.actor_config: DistributedActorConfig = DistributedActorConfig.load(
-            self.parse_field("distributed_actor_config_file", required=True)
-        )
-
 
 class DistributedActorConfig(DistributedConfig):
     def __init__(self, config_dict):

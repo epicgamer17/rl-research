@@ -290,25 +290,27 @@ class ApeXLearner(ApeXLearnerBase):
         self.replay_thread.daemon = True
         self.replay_thread.start()
 
-    def _start_actor(self, rank) -> torch.Future:
+        for i in range(self.config.num_actors):
+            self._start_actor(i)
+
+    def _start_actor(self, actor_num) -> torch.Future:
         env_copy = copy.deepcopy(self.env)
         config_copy = copy.deepcopy(self.config.actor_config)
-        config_copy.config_dict["rank"] = rank
-        config_copy.rank = rank
+        config_copy.config_dict["rank"] = actor_num+3
+        config_copy.rank = actor_num
+        worker_info = rpc.get_worker_info(f"actor_{actor_num}")
         args = (
             env_copy,
             config_copy,
-            f"{rank}_actor",
+            f"actor_{actor_num}",
             self.replay_rref,
             self.online_network_rref,
             self.target_network_rref,
         )
-        remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(rank, ApeXActor, args)
+        remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(worker_info, ApeXActor, args)
 
         # no timeout
-        res: torch.Future[None] = rpc.rpc_async(
-            remote_actor_rref, remote_actor_rref.train, timeout=0
-        )
+        res: torch.Future[None] = remote_actor_rref.rpc_async(timeout=0).train()
         return res
 
     def on_done(self):
