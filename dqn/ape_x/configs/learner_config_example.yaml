@@ -8,7 +8,7 @@ config_dict:
   replay_addr: 127.0.0.1
   storage_addr: 127.0.0.1
   distributed_actor_config_file: './configs/actor_config_example.yaml'
-  loss_function: !!python/object:utils.utils.CategoricalCrossentropy
+  loss_function: !!python/object:utils.utils.CategoricalCrossentropyLoss
     axis: -1
     from_logits: false
   num_actors: 1

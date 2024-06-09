@@ -267,16 +267,8 @@ class ApeXLearner(ApeXLearnerBase):
         failed = True
         while failed:
             try:
-                rpc.rpc_sync(
-                    self.target_network_rref,
-                    self.target_network_rref.load_state_dict,
-                    (self.target_model.state_dict(),),
-                )
-                rpc.rpc_sync(
-                    self.online_network_rref,
-                    self.online_network_rref.load_state_dict,
-                    (self.model.state_dict(),),
-                )
+                self.target_network_rref.rpc_sync().load_state_dict(self.target_model.state_dict())
+                self.online_network_rref.rpc_sync().load_state_dict(self.model.state_dict())
                 failed = False
             except Exception as e:
                 logger.exception(f"error setting weights: {e}")
@@ -347,11 +339,9 @@ class ApeXLearner(ApeXLearnerBase):
             try:
                 if self.samples_queue.qsize() < self.config.samples_queue_size:
                     logger.info("requesting batch")
-                    samples_rref: rpc.RRef[dict | None] = rpc.remote(
-                        self.replay_rref, self.replay_rref.sample, (False,)
-                    )
+                    samples_rref: rpc.RRef[dict | None] = self.replay_rref.remote().sample(False)
                     samples = samples_rref.to_here()
-                    if samples_rref == None:  # replay buffer size < min_size
+                    if samples == None:  # replay buffer size < min_size
                         logger.info("no batch recieved, continuing and waiting")
                     else:
                         logger.info("recieved batch")
@@ -366,9 +356,7 @@ class ApeXLearner(ApeXLearnerBase):
             try:
                 t = self.updates_queue.get(block=False)  # (indices, priorities, ids)
                 active = True
-                rpc.rpc_sync(
-                    self.replay_rref, self.replay_rref.update_priorities, (*t,)
-                )
+                self.replay_rref.rpc_sync().update_priorities(*t)
             except queue.Empty:
                 logger.debug("no updates to send, continuing")
             except Exception as e:

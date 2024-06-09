@@ -7,7 +7,7 @@ config_dict:
   master_addr: 127.0.0.1
   replay_addr: 127.0.0.1
   storage_addr: 127.0.0.1
-  loss_function: !!python/object:utils.utils.CategoricalCrossentropy
+  loss_function: !!python/object:utils.utils.CategoricalCrossentropyLoss
     axis: -1
     from_logits: false
 game: !!python/object:game_configs.cartpole_config.CartPoleConfig
