@@ -94,6 +94,8 @@ Some useful papers:
 16. Population Based Training: https://arxiv.org/pdf/1711.09846.pdf <- not used but interesting idea for the future
 17. RL Card: https://arxiv.org/abs/1910.04376
 18. NFSP https://arxiv.org/pdf/1603.01121
+19. CFR: https://proceedings.neurips.cc/paper/2007/file/08d98638c6fcd194a4b1e6992063e944-Paper.pdf 
+20: Deep CFR: https://arxiv.org/pdf/1811.00164
 
 
 To Look Into: 
