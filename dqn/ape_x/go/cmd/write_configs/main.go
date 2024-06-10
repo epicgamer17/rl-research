@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 
 	"internal/pkg/configs"
@@ -12,6 +14,19 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+func getHostname() string {
+	cmd := exec.Command("/bin/hostname", "-f")
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	err := cmd.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fqdn := buf.String()
+	fqdn = fqdn[:len(fqdn)-1]
+	return fqdn
+}
 
 func CreateConfigsRemote(
 	client *ssh_util.Client,
@@ -35,12 +50,13 @@ func CreateConfigsRemote(
 	// copy base files to remote, then run the config_generator.py script (remotely)
 	// to inject the necessary distributed info
 
+	worldSize := len(config.ActorHosts) + 3
 	commands := []string{
 		"cd ~/rl-research/ape_x",
 		"conda activate ml",
 		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerConfig), learnerConfigBaseFilename),
 		fmt.Sprintf("echo '%s' > \"%s\"", string(actorConfig), actorConfigBaseFilename),
-		fmt.Sprintf("python3 config_generator.py --"),
+		fmt.Sprintf("python3 config_generator.py --world_size %d --master_addr %s --replay_addr %s --storage_addr %s --rpc_port %d --pg_port %d", worldSize, config.MasterHost, config.ReplayHost, config.StorageHost, config.RPCPort, config.PGPort),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -64,7 +80,6 @@ func main() {
 
 	learnerBaseFilenameFlag := flag.String("learner_config", "configs/learner_config_example.yaml", "")
 	actorBaseFilenameFlag := flag.String("actor_config", "configs/actor_config_example.yaml", "")
-	replayFilenameFlag := flag.String("replay_config", "configs/replay_config_example.yaml", "")
 	hostsFilenameFlag := flag.String("hosts_file", "generated/hosts.yaml", "")
 
 	learnerOutputFlag := flag.String("learner_output", "generated/learner_config.yaml", "")
@@ -86,15 +101,19 @@ func main() {
 	storageHost, hosts := hosts[len(hosts)-1], hosts[:len(hosts)-1]
 
 	learnerHost := ""
+	masterHost := ""
 	if *withLearnerFlag {
 		learnerHost, hosts = hosts[len(hosts)-1], hosts[:len(hosts)-1]
+		masterHost = learnerHost
+	} else {
+		masterHost = getHostname()
 	}
 
 	distributedConfig := configs.DistributedConfig{
 		LearnerHost:           learnerHost,
 		ReplayHost:            replayHost,
 		StorageHost:           storageHost,
-		MasterHost:            learnerHost,
+		MasterHost:            masterHost,
 		RPCPort:               3333, // hardcoded for now
 		PGPort:                3334, // hardcoded for now
 		ActorHosts:            hosts,
@@ -109,8 +128,8 @@ func main() {
 		distributedConfig,
 		*learnerBaseFilenameFlag,
 		*actorBaseFilenameFlag,
-		*replayFilenameFlag,
 		*learnerOutputFlag,
+		*actorOutputFlag,
 	)
 	client.Close()
 

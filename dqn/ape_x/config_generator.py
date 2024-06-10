@@ -33,8 +33,8 @@ def main():
     learner_path = pathlib.Path(args.learner_output)
     actor_path = pathlib.Path(args.actor_output)
 
-    os.makedirs(os.path.basename(learner_path), exist_ok=True)
-    os.makedirs(os.path.basename(actor_path), exist_ok=True)
+    os.makedirs(os.path.dirname(learner_path.absolute()), exist_ok=True)
+    os.makedirs(os.path.dirname(actor_path.absolute()), exist_ok=True)
 
     distributed_dict = dict(
         rank=0,
