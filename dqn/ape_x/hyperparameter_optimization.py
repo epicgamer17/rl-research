@@ -2,47 +2,27 @@ import os
 import pickle
 import subprocess
 from subprocess import Popen
-import pathlib
 from pathlib import Path
 import multiprocessing
 import time
-import gc
 import argparse
+import utils
 
 # os.environ["OMP_NUM_THREADS"] = f"{1}"
 # os.environ['TF_NUM_INTEROP_THREADS'] = f"{1}"
 # os.environ['TF_NUM_INTRAOP_THREADS'] = f"{1}"
 
-import tensorflow as tf
 import numpy as np
 import pandas as pd
 import gymnasium as gym
 from hyperopt import tpe, hp, fmin, space_eval, STATUS_OK, STATUS_FAIL
 
 from agent_configs import ApeXActorConfig, ApeXLearnerConfig
-from agent_configs import ReplayBufferConfig
 from game_configs.cartpole_config import CartPoleConfig
 from learner import ApeXLearner
 
-# tf.config.threading.set_intra_op_parallelism_threads(1)
-# tf.config.threading.set_inter_op_parallelism_threads(1)
-
-
 SIGTERM = 15
 SSH_USERNAME = "ehuang"
-
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.list_logical_devices("GPU")
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
-        print(e)
-
 
 ctx = multiprocessing.get_context("fork")
 
@@ -81,22 +61,22 @@ def run_training(config, env: gym.Env, name):
 
     distributed_config_placeholder = {
         "rank": 0,
-        "worker_name": '',
+        "worker_name": "",
         "world_size": 0,
         "rpc_port": 0,
         "pg_port": 0,
-        "master_addr": '',
-        "replay_addr": '',
-        "storage_addr": '',
+        "master_addr": "",
+        "replay_addr": "",
+        "storage_addr": "",
     }
 
     # combined learner and actor config
     conf = (config | distributed_config_placeholder) | {
         "num_actors": 1,
-        "training_steps": 2000,
+        "training_steps": 10000,
         # save on mimi disk quota
         "save_intermediate_weights": False,
-        # set for learner, will be overwritten by cli flags in actors
+        # set for learner, will be overwritten by learner when creating actors
         "noisy_sigma": config["learner_noisy_sigma"],
     }
 
@@ -111,15 +91,17 @@ def run_training(config, env: gym.Env, name):
     actor_output_path = Path(Path.cwd(), generated_dir, "actor_output.yaml")
     distributed_output_path = Path(Path.cwd(), generated_dir, "distributed_output.yaml")
 
-    learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
     actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
-
-    learner_config.dump(learner_config_path)
     actor_config.dump(actor_config_path)
+
+    conf["distributed_actor_config_file"] = str(actor_config_path.absolute())
+
+    learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
+    learner_config.dump(learner_config_path)
 
     current_host = get_current_host()
 
-    machines = config["num_actors"] +3 # +mongo, replay, spectator
+    machines = learner_config.num_actors+2
     cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME} -machines={machines}"
     print("running cmd:", cmd)
     proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
@@ -128,7 +110,7 @@ def run_training(config, env: gym.Env, name):
     if proc.returncode != 0:
         return {"status": STATUS_FAIL, "loss": 0}
 
-    cmd = f'./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME} -actors_initial_sigma={config["actors_initial_sigma"]} -actors_sigma_alpha={config["actors_sigma_alpha"]}'
+    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME}"
     print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
@@ -214,18 +196,20 @@ def objective(params):
     return {"loss": np.sum(loss_list), "status": status}
 
 
+from hyperopt.pyll.base import scope
+import math
+
 def create_search_space():
     search_space = {
-        "activation": hp.choice("activation", ["relu"]),
+        # "activation": hp.choice("activation", ["relu"]),
         "kernel_initializer": hp.choice(
             "kernel_initializer",
             [
+                "pytorch_default",
                 "he_uniform",
                 "he_normal",
                 "glorot_uniform",
                 "glorot_normal",
-                # "lecun_uniform",
-                # "lecun_normal",
                 "orthogonal",
                 "variance_baseline",
                 "variance_0.1",
@@ -234,79 +218,43 @@ def create_search_space():
                 "variance_3",
                 "variance_5",
                 "variance_10",
+                # "lecun_uniform",
+                # "lecun_normal",
             ],
         ),
-        "learning_rate": hp.choice(
-            "learning_rate", [0.1, 0.01, 0.001, 0.0001, 0.00001]
-        ),  #
-        "adam_epsilon": hp.choice(
-            "adam_epsilon",
-            [0.3125, 0.03125, 0.003125, 0.0003125, 0.00003125, 0.000003125],
-        ),
-        "clipnorm": hp.choice(
-            "clipnorm", [None, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]
-        ),
-        # NORMALIZATION?
-        "transfer_interval": hp.choice(
-            "transfer_interval", [10, 25, 50, 100, 200, 400, 800, 1600, 2000]
-        ),
-        "minibatch_size": hp.choice("minibatch_size", [2**i for i in range(3, 8)]),
-        "replay_buffer_size": hp.choice(
-            "replay_buffer_size",
-            [2000, 3000, 5000, 7500, 10000, 15000, 20000, 25000, 50000, 100000],
-        ),
-        "actor_buffer_size": hp.choice(
-            "actor_buffer_size", [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-        ),
-        "min_replay_buffer_size": hp.choice(
-            "min_replay_buffer_size",
-            [125, 250, 375, 500, 625, 750, 875, 1000, 1500, 2000],
-        ),
-        "n_step": hp.choice("n_step", [1, 2, 3, 4, 5, 8, 10]),
-        "discount_factor": hp.choice("discount_factor", [0.9, 0.99, 0.995, 0.999]),
-        "atom_size": hp.choice("atom_size", [41, 51, 61, 71, 81]),  #
-        "width": hp.choice("width", [32, 64, 128, 256, 512, 1024]),
-        "dense_layers": hp.choice("dense_layers", [0, 1, 2, 3, 4]),
-        # REWARD CLIPPING
+
+        #### not actually used, just to prevent the configs from throwing errors
         "loss_function": hp.choice(
             "loss_function",
-            [tf.keras.losses.CategoricalCrossentropy(), tf.keras.losses.KLDivergence()],
+            [utils.CategoricalCrossentropyLoss(), utils.KLDivergenceLoss()],
         ),
-        "advantage_hidden_layers": hp.choice(
-            "advantage_hidden_layers", [0, 1, 2, 3, 4]
-        ),  #
-        "value_hidden_layers": hp.choice("value_hidden_layers", [0, 1, 2, 3, 4]),  #
-        "per_epsilon": hp.choice(
-            "per_epsilon", [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1]
-        ),
-        "per_alpha": hp.choice("per_alpha", [0.05 * i for i in range(0, 21)]),
-        "per_beta": hp.choice("per_beta", [0.05 * i for i in range(1, 21)]),
-        "push_params_interval": hp.choice(
-            "push_params_interval", [2, 3, 4, 5, 8, 10, 12]
-        ),
-        "updates_queue_size": hp.choice(
-            "updates_queue_size", [1, 2, 3, 4, 5, 8, 10, 12]
-        ),
-        "samples_queue_size": hp.choice(
-            "samples_queue_size", [1, 2, 3, 4, 5, 8, 10, 12]
-        ),
-        # "remove_old_experiences_interval": hp.choice(
-        #     "remove_old_experiences_interval", [1000, 2000, 3000, 4000, 5000, 8000, 10000]
-        # ),
-        "poll_params_interval": hp.choice("poll_params_interval", [50, 100, 200, 300]),
-        "actors_initial_sigma": hp.choice(
-            "actors_initial_sigma", [0.1 * i for i in range(1, 10)]
-        ),
-        "actors_sigma_alpha": hp.choice(
-            "actors_sigma_alpha", [i for i in range(1, 20)]
-        ),
-        "learner_noisy_sigma": hp.choice(
-            "learner_noisy_sigma", [0.1 * i for i in range(1, 10)]
-        ),
-        "num_actors": hp.choice("num_actors", [i for i in range(1, 16 + 1)]),
-        # 'per_beta_increase': hp.uniform('per_beta_increase', 0, 0.015),
-        # 'search_max_depth': 5,
-        # 'search_max_time': 10,
+        ###
+
+        "learning_rate": hp.loguniform("learning_rate", math.log(1e-5), math.log(1e-1)),
+        "adam_epsilon": hp.loguniform("adam_epsilon", math.log(1e-9), math.log(1e-6)),
+        "clipnorm": hp.loguniform("clipnorm", math.log(0.1), math.log(1000)),
+        "transfer_interval": scope.int(hp.quniform("transfer_interval", 20, 1000, 20)),
+        "minibatch_size": scope.int(hp.loguniform("minibatch_size", math.log(2**3), math.log(2**10))),
+        "replay_buffer_size": scope.int(hp.loguniform("replay_buffer_size", math.log(1e5), math.log(1e7))),
+        "actor_buffer_size": scope.int(hp.quniform("actor_buffer_size", 100, 1000, 25)),
+        "min_replay_buffer_size": scope.int(hp.quniform("min_replay_buffer_size", 100, 2000, 100)),
+        "n_step": scope.int(hp.quniform("n_step", 3, 10, 1)),
+        "discount_factor": hp.loguniform("discount_factor", math.log(0.9), math.log(0.999)),
+        "atom_size": hp.choice("atom_size", [41, 51, 61, 71, 81]),
+        "dense_layers_widths": hp.choice("dense_layers_widths", [[32], [64], [128], [256], [512], [1024]]),
+        "advantage_hidden_layers_widths": hp.choice("advantage_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]),
+        "value_hidden_layers_widths": hp.choice("value_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]),
+        "per_epsilon": hp.loguniform("per_epsilon", math.log(1e-8), math.log(1e-1)),
+        "per_alpha": hp.quniform("per_alpha", 0.05, 1, 0.05),
+        "per_beta": hp.quniform("per_beta", 0.05, 1, 0.05),
+        "push_params_interval": scope.int(hp.quniform("push_params_interval", 2, 12, 1)),
+        "updates_queue_size": scope.int(hp.quniform("updates_queue_size", 2, 12, 1)),
+        "samples_queue_size": scope.int(hp.quniform("samples_queue_size", 2, 12, 1)),
+        "poll_params_interval": scope.int(hp.quniform("poll_params_interval", 50, 500, 10)),
+        "actors_initial_sigma": hp.quniform("actors_initial_sigma", 0.1, 1, 0.1),
+        "actors_sigma_alpha": scope.int(hp.quniform("actors_sigma_alpha", 1, 19, 1)),
+        "learner_noisy_sigma": hp.quniform("learner_noisy_sigma", 0.1, 1, 0.1),
+        "num_actors": scope.int(hp.quniform("num_actors", 1 + 1, 16 + 1, 1)),
     }
     initial_best_config = []
 

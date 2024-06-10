@@ -9,7 +9,7 @@ from utils import (
 
 
 class ConfigBase:
-    def parse_field(self, field_name, default=None, wrapper=None, required=True):
+    def parse_field(self, field_name, default=None, wrapper=None, required=True, dtype=None):
         if field_name in self.config_dict:
             val = self.config_dict[field_name]
             # print("value: ", val)
@@ -85,7 +85,7 @@ class Config(ConfigBase):
         )
 
         # ADD LEARNING RATE SCHEDULES
-        self.training_steps: int = self.parse_field("training_steps", 10000)
+        self.training_steps: int = self.parse_field("training_steps", 10000, wrapper=int)
 
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
         self.learning_rate: float = self.parse_field("learning_rate", 0.001)
@@ -104,13 +104,13 @@ class Config(ConfigBase):
             wrapper=kernel_initializer_wrapper,
         )
 
-        self.minibatch_size: int = self.parse_field("minibatch_size", 64)
-        self.replay_buffer_size: int = self.parse_field("replay_buffer_size", 5000)
+        self.minibatch_size: int = self.parse_field("minibatch_size", 64, wrapper=int)
+        self.replay_buffer_size: int = self.parse_field("replay_buffer_size", 5000, wrapper=int)
         self.min_replay_buffer_size: int = self.parse_field(
-            "min_replay_buffer_size", self.minibatch_size
+            "min_replay_buffer_size", self.minibatch_size, wrapper=int
         )
-        self.num_minibatches: int = self.parse_field("num_minibatches", 1)
-        self.training_iterations: int = self.parse_field("training_iterations", 1)
+        self.num_minibatches: int = self.parse_field("num_minibatches", 1, wrapper=int)
+        self.training_iterations: int = self.parse_field("training_iterations", 1, wrapper=int)
 
     def _verify_game(self):
         raise NotImplementedError

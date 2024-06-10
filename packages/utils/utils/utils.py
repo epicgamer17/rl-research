@@ -1,3 +1,4 @@
+import random
 from collections import defaultdict
 import copy
 import math
@@ -123,9 +124,7 @@ def update_linear_lr_schedule(
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    axs[row][col].set_title(
-        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
-    )
+    axs[row][col].set_title("{} | rolling average: {}".format(key, np.mean(values[-10:])))
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
@@ -354,6 +353,8 @@ def plot_graphs(
 
 
 def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = False):
+    if kernel_initializer == "pytorch_default":
+        return None
     if kernel_initializer == "glorot_uniform":
         return nn.init.xavier_uniform_
     elif kernel_initializer == "glorot_normal":
@@ -362,25 +363,25 @@ def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = Fa
         return nn.init.kaiming_uniform_
     elif kernel_initializer == "he_normal":
         return nn.init.kaiming_normal_
-    ### TODO
-    # elif kernel_initializer == "variance_baseline":
-    #     # return VarianceScaling(seed=np.random.seed())
-    # elif kernel_initializer == "variance_0.1":
-    #     # return VarianceScaling(scale=0.1, seed=np.random.seed())
-    # elif kernel_initializer == "variance_0.3":
-    #     # return VarianceScaling(scale=0.3, seed=np.random.seed())
-    # elif kernel_initializer == "variance_0.8":
-    #     # return VarianceScaling(scale=0.8, seed=np.random.seed())
-    # elif kernel_initializer == "variance_3":
-    #     # return VarianceScaling(scale=3, seed=np.random.seed())
-    # elif kernel_initializer == "variance_5":
-    #     # return VarianceScaling(scale=5, seed=np.random.seed())
-    # elif kernel_initializer == "variance_10":
-    #     # return VarianceScaling(scale=10, seed=np.random.seed())
+    elif kernel_initializer == "variance_baseline":
+        return VarianceScaling()
+    elif kernel_initializer == "variance_0.1":
+        return VarianceScaling(scale=0.1)
+    elif kernel_initializer == "variance_0.3":
+        return VarianceScaling(scale=0.3)
+    elif kernel_initializer == "variance_0.8":
+        return VarianceScaling(scale=0.8)
+    elif kernel_initializer == "variance_3":
+        return VarianceScaling(scale=3)
+    elif kernel_initializer == "variance_5":
+        return VarianceScaling(scale=5)
+    elif kernel_initializer == "variance_10":
+        return VarianceScaling(scale=10)
+    # TODO
     # elif kernel_initializer == "lecun_uniform":
-    #     # return LecunUniform(seed=np.random.seed())
+    #     return LecunUniform(seed=np.random.seed())
     # elif kernel_initializer == "lecun_normal":
-    #     # return LecunNormal(seed=np.random.seed())
+    #     return LecunNormal(seed=np.random.seed())
     elif kernel_initializer == "orthogonal":
         return nn.init.orthogonal_
 
@@ -654,9 +655,7 @@ class KLDivergenceLoss:
 
 def huber(predicted: torch.Tensor, target: torch.Tensor, axis=-1, delta: float = 1.0):
     diff = torch.abs(predicted - target)
-    return torch.where(
-        diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)
-    ).view(-1)
+    return torch.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)).view(-1)
 
 
 class HuberLoss:
@@ -905,3 +904,61 @@ def graph_hyperparameter_importance(
         else:
             plt.scatter(means.index, means.values, c="#00FFFF")
         # plt.add_line
+
+
+def calc_units(shape):
+    shape = tuple(shape)
+    if len(shape == 1):
+        return shape + shape
+    if len(shape) == 2:
+        # dense layer -> (in_channels, out_channels)
+        return shape
+    else:
+        # conv_layer (Assuming convolution kernels (2D, 3D, or more).
+        # kernel shape: (input_depth, depth, ...)
+        in_units = shape[1]
+        out_units = shape[0]
+        c = 1
+        for dim in shape[2:]:
+            c *= dim
+        return (c * in_units, c * out_units)
+
+class VarianceScaling:
+    def __init__(self, scale=0.1, mode="fan_in", distribution="uniform"):
+        self.scale = scale
+        self.mode = mode
+        self.distribution = distribution
+
+        assert mode == 'fan_in' or mode == 'fan_out' or mode == 'fan_avg'
+        assert distribution == "uniform", 'only uniform distribution is supported'
+
+    def __call__(self, tensor: Tensor) -> None:
+        scale = self.scale
+        shape = tensor.shape
+        in_units, out_units = calc_units(shape)
+        if self.mode == "fan_in":
+            scale /= in_units
+        elif self.mode == "fan_out":
+            scale /= out_units
+        else:
+            scale /= (in_units + out_units) / 2
+
+        limit = math.sqrt(3.0 * scale)
+        return tensor.uniform_(-limit, limit)
+
+def isiterable(o):
+    try:
+        it = iter(o)
+    except TypeError: 
+        return False
+    return True
+
+
+def tointlists(list):
+    ret = []
+    for x in list:
+        if isiterable(x):
+            ret.append(tointlists(x))
+        else:
+            ret.append(int(x))
+    return ret

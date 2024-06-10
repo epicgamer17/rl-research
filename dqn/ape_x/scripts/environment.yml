@@ -20,7 +20,6 @@ dependencies:
   - setuptools=69.5.1=py311h06a4308_0
   - sqlite=3.45.3=h5eee18b_0
   - tk=8.6.14=h39e8969_0
-  - tzdata=2024a=h04d1e81_0
   - wheel=0.43.0=py311h06a4308_0
   - xz=5.4.6=h5eee18b_1
   - zlib=1.2.13=h5eee18b_1
@@ -35,11 +34,14 @@ dependencies:
       - contourpy==1.2.1
       - cycler==0.12.1
       - decorator==4.4.2
+      - dill==0.3.8
       - farama-notifications==0.0.4
       - filelock==3.14.0
       - fonttools==4.52.4
       - fsspec==2024.5.0
+      - future==1.0.0
       - gymnasium==0.29.1
+      - hyperopt==0.2.7
       - idna==3.7
       - imageio==2.34.1
       - imageio-ffmpeg==0.5.1
@@ -65,12 +67,17 @@ dependencies:
       - nvidia-nvjitlink-cu12==12.5.40
       - nvidia-nvtx-cu12==12.1.105
       - packaging==24.0
+      - pandas==2.2.2
       - pillow==10.3.0
       - proglog==0.1.10
+      - py4j==0.10.9.7
       - pygame==2.5.2
       - pyparsing==3.1.2
       - python-dateutil==2.9.0.post0
+      - pytz==2024.1
+      - pyyaml==6.0.1
       - requests==2.32.3
+      - scipy==1.13.1
       - shimmy==0.2.1
       - six==1.16.0
       - sympy==1.12.1
@@ -78,4 +85,5 @@ dependencies:
       - tqdm==4.66.4
       - triton==2.3.0
       - typing-extensions==4.12.0
+      - tzdata==2024.1
       - urllib3==2.2.1

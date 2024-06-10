@@ -291,7 +291,7 @@ class ApeXLearner(ApeXLearnerBase):
         self.replay_thread.start()
 
         # actors
-        for i in range(1, self.config.num_actors):
+        for i in range(0, self.config.num_actors):
             self._start_actor(i, False)
 
         # spectator
@@ -390,7 +390,7 @@ class ApeXLearner(ApeXLearnerBase):
         bootstrapped = (self.config.discount_factor**self.config.n_step) * (
             self.predict_target(self.preprocess(observations, device=self.device))
             * self.support
-        )[0, self.select_actions(predicted_distributions)].sum(dim=1)
+        )[range(self.config.minibatch_size), self.select_actions(predicted_distributions)].sum(dim=1)
         Gt = rewards + bootstrapped  # already discounted
 
         predicted_q = (predicted_distributions * self.support)[

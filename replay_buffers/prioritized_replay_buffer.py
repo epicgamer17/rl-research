@@ -17,13 +17,18 @@ class PrioritizedReplayBuffer(BaseDQNReplayBuffer):
         alpha: float = 0.6,
         beta: float = 0.4,
         # epsilon=0.01,
+        compressed_observations: bool = False,
     ):
         assert alpha >= 0 and alpha <= 1
         assert beta >= 0 and beta <= 1
 
         self.initial_max_priority = max_priority
         super().__init__(
-            observation_dimensions, observation_dtype, max_size, batch_size
+            observation_dimensions,
+            observation_dtype,
+            max_size,
+            batch_size,
+            compressed_observations,
         )
 
         self.alpha = alpha  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
