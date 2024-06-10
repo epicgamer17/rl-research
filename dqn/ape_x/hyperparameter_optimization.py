@@ -91,12 +91,13 @@ def run_training(config, env: gym.Env, name):
     actor_output_path = Path(Path.cwd(), generated_dir, "actor_output.yaml")
     distributed_output_path = Path(Path.cwd(), generated_dir, "distributed_output.yaml")
 
-    conf["distributed_actor_config_file"] = str(actor_output_path.absolute())
-    learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
     actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
-
-    learner_config.dump(learner_config_path)
     actor_config.dump(actor_config_path)
+
+    conf["distributed_actor_config_file"] = str(actor_config_path.absolute())
+
+    learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
+    learner_config.dump(learner_config_path)
 
     current_host = get_current_host()
 
