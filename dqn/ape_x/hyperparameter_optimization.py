@@ -91,6 +91,7 @@ def run_training(config, env: gym.Env, name):
     actor_output_path = Path(Path.cwd(), generated_dir, "actor_output.yaml")
     distributed_output_path = Path(Path.cwd(), generated_dir, "distributed_output.yaml")
 
+    conf["distributed_actor_config_file"] = str(actor_output_path.absolute())
     learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
     actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
 
@@ -194,9 +195,10 @@ def objective(params):
     return {"loss": np.sum(loss_list), "status": status}
 
 
+import math
 def create_search_space():
     search_space = {
-        "activation": hp.choice("activation", ["relu"]),
+        # "activation": hp.choice("activation", ["relu"]),
         "kernel_initializer": hp.choice(
             "kernel_initializer",
             [
@@ -217,32 +219,35 @@ def create_search_space():
                 # "lecun_normal",
             ],
         ),
-        "learning_rate": hp.loguniform("learning_rate", 1e-5, 1e-1),
-        "adam_epsilon": hp.loguniform("adam_epsilon", 1e-9, 1e-6),
-        "clipnorm": hp.loguniform("clipnorm", 0.1, 1000),
-        # NORMALIZATION?
-        "transfer_interval": hp.quniform("transfer_interval", 20, 1000, 20),
-        "minibatch_size": hp.loguniform("minibatch_size", 2**3, 2**10),
-        "replay_buffer_size": hp.loguniform("replay_buffer_size", 1e5, 1e7),
-        "actor_buffer_size": hp.quniform("actor_buffer_size", 100, 1000, 25),
-        "min_replay_buffer_size": hp.quniform("min_replay_buffer_size", 100, 2000, 100),
-        "n_step": hp.uniform("n_step", 3, 10),
-        "discount_factor": hp.loguniform("discount_factor", 0.9, 0.999),
-        "atom_size": hp.choice("atom_size", [41, 51, 61, 71, 81]),
-        "width": hp.choice("width", [32, 64, 128, 256, 512, 1024]),
-        "dense_layers_widths": hp.choice("dense_layers_widths", [0, 1, 2, 3, 4]),
-        # REWARD CLIPPING
+
+        #### not actually used, just to prevent the configs from throwing errors
         "loss_function": hp.choice(
             "loss_function",
             [utils.CategoricalCrossentropyLoss(), utils.KLDivergenceLoss()],
         ),
+        ###
+
+        "learning_rate": hp.loguniform("learning_rate", math.log(1e-5), math.log(1e-1)),
+        "adam_epsilon": hp.loguniform("adam_epsilon", math.log(1e-9), math.log(1e-6)),
+        "clipnorm": hp.loguniform("clipnorm", math.log(0.1), math.log(1000)),
+        "transfer_interval": hp.quniform("transfer_interval", 20, 1000, 20),
+        "minibatch_size": hp.loguniform("minibatch_size", math.log(2**3), math.log(2**10)),
+        "replay_buffer_size": hp.loguniform("replay_buffer_size", math.log(1e5), math.log(1e7)),
+        "actor_buffer_size": hp.quniform("actor_buffer_size", 100, 1000, 25),
+        "min_replay_buffer_size": hp.quniform("min_replay_buffer_size", 100, 2000, 100),
+        "n_step": hp.quniform("n_step", 3, 10, 1),
+        "discount_factor": hp.loguniform("discount_factor", math.log(0.9), math.log(0.999)),
+        "atom_size": hp.choice("atom_size", [41, 51, 61, 71, 81]),
+        "dense_layers_widths": hp.choice(
+            "dense_layers_widths", [32, 64, 128, 256, 512, 1024]
+        ),
         "advantage_hidden_layers_widths": hp.choice(
-            "advantage_hidden_layers_widths", [0, 1, 2, 3, 4]
+            "advantage_hidden_layers_widths", [32, 64, 128, 256, 512, 1024]
         ),
         "value_hidden_layers_widths": hp.choice(
-            "value_hidden_layers_widths", [0, 1, 2, 3, 4]
+            "value_hidden_layers_widths", [32, 64, 128, 256, 512, 1024]
         ),
-        "per_epsilon": hp.loguniform("per_epsilon", 1e-8, 1e-1),
+        "per_epsilon": hp.loguniform("per_epsilon", math.log(1e-8), math.log(1e-1)),
         "per_alpha": hp.quniform("per_alpha", 0.05, 1, 0.05),
         "per_beta": hp.quniform("per_beta", 0.05, 1, 0.05),
         "push_params_interval": hp.quniform("push_params_interval", 2, 12, 1),
@@ -251,7 +256,7 @@ def create_search_space():
         "poll_params_interval": hp.quniform("poll_params_interval", 50, 500, 10),
         "actors_initial_sigma": hp.quniform("actors_initial_sigma", 0.1, 1, 0.1),
         "actors_sigma_alpha": hp.quniform("actors_sigma_alpha", 1, 19, 1),
-        "learner_noisy_sigma": hp.quniform("learner_noisy_sigma", 0.1, 1),
+        "learner_noisy_sigma": hp.quniform("learner_noisy_sigma", 0.1, 1, 0.1),
         "num_actors": hp.quniform("num_actors", 1 + 1, 16 + 1, 1),
     }
     initial_best_config = []
