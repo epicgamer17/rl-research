@@ -19,6 +19,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         # epsilon=0.01,
         n_step: float = 1,
         gamma: float = 0.99,
+        compressed_observations: bool = False,
     ):
         assert alpha >= 0 and alpha <= 1
         assert beta >= 0 and beta <= 1
@@ -33,6 +34,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             batch_size,
             n_step=n_step,
             gamma=gamma,
+            compressed_observations=compressed_observations,
         )
 
         self.alpha = alpha  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
@@ -70,7 +72,9 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self.beta = beta
 
     def store_batch(self, batch):
-        observations, actions, rewards, next_observations, dones, ids, priorities = batch
+        observations, actions, rewards, next_observations, dones, ids, priorities = (
+            batch
+        )
         for i in range(len(observations)):
             self.store(
                 observations[i],

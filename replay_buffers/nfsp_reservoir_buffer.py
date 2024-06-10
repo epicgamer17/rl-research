@@ -1,5 +1,4 @@
 import numpy as np
-from utils import calculate_observation_buffer_shape
 
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
 
@@ -11,10 +10,15 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         observation_dtype: np.dtype,
         max_size: int,
         batch_size: int = 32,
+        compressed_observations: bool = False,
     ):
         self.observation_dimensions = observation_dimensions
         self.observation_dtype = observation_dtype
-        super().__init__(max_size=max_size, batch_size=batch_size)
+        super().__init__(
+            max_size=max_size,
+            batch_size=batch_size,
+            compressed_observations=compressed_observations,
+        )
 
     def store(self, observation, target_policy: list[int], id=None):
         """
@@ -59,12 +63,13 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         )
 
     def clear(self):
-        observation_buffer_shape = calculate_observation_buffer_shape(
-            self.max_size, self.observation_dimensions
-        )
-        self.observation_buffer = np.zeros(
-            observation_buffer_shape, dtype=self.observation_dtype
-        )
+        if self.compressed_observations:
+            self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
+        else:
+            observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+            self.observation_buffer = np.zeros(
+                observation_buffer_shape, dtype=self.observation_dtype
+            )
         self.target_policy_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.size = 0
         self.pointer = 0

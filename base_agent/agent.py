@@ -102,6 +102,7 @@ class BaseAgent:
         """
 
         # convert to np.array first for performance, recoommnded by pytorch
+        # also decompresses lazy frames
         prepared_state = torch.from_numpy(np.array(states)).to(torch.float32).to(device)
         # if self.config.game.is_image:
         # normalize_images(prepared_state)

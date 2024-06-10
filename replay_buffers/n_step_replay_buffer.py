@@ -13,14 +13,16 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
         batch_size: int = 32,
         n_step: int = 1,
         gamma: float = 0.99,
+        compressed_observations: bool = False,
     ):
         self.n_step = n_step
         self.gamma = gamma
         super().__init__(
-            observation_dimensions,
-            observation_dtype,
-            max_size,
-            batch_size,
+            observation_dimensions=observation_dimensions,
+            observation_dtype=observation_dtype,
+            max_size=max_size,
+            batch_size=batch_size,
+            compressed_observations=compressed_observations,
         )
 
     def store(

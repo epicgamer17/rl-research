@@ -9,9 +9,11 @@ class BaseReplayBuffer:
         self,
         max_size: int,
         batch_size: int = None,
+        compressed_observations: bool = False,
     ):
         self.max_size = max_size
         self.batch_size = batch_size if batch_size is not None else max_size
+        self.compressed_observations = compressed_observations
 
         self.clear()
         assert self.size == 0, "Replay buffer should be empty at initialization"
@@ -119,11 +121,16 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         observation_dtype: np.dtype,
         max_size: int,
         batch_size: int = 32,
+        compressed_observations: bool = False,
     ):
         self.observation_dimensions = observation_dimensions
         self._observation_dtype = observation_dtype
         print(observation_dtype)
-        super().__init__(max_size=max_size, batch_size=batch_size)
+        super().__init__(
+            max_size=max_size,
+            batch_size=batch_size,
+            compressed_observations=compressed_observations,
+        )
 
     def store(
         self,
@@ -150,13 +157,17 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         self.size = min(self.size + 1, self.max_size)
 
     def clear(self):
-        observation_buffer_shape = (self.max_size,) + self.observation_dimensions
-        self.observation_buffer = np.zeros(
-            observation_buffer_shape, self._observation_dtype
-        )
-        self.next_observation_buffer = np.zeros(
-            observation_buffer_shape, dtype=self._observation_dtype
-        )
+        if self.compressed_observations:
+            self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
+            self.next_observation_buffer = np.zeros(self.max_size, dtype=np.object_)
+        else:
+            observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+            self.observation_buffer = np.zeros(
+                observation_buffer_shape, self._observation_dtype
+            )
+            self.next_observation_buffer = np.zeros(
+                observation_buffer_shape, dtype=self._observation_dtype
+            )
 
         self.id_buffer = np.zeros(self.max_size, dtype=np.object_)
         self.action_buffer = np.zeros(self.max_size, dtype=np.uint8)
@@ -203,12 +214,15 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         max_size: int,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
+        compressed_observations: bool = False,
     ):
         self.observation_dimensions = observation_dimensions
         self.observation_dtype = (observation_dtype,)
         self.gamma = gamma
         self.gae_lambda = gae_lambda
-        super().__init__(max_size=max_size)
+        super().__init__(
+            max_size=max_size, compressed_observations=compressed_observations
+        )
 
     def store(
         self,
@@ -243,10 +257,13 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         )
 
     def clear(self):
-        observation_buffer_shape = (self.max_size,) + self.observation_dimensions
-        self.observation_buffer = np.zeros(
-            observation_buffer_shape, dtype=self.observation_dtype
-        )
+        if self.compressed_observations:
+            self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
+        else:
+            observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+            self.observation_buffer = np.zeros(
+                observation_buffer_shape, dtype=self.observation_dtype
+            )
         self.action_buffer = np.zeros(self.max_size, dtype=np.int8)
         self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.advantage_buffer = np.zeros(self.max_size, dtype=np.float16)
