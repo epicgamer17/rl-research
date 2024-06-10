@@ -945,3 +945,20 @@ class VarianceScaling:
 
         limit = math.sqrt(3.0 * scale)
         return tensor.uniform_(-limit, limit)
+
+def isiterable(o):
+    try:
+        it = iter(o)
+    except TypeError: 
+        return False
+    return True
+
+
+def tointlists(list):
+    ret = []
+    for x in list:
+        if isiterable(x):
+            ret.append(tointlists(x))
+        else:
+            ret.append(int(x))
+    return ret

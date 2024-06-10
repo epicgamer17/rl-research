@@ -19,7 +19,7 @@ class ApeXLearnerConfig(ApeXConfig, DistributedLearnerConfig):
         super(ApeXLearnerConfig, self).__init__(config_dict, game_config)
         super(DistributedLearnerConfig, self).__init__(config_dict)
 
-        self.num_actors: int = self.parse_field("num_actors", required=True)
+        self.num_actors: int = self.parse_field("num_actors", required=True, wrapper=int)
 
         print("Loading actor config:")
         self.actor_config: ApeXActorConfig = ApeXActorConfig.load(
@@ -32,6 +32,6 @@ class ApeXActorConfig(ApeXConfig, DistributedActorConfig):
         super(ApeXActorConfig, self).__init__(config_dict, game_config)
         super(DistributedActorConfig, self).__init__(config_dict)
         # DIFFERENT EPSILONS PER ACTOR
-        self.replay_buffer_size: int = self.parse_field("actor_buffer_size", 128)
+        self.replay_buffer_size: int = self.parse_field("actor_buffer_size", 128, wrapper=int)
         self.minibatch_size = self.replay_buffer_size
         self.training_steps = 10000000000  # just a big number

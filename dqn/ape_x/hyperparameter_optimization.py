@@ -101,7 +101,7 @@ def run_training(config, env: gym.Env, name):
 
     current_host = get_current_host()
 
-    machines = config["num_actors"] + 2  # +mongo, replay
+    machines = learner_config.num_actors+2
     cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME} -machines={machines}"
     print("running cmd:", cmd)
     proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
@@ -240,13 +240,13 @@ def create_search_space():
         "discount_factor": hp.loguniform("discount_factor", math.log(0.9), math.log(0.999)),
         "atom_size": hp.choice("atom_size", [41, 51, 61, 71, 81]),
         "dense_layers_widths": hp.choice(
-            "dense_layers_widths", [32, 64, 128, 256, 512, 1024]
+            "dense_layers_widths", [[32], [64], [128], [256], [512], [1024]]
         ),
         "advantage_hidden_layers_widths": hp.choice(
-            "advantage_hidden_layers_widths", [32, 64, 128, 256, 512, 1024]
+            "advantage_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]
         ),
         "value_hidden_layers_widths": hp.choice(
-            "value_hidden_layers_widths", [32, 64, 128, 256, 512, 1024]
+            "value_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]
         ),
         "per_epsilon": hp.loguniform("per_epsilon", math.log(1e-8), math.log(1e-1)),
         "per_alpha": hp.quniform("per_alpha", 0.05, 1, 0.05),
