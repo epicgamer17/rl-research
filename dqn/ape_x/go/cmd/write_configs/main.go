@@ -52,7 +52,7 @@ func CreateConfigsRemote(
 
 	worldSize := len(config.ActorHosts) + 3
 	commands := []string{
-		"cd ~/rl-research/ape_x",
+		"cd ~/rl-research/dqn/ape_x",
 		"conda activate ml",
 		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerConfig), learnerConfigBaseFilename),
 		fmt.Sprintf("echo '%s' > \"%s\"", string(actorConfig), actorConfigBaseFilename),
