@@ -11,6 +11,25 @@ config_dict:
   loss_function: !!python/object:utils.utils.CategoricalCrossentropyLoss
     axis: -1
     from_logits: false
+  adam_epsilon: 1.0e-08
+  advatage_hidden_layers_widths:
+  - 128
+  clipnorm: 10.0
+  dense_layers_widths:
+  - 128
+  kernel_initializer: orthogonal
+  learning_rate: 0.001
+  minibatch_size: 128
+  n_step: 3
+  noisy_sigma: 0.5
+  per_alpha: 0.2
+  per_beta: 0.6
+  per_epsilon: 1.0e-06
+  replay_interval: 1
+  training_steps: 10000
+  transfer_interval: 100
+  value_hidden_layers_widths:
+  - 128
 game: !!python/object:game_configs.cartpole_config.CartPoleConfig
   has_legal_moves: false
   is_deterministic: true
