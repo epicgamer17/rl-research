@@ -69,11 +69,6 @@ func CreateConfigsRemote(
 }
 
 const USERNAME = "ehuang"
-const ReplayLearnerPort = 5554
-const ReplayActorPort = 5555
-const MongoPort = 5553
-const MongoUsername = "ezra"
-const MongoPasswordLocation = "~/mongodb/mongodb_admin_password"
 
 func main() {
 	SSHUsernameFlag := flag.String("ssh_username", USERNAME, "")

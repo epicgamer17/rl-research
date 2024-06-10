@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const APEX_PATH = "~/rl-research/dqn/ape_x"
 const SSH_ARGS = "-oStrictHostKeyChecking=no -oConnectTimeout=5"
 const USERNAME = "ehuang"
 const FQDN = "cs.mcgill.ca"
@@ -23,7 +24,7 @@ const KillPythonProcessesCmd = "pkill \"python\""
 
 func createLearnerCmd(config configs.DistributedConfig) string {
 	commands := []string{
-		"cd ~/rl-research/ape_x",
+		fmt.Sprintf("cd %s", APEX_PATH),
 		"conda activate ml",
 		fmt.Sprintf("python3 main_learner.py --config_file %s", config.LearnerConfigFilename),
 	}
@@ -35,9 +36,9 @@ func createLearnerCmd(config configs.DistributedConfig) string {
 func createWorkerCommand(config configs.DistributedConfig, rank int, name string) string {
 	worldSize := len(config.ActorHosts) + 3
 	commands := []string{
-		"cd ~/rl-research/ape_x",
+		fmt.Sprintf("cd %s", APEX_PATH),
 		"conda activate ml",
-		fmt.Sprintf("python3 remote_worker.py --rank %d --name %s --world_size %d --master_addr %d --rpc_port %d --pg_port %d", rank, name, worldSize, config.LearnerHost, config.RPCPort, config.PGPort),
+		fmt.Sprintf("python3 remote_worker.py --rank %d --name %s --world_size %d --master_addr %s --rpc_port %d --pg_port %d", rank, name, worldSize, config.LearnerHost, config.RPCPort, config.PGPort),
 	}
 
 	cmd := strings.Join(commands, "; ")
@@ -58,7 +59,7 @@ func createActorWorkerCommand(config configs.DistributedConfig, actorNum int) st
 }
 
 func copyTrainingGraphsToStaticSite(client *ssh_util.Client, learnerName string) {
-	cmd := fmt.Sprintf("cp ~/rl-research/ape_x/training_graphs/%s/%s.png ~/public_html/training/learner.png; cp ~/rl-research/ape_x/training_graphs/spectator/spectator.png ~/public_html/training/spectator.png\n", learnerName, learnerName)
+	cmd := fmt.Sprintf("cp %s/checkpoints/%s/graphs/%s.png ~/public_html/training/learner.png; cp %s/checkpoints/graphs/spectator.png ~/public_html/training/spectator.png\n", APEX_PATH, learnerName, learnerName, APEX_PATH)
 
 	if _, err := client.Run(cmd); err != nil {
 		log.Println("Failed to copy training graphs: ", err)

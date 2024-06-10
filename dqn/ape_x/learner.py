@@ -295,7 +295,7 @@ class ApeXLearner(ApeXLearnerBase):
             self._start_actor(i, False)
 
         # spectator
-        # self._start_actor(0, True)
+        self._start_actor(0, True)
 
     def _start_actor(self, actor_num: int, spectator: bool) -> torch.Future:
         env_copy = copy.deepcopy(self.env)
