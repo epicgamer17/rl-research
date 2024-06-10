@@ -56,7 +56,7 @@ func CreateConfigsRemote(
 		"conda activate ml",
 		fmt.Sprintf("echo '%s' > \"%s\"", string(learnerConfig), learnerConfigBaseFilename),
 		fmt.Sprintf("echo '%s' > \"%s\"", string(actorConfig), actorConfigBaseFilename),
-		fmt.Sprintf("python3 config_generator.py --world_size %d --master_addr %s --replay_addr %s --storage_addr %s --rpc_port %d --pg_port %d", worldSize, config.MasterHost, config.ReplayHost, config.StorageHost, config.RPCPort, config.PGPort),
+		fmt.Sprintf("python3 config_generator.py --world_size %d --master_addr %s --replay_addr %s --storage_addr %s --rpc_port %d --pg_port %d --actor_base %s --learner_base %s --actor_output %s --learner_output %s", worldSize, config.MasterHost, config.ReplayHost, config.StorageHost, config.RPCPort, config.PGPort, actorConfigBaseFilename, learnerConfigBaseFilename, config.ActorConfigFilename, config.LearnerConfigFilename),
 	}
 
 	cmd := strings.Join(commands, "; ")
