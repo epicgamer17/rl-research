@@ -134,10 +134,9 @@ func runWorkers(conf configs.DistributedConfig, learnerName string, SSHUsername 
 	runUpdator(updaterClient, 3*time.Second, learnerName, doneChannel)
 
 	cancelChan := make(chan os.Signal, 1)
-	// catch SIGETRM or SIGINTERRUPT
 	signal.Notify(cancelChan, syscall.SIGTERM, syscall.SIGINT)
+	sig := <-cancelChan // block here until a sigterm or sigint is recieved
 
-	sig := <-cancelChan
 	log.Printf("Caught signal %v", sig)
 	fmt.Println("stopping and cleaning up...")
 }
