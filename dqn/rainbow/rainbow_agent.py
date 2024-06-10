@@ -68,6 +68,9 @@ class RainbowAgent(BaseAgent):
             # epsilon=config["per_epsilon"],
             n_step=self.config.n_step,
             gamma=self.config.discount_factor,
+            compressed_observations=(
+                self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
+            ),
         )
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
@@ -135,6 +138,8 @@ class RainbowAgent(BaseAgent):
             torch.from_numpy(samples["actions"]).to(self.device).long(),
         )
         # print("actions", actions)
+
+        # print(observations[0])
 
         # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
         online_distributions = self.predict(observations)[
@@ -231,13 +236,15 @@ class RainbowAgent(BaseAgent):
         with torch.no_grad():
             state, info = self.env.reset()
             for i in range(self.config.min_replay_buffer_size + self.config.n_step - 1):
-                # print("filling replay buffer", i)
+                print("filling replay buffer", i)
                 # dist = self.predict(state)
                 # action = self.select_actions(dist).item()
                 action = self.env.action_space.sample()
                 next_state, reward, terminated, truncated, info = self.env.step(action)
                 done = terminated or truncated
+                # print(state)
                 self.replay_buffer.store(state, action, reward, next_state, done)
+                # print(self.replay_buffer.observation_buffer[0])
                 state = next_state
                 if done:
                     state, info = self.env.reset()
@@ -260,7 +267,7 @@ class RainbowAgent(BaseAgent):
 
         # self.training_steps += self.start_training_step
         for training_step in range(self.start_training_step, self.training_steps):
-            # print("training step", training_step)
+            print("training step", training_step)
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     distributions = self.predict(state)
@@ -270,6 +277,7 @@ class RainbowAgent(BaseAgent):
                         action
                     )
                     done = terminated or truncated
+                    # print(state)
                     self.replay_buffer.store(state, action, reward, next_state, done)
                     state = next_state
                     score += reward
@@ -293,7 +301,7 @@ class RainbowAgent(BaseAgent):
 
             for _ in range(self.config.num_minibatches):
                 losses = self.learn()
-                print(losses)
+                # print(losses)
                 loss_mean = losses.mean()
                 # could do things other than taking the mean here
                 self.stats["loss"].append(

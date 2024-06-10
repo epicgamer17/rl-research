@@ -101,8 +101,23 @@ class BaseAgent:
                     the returned tensor is returned as outputed as if a batch of states with a length of a batch size of 1
         """
 
-        # convert to np.array first for performance, recoommnded by pytorch
-        prepared_state = torch.from_numpy(np.array(states)).to(torch.float32).to(device)
+        # always convert to np.array first for performance, recoommnded by pytorchx
+        # special case: list of compressed images (which are LazyFrames)
+        if isinstance(states[0], gym.wrappers.frame_stack.LazyFrames):
+            np_states = np.array([np.array(state) for state in states])
+        else:
+            # single observation, could be compressed or not compressed
+            # print("Single state")
+            np_states = np.array(states)
+
+        # print("Numpyified States", np_states)
+        prepared_state = (
+            torch.from_numpy(
+                np_states,
+            )
+            .to(torch.float32)
+            .to(device)
+        )
         # if self.config.game.is_image:
         # normalize_images(prepared_state)
 
