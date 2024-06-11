@@ -126,11 +126,11 @@ def run_training(config, env: gym.Env, name):
         logger.info("        === Running learner")
         learner.run()
         logger.info("Training complete")
-        loss = -learner.test(num_trials=10, step=0)
+        loss = -learner.test(num_trials=10, step=0)["score"]
         return {"status": STATUS_OK, "loss": loss}
     except KeyboardInterrupt:
         logger.info("learner interrupted, cleaning up")
-        loss = -learner.test(num_trials=10, step=0)
+        loss = -learner.test(num_trials=10, step=0)["score"]
         return {"status": STATUS_OK, "loss": loss}
     except Exception as e:
         logger.exception(f"learner failed due to error {e}")
