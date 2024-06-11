@@ -101,7 +101,7 @@ def run_training(config, env: gym.Env, name):
 
     current_host = get_current_host()
 
-    machines = learner_config.num_actors+2
+    machines = learner_config.num_actors + 3
     cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME} -machines={machines}"
     print("running cmd:", cmd)
     proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
@@ -199,6 +199,7 @@ def objective(params):
 from hyperopt.pyll.base import scope
 import math
 
+
 def create_search_space():
     search_space = {
         # "activation": hp.choice("activation", ["relu"]),
@@ -222,35 +223,49 @@ def create_search_space():
                 # "lecun_normal",
             ],
         ),
-
         #### not actually used, just to prevent the configs from throwing errors
         "loss_function": hp.choice(
             "loss_function",
             [utils.CategoricalCrossentropyLoss(), utils.KLDivergenceLoss()],
         ),
         ###
-
         "learning_rate": hp.loguniform("learning_rate", math.log(1e-5), math.log(1e-1)),
         "adam_epsilon": hp.loguniform("adam_epsilon", math.log(1e-9), math.log(1e-6)),
         "clipnorm": hp.loguniform("clipnorm", math.log(0.1), math.log(1000)),
         "transfer_interval": scope.int(hp.quniform("transfer_interval", 20, 1000, 20)),
-        "minibatch_size": scope.int(hp.loguniform("minibatch_size", math.log(2**3), math.log(2**10))),
-        "replay_buffer_size": scope.int(hp.loguniform("replay_buffer_size", math.log(1e5), math.log(1e7))),
+        "minibatch_size": scope.int(
+            hp.loguniform("minibatch_size", math.log(2**3), math.log(2**10))
+        ),
+        "replay_buffer_size": scope.int(
+            hp.loguniform("replay_buffer_size", math.log(1e5), math.log(1e7))
+        ),
         "actor_buffer_size": scope.int(hp.quniform("actor_buffer_size", 100, 1000, 25)),
-        "min_replay_buffer_size": scope.int(hp.quniform("min_replay_buffer_size", 100, 2000, 100)),
+        "min_replay_buffer_size": scope.int(
+            hp.quniform("min_replay_buffer_size", 100, 2000, 100)
+        ),
         "n_step": scope.int(hp.quniform("n_step", 3, 10, 1)),
-        "discount_factor": hp.loguniform("discount_factor", math.log(0.9), math.log(0.999)),
+        "discount_factor": hp.loguniform(
+            "discount_factor", math.log(0.9), math.log(0.999)
+        ),
         "atom_size": hp.choice("atom_size", [41, 51, 61, 71, 81]),
-        "dense_layers_widths": hp.choice("dense_layers_widths", [[32], [64], [128], [256], [512], [1024]]),
-        "advantage_hidden_layers_widths": hp.choice("advantage_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]),
-        "value_hidden_layers_widths": hp.choice("value_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]),
+        "dense_layers_widths": hp.choice(
+            "dense_layers_widths", [[32], [64], [128], [256], [512], [1024]]
+        ),
+        "advantage_hidden_layers_widths": hp.choice(
+            "advantage_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]
+        ),
+        "value_hidden_layers_widths": hp.choice(
+            "value_hidden_layers_widths", [[32], [64], [128], [256], [512], [1024]]
+        ),
         "per_epsilon": hp.loguniform("per_epsilon", math.log(1e-8), math.log(1e-1)),
         "per_alpha": hp.quniform("per_alpha", 0.05, 1, 0.05),
         "per_beta": hp.quniform("per_beta", 0.05, 1, 0.05),
         "push_params_interval": scope.int(hp.quniform("push_params_interval", 2, 12, 1)),
         "updates_queue_size": scope.int(hp.quniform("updates_queue_size", 2, 12, 1)),
         "samples_queue_size": scope.int(hp.quniform("samples_queue_size", 2, 12, 1)),
-        "poll_params_interval": scope.int(hp.quniform("poll_params_interval", 50, 500, 10)),
+        "poll_params_interval": scope.int(
+            hp.quniform("poll_params_interval", 50, 500, 10)
+        ),
         "actors_initial_sigma": hp.quniform("actors_initial_sigma", 0.1, 1, 0.1),
         "actors_sigma_alpha": scope.int(hp.quniform("actors_sigma_alpha", 1, 19, 1)),
         "learner_noisy_sigma": hp.quniform("learner_noisy_sigma", 0.1, 1, 0.1),

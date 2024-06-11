@@ -103,11 +103,11 @@ func runWorkers(conf configs.DistributedConfig, learnerName string, SSHUsername 
 		panic(err)
 	}
 	go replayCommandSession.StreamOutput("[replay] ")
-	storageCommandSession, err := storageClient.Start(createStorageWorkerCommand(conf), "mongod --shutdown --dbpath ~/mongodb/data")
+	storageCommandSession, err := storageClient.Start(createStorageWorkerCommand(conf), KillPythonProcessesCmd)
 	if err != nil {
 		panic(err)
 	}
-	go storageCommandSession.StreamOutput("[mongo] ")
+	go storageCommandSession.StreamOutput("[storage] ")
 
 	actorClients := []*ssh_util.Client{}
 	for _, host := range conf.ActorHosts {

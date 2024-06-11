@@ -291,7 +291,7 @@ class ApeXLearner(ApeXLearnerBase):
         self.replay_thread.start()
 
         # actors
-        for i in range(0, self.config.num_actors):
+        for i in range(1, self.config.num_actors):
             self._start_actor(i, False)
 
         # spectator
