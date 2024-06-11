@@ -125,11 +125,11 @@ func (c *Client) Start(cmd string, killCmd string) (*CommandSession, error) {
 func (c *Client) Close() {
 	for k, v := range c.sessions {
 		log.Printf("cleaning up session on %s\n", c.SSHClient.Conn.RemoteAddr())
-		out, err := c.Run(v.killCommand)
-		if err != nil {
-			log.Printf("[%s] error running kill cmd: %v\n", c.Name, err)
-		}
-		log.Printf("[%s] kill stdout and stderr: %v\n", c.Name, out)
+		// out, err := c.Run(v.killCommand)
+		// if err != nil {
+		// 	log.Printf("[%s] error running kill cmd: %v\n", c.Name, err)
+		// }
+		// log.Printf("[%s] kill stdout and stderr: %v\n", c.Name, out)
 		v.wg.Wait()
 		if !v.stderrFinished || !v.stdoutFinished {
 			log.Printf("warning: command %s on host %s never terminated\n", v.cmd, c.SSHClient.Conn.RemoteAddr())
