@@ -300,8 +300,9 @@ class ApeXLearner(ApeXLearnerBase):
     def _start_actor(self, actor_num: int, spectator: bool) -> torch.Future:
         env_copy = copy.deepcopy(self.env)
         config_copy = copy.deepcopy(self.config.actor_config)
-        config_copy.config_dict["rank"] = actor_num + 3
-        config_copy.rank = actor_num
+        actor_rank = actor_num + 3
+        config_copy.config_dict["rank"] = actor_rank
+        config_copy.rank = actor_rank
         worker_info = rpc.get_worker_info(f"actor_{actor_num}")
         args = (
             env_copy,
