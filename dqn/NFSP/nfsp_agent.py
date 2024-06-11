@@ -33,7 +33,10 @@ from time import time
 
 from agent_configs import NFSPDQNConfig
 
+import torch
 from utils import get_legal_moves
+
+from dqn.rainbow.rainbow_agent import RainbowAgent
 
 sys.path.append("../")
 
@@ -44,31 +47,27 @@ from packages.agent_configs.agent_configs.nfsp_config import NFSPDQNConfig
 
 
 class NFSPDQN(BaseAgent):
-    def __init__(self, env, config: NFSPDQNConfig, agent_type) -> None:
+    def __init__(self, env, config: NFSPDQNConfig) -> None:
         super().__init__(env, config, "NFSPDQN")
-        self.agent_type = agent_type
         rl_configs = self.config.rl_configs
         sl_configs = self.config.sl_configs
         self.nfsp_agents = [
-            NFSPDQNAgent(
-                env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}", agent_type, i
-            )
+            NFSPDQNAgent(env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}")
             for i in range(self.config.num_players)
         ]
-        self.checkpoint_interval = 50
 
-    def train(self):
-        training_time = time()
-        self.is_test = False
-        stats = {
+        self.stats = {
             "rl_loss": [],
             "sl_loss": [],
             "test_score": [],
         }
-        targets = {
+
+        self.targets = {
             "test_score": self.env.spec.reward_threshold,
         }
 
+    def train(self):
+        training_time = time()
         training_step = 0
         while (
             training_step < self.training_steps
@@ -81,11 +80,15 @@ class NFSPDQN(BaseAgent):
                 # for _ in range(self.config.replay_interval):
                 # for current_player in range(self.config.num_players):
                 current_player = state["current_player"]
-                current_agent = self.nfsp_agents[current_player]
+                current_agent: NFSPDQNAgent = self.nfsp_agents[current_player]
                 action = current_agent.select_actions(
                     state,
                     get_legal_moves(info),
                 )
+                target_policy = torch.one_hot(action, self.num_actions)
+                current_agent.sl_agent.replay_buffer.store(
+                    state, target_policy
+                )  # Store best moves in SL Memory
 
                 current_agent.config.per_beta = min(
                     1.0,
@@ -95,23 +98,22 @@ class NFSPDQN(BaseAgent):
                 )
 
                 # self.nfsp_agents[0].rl_agent.transition = [state_p1, action_p1]
-                next_state, rewards, terminated, truncated, info = self.step(action)
+                next_state, rewards, terminated, truncated, info = self.env.step(action)
                 state = next_state
                 done = terminated or truncated
 
                 training_step += 1
                 for minibatch in range(self.config.num_minibatches):
-                    rl_loss, sl_loss = self.experience_replay()
+                    rl_loss, sl_loss = current_agent.learn()
 
                 if training_step % self.config.transfer_interval == 0:
-                    self.target_model.set_weights(self.rl_agent.model.get_weights())
+                    current_agent.rl_agent.target_model.set_weights(
+                        current_agent.rl_agent.model.get_weights()
+                    )
 
                 if training_step % self.checkpoint_interval == 0 and training_step > 0:
                     for p in range(self.config.num_players):
                         self.nfsp_agents[p].save_checkpoint(
-                            stats,
-                            targets,
-                            5,
                             training_step,
                             training_step * self.config.replay_interval,
                             time() - training_time,
@@ -119,23 +121,16 @@ class NFSPDQN(BaseAgent):
                     # CALL CHECKPOINTING ON THE INDIVIDUAL AGENTS
 
                 if not done:
-                    current_agent.step(
+                    current_agent.store_transition(
                         action, state, rewards[current_player], done
                     )  # stores experiences
 
             for p in range(self.config.num_players):
-                self.nfsp_agents[p].step(action, state, rewards[p], done)
+                self.nfsp_agents[p].store_transition(action, state, rewards[p], done)
         self.env.close()
-
-    def step(self, action):
-        if self.is_test:
-            return self.test_env.step(action)
-        else:
-            return self.env.step(action)
 
     def test(self, num_trials):
         print("Testing")
-        self.is_test = True
         test_score = 0
         for _ in range(num_trials):
             print("Trial ", _)
@@ -149,26 +144,27 @@ class NFSPDQN(BaseAgent):
             self.nfsp_agents[0].policy = "average_strategy"
             while not done:
                 for p in range(self.config.num_players):
-                    action = self.nfsp_agents[p].select_action(
+                    action = self.nfsp_agents[p].select_actions(
                         state,
                         get_legal_moves(info),
                     )
-                    next_state, reward, terminated, truncated, info = self.step(action)
+                    next_state, reward, terminated, truncated, info = (
+                        self.test_env.step(action)
+                    )
                     done = terminated or truncated
                     state = next_state
                     if done:
                         break
             test_score += 1 if reward[0] >= 0 else 0
-        self.is_test = False
         for p in range(self.config.num_players):
             self.nfsp_agents[p].policy = policies[p]
         return 1 - (test_score / num_trials)
 
 
 class NFSPDQNAgent(BaseAgent):
-    def __init__(self, env, rl_config, sl_config, name, agent_type, player) -> None:
+    def __init__(self, env, rl_config, sl_config, name) -> None:
         super().__init__(env, rl_config, name)
-        self.rl_agent = agent_type(env, rl_config, name)
+        self.rl_agent = RainbowAgent(env, rl_config, name)
         self.sl_agent = AverageStrategyAgent(env, sl_config, name)
         self.policy = "best_response"  # "average_strategy" or "best_response
         # transition = [state, action, reward, next_state, done]
@@ -176,7 +172,7 @@ class NFSPDQNAgent(BaseAgent):
         self.previous_action = None
         self.previous_reward = None
 
-    def step(self, action, state, reward, done):
+    def store_transition(self, action, state, reward, done):
         self.transition = [self.previous_state, self.previous_action]
         if (
             self.previous_action is not None
@@ -196,36 +192,30 @@ class NFSPDQNAgent(BaseAgent):
             self.previous_reward = None
 
     def select_policy(self, anticipatory_param):
-        if random.random() < anticipatory_param and not self.is_test:
+        if random.random() < anticipatory_param:
             return "best_response"
         else:
             return "average_strategy"
 
-    def select_action(self, state, legal_moves=None):
+    def select_actions(self, state, legal_moves=None):
         if self.policy == "average_strategy":
-            action = self.sl_agent.select_action(state, legal_moves)
+            action = self.sl_agent.select_actions(state, legal_moves)
         else:
-            action = self.rl_agent.select_action(state, legal_moves)
-            if not self.is_test:
-                target_policy = tf.one_hot(action, self.num_actions)
-                self.sl_agent.replay_buffer.store(
-                    state, target_policy
-                )  # Store best moves in SL Memory
-            return action
+            action = self.rl_agent.select_actions(state, legal_moves)
 
         return action
 
-    def experience_replay(self):
+    def learn(self):
         rl_loss = 0
         sl_loss = 0
         if (
             self.rl_agent.replay_buffer.size
             > self.rl_agent.config.min_replay_buffer_size
         ):  # only do if not in rl agent mode? (open spiel)
-            rl_loss = self.rl_agent.experience_replay()
+            rl_loss = self.rl_agent.learn()
         if (
             self.sl_agent.replay_buffer.size
             > self.sl_agent.config.min_replay_buffer_size
         ):
-            sl_loss = self.sl_agent.experience_replay()
+            sl_loss = self.sl_agent.learn()
         return rl_loss, sl_loss
