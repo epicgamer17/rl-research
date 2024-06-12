@@ -75,7 +75,7 @@ def run_training(config, env: gym.Env, name):
         # save on mimi disk quota
         "save_intermediate_weights": False,
         # set for learner, will be overwritten by learner when creating actors
-        "noisy_sigma": config["learner_noisy_sigma"],
+        "noisy_sigma": 0# config["learner_noisy_sigma"],
     }
 
     generated_dir = "generated"

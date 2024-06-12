@@ -936,18 +936,19 @@ class VarianceScaling:
         assert distribution == "uniform", 'only uniform distribution is supported'
 
     def __call__(self, tensor: Tensor) -> None:
-        scale = self.scale
-        shape = tensor.shape
-        in_units, out_units = calc_units(shape)
-        if self.mode == "fan_in":
-            scale /= in_units
-        elif self.mode == "fan_out":
-            scale /= out_units
-        else:
-            scale /= (in_units + out_units) / 2
+        with torch.no_grad:
+            scale = self.scale
+            shape = tensor.shape
+            in_units, out_units = calc_units(shape)
+            if self.mode == "fan_in":
+                scale /= in_units
+            elif self.mode == "fan_out":
+                scale /= out_units
+            else:
+                scale /= (in_units + out_units) / 2
 
-        limit = math.sqrt(3.0 * scale)
-        return tensor.uniform_(-limit, limit)
+            limit = math.sqrt(3.0 * scale)
+            return tensor.uniform_(-limit, limit)
 
 def isiterable(o):
     try:
