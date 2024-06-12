@@ -52,8 +52,15 @@ def main():
         rpc_backend_options=options,
     )
 
+    try:
+        rpc.shutdown()
+    except Exception as e:
+        print("error shutting down rpc:", e)
 
-    rpc.shutdown()
+    try:
+        torch.distributed.destroy_process_group()
+    except Exception as e:
+        print("error destroying process group:", e)
 
 if __name__ == "__main__":
     main()
