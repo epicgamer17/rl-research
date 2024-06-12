@@ -105,7 +105,7 @@ func main() {
 
 	indicesToExclude := make(map[int]bool)
 
-	for _, i := range []int{5, 7, 13, 17, 24} {
+	for _, i := range []int{16} {
 		indicesToExclude[i] = true
 	}
 

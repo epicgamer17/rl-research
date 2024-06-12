@@ -155,6 +155,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
                 score_dict = {"score": self.score}
                 self.stats["score"].append(score_dict)
                 self.score = 0
+                
 
         return t, info
 
@@ -210,6 +211,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         )
 
         self.remote_replay.rpc_sync().store_batch(batch)
+        self.replay_buffer.clear()
     def update_params(self):
         ti = time.time()
         logger.info("fetching weights from storage...")
@@ -239,16 +241,13 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         self.env_state, info = self.env.reset()
 
     def on_training_step_end(self, training_step):
-        if self.should_send_experience_batch():
-            self.send_experience_batch()
+        if not self.spectator:
+            if self.should_send_experience_batch():
+                self.send_experience_batch()
 
-        if self.should_update_params(training_step):
-            self.update_params()
-
-        if self.spectator:
-            self.targets = {
-                "score": self.env.spec.reward_threshold,
-            }
+            if self.should_update_params(training_step):
+                self.update_params()
+        elif self.training_steps % self.checkpoint_interval == 0:
             plot_graphs(
                 self.stats,
                 self.targets,
