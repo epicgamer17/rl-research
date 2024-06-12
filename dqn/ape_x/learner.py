@@ -285,11 +285,10 @@ class ApeXLearner(ApeXLearnerBase):
 
         # actors
         for i in range(0, self.config.num_actors - 1):
-            print("starting actor", i)
             self._start_actor(i, actor_epsilons[i], False)
 
         # spectator
-        print('staring spectator')
+        logger.info('starting spectator')
         self._start_actor(self.config.num_actors - 1, 0, True)
 
     def _start_actor(self, actor_num: int, epsilon: float, spectator: bool) -> torch.Future:
@@ -310,6 +309,7 @@ class ApeXLearner(ApeXLearnerBase):
             self.target_network_rref,
             spectator,
         )
+        logger.info(f"starting actor {actor_num} with rank={actor_rank} and eps={config_copy.eg_epsilon}")
         remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(worker_info, ApeXActor, args)
 
         # no timeout
@@ -318,7 +318,11 @@ class ApeXLearner(ApeXLearnerBase):
 
     def on_done(self):
         self.flag.set()
+
+        logger.info("shutting down rpc")
         rpc.shutdown()
+        
+        logger.info("waiting for replay thread to finish")
         self.replay_thread.join()
 
 
@@ -373,9 +377,7 @@ class ApeXLearner(ApeXLearnerBase):
                 time.sleep(1)
 
     def learn_from_sample(self, samples: dict):
-        ids, indices, observations, next_observations, rewards, weights, actions = (
-            samples["ids"],
-            samples["indices"],
+        observations, next_observations, rewards, weights, actions = (
             samples["observations"],
             samples["next_observations"],
             samples["rewards"],

@@ -247,7 +247,8 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
             if self.should_update_params(training_step):
                 self.update_params()
-        elif self.training_steps % self.checkpoint_interval == 0:
+        else:
+            logger.debug("spectator plotting graphs")
             plot_graphs(
                 self.stats,
                 self.targets,
