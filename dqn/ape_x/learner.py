@@ -318,9 +318,9 @@ class ApeXLearner(ApeXLearnerBase):
 
     def on_done(self):
         self.flag.set()
+        rpc.shutdown()
         self.replay_thread.join()
 
-        rpc.shutdown()
 
     def on_training_step_end(self):
         super().on_training_step_end()

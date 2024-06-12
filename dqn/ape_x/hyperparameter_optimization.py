@@ -106,7 +106,7 @@ def run_training(config, env: gym.Env, name):
 
     # not enough actors to run or other issue generating hosts
     if proc.returncode != 0:
-        return {"status": STATUS_FAIL, "loss": 0}
+        return {"status": STATUS_FAIL, "loss": 100000}
 
     cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME}"
     print("running cmd: ", cmd)

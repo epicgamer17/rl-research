@@ -20,7 +20,7 @@ const APEX_PATH = "~/rl-research/dqn/ape_x"
 const SSH_ARGS = "-oStrictHostKeyChecking=no -oConnectTimeout=5"
 const USERNAME = "ehuang"
 const FQDN = "cs.mcgill.ca"
-const KillPythonProcessesCmd = "pkill \"python\""
+const KillPythonProcessesCmd = "pkill pt_main_thread"
 
 func createLearnerCmd(config configs.DistributedConfig) string {
 	commands := []string{

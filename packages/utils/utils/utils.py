@@ -911,7 +911,7 @@ def graph_hyperparameter_importance(
 
 def calc_units(shape):
     shape = tuple(shape)
-    if len(shape == 1):
+    if len(shape) == 1:
         return shape + shape
     if len(shape) == 2:
         # dense layer -> (in_channels, out_channels)
