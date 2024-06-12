@@ -27,7 +27,6 @@ def main():
     parser.add_argument("--world_size", type=int, default=6)
     parser.add_argument("--master_addr", type=str, default="127.0.0.1")
     parser.add_argument("--rpc_port", type=int, default=3333)
-    parser.add_argument("--pg_port", type=int, default=3334)
 
     args = parser.parse_args()
 

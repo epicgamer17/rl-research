@@ -64,7 +64,6 @@ def run_training(config, env: gym.Env, name):
         "worker_name": "",
         "world_size": 0,
         "rpc_port": 0,
-        "pg_port": 0,
         "master_addr": "",
         "replay_addr": "",
         "storage_addr": "",

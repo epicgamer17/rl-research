@@ -10,7 +10,6 @@ from agent_configs import ApeXActorConfig, ApeXLearnerConfig
 def main():
     parser = argparse.ArgumentParser(description="generate configs")
     parser.add_argument("--rpc_port", type=int, default=3333)
-    parser.add_argument("--pg_port", type=int, default=3334)
     parser.add_argument("--world_size", type=int, default=4)
 
     parser.add_argument("--master_addr", type=str, default="127.0.0.1")
@@ -41,7 +40,6 @@ def main():
         worker_name="",
         world_size=args.world_size,
         rpc_port=args.rpc_port,
-        pg_port=args.pg_port,
         master_addr=args.master_addr,
         replay_addr=args.replay_addr,
         storage_addr=args.storage_addr,

@@ -38,7 +38,7 @@ func createWorkerCommand(config configs.DistributedConfig, rank int, name string
 	commands := []string{
 		fmt.Sprintf("cd %s", APEX_PATH),
 		"conda activate ml",
-		fmt.Sprintf("python3 remote_worker.py --rank %d --name %s --world_size %d --master_addr %s --rpc_port %d --pg_port %d", rank, name, worldSize, config.MasterHost, config.RPCPort, config.PGPort),
+		fmt.Sprintf("python3 remote_worker.py --rank %d --name %s --world_size %d --master_addr %s --rpc_port %d", rank, name, worldSize, config.MasterHost, config.RPCPort),
 	}
 
 	cmd := strings.Join(commands, "; ")

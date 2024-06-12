@@ -9,7 +9,6 @@ class DistributedConfig(ConfigBase):
         self.worker_name: int = self.parse_field("worker_name", required=True)
         self.world_size: int = self.parse_field("world_size", required=True)
         self.rpc_port: int = self.parse_field("rpc_port", required=True)
-        self.pg_port: int = self.parse_field("pg_port", required=True)
 
         self.master_addr: str = self.parse_field("master_addr", required=True)
         self.replay_addr: str = self.parse_field("replay_addr", required=True)

@@ -6,7 +6,6 @@ type DistributedConfig struct {
 	StorageHost           string
 	MasterHost            string
 	RPCPort               int
-	PGPort                int
 	ActorHosts            []string
 	LearnerConfigFilename string
 	ActorConfigFilename   string
