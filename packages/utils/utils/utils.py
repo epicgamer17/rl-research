@@ -987,7 +987,7 @@ class TimeStoppingCriteria(StoppingCriteria):
         self.stop_time = time.time() + max_runtime_sec
 
     def should_stop(self, details: dict) -> bool:
-        return details["time"] > self.stop_time
+        return time.time() > self.stop_time
 
 
 class TrainingStepStoppingCritiera(StoppingCriteria):
