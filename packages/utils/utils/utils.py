@@ -936,7 +936,7 @@ class VarianceScaling:
         assert distribution == "uniform", 'only uniform distribution is supported'
 
     def __call__(self, tensor: Tensor) -> None:
-        with torch.no_grad:
+        with torch.no_grad():
             scale = self.scale
             shape = tensor.shape
             in_units, out_units = calc_units(shape)
