@@ -12,6 +12,7 @@ from actor import ApeXActor
 from utils import update_per_beta
 import torch.distributed
 from torch.nn.utils import clip_grad_norm_
+from utils import StoppingCriteria, ApexLearnerStoppingCriteria
 
 sys.path.append("../")
 from dqn.rainbow.rainbow_agent import RainbowAgent
@@ -55,6 +56,8 @@ class ApeXLearnerBase(RainbowAgent):
 
         self.per_sample_beta = self.config.per_beta
 
+        self.stoping_critera = ApexLearnerStoppingCriteria()
+
     # apex learner methods
     def store_weights(self, weights):
         pass
@@ -88,13 +91,11 @@ class ApeXLearnerBase(RainbowAgent):
 
             self.training_steps += self.start_training_step
             for training_step in range(self.start_training_step, self.training_steps):
-                # stop training if going over 1.5 hours
                 logger.info(
                     f"learner training step: {training_step}/{self.training_steps}"
                 )
-
-                if time.time() - start_time > 3600 * 1.5:
-                    break
+                if self.stoping_critera.should_stop(details=dict(training_step=training_step)):
+                    return
 
                 if training_step % self.config.push_params_interval == 0:
                     self.store_weights()
@@ -113,14 +114,7 @@ class ApeXLearnerBase(RainbowAgent):
                     self.save_checkpoint(
                         training_step, training_step, time.time() - start_time
                     )
-
-                    if training_step // self.training_steps > 0.125:
-                        past_scores_dicts = self.stats["test_score"][-5:]
-                        scores = [score_dict["score"] for score_dict in past_scores_dicts]
-                        avg = np.sum(scores) / 5
-                        if avg < 10:
-                            return  # could do stopping param as the slope of line of best fit
-
+                    self.stoping_critera.add_score(self.stats["test_score"][-1])
                 self.on_training_step_end()
 
             logger.info("loop done")
@@ -240,6 +234,7 @@ class ApeXLearner(ApeXLearnerBase):
             # self.load_from_checkpoint() ...
 
         # update the remote references with the current weights
+        self.stopping_criteria = ApexLearnerStoppingCriteria()
         self.store_weights()
 
     def on_save(self):

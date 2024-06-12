@@ -926,14 +926,15 @@ def calc_units(shape):
             c *= dim
         return (c * in_units, c * out_units)
 
+
 class VarianceScaling:
     def __init__(self, scale=0.1, mode="fan_in", distribution="uniform"):
         self.scale = scale
         self.mode = mode
         self.distribution = distribution
 
-        assert mode == 'fan_in' or mode == 'fan_out' or mode == 'fan_avg'
-        assert distribution == "uniform", 'only uniform distribution is supported'
+        assert mode == "fan_in" or mode == "fan_out" or mode == "fan_avg"
+        assert distribution == "uniform", "only uniform distribution is supported"
 
     def __call__(self, tensor: Tensor) -> None:
         with torch.no_grad():
@@ -950,10 +951,11 @@ class VarianceScaling:
             limit = math.sqrt(3.0 * scale)
             return tensor.uniform_(-limit, limit)
 
+
 def isiterable(o):
     try:
         it = iter(o)
-    except TypeError: 
+    except TypeError:
         return False
     return True
 
@@ -966,3 +968,79 @@ def tointlists(list):
         else:
             ret.append(int(x))
     return ret
+
+
+import time
+from collections import deque
+
+
+class StoppingCriteria():
+    def __init__(self):
+        pass
+
+    def should_stop(self, details: dict) -> bool:
+        return False
+
+
+class TimeStoppingCriteria(StoppingCriteria):
+    def __init__(self, max_runtime_sec=60 * 10):
+        self.stop_time = time.time() + max_runtime_sec
+
+    def should_stop(self, details: dict) -> bool:
+        return details["time"] > self.stop_time
+
+
+class TrainingStepStoppingCritiera(StoppingCriteria):
+    def __init__(self, max_training_steps=100000):
+        self.max_training_steps = max_training_steps
+
+    def should_stop(self, details: dict) -> bool:
+        return details["training_step"] > self.max_training_steps
+
+
+class EpisodesStoppingCriteria(StoppingCriteria):
+    def __init__(self, max_episodes=100000):
+        self.max_episodes = max_episodes
+
+    def should_stop(self, details: dict) -> bool:
+        return details["max_episodes"] > self.max_episodes
+
+
+class AverageScoreStoppingCritera(StoppingCriteria):
+    def __init__(self, min_avg_score: float, last_scores_length: int):
+        self.min_avg_score = min_avg_score
+        self.last_scores_length = last_scores_length
+        self.last_scores = deque(maxlen=last_scores_length)
+
+    def add_score(self, score: float):
+        self.last_scores.append(score)
+
+    def should_stop(self, details: dict) -> bool:
+        if len(self.last_scores) < self.last_scores_length:
+            return False
+
+        return np.average(self.last_scores) < self.min_avg_score
+
+
+class ApexLearnerStoppingCriteria(StoppingCriteria):
+    def __init__(self):
+        self.criterias: dict[str, StoppingCriteria] = {
+            "time": TimeStoppingCriteria(max_runtime_sec=1.5 * 60 * 60),
+            "training_step": TrainingStepStoppingCritiera(max_training_steps=10000),
+            "avg_score": AverageScoreStoppingCritera(min_avg_score=15, last_scores_length=10),
+        }
+
+    def should_stop(self, details: dict) -> bool:
+        if self.criterias["time"].should_stop(details):
+            return True
+
+        if details["training_step"] < 10000:
+            return False
+
+        return self.criterias["training_step"].should_stop(details) or self.criterias[
+            "avg_score"
+        ].should_stop(details)
+    
+    def add_score(self, score: float):
+        tc: AverageScoreStoppingCritera = self.criterias["avg_score"]
+        tc.add_score(score)
