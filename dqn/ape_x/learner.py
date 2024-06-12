@@ -326,10 +326,16 @@ class ApeXLearner(ApeXLearnerBase):
         self.flag.set()
 
         logger.info("shutting down rpc")
-        rpc.shutdown()
+        try:
+            rpc.shutdown(graceful=False)
+        except Exception as e:
+            logger.exception(f"error shutting down rpc: {e}")
 
         logger.info("destroying process group")
-        torch.distributed.destroy_process_group()
+        try:
+            torch.distributed.destroy_process_group()
+        except Exception as e:
+            logger.exception(f"error destroying process group: {e}")
         
         logger.info("waiting for replay thread to finish")
         self.replay_thread.join()
