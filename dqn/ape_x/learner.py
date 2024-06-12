@@ -156,60 +156,66 @@ class ApeXLearner(ApeXLearnerBase):
         os.environ["WORLD_SIZE"] = str(self.config.world_size)
         os.environ["RANK"] = str(self.config.rank)
 
-        print("initializing rpc...")
-        torch.distributed.init_process_group(backend=torch.distributed.Backend.NCCL)
-        assert torch.distributed.is_initialized() and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
+        logger.info("initializing rpc...")
+        try:
+            torch.distributed.init_process_group(backend=torch.distributed.Backend.NCCL)
+            assert torch.distributed.is_initialized() and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
 
-        # for cuda to cuda rpc
-        options = rpc.TensorPipeRpcBackendOptions(
-            num_worker_threads=32, devices=["cuda:0"]
-        )
+            # for cuda to cuda rpc
+            options = rpc.TensorPipeRpcBackendOptions(
+                num_worker_threads=32, devices=["cuda:0"]
+            )
 
-        for callee in ["parameter_server", "replay_server"]:
-            options.set_device_map(callee, {0: 0})
+            for callee in ["parameter_server", "replay_server"]:
+                options.set_device_map(callee, {0: 0})
 
-        rpc.init_rpc(
-            name="learner",
-            rank=0,
-            world_size=self.config.world_size,
-            rpc_backend_options=options,
-        )
+            rpc.init_rpc(
+                name="learner",
+                rank=0,
+                world_size=self.config.world_size,
+                rpc_backend_options=options,
+            )
 
-        # use WorkerInfo instead of expensive strings, "Use this WorkerInfo to avoid passing an expensive string on every invocation."
-        self.replay_worker_info = rpc.get_worker_info("replay_server")
-        self.parameter_worker_info = rpc.get_worker_info("parameter_server")
+            # use WorkerInfo instead of expensive strings, "Use this WorkerInfo to avoid passing an expensive string on every invocation."
+            self.replay_worker_info = rpc.get_worker_info("replay_server")
+            self.parameter_worker_info = rpc.get_worker_info("parameter_server")
 
-        # create remote references (rref)s to the online_network, target_network, (parameter server) and replay buffer (replay memory server)
-        rainbow_network_args = (
-            config,
-            self.num_actions,
-            (self.config.minibatch_size,) + self.observation_dimensions,
-        )
-        replay_buffer_args = dict(
-            observation_dimensions=self.observation_dimensions,
-            observation_dtype=self.env.observation_space.dtype,
-            max_size=self.config.replay_buffer_size,
-            batch_size=self.config.minibatch_size,
-            max_priority=1.0,
-            alpha=self.config.per_alpha,
-            beta=self.config.per_beta,
-            # epsilon=config["per_epsilon"],
-            n_step=self.config.n_step,
-            gamma=self.config.discount_factor,
-        )
+            # create remote references (rref)s to the online_network, target_network, (parameter server) and replay buffer (replay memory server)
+            rainbow_network_args = (
+                config,
+                self.num_actions,
+                (self.config.minibatch_size,) + self.observation_dimensions,
+            )
+            replay_buffer_args = dict(
+                observation_dimensions=self.observation_dimensions,
+                observation_dtype=self.env.observation_space.dtype,
+                max_size=self.config.replay_buffer_size,
+                batch_size=self.config.minibatch_size,
+                max_priority=1.0,
+                alpha=self.config.per_alpha,
+                beta=self.config.per_beta,
+                # epsilon=config["per_epsilon"],
+                n_step=self.config.n_step,
+                gamma=self.config.discount_factor,
+            )
 
-        self.online_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
-            self.parameter_worker_info, RainbowNetwork, rainbow_network_args
-        )
-        self.target_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
-            self.parameter_worker_info, RainbowNetwork, rainbow_network_args
-        )
-        self.replay_rref: rpc.RRef[PrioritizedNStepReplayBuffer] = rpc.remote(
-            self.replay_worker_info,
-            PrioritizedNStepReplayBuffer,
-            args=None,
-            kwargs=replay_buffer_args,
-        )
+            self.online_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
+                self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+            )
+            self.target_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
+                self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+            )
+            self.replay_rref: rpc.RRef[PrioritizedNStepReplayBuffer] = rpc.remote(
+                self.replay_worker_info,
+                PrioritizedNStepReplayBuffer,
+                args=None,
+                kwargs=replay_buffer_args,
+            )
+        except Exception as e:
+            # error setting up rpc
+            logger.info(e)
+            rpc.shutdown()
+            torch.distributed.destroy_process_group()
 
         print("running tests...")
         # print("target network owner", self.target_network_rref.owner_name())
@@ -321,6 +327,9 @@ class ApeXLearner(ApeXLearnerBase):
 
         logger.info("shutting down rpc")
         rpc.shutdown()
+
+        logger.info("destroying process group")
+        torch.distributed.destroy_process_group()
         
         logger.info("waiting for replay thread to finish")
         self.replay_thread.join()
