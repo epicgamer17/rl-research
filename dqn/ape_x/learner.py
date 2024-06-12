@@ -153,6 +153,12 @@ class ApeXLearner(ApeXLearnerBase):
         # torch rpc initialization
         os.environ["MASTER_ADDR"] = socket.getfqdn()  # learner is the master
         os.environ["MASTER_PORT"] = str(self.config.rpc_port)
+        os.environ["WORLD_SIZE"] = str(self.config.world_size)
+        os.environ["RANK"] = str(self.config.rank)
+
+        print("initializing rpc...")
+        torch.distributed.init_process_group(backend=torch.distributed.Backend.NCCL)
+        assert torch.distributed.is_initialized() and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
 
         # for cuda to cuda rpc
         options = rpc.TensorPipeRpcBackendOptions(
@@ -162,23 +168,6 @@ class ApeXLearner(ApeXLearnerBase):
         for callee in ["parameter_server", "replay_server"]:
             options.set_device_map(callee, {0: 0})
 
-        print("initializing rpc...")
-        torch.distributed.init_process_group(
-            backend=torch.distributed.Backend.NCCL,
-            world_size=self.config.world_size,
-            rank=0,
-            store=torch.distributed.TCPStore(
-                host_name=self.config.master_addr,
-                port=self.config.pg_port,
-                world_size=self.config.world_size,
-                is_master=True,
-                wait_for_workers=True,
-            ),
-            pg_options=None,
-            device_id=None,
-        )
-        assert torch.distributed.is_initialized()
-        assert torch.distributed.get_backend() == torch.distributed.Backend.NCCL
         rpc.init_rpc(
             name="learner",
             rank=0,
@@ -290,19 +279,27 @@ class ApeXLearner(ApeXLearnerBase):
         self.replay_thread.daemon = True
         self.replay_thread.start()
 
+        actor_epsilons = []
+        for i in range(0, self.config.num_actors - 1):
+            actor_epsilons.append(0.4 ** (1 + (i*7 / (self.config.num_actors - 2))))
+
         # actors
-        for i in range(1, self.config.num_actors):
-            self._start_actor(i, False)
+        for i in range(0, self.config.num_actors - 1):
+            print("starting actor", i)
+            self._start_actor(i, actor_epsilons[i], False)
 
         # spectator
-        self._start_actor(0, True)
+        print('staring spectator')
+        self._start_actor(self.config.num_actors - 1, 0, True)
 
-    def _start_actor(self, actor_num: int, spectator: bool) -> torch.Future:
+    def _start_actor(self, actor_num: int, epsilon: float, spectator: bool) -> torch.Future:
         env_copy = copy.deepcopy(self.env)
         config_copy = copy.deepcopy(self.config.actor_config)
         actor_rank = actor_num + 3
         config_copy.config_dict["rank"] = actor_rank
         config_copy.rank = actor_rank
+        config_copy.eg_epsilon = 0 if spectator else epsilon
+        config_copy.config_dict['eg_epsilon'] = 0 if spectator else epsilon
         worker_info = rpc.get_worker_info(f"actor_{actor_num}")
         args = (
             env_copy,

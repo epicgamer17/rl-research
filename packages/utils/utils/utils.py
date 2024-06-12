@@ -428,11 +428,14 @@ def prepare_activations(activation: str):
     raise ValueError(f"Activation {activation} not recognized")
 
 
-def epsilon_greedy_policy(q_values: list[float], epsilon: float):
+def epsilon_greedy_policy(q_values: list[float], epsilon: float, range=None, wrapper=np.argmax):
     if np.random.rand() < epsilon:
-        return np.random.randint(len(q_values))
+        if range is not None:
+            return np.random.randint(range)
+        else:
+            return np.random.randint(len(q_values))
     else:
-        return np.argmax(q_values)
+        return wrapper(q_values)
 
 
 def add_dirichlet_noise(

@@ -7,7 +7,7 @@ from uuid import uuid4
 import torch.distributed.rpc as rpc
 from gymnasium import Env
 from agent_configs import ApeXActorConfig
-from utils import plot_graphs
+from utils import plot_graphs, epsilon_greedy_policy
 
 import matplotlib
 import logging
@@ -125,12 +125,33 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         q_value = (target_distributions * self.support)[0, action].sum().item()
         return q_value
 
+    # override
     def collect_experience(self, state, info) -> tuple[DistreteTransition, Any]:
-        t, info = super().collect_experience(state, info)
+        legal_moves = None # sget_legal_moves(info)
+        # (1, output_length, num_atoms)
+        values = self.predict(state)
+        action = epsilon_greedy_policy(values, self.config.eg_epsilon, wrapper=lambda values: self.select_actions(values).item(), range=self.num_actions)
+        next_state, reward, terminated, truncated, info = self.env.step(action)
+        done = truncated or terminated
+
+        t = DistreteTransition(state, action, reward, next_state, done, legal_moves)
+        p = self.rb.pointer
+
+        n_step_t = self.rb.store(
+            t.state, t.action, t.reward, t.next_state, t.done, None, t.legal_moves
+        )
+
+        if n_step_t != None and not self.spectator:
+            predicted_q = self.predict(t.next_state)
+            action = self.select_actions(predicted_q).item()
+
+            self.precalculated_q[p] = (self.config.discount_factor ** self.config.n_step) * self.predict_target_q(
+                t.next_state, action
+            )
 
         if self.spectator:
-            self.score += t.reward
-            if t.done:
+            self.score += reward
+            if done:
                 score_dict = {"score": self.score}
                 self.stats["score"].append(score_dict)
                 self.score = 0

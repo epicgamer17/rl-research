@@ -223,10 +223,10 @@ def create_search_space():
                 # "lecun_normal",
             ],
         ),
-        #### not actually used, just to prevent the configs from throwing errors
+        #### not actually used in apex, just to prevent the configs from throwing errors
         "loss_function": hp.choice(
             "loss_function",
-            [utils.CategoricalCrossentropyLoss(), utils.KLDivergenceLoss()],
+            [utils.CategoricalCrossentropyLoss()],#, utils.KLDivergenceLoss()],
         ),
         ###
         "learning_rate": hp.loguniform("learning_rate", math.log(1e-5), math.log(1e-1)),
@@ -266,10 +266,7 @@ def create_search_space():
         "poll_params_interval": scope.int(
             hp.quniform("poll_params_interval", 50, 500, 10)
         ),
-        "actors_initial_sigma": hp.quniform("actors_initial_sigma", 0.1, 1, 0.1),
-        "actors_sigma_alpha": scope.int(hp.quniform("actors_sigma_alpha", 1, 19, 1)),
-        "learner_noisy_sigma": hp.quniform("learner_noisy_sigma", 0.1, 1, 0.1),
-        "num_actors": scope.int(hp.quniform("num_actors", 1 + 1, 16 + 1, 1)),
+        "num_actors": scope.int(hp.quniform("num_actors", 5, 17, 1)),
     }
     initial_best_config = []
 
