@@ -2,7 +2,7 @@ config_dict:
   rank: 0
   atoms: 1
   worker_name: 'learner'
-  world_size: 4
+  world_size: 6 
   pg_port: 3334
   rpc_port: 3333
   master_addr: 127.0.0.1
@@ -13,7 +13,7 @@ config_dict:
   loss_function: !!python/object:utils.utils.CategoricalCrossentropyLoss
     axis: -1
     from_logits: false
-  num_actors: 1
+  num_actors: 3
   adam_epsilon: 1.0e-08
   advatage_hidden_layers_widths:
   - 128
@@ -24,7 +24,6 @@ config_dict:
   learning_rate: 0.001
   minibatch_size: 128
   n_step: 3
-  noisy_sigma: 0.5
   per_alpha: 0.2
   per_beta: 0.6
   per_epsilon: 1.0e-06
