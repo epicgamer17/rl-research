@@ -105,7 +105,9 @@ func main() {
 
 	indicesToExclude := make(map[int]bool)
 
-	for _, i := range []int{16} {
+	for _, i := range []int{13, 16} {
+		// 13 - /home/2023/ehuang/.conda/envs/ml/lib/python3.11/site-packages/torch/cuda/__init__.py:118: UserWarning: CUDA initialization: CUDA unknown error - this may be due to an incorrectly set up environment, e.g. changing env variable CUDA_VISIBLE_DEVICES after program start. Setting the available devices to be zero. (Triggered internally at ../c10/cuda/CUDAFunctions.cpp:108.) \n return torch._C._cuda_getDeviceCount() > 0
+		// 16 - bad driver version
 		indicesToExclude[i] = true
 	}
 
