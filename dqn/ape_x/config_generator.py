@@ -4,6 +4,7 @@
 import argparse
 import os
 import pathlib
+import numpy
 from agent_configs import ApeXActorConfig, ApeXLearnerConfig
 
 
@@ -54,7 +55,7 @@ def main():
 
     injected_learner_conf = learner_conf.config_dict | {
         **distributed_dict
-        | {"rank": 0, "worker_name": "learner","distributed_actor_config_file": args.actor_output}
+        | {"worker_name": "learner","distributed_actor_config_file": args.actor_output}
     }
     learner_config = ApeXLearnerConfig(injected_learner_conf, learner_conf.game)
     learner_config.dump(args.learner_output)

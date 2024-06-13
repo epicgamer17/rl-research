@@ -4,8 +4,9 @@ import subprocess
 from subprocess import Popen
 from pathlib import Path
 import time
-import argparse
+import sys
 
+import torch
 import numpy as np
 import pandas as pd
 import gymnasium as gym
@@ -17,7 +18,6 @@ from learner import ApeXLearner
 import utils
 
 SIGTERM = 15
-SSH_USERNAME = "ehuang"
 
 import logging
 
@@ -37,29 +37,19 @@ logging.basicConfig(
 )
 
 
-def get_current_host():
-    host_output = subprocess.check_output("hostname | sed 's/[^0-9]*//'", shell=True)
-    logger.info(f"current host: {host_output.strip()}")
-    try:
-        current_host = int(host_output.strip())
-    except ValueError:
-        # assume we are not on open-gpu-x
-        current_host = 0
-    return current_host
-
-
 def run_training(config, env: gym.Env, name):
-    global SSH_USERNAME
     print("=================== Run Training ======================")
 
+    config["num_actors"] = 3
+    world_size = config["num_actors"] + 3
     distributed_config_placeholder = {
         "rank": 0,
         "worker_name": "",
-        "world_size": 0,
-        "rpc_port": 0,
-        "master_addr": "",
-        "replay_addr": "",
-        "storage_addr": "",
+        "world_size": world_size,
+        "rpc_port": 3333,
+        "master_addr": "127.0.0.1",
+        "replay_addr": "127.0.0.1",
+        "storage_addr": "127.0.0.1",
     }
 
     # combined learner and actor config
@@ -68,19 +58,18 @@ def run_training(config, env: gym.Env, name):
         # save on mimi disk quota
         "save_intermediate_weights": False,
         # set for learner, will be overwritten by learner when creating actors
-        "noisy_sigma": 0# config["learner_noisy_sigma"],
+        "noisy_sigma": 0,  # config["learner_noisy_sigma"],
     }
 
+    executable = sys.executable
     generated_dir = "generated"
     os.makedirs(generated_dir, exist_ok=True)
 
     learner_config_path = Path(Path.cwd(), "configs", "learner_config.yaml")
     actor_config_path = Path(Path.cwd(), "configs", "actor_config.yaml")
 
-    hosts_file_path = Path(Path.cwd(), generated_dir, "hosts.yaml")
     learner_output_path = Path(Path.cwd(), generated_dir, "learner_output.yaml")
     actor_output_path = Path(Path.cwd(), generated_dir, "actor_output.yaml")
-    distributed_output_path = Path(Path.cwd(), generated_dir, "distributed_output.yaml")
 
     actor_config = ApeXActorConfig(conf, game_config=CartPoleConfig())
     actor_config.dump(actor_config_path)
@@ -90,29 +79,44 @@ def run_training(config, env: gym.Env, name):
     learner_config = ApeXLearnerConfig(conf, game_config=CartPoleConfig())
     learner_config.dump(learner_config_path)
 
-    current_host = get_current_host()
+    cmd = f"{executable} config_generator.py --world_size {world_size} --actor_base {actor_config_path} --learner_base {learner_config_path} --actor_output {actor_output_path} --learner_output {learner_output_path}"
 
-    machines = learner_config.num_actors + 3
-    cmd = f"./bin/find_servers -exclude={current_host} -output={hosts_file_path} -ssh_username={SSH_USERNAME} -machines={machines}"
-    print("running cmd:", cmd)
-    proc = subprocess.run(cmd.split(" "), capture_output=True, text=True)
-
-    # not enough actors to run or other issue generating hosts
-    if proc.returncode != 0:
-        return {"status": STATUS_FAIL, "loss": 100000}
-
-    cmd = f"./bin/write_configs -learner_config={learner_config_path} -actor_config={actor_config_path} -hosts_file={hosts_file_path} -learner_output={learner_output_path} -actor_output={actor_output_path} -distributed_output={distributed_output_path} -ssh_username={SSH_USERNAME}"
     print("running cmd: ", cmd)
     out = subprocess.run(cmd.split(" "), capture_output=True, text=True)
     logger.debug(f"write_configs stdout: {out.stdout}")
     logger.debug(f"write_configs stderr: {out.stderr}")
     try:
-        cmd = f"./bin/hyperopt -distributed_config={distributed_output_path} -learner_name={name} -ssh_username={SSH_USERNAME}"
-        print("running cmd:", cmd)
-        go_proc = Popen(cmd.split(" "), stdin=subprocess.PIPE, text=True)
+        learner_generated_config = ApeXLearnerConfig.load(learner_output_path)
+
+        replay_proc = Popen(
+            f"{executable} remote_worker.py --rank {1} --name replay_server --world_size {world_size}".split(
+                " "
+            ),
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        storage_proc = Popen(
+            f"{executable} remote_worker.py --rank {2} --name parameter_server --world_size {world_size}".split(
+                " "
+            ),
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+
+        actor_procs = []
+        for i in range(learner_generated_config.num_actors):
+            actor_procs.append(
+                Popen(
+                    f"{executable} remote_worker.py --rank {3+i} --name actor_{i} --world_size {world_size}".split(
+                        " "
+                    ),
+                    stdout=subprocess.PIPE,
+                    text=True,
+                )
+            )
+
         time.sleep(5)
 
-        learner_generated_config = ApeXLearnerConfig.load(learner_output_path)
         learner = ApeXLearner(env, learner_generated_config, name=name)
         logger.info("        === Running learner")
         learner.run()
@@ -130,10 +134,15 @@ def run_training(config, env: gym.Env, name):
             "loss": 100000,
         }  # make this high since some games have negative rewards (mountain car and acrobot) and 0 would actually be a perfect score
     finally:
-        go_proc.send_signal(SIGTERM)
-        while go_proc.poll() == None:
-            logger.debug("process not terminated yet, waiting")
-            time.sleep(1)
+        replay_proc.send_signal(SIGTERM)
+        storage_proc.send_signal(SIGTERM)
+        for proc in actor_procs:
+            proc.send_signal(SIGTERM)
+
+        replay_proc.wait()
+        storage_proc.wait()
+        for proc in actor_procs:
+            proc.wait()
         logger.info("cleaning up finished")
 
 
@@ -217,7 +226,7 @@ def create_search_space():
         #### not actually used in apex, just to prevent the configs from throwing errors
         "loss_function": hp.choice(
             "loss_function",
-            [utils.CategoricalCrossentropyLoss()],#, utils.KLDivergenceLoss()],
+            [utils.CategoricalCrossentropyLoss()],  # , utils.KLDivergenceLoss()],
         ),
         ###
         "learning_rate": hp.loguniform("learning_rate", math.log(1e-5), math.log(1e-1)),
@@ -257,7 +266,6 @@ def create_search_space():
         "poll_params_interval": scope.int(
             hp.quniform("poll_params_interval", 50, 500, 10)
         ),
-        "num_actors": scope.int(hp.quniform("num_actors", 5, 17, 1)),
     }
     initial_best_config = []
 
@@ -265,13 +273,6 @@ def create_search_space():
 
 
 def main():
-    global SSH_USERNAME
-    parser = argparse.ArgumentParser()
-    parser.add_argument("ssh_username", type=str, help="an integer to be summed")
-    args = parser.parse_args()
-
-    SSH_USERNAME = args.ssh_username
-
     search_space, initial_best_config = create_search_space()
     max_trials = 64
     trials_step = 64  # how many additional trials to do after loading the last ones
