@@ -94,7 +94,9 @@ class ApeXLearnerBase(RainbowAgent):
                 logger.info(
                     f"learner training step: {training_step}/{self.training_steps}"
                 )
-                if self.stoping_critera.should_stop(details=dict(training_step=training_step)):
+                if self.stoping_critera.should_stop(
+                    details=dict(training_step=training_step)
+                ):
                     return
 
                 if training_step % self.config.push_params_interval == 0:
@@ -124,9 +126,12 @@ class ApeXLearnerBase(RainbowAgent):
             logger.exception(f"run method ended by error: {e}")
         finally:
             self.env.close()
+            logger.info("running learner cleanup methods")
             self.on_done()
 
 
+import torch.distributed
+import torch.distributed.rpc
 import torch.distributed.rpc as rpc
 import os
 import socket
@@ -143,17 +148,22 @@ class ApeXLearner(ApeXLearnerBase):
         assert torch.distributed.is_nccl_available()
         self.updates_queue = queue.Queue()
         self.config = config
+        self.failed = False
 
         # torch rpc initialization
         os.environ["MASTER_ADDR"] = socket.getfqdn()  # learner is the master
         os.environ["MASTER_PORT"] = str(self.config.rpc_port)
         os.environ["WORLD_SIZE"] = str(self.config.world_size)
         os.environ["RANK"] = str(self.config.rank)
+        self._rrefs_to_confirm: list[rpc.RRef] = []
 
-        logger.info("initializing rpc...")
         try:
-            torch.distributed.init_process_group(backend=torch.distributed.Backend.NCCL)
-            assert torch.distributed.is_initialized() and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
+            # logger.info("initializing process group...")
+            # torch.distributed.init_process_group(backend=torch.distributed.Backend.NCCL)
+            # assert (
+            #     torch.distributed.is_initialized()
+            #     and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
+            # )
 
             # for cuda to cuda rpc
             options = rpc.TensorPipeRpcBackendOptions(
@@ -163,6 +173,7 @@ class ApeXLearner(ApeXLearnerBase):
             for callee in ["parameter_server", "replay_server"]:
                 options.set_device_map(callee, {0: 0})
 
+            logger.info("initializing rpc...")
             rpc.init_rpc(
                 name="learner",
                 rank=0,
@@ -175,11 +186,10 @@ class ApeXLearner(ApeXLearnerBase):
             self.parameter_worker_info = rpc.get_worker_info("parameter_server")
 
             # create remote references (rref)s to the online_network, target_network, (parameter server) and replay buffer (replay memory server)
-            rainbow_network_args = (
-                config,
-                self.num_actions,
-                (self.config.minibatch_size,) + self.observation_dimensions,
-            )
+            rainbow_batch_dim = (
+                self.config.minibatch_size,
+            ) + self.observation_dimensions
+            rainbow_network_args = (config, self.num_actions, rainbow_batch_dim)
             replay_buffer_args = dict(
                 observation_dimensions=self.observation_dimensions,
                 observation_dtype=self.env.observation_space.dtype,
@@ -193,49 +203,98 @@ class ApeXLearner(ApeXLearnerBase):
                 gamma=self.config.discount_factor,
             )
 
-            self.online_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
-                self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+            self.online_network_rref: rpc.RRef[RainbowNetwork] = (
+                self._create_cls_on_remote(
+                    self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+                )
             )
-            self.target_network_rref: rpc.RRef[RainbowNetwork] = rpc.remote(
-                self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+            self.target_network_rref: rpc.RRef[RainbowNetwork] = (
+                self._create_cls_on_remote(
+                    self.parameter_worker_info, RainbowNetwork, rainbow_network_args
+                )
             )
-            self.replay_rref: rpc.RRef[PrioritizedNStepReplayBuffer] = rpc.remote(
-                self.replay_worker_info,
-                PrioritizedNStepReplayBuffer,
-                args=None,
-                kwargs=replay_buffer_args,
+            self.replay_rref: rpc.RRef[PrioritizedNStepReplayBuffer] = (
+                self._create_cls_on_remote(
+                    self.replay_worker_info,
+                    PrioritizedNStepReplayBuffer,
+                    args=None,
+                    kwargs=replay_buffer_args,
+                )
             )
+            self.actor_rrefs: list[rpc.RRef[ApeXActor]] = []
+            for i in range(0, self.config.num_actors - 1):
+                eps = 0.4 ** (1 + (i * 7 / (self.config.num_actors - 2)))
+                self.actor_rrefs.append(self._create_actor_cls_on_remote(i, eps, False))
+            self.actor_rrefs.append(
+                self._create_actor_cls_on_remote(self.config.num_actors - 1, 0, True)
+            )
+            logger.info("waiting for confirmations")
+            self._wait_for_confirmations()
         except Exception as e:
             # error setting up rpc
-            logger.info(e)
-            rpc.shutdown()
-            torch.distributed.destroy_process_group()
-
-        print("running tests...")
-        # print("target network owner", self.target_network_rref.owner_name())
-        # print("online network owner", self.online_network_rref.owner_name())
-        # print("replay owner", self.replay_rref.owner_name())
-        print("target network confirmed: ", self.target_network_rref.confirmed_by_owner())
-        print("online network confirmed: ", self.online_network_rref.confirmed_by_owner())
-        print("replay confirmed: ", self.replay_rref.confirmed_by_owner())
-
-        while (
-            (not self.target_network_rref.confirmed_by_owner)
-            or (not self.online_network_rref.confirmed_by_owner())
-            or (not self.replay_rref.confirmed_by_owner())
-        ):
-            print("waiting for confirmation")
-            time.sleep(1)
-        print("confirmed.")
+            logger.exception(f"error initializing learner: {e}")
+            self.failed = True
+            self.on_done()
 
         # if the start training step is not zero, attempt to load states from a checkpoint onto the remote server
         if self.start_training_step != 0:
+            self.failed = True
             raise "starting from checkpoint not implemented yet"
             # self.load_from_checkpoint() ...
 
         # update the remote references with the current weights
         self.stopping_criteria = ApexLearnerStoppingCriteria()
         self.store_weights()
+        self.ready = True
+
+    def _create_cls_on_remote(self, worker_info: str, cls, args=None, kwargs=None):
+        rref = rpc.remote(worker_info, cls, args, kwargs)
+        self._rrefs_to_confirm.append(rref)
+        return rref
+
+    def _create_actor_cls_on_remote(
+        self, actor_num: int, epsilon: float, spectator: bool
+    ):
+        env_copy = copy.deepcopy(self.env)
+        config_copy = copy.deepcopy(self.config.actor_config)
+        actor_rank = actor_num + 3
+        config_copy.config_dict["rank"] = actor_rank
+        config_copy.rank = actor_rank
+        config_copy.eg_epsilon = 0 if spectator else epsilon
+        config_copy.config_dict["eg_epsilon"] = 0 if spectator else epsilon
+        worker_info = rpc.get_worker_info(f"actor_{actor_num}")
+        args = (
+            env_copy,
+            config_copy,
+            f"actor_{actor_num}" if not spectator else "spectator",
+            self.replay_rref,
+            self.online_network_rref,
+            self.target_network_rref,
+            spectator,
+        )
+        logger.info(
+            f"creating actor {actor_num} with rank={actor_rank} and eps={config_copy.eg_epsilon}"
+        )
+        return self._create_cls_on_remote(worker_info, ApeXActor, args)
+
+    def _wait_for_confirmations(self):
+        logger.info("waiting for confirmations")
+        confirmed = 0
+        to_confirm = len(self._rrefs_to_confirm)
+        while confirmed < to_confirm:
+            logger.debug(f"{confirmed} / {to_confirm} rrefs confirmed")
+            for rref in self._rrefs_to_confirm:
+                if rref.confirmed_by_owner():
+                    print(rref.owner_name())
+                    confirmed += 1
+                    self._rrefs_to_confirm.remove(rref)
+            time.sleep(1)
+
+    def _shutdown_actor(self, actor_rref: rpc.RRef[ApeXActor]):
+        try:
+            actor_rref.remote().stop()
+        except Exception as e:
+            logger.exception(f"error stopping actor {e}")
 
     def on_save(self):
         self.replay_buffer = self.replay_rref.to_here(0)
@@ -248,8 +307,8 @@ class ApeXLearner(ApeXLearnerBase):
     def store_weights(self):
         # TODO - async
         logger.info("storing weights")
-        failed = True
-        while failed:
+        attempts = 5
+        for attempt in range(attempts):
             try:
                 self.target_network_rref.rpc_async().load_state_dict(
                     self.target_model.state_dict()
@@ -257,10 +316,13 @@ class ApeXLearner(ApeXLearnerBase):
                 self.online_network_rref.rpc_async().load_state_dict(
                     self.model.state_dict()
                 )
-                failed = False
+                return
             except Exception as e:
-                logger.exception(f"error setting weights: {e}")
+                logger.exception(
+                    f"try {attempt+1} of {attempts}: error setting weights: {e}"
+                )
                 time.sleep(1)
+        logger.info(f"failed to store weights after {attempts} tries")
 
     def update_replay_priorities(self, samples, priorities):
         self.updates_queue.put(
@@ -280,61 +342,31 @@ class ApeXLearner(ApeXLearnerBase):
         self.replay_thread.daemon = True
         self.replay_thread.start()
 
-        actor_epsilons = []
-        for i in range(0, self.config.num_actors - 1):
-            actor_epsilons.append(0.4 ** (1 + (i*7 / (self.config.num_actors - 2))))
-
-        # actors
-        for i in range(0, self.config.num_actors - 1):
-            self._start_actor(i, actor_epsilons[i], False)
-
-        # spectator
-        logger.info('starting spectator')
-        self._start_actor(self.config.num_actors - 1, 0, True)
-
-    def _start_actor(self, actor_num: int, epsilon: float, spectator: bool) -> torch.Future:
-        env_copy = copy.deepcopy(self.env)
-        config_copy = copy.deepcopy(self.config.actor_config)
-        actor_rank = actor_num + 3
-        config_copy.config_dict["rank"] = actor_rank
-        config_copy.rank = actor_rank
-        config_copy.eg_epsilon = 0 if spectator else epsilon
-        config_copy.config_dict['eg_epsilon'] = 0 if spectator else epsilon
-        worker_info = rpc.get_worker_info(f"actor_{actor_num}")
-        args = (
-            env_copy,
-            config_copy,
-            f"actor_{actor_num}" if not spectator else "spectator",
-            self.replay_rref,
-            self.online_network_rref,
-            self.target_network_rref,
-            spectator,
-        )
-        logger.info(f"starting actor {actor_num} with rank={actor_rank} and eps={config_copy.eg_epsilon}")
-        remote_actor_rref: rpc.RRef[ApeXActor] = rpc.remote(worker_info, ApeXActor, args)
-
-        # no timeout
-        res: torch.Future[None] = remote_actor_rref.rpc_async(timeout=0).learn()
-        return res
+        for actor in self.actor_rrefs:
+            # no timeout
+            logger.info(f"starting actor {actor.owner_name()}")
+            actor.rpc_async(timeout=0).learn()
 
     def on_done(self):
         self.flag.set()
 
+        logger.info("shutting down actors")
+        for actor in self.actor_rrefs:
+            self._shutdown_actor(actor)
+
         logger.info("shutting down rpc")
         try:
-            rpc.shutdown(graceful=False)
+            rpc.shutdown()
         except Exception as e:
             logger.exception(f"error shutting down rpc: {e}")
 
-        logger.info("destroying process group")
-        try:
-            torch.distributed.destroy_process_group()
-        except Exception as e:
-            logger.exception(f"error destroying process group: {e}")
-        
+        # try:
+        #     torch.distributed.destroy_process_group()
+        # except:
+        #     pass
+
         logger.info("waiting for replay thread to finish")
         self.replay_thread.join()
-
 
     def on_training_step_end(self):
         super().on_training_step_end()
@@ -400,7 +432,12 @@ class ApeXLearner(ApeXLearnerBase):
         bootstrapped = (self.config.discount_factor**self.config.n_step) * (
             self.predict_target(self.preprocess(observations, device=self.device))
             * self.support
-        )[range(self.config.minibatch_size), self.select_actions(predicted_distributions)].sum(dim=1)
+        )[
+            range(self.config.minibatch_size),
+            self.select_actions(predicted_distributions),
+        ].sum(
+            dim=1
+        )
         Gt = rewards + bootstrapped  # already discounted
 
         predicted_q = (predicted_distributions * self.support)[

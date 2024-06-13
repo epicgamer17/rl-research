@@ -88,37 +88,24 @@ def run_training(config, env: gym.Env, name):
     try:
         learner_generated_config = ApeXLearnerConfig.load(learner_output_path)
 
-        replay_proc = Popen(
-            f"{executable} remote_worker.py --rank {1} --name replay_server --world_size {world_size}".split(
-                " "
-            ),
-            stdout=subprocess.PIPE,
-            text=True,
-        )
-        storage_proc = Popen(
-            f"{executable} remote_worker.py --rank {2} --name parameter_server --world_size {world_size}".split(
-                " "
-            ),
-            stdout=subprocess.PIPE,
-            text=True,
-        )
+        cmd = f"{executable} remote_worker.py --rank {1} --name replay_server --world_size {world_size}"
+        replay_proc = Popen(cmd.split(" "), stdout=subprocess.PIPE, text=True)
+
+        cmd = f"{executable} remote_worker.py --rank {2} --name parameter_server --world_size {world_size}"
+        storage_proc = Popen(cmd.split(" "), stdout=subprocess.PIPE, text=True)
 
         actor_procs = []
         for i in range(learner_generated_config.num_actors):
-            actor_procs.append(
-                Popen(
-                    f"{executable} remote_worker.py --rank {3+i} --name actor_{i} --world_size {world_size}".split(
-                        " "
-                    ),
-                    stdout=subprocess.PIPE,
-                    text=True,
-                )
-            )
-
-        time.sleep(5)
+            cmd = f"{executable} remote_worker.py --rank {3+i} --name actor_{i} --world_size {world_size}"
+            actor_procs.append(Popen(cmd.split(" "), stdout=subprocess.PIPE, text=True))
 
         learner = ApeXLearner(env, learner_generated_config, name=name)
         logger.info("        === Running learner")
+
+        # if there were any errors creating artifacts on workers, return status fail
+        if learner.failed:
+            return {"status": STATUS_FAIL, "loss": 100000}
+
         learner.run()
         logger.info("Training complete")
         loss = -learner.test(num_trials=10, step=0)["score"]
@@ -134,6 +121,8 @@ def run_training(config, env: gym.Env, name):
             "loss": 100000,
         }  # make this high since some games have negative rewards (mountain car and acrobot) and 0 would actually be a perfect score
     finally:
+        # RPC has already been shutdown by the learner
+        logger.info("sending sigterms")
         replay_proc.send_signal(SIGTERM)
         storage_proc.send_signal(SIGTERM)
         for proc in actor_procs:

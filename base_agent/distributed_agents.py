@@ -27,6 +27,10 @@ class ActorAgent(BaseAgent):
 
     def __init__(self, env: Env, config: Config, name):
         super().__init__(env, config, name)
+        self.stop_flag = False
+
+    def stop(self):
+        self.stop_flag = True
 
     def setup(self):
         """This method is called before starting of the training/collecting experiences loop.
@@ -67,6 +71,8 @@ class ActorAgent(BaseAgent):
                 state, info = self.env.reset()
 
                 for training_step in range(self.config.training_steps + 1):
+                    if self.stop_flag:
+                        break
                     t, info = self.collect_experience(state, info)
                     self.on_experience_collected(t)
 

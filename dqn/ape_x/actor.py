@@ -210,7 +210,11 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             priorities=prioritized_losses,
         )
 
-        self.remote_replay.rpc_sync().store_batch(batch)
+        try:
+            self.remote_replay.rpc_sync().store_batch(batch)
+        except Exception as e:
+            logger.info(f"failed to store batch: {e}")
+
         self.replay_buffer.clear()
     def update_params(self):
         ti = time.time()
@@ -240,13 +244,14 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
         self.env_state, info = self.env.reset()
 
+    def cleanup(self, failed):
+        rpc.shutdown()
+
     def on_training_step_end(self, training_step):
         if not self.spectator:
             if self.should_send_experience_batch():
                 self.send_experience_batch()
 
-            if self.should_update_params(training_step):
-                self.update_params()
         else:
             logger.debug("spectator plotting graphs")
             plot_graphs(
@@ -257,3 +262,6 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
                 time.time() - self.t_i,
                 "spectator",
             )
+
+        if self.should_update_params(training_step):
+            self.update_params()
