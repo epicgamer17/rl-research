@@ -88,14 +88,12 @@ class BaseAgent:
     def train(self):
         raise NotImplementedError
 
-    def preprocess(self, states, device="cpu") -> torch.Tensor:
+    def preprocess(self, states) -> torch.Tensor:
         """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
         Does not alter the input state parameter, instead creating a new Tensor on the inputted device (default cpu)
 
         Args:
             state (Any): A or a list of state returned from self.env.step
-            device (str, optional): The device to send the preprocessed states to. Defaults to "cpu".
-
         Returns:
             Tensor: The preprocessed state, a tensor of floats. If the input was a single environment step,
                     the returned tensor is returned as outputed as if a batch of states with a length of a batch size of 1
@@ -116,7 +114,7 @@ class BaseAgent:
                 np_states,
             )
             .to(torch.float32)
-            .to(device)
+            .to(self.device)
         )
         # if self.config.game.is_image:
         # normalize_images(prepared_state)
@@ -127,10 +125,11 @@ class BaseAgent:
 
         if prepared_state.shape == self.observation_dimensions:
             prepared_state = make_stack(prepared_state)
-        # print(prepared_state)
         return prepared_state
 
-    def predict(self, state: torch.Tensor) -> torch.Tensor:
+    def predict(
+        self, state: torch.Tensor, *args
+    ) -> torch.Tensor:  # args is for info for player counts or legal move masks
         """Run inference on 1 or a batch of environment states, applying necessary preprocessing steps
 
         Returns:
@@ -138,7 +137,7 @@ class BaseAgent:
         """
         raise NotImplementedError
 
-    def select_actions(self, predicted, legal_moves=None) -> torch.Tensor:
+    def select_actions(self, predicted, info) -> torch.Tensor:
         """Return actions determined from the model output, appling postprocessing steps such as masking beforehand
 
         Args:
@@ -152,9 +151,6 @@ class BaseAgent:
             Tensor: _description_
         """
         raise NotImplementedError
-
-    def calculate_loss(self, batch):
-        pass
 
     def learn(self):
         # raise NotImplementedError, "Every agent should have a learn method. (Previously experience_replay)"

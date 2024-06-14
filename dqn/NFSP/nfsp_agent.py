@@ -34,25 +34,41 @@ from time import time
 from agent_configs import NFSPDQNConfig
 
 import torch
-from utils import get_legal_moves
+from utils import get_legal_moves, current_timestamp, update_per_beta
+
+
+sys.path.append("../../")
 
 from dqn.rainbow.rainbow_agent import RainbowAgent
 
-sys.path.append("../")
 
 import random
-from supervised_agent import AverageStrategyAgent
 from base_agent.agent import BaseAgent
-from packages.agent_configs.agent_configs.nfsp_config import NFSPDQNConfig
+from agent_configs.dqn.nfsp_config import NFSPDQNConfig
+from imitation_learning.policy_imitation_agent import PolicyImitationAgent
 
 
 class NFSPDQN(BaseAgent):
-    def __init__(self, env, config: NFSPDQNConfig) -> None:
+    def __init__(
+        self,
+        env,
+        config: NFSPDQNConfig,
+        device: torch.device = (
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
+            else (
+                torch.device("mps")
+                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+                else torch.device("cpu")
+            )
+        ),
+    ) -> None:
         super().__init__(env, config, "NFSPDQN")
         rl_configs = self.config.rl_configs
         sl_configs = self.config.sl_configs
         self.nfsp_agents = [
-            NFSPDQNAgent(env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}")
+            NFSPDQNAgent(env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}", device)
             for i in range(self.config.num_players)
         ]
 
@@ -66,52 +82,77 @@ class NFSPDQN(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
+    def select_agent_policies(self):
+        for p in range(self.config.num_players):
+            self.nfsp_agents[p].select_policy(self.config.anticipatory_param)
+
+    def predict(self, state, info):
+        return self.nfsp_agents[info["player"]].predict(state)
+
+    def select_actions(self, predicted, info) -> torch.Tensor:
+        return self.nfsp_agents[info["player"]].select_actions(predicted, info)
+
+    def learn(self, current_player):
+        return self.nfsp_agents[current_player].learn()
+
     def train(self):
         training_time = time()
         training_step = 0
         while (
             training_step < self.training_steps
         ):  # change to training steps and just make it so it ends a game even if the training steps are done
-            for p in range(self.config.num_players):
-                self.nfsp_agents[p].select_policy(self.config.anticipatory_param)
+            self.select_agent_policies()
             state, info = self.env.reset()
             done = False
+
             while not done:
-                # for _ in range(self.config.replay_interval):
-                # for current_player in range(self.config.num_players):
-                current_player = state["current_player"]
-                current_agent: NFSPDQNAgent = self.nfsp_agents[current_player]
-                action = current_agent.select_actions(
-                    state,
-                    get_legal_moves(info),
-                )
-                target_policy = torch.one_hot(action, self.num_actions)
-                current_agent.sl_agent.replay_buffer.store(
-                    state, target_policy
-                )  # Store best moves in SL Memory
+                with torch.no_grad():
+                    current_player = info["player"]
+                    prediction = self.predict(state, info)
+                    action = self.select_actions(
+                        prediction,
+                        info,
+                    )
+                    # should we store this for SL agent if it as sl agent action?
 
-                current_agent.config.per_beta = min(
-                    1.0,
-                    current_agent.rl_agent.config.per_beta
-                    + (1 - current_agent.rl_agent.config.per_beta)
-                    / self.training_steps,  # per beta increase
-                )
+                    target_policy = torch.zeros(self.num_actions)
+                    target_policy[action] = 1.0
+                    # print(current_player)
+                    self.nfsp_agents[current_player].sl_agent.replay_buffer.store(
+                        state, target_policy
+                    )  # Store best moves in SL Memory
 
-                # self.nfsp_agents[0].rl_agent.transition = [state_p1, action_p1]
-                next_state, rewards, terminated, truncated, info = self.env.step(action)
-                state = next_state
-                done = terminated or truncated
-
-                training_step += 1
-                for minibatch in range(self.config.num_minibatches):
-                    rl_loss, sl_loss = current_agent.learn()
-
-                if training_step % self.config.transfer_interval == 0:
-                    current_agent.rl_agent.target_model.set_weights(
-                        current_agent.rl_agent.model.get_weights()
+                    self.nfsp_agents[current_player].rl_agent.replay_buffer.set_beta(
+                        update_per_beta(
+                            self.nfsp_agents[
+                                current_player
+                            ].rl_agent.replay_buffer.beta,
+                            self.nfsp_agents[
+                                current_player
+                            ].rl_agent.config.per_beta_final,
+                            self.training_steps,
+                        )
                     )
 
-                if training_step % self.checkpoint_interval == 0 and training_step > 0:
+                    # self.nfsp_agents[0].rl_agent.transition = [state_p1, action_p1]
+                    next_state, rewards, terminated, truncated, info = self.env.step(
+                        action
+                    )
+                    state = next_state
+                    done = terminated or truncated
+
+                    training_step += 1
+                for minibatch in range(self.config.num_minibatches):
+                    rl_loss, sl_loss = self.learn(current_player)
+
+                if (
+                    training_step
+                    % self.nfsp_agents[current_player].rl_agent.config.transfer_interval
+                    == 0
+                ):
+                    self.nfsp_agents[current_player].rl_agent.update_target_model()
+
+                if training_step % self.checkpoint_interval == 0:
                     for p in range(self.config.num_players):
                         self.nfsp_agents[p].save_checkpoint(
                             training_step,
@@ -121,7 +162,7 @@ class NFSPDQN(BaseAgent):
                     # CALL CHECKPOINTING ON THE INDIVIDUAL AGENTS
 
                 if not done:
-                    current_agent.store_transition(
+                    self.nfsp_agents[current_player].store_transition(
                         action, state, rewards[current_player], done
                     )  # stores experiences
 
@@ -130,24 +171,20 @@ class NFSPDQN(BaseAgent):
         self.env.close()
 
     def test(self, num_trials):
-        print("Testing")
+        policies = [self.nfsp_agents[p].policy for p in range(self.config.num_players)]
+        for p in range(self.config.num_players):
+            self.nfsp_agents[p].policy = "best_response"
+        self.nfsp_agents[0].policy = "average_strategy"
         test_score = 0
+
         for _ in range(num_trials):
             print("Trial ", _)
             state, info = self.test_env.reset()
             done = False
-            policies = [
-                self.nfsp_agents[p].policy for p in range(self.config.num_players)
-            ]
-            for p in range(self.config.num_players):
-                self.nfsp_agents[p].policy = "best_response"
-            self.nfsp_agents[0].policy = "average_strategy"
             while not done:
                 for p in range(self.config.num_players):
-                    action = self.nfsp_agents[p].select_actions(
-                        state,
-                        get_legal_moves(info),
-                    )
+                    prediction = self.predict(state, info)
+                    action = self.select_actions(prediction, info)
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
@@ -156,16 +193,35 @@ class NFSPDQN(BaseAgent):
                     if done:
                         break
             test_score += 1 if reward[0] >= 0 else 0
+
         for p in range(self.config.num_players):
             self.nfsp_agents[p].policy = policies[p]
-        return 1 - (test_score / num_trials)
+        return 1 - (
+            test_score / num_trials
+        )  # I THINK THIS IS NOT THE RIGHT THING FOR EXPLOITABILITY
 
 
 class NFSPDQNAgent(BaseAgent):
-    def __init__(self, env, rl_config, sl_config, name) -> None:
+    def __init__(
+        self,
+        env,
+        rl_config,
+        sl_config,
+        name=f"dqn_nfsp_{current_timestamp():.1f}",
+        device: torch.device = (
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
+            else (
+                torch.device("mps")
+                if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+                else torch.device("cpu")
+            )
+        ),
+    ) -> None:
         super().__init__(env, rl_config, name)
-        self.rl_agent = RainbowAgent(env, rl_config, name)
-        self.sl_agent = AverageStrategyAgent(env, sl_config, name)
+        self.rl_agent = RainbowAgent(env, rl_config, name, device)
+        self.sl_agent = PolicyImitationAgent(env, sl_config, name, device)
         self.policy = "best_response"  # "average_strategy" or "best_response
         # transition = [state, action, reward, next_state, done]
         self.previous_state = None
@@ -197,11 +253,18 @@ class NFSPDQNAgent(BaseAgent):
         else:
             return "average_strategy"
 
-    def select_actions(self, state, legal_moves=None):
+    def predict(self, state):
         if self.policy == "average_strategy":
-            action = self.sl_agent.select_actions(state, legal_moves)
+            prediction = self.sl_agent.predict(state)
         else:
-            action = self.rl_agent.select_actions(state, legal_moves)
+            prediction = self.rl_agent.predict(state)
+        return prediction
+
+    def select_actions(self, prediction, info):
+        if self.policy == "average_strategy":
+            action = self.sl_agent.select_actions(prediction, info)
+        else:
+            action = self.rl_agent.select_actions(prediction, info)
 
         return action
 

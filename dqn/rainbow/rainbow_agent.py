@@ -98,17 +98,17 @@ class RainbowAgent(BaseAgent):
 
     def predict(self, states) -> torch.Tensor:
         # could change type later
-        state_input = self.preprocess(states, device=self.device)
+        state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)
         return q_distribution
 
     def predict_target(self, states) -> torch.Tensor:
         # could change type later
-        state_input = self.preprocess(states, device=self.device)
+        state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(self, distribution, legal_moves=None):
+    def select_actions(self, distribution, info):
         # (B, output_size, atom_size) *
         # (                atom_size)
         # is valid broadcasting
@@ -198,7 +198,9 @@ class RainbowAgent(BaseAgent):
             )
             online_distributions = self.predict(next_observations)
             target_distributions = self.predict_target(next_observations)
-            next_actions = self.select_actions(online_distributions)
+            next_actions = self.select_actions(
+                online_distributions, {}
+            )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[
                 range(self.config.minibatch_size), next_actions
@@ -270,8 +272,8 @@ class RainbowAgent(BaseAgent):
             print("training step", training_step)
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
-                    distributions = self.predict(state)
-                    actions = self.select_actions(distributions, get_legal_moves(info))
+                    distributions = self.predict(state, info)
+                    actions = self.select_actions(distributions, info)
                     action = actions.item()
                     next_state, reward, terminated, truncated, info = self.env.step(
                         action

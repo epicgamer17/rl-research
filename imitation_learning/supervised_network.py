@@ -2,8 +2,6 @@ from typing import Callable
 from torch import Tensor
 from utils.utils import to_lists
 from modules.conv import Conv2dStack
-import numpy as np
-from utils import prepare_kernel_initializers
 
 from modules.dense import DenseStack, build_dense
 import torch.nn as nn
@@ -36,7 +34,7 @@ class SupervisedNetwork(nn.Module):
                 kernel_sizes=kernel_sizes,
                 strides=strides,
                 activation=self.config.activation,
-                noisy_sigma=config.noisy_sigma,
+                sigma=config.noisy_sigma,
             )
             current_shape = (
                 B,
@@ -49,7 +47,9 @@ class SupervisedNetwork(nn.Module):
             if len(current_shape) == 4:
                 initial_width = current_shape[1] * current_shape[2] * current_shape[3]
             else:
-                assert len(current_shape) == 2
+                assert (
+                    len(current_shape) == 2
+                ), "Input shape should be (B, width), got {}".format(current_shape)
                 initial_width = current_shape[1]
 
             # (B, width_in) -> (B, width_out)
@@ -73,7 +73,7 @@ class SupervisedNetwork(nn.Module):
         self.output_layer = build_dense(
             initial_width,
             output_size,
-            noisy_sigma=self.config.noisy_sigma,
+            sigma=self.config.noisy_sigma,
         )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
@@ -91,10 +91,11 @@ class SupervisedNetwork(nn.Module):
 
         x = inputs
         if self.has_conv_layers:
-            x = self.conv_layers(x)
+            x: Tensor = self.conv_layers(x)
         if self.has_dense_layers:
-            x = self.dense_layers(x)
-        return self.output_layer(x).softmax(dim=-1)
+            x: Tensor = self.dense_layers(x)
+        x: Tensor = self.output_layer(x).view(-1, self.output_size)
+        return x.softmax(dim=-1)
 
     def reset_noise(self):
         if self.has_conv_layers:
