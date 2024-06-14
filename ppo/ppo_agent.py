@@ -1,3 +1,4 @@
+from operator import ge
 import sys
 from time import time
 
@@ -90,13 +91,15 @@ class PPOAgent(BaseAgent):
             "actor_loss": self.config.target_kl,
         }
 
-    def predict(self, state, legal_moves=None):
+    def predict(self, state, info):
         state_input = self.preprocess(state)
         value = self.model.critic(inputs=state_input)
         if self.discrete_action_space:
             policy = self.model.actor(inputs=state_input)[0]
             # print(policy)
-            policy = action_mask(policy, legal_moves, self.num_actions, mask_value=0)
+            policy = action_mask(
+                policy, get_legal_moves(info), self.num_actions, mask_value=0
+            )
             # print(policy)
             policy = normalize_policy(policy)
             # print(policy)
@@ -106,7 +109,7 @@ class PPOAgent(BaseAgent):
             distribution = torch.distributions.Normal(mean, std)
         return distribution, value
 
-    def select_actions(self, predictions, legal_moves=None):
+    def select_actions(self, predictions, info):
         distribution = predictions[0]
         # if self.is_test:
         #     selected_action = distribution.mode
@@ -198,6 +201,87 @@ class PPOAgent(BaseAgent):
         self.critic_optimizer.step()
         return critic_loss.detach()
 
+    def learn(self):
+        samples = self.replay_buffer.sample()
+        observations = samples["observations"]
+        actions = torch.from_numpy(samples["actions"])
+        log_probabilities = torch.from_numpy(samples["log_probabilities"])
+        advantages = torch.from_numpy(samples["advantages"])
+        returns = torch.from_numpy(samples["returns"])
+        inputs = self.preprocess(observations)
+
+        indices = torch.randperm(len(observations))
+        minibatch_size = len(observations) // self.config.num_minibatches
+
+        # actor_scheduler = torch.optim.lr_scheduler.LinearLR(
+        #     self.actor_optimizer,
+        #     self.config.actor.learning_rate,
+        #     0,
+        #     total_iters=self.config.train_policy_iterations,
+        # )
+
+        for iteration in range(self.config.train_policy_iterations):
+            # actor_scheduler.step()
+            # print(actor_scheduler.get_last_lr())
+            self.actor_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
+                self.config.actor.learning_rate,
+                0,
+                self.config.train_policy_iterations,
+                iteration,
+            )
+            for start in range(0, len(observations), minibatch_size):
+                end = start + minibatch_size
+                batch_indices = indices[start:end]
+                batch_observations = inputs[batch_indices]
+                batch_actions = actions[batch_indices]
+                batch_log_probabilities = log_probabilities[batch_indices]
+                batch_advantages = advantages[batch_indices]
+                kl_divergence = self.actor_learn(
+                    batch_observations,
+                    batch_actions,
+                    batch_log_probabilities,
+                    batch_advantages,
+                )
+                self.stats["actor_loss"].append(kl_divergence)
+            if kl_divergence > 1.5 * self.config.target_kl:
+                print("Early stopping at iteration {}".format(iteration))
+                break
+            # kl_divergence = self.train_actor(
+            #     inputs, actions, log_probabilities, advantages, learning_rate
+            # )
+            # stat_actor_loss.append(kl_divergence)
+            # if kl_divergence > 1.5 * self.target_kl:
+            #     print("Early stopping at iteration {}".format(_))
+            #     break
+        # critic_scheduler = torch.optim.lr_scheduler.LinearLR(
+        #     self.critic_optimizer,
+        #     self.config.critic.learning_rate,
+        #     0,
+        #     total_iters=self.config.train_value_iterations,
+        # )
+        for iteration in range(self.config.train_value_iterations):
+            # critic_scheduler.step()
+            # print(critic_scheduler.get_last_lr())
+            self.critic_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
+                self.config.critic.learning_rate,
+                0,
+                self.config.train_value_iterations,
+                iteration,
+            )
+            for start in range(0, len(observations), minibatch_size):
+                end = start + minibatch_size
+                batch_indices = indices[start:end]
+                batch_observations = inputs[batch_indices]
+                batch_returns = returns[batch_indices]
+                critic_loss = self.critic_learn(
+                    batch_observations,
+                    batch_returns,
+                )
+                self.stats["critic_loss"].append(critic_loss)
+                # critic_loss = self.train_critic(inputs, returns, learning_rate)
+                # stat_critic_loss.append(critic_loss)
+                # stat_loss.append(critic_loss)
+
     def train(self):
         training_time = time()
 
@@ -244,87 +328,9 @@ class PPOAgent(BaseAgent):
                         self.stats["score"].append(score_dict)
                         score = 0
 
-            samples = self.replay_buffer.sample()
-            observations = samples["observations"]
-            actions = torch.from_numpy(samples["actions"])
-            log_probabilities = torch.from_numpy(samples["log_probabilities"])
-            advantages = torch.from_numpy(samples["advantages"])
-            returns = torch.from_numpy(samples["returns"])
-            inputs = self.preprocess(observations)
+            self.learn()
 
-            indices = torch.randperm(len(observations))
-            minibatch_size = len(observations) // self.config.num_minibatches
-
-            # actor_scheduler = torch.optim.lr_scheduler.LinearLR(
-            #     self.actor_optimizer,
-            #     self.config.actor.learning_rate,
-            #     0,
-            #     total_iters=self.config.train_policy_iterations,
-            # )
-
-            for iteration in range(self.config.train_policy_iterations):
-                # actor_scheduler.step()
-                # print(actor_scheduler.get_last_lr())
-                self.actor_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
-                    self.config.actor.learning_rate,
-                    0,
-                    self.config.train_policy_iterations,
-                    iteration,
-                )
-                for start in range(0, len(observations), minibatch_size):
-                    end = start + minibatch_size
-                    batch_indices = indices[start:end]
-                    batch_observations = inputs[batch_indices]
-                    batch_actions = actions[batch_indices]
-                    batch_log_probabilities = log_probabilities[batch_indices]
-                    batch_advantages = advantages[batch_indices]
-                    kl_divergence = self.actor_learn(
-                        batch_observations,
-                        batch_actions,
-                        batch_log_probabilities,
-                        batch_advantages,
-                    )
-                    self.stats["actor_loss"].append(kl_divergence)
-                if kl_divergence > 1.5 * self.config.target_kl:
-                    print("Early stopping at iteration {}".format(iteration))
-                    break
-                # kl_divergence = self.train_actor(
-                #     inputs, actions, log_probabilities, advantages, learning_rate
-                # )
-                # stat_actor_loss.append(kl_divergence)
-                # if kl_divergence > 1.5 * self.target_kl:
-                #     print("Early stopping at iteration {}".format(_))
-                #     break
-            # critic_scheduler = torch.optim.lr_scheduler.LinearLR(
-            #     self.critic_optimizer,
-            #     self.config.critic.learning_rate,
-            #     0,
-            #     total_iters=self.config.train_value_iterations,
-            # )
-            for iteration in range(self.config.train_value_iterations):
-                # critic_scheduler.step()
-                # print(critic_scheduler.get_last_lr())
-                self.critic_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
-                    self.config.critic.learning_rate,
-                    0,
-                    self.config.train_value_iterations,
-                    iteration,
-                )
-                for start in range(0, len(observations), minibatch_size):
-                    end = start + minibatch_size
-                    batch_indices = indices[start:end]
-                    batch_observations = inputs[batch_indices]
-                    batch_returns = returns[batch_indices]
-                    critic_loss = self.critic_learn(
-                        batch_observations,
-                        batch_returns,
-                    )
-                    self.stats["critic_loss"].append(critic_loss)
-                    # critic_loss = self.train_critic(inputs, returns, learning_rate)
-                    # stat_critic_loss.append(critic_loss)
-                    # stat_loss.append(critic_loss)
-
-                # self.old_actor.set_weights(self.actor.get_weights())
+            # self.old_actor.set_weights(self.actor.get_weights())
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
                     training_step,

@@ -77,7 +77,9 @@ class RainbowNetwork(nn.Module):
         if len(current_shape) == 4:
             initial_width = current_shape[1] * current_shape[2] * current_shape[3]
         else:
-            assert len(current_shape) == 2
+            assert (
+                len(current_shape) == 2
+            ), "Input shape should be (B, width), got {}".format(current_shape)
             initial_width = current_shape[1]
 
         if self.config.dueling:

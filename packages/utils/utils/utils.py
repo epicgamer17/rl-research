@@ -14,6 +14,7 @@ import pickle
 from typing import Iterable, Tuple
 from datetime import datetime
 
+import torch
 from torch import nn, Tensor
 
 import numpy as np
@@ -29,7 +30,7 @@ import pandas as pd
 # from replay_buffers.segment_tree import SumSegmentTree
 
 
-def normalize_policy(policy: np.float16):
+def normalize_policy(policy: torch.float32):
     policy /= policy.sum(axis=-1, keepdims=False)
     return policy
 
@@ -42,7 +43,7 @@ def action_mask(
     actions: Tensor, probabilities of actions or q-values
     """
     # print(legal_moves)
-    mask = np.zeros(num_actions, dtype=np.int8)
+    mask = torch.zeros(num_actions, dtype=np.int8)
     mask[legal_moves] = 1
     # print(mask)
     actions[mask == 0] = mask_value
@@ -124,7 +125,9 @@ def update_linear_lr_schedule(
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    axs[row][col].set_title("{} | rolling average: {}".format(key, np.mean(values[-10:])))
+    axs[row][col].set_title(
+        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
+    )
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
@@ -428,7 +431,9 @@ def prepare_activations(activation: str):
     raise ValueError(f"Activation {activation} not recognized")
 
 
-def epsilon_greedy_policy(q_values: list[float], epsilon: float, range=None, wrapper=np.argmax):
+def epsilon_greedy_policy(
+    q_values: list[float], epsilon: float, range=None, wrapper=np.argmax
+):
     if np.random.rand() < epsilon:
         if range is not None:
             return np.random.randint(range)
@@ -619,8 +624,6 @@ def current_timestamp():
     return datetime.now().timestamp()
 
 
-import torch
-
 _epsilon = 1e-7
 
 
@@ -658,7 +661,9 @@ class KLDivergenceLoss:
 
 def huber(predicted: torch.Tensor, target: torch.Tensor, axis=-1, delta: float = 1.0):
     diff = torch.abs(predicted - target)
-    return torch.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)).view(-1)
+    return torch.where(
+        diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)
+    ).view(-1)
 
 
 class HuberLoss:
@@ -974,7 +979,7 @@ import time
 from collections import deque
 
 
-class StoppingCriteria():
+class StoppingCriteria:
     def __init__(self):
         pass
 
@@ -1027,7 +1032,9 @@ class ApexLearnerStoppingCriteria(StoppingCriteria):
         self.criterias: dict[str, StoppingCriteria] = {
             "time": TimeStoppingCriteria(max_runtime_sec=1.5 * 60 * 60),
             "training_step": TrainingStepStoppingCritiera(max_training_steps=10000),
-            "avg_score": AverageScoreStoppingCritera(min_avg_score=15, last_scores_length=10),
+            "avg_score": AverageScoreStoppingCritera(
+                min_avg_score=15, last_scores_length=10
+            ),
         }
 
     def should_stop(self, details: dict) -> bool:
@@ -1040,7 +1047,7 @@ class ApexLearnerStoppingCriteria(StoppingCriteria):
         return self.criterias["training_step"].should_stop(details) or self.criterias[
             "avg_score"
         ].should_stop(details)
-    
+
     def add_score(self, score: float):
         tc: AverageScoreStoppingCritera = self.criterias["avg_score"]
         tc.add_score(score)

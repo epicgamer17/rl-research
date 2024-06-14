@@ -1,5 +1,14 @@
 setup.py
+custom_gym_envs/__init__.py
 custom_gym_envs.egg-info/PKG-INFO
 custom_gym_envs.egg-info/SOURCES.txt
 custom_gym_envs.egg-info/dependency_links.txt
 custom_gym_envs.egg-info/top_level.txt
+custom_gym_envs/envs/__init__.py
+custom_gym_envs/envs/armed_bandits.py
+custom_gym_envs/envs/connect4.py
+custom_gym_envs/envs/grid_world.py
+custom_gym_envs/envs/leduc_holdem.py
+custom_gym_envs/envs/mississippi_marbles.py
+custom_gym_envs/envs/nonstationary_armed_bandits.py
+custom_gym_envs/envs/tictactoe.py

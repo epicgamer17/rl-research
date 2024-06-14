@@ -9,11 +9,13 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         observation_dimensions,
         observation_dtype: np.dtype,
         max_size: int,
+        num_actions: int,
         batch_size: int = 32,
         compressed_observations: bool = False,
     ):
         self.observation_dimensions = observation_dimensions
         self.observation_dtype = observation_dtype
+        self.num_actions = num_actions
         super().__init__(
             max_size=max_size,
             batch_size=batch_size,
@@ -27,6 +29,9 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         :param target_policy: the target policy for the current observation, in this case it is of type list[int] since it will be a one-hot encoded vector of the action selected by the best agent network
         :param id: the id of the transition
         """
+        print(target_policy)
+        print(target_policy.shape)
+        print(self.target_policy_buffer.shape)
         self.observation_buffer[self.pointer] = observation
         self.target_policy_buffer[self.pointer] = target_policy
         self.size = min(self.size + 1, self.max_size)
@@ -70,6 +75,8 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             self.observation_buffer = np.zeros(
                 observation_buffer_shape, dtype=self.observation_dtype
             )
-        self.target_policy_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.target_policy_buffer = np.zeros(
+            (self.max_size, self.num_actions), dtype=np.float16
+        )
         self.size = 0
         self.pointer = 0

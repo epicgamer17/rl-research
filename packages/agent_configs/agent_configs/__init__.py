@@ -16,5 +16,5 @@ from .ppo_critic_config import PPOCriticConfig
 from .ppo_config import PPOConfig
 from .dqn.rainbow_config import RainbowConfig
 from .replay_config import ReplayBufferConfig
-from .nfsp_config import NFSPDQNConfig
+from .dqn.nfsp_config import NFSPDQNConfig
 from .sl_config import SupervisedConfig
