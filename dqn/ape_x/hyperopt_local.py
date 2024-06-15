@@ -54,7 +54,7 @@ def run_training(config, env: gym.Env, name):
 
     # combined learner and actor config
     conf = (config | distributed_config_placeholder) | {
-        "training_steps": 10000,
+        "training_steps": 1000,
         # save on mimi disk quota
         "save_intermediate_weights": False,
         # set for learner, will be overwritten by learner when creating actors

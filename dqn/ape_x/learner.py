@@ -140,7 +140,10 @@ import socket
 from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
 from dqn.rainbow.rainbow_network import RainbowNetwork
 
-
+# to stop workers
+def recv_stop_msg(msg):
+    global chan # queue.Queue
+    chan.put(msg)
 class ApeXLearner(ApeXLearnerBase):
     def __init__(self, env, config: ApeXLearnerConfig, name: str):
         super().__init__(env, config, name)
@@ -247,6 +250,10 @@ class ApeXLearner(ApeXLearnerBase):
         self.store_weights()
         self.ready = True
 
+        self.model.to('cuda')
+        self.target_model.to('cuda')
+        self.device='cuda'
+
     def _create_cls_on_remote(self, worker_info: str, cls, args=None, kwargs=None):
         rref = rpc.remote(worker_info, cls, args, kwargs)
         self._rrefs_to_confirm.append(rref)
@@ -290,9 +297,13 @@ class ApeXLearner(ApeXLearnerBase):
                     self._rrefs_to_confirm.remove(rref)
             time.sleep(1)
 
+    def _shutdown_worker(self, worker_info: rpc.WorkerInfo) -> rpc.RRef[None]:
+        return rpc.remote(worker_info, recv_stop_msg, (True,))
+
     def _shutdown_actor(self, actor_rref: rpc.RRef[ApeXActor]):
         try:
-            actor_rref.remote().stop()
+            actor_rref.remote().stop() # block until actor is done
+            return self._shutdown_worker(actor_rref.owner())
         except Exception as e:
             logger.exception(f"error stopping actor {e}")
 
@@ -348,11 +359,18 @@ class ApeXLearner(ApeXLearnerBase):
             actor.rpc_async(timeout=0).learn()
 
     def on_done(self):
+        logger.info("waiting for replay thread to finish")
         self.flag.set()
+        self.replay_thread.join()
 
         logger.info("shutting down actors")
+
+        worker_shutdown_rrefs = []
         for actor in self.actor_rrefs:
-            self._shutdown_actor(actor)
+            worker_shutdown_rrefs.append(self._shutdown_actor(actor))
+
+        worker_shutdown_rrefs.append(self._shutdown_worker(self.parameter_worker_info))
+        worker_shutdown_rrefs.append(self._shutdown_worker(self.replay_worker_info))
 
         logger.info("shutting down rpc")
         try:
@@ -365,8 +383,6 @@ class ApeXLearner(ApeXLearnerBase):
         # except:
         #     pass
 
-        logger.info("waiting for replay thread to finish")
-        self.replay_thread.join()
 
     def on_training_step_end(self):
         super().on_training_step_end()
@@ -426,24 +442,12 @@ class ApeXLearner(ApeXLearnerBase):
             samples["weights"],
             torch.from_numpy(samples["actions"]).to(self.device).long(),
         )
-        predicted_distributions = self.predict(
-            self.preprocess(next_observations, device=self.device)
-        )
-        bootstrapped = (self.config.discount_factor**self.config.n_step) * (
-            self.predict_target(self.preprocess(observations, device=self.device))
-            * self.support
-        )[
-            range(self.config.minibatch_size),
-            self.select_actions(predicted_distributions),
-        ].sum(
-            dim=1
-        )
+        next_actions = self.select_actions(self.predict(self.preprocess(next_observations)), info=None)
+        bootstrapped_distribution = self.predict_target(self.preprocess(next_observations)) * self.support
+        bootstrapped = (self.config.discount_factor**self.config.n_step) * bootstrapped_distribution[range(self.config.minibatch_size), next_actions].sum(dim=1)
         Gt = rewards + bootstrapped  # already discounted
 
-        predicted_q = (predicted_distributions * self.support)[
-            range(self.config.minibatch_size), actions
-        ].sum(dim=1)
-
+        predicted_q = (self.predict(observations) * self.support)[range(self.config.minibatch_size), actions].sum(dim=1)
         weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
         elementwise_loss = 1 / 2 * (Gt - predicted_q).square()
         loss = elementwise_loss * weights_cuda

@@ -72,7 +72,7 @@ class ApeXActorBase(ActorAgent):
 
         if n_step_t != None:
             predicted_q = self.predict(t.next_state)
-            action = self.select_actions(predicted_q).item()
+            action = self.select_actions(predicted_q, info).item()
 
             self.precalculated_q[p] = (self.config.discount_factor ** self.config.n_step) * self.predict_target_q(
                 t.next_state, action
@@ -120,7 +120,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             }
 
     def predict_target_q(self, state, action) -> float:
-        input = self.preprocess(state, device=self.device)
+        input = self.preprocess(state)
         target_distributions = self.target_model(input)
         q_value = (target_distributions * self.support)[0, action].sum().item()
         return q_value
@@ -130,7 +130,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         legal_moves = None # sget_legal_moves(info)
         # (1, output_length, num_atoms)
         values = self.predict(state)
-        action = epsilon_greedy_policy(values, self.config.eg_epsilon, wrapper=lambda values: self.select_actions(values).item(), range=self.num_actions)
+        action = epsilon_greedy_policy(values, self.config.eg_epsilon, wrapper=lambda values: self.select_actions(values, info).item(), range=self.num_actions)
         next_state, reward, terminated, truncated, info = self.env.step(action)
         done = truncated or terminated
 
@@ -143,7 +143,7 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
         if n_step_t != None and not self.spectator:
             predicted_q = self.predict(t.next_state)
-            action = self.select_actions(predicted_q).item()
+            action = self.select_actions(predicted_q, info).item()
 
             self.precalculated_q[p] = (self.config.discount_factor ** self.config.n_step) * self.predict_target_q(
                 t.next_state, action

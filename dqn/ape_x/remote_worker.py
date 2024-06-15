@@ -2,6 +2,7 @@ import time
 import os
 import argparse
 import torch
+import queue
 ### DO NOT DELETE THE UNUSED IMPORTS!!!
 import copy
 import torch.distributed.rpc as rpc
@@ -18,6 +19,12 @@ import replay_buffers.prioritized_n_step_replay_buffer
 
 import logging
 
+chan: queue.Queue = queue.Queue()
+
+def recv_stop_msg(msg):
+    global chan
+    chan.put(msg)
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 fh = logging.FileHandler("remote_worker.log", mode="a")
@@ -26,7 +33,6 @@ ch.setFormatter(logging.Formatter("%(message)s"))
 
 logger.addHandler(fh)
 logger.addHandler(ch)
-
 
 def main():
     assert torch.distributed.is_available() and torch.distributed.is_nccl_available()
@@ -76,12 +82,16 @@ def main():
             rpc_backend_options=options,
         )
     except Exception as e:
-        logger.exception(f"error initializing rpc: {e}")
+        logger.exception(f"[{args.name}] error initializing rpc: {e}")
     logger.info(f"[{args.name}] rpc initialized.")
-    
-    while True:
-        print("sleeping")
-        time.sleep(1)
+
+    logger.info("waiting for stop signal")
+    chan.get()
+    logger.info(f"[{args.name}] shutting down rpc")
+    try:
+        rpc.shutdown()
+    except Exception as e:
+        logger.exception(f"[{args.name}] error shutting down rpc: {e}")
 
 
 if __name__ == "__main__":
