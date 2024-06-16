@@ -38,12 +38,6 @@ class ActorAgent(BaseAgent):
         """
         pass
 
-    def cleanup(self, failed: bool):
-        """This method is called after the training/collecting experiences loop finishes or errors.
-        It is used for any cleanup that may be necessary.
-        """
-        pass
-
     def collect_experience(self, state, info) -> tuple[DistreteTransition, Any]:
         legal_moves = None # sget_legal_moves(info)
         values = self.predict(state)
@@ -86,7 +80,6 @@ class ActorAgent(BaseAgent):
                 pass
             finally:
                 self.env.close()
-                self.cleanup(failed)
 
 
 # Config class for PollingActor

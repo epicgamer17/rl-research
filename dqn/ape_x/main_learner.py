@@ -26,6 +26,11 @@ def make_cartpole_env():
     return env
 
 
+def recv_stop_msg(msg):
+    global stop_chan
+    stop_chan.put(msg)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run a distributed Ape-X learner")
     parser.add_argument(
@@ -36,7 +41,9 @@ def main():
 
     config = ApeXLearnerConfig.load(args.config_file)
 
-    learner = ApeXLearner(env=make_cartpole_env(), config=config, name="learner")
+    learner = ApeXLearner(
+        env=make_cartpole_env(), config=config, name="learner", stop_fn=recv_stop_msg
+    )
     learner.run()
 
 

@@ -18,6 +18,10 @@ import utils
 
 SIGTERM = 15
 SSH_USERNAME = "ehuang"
+def recv_stop_msg(msg):
+    global stop_chan
+    stop_chan.put(msg)
+
 
 import logging
 
@@ -113,7 +117,7 @@ def run_training(config, env: gym.Env, name):
         time.sleep(5)
 
         learner_generated_config = ApeXLearnerConfig.load(learner_output_path)
-        learner = ApeXLearner(env, learner_generated_config, name=name)
+        learner = ApeXLearner(env, learner_generated_config, name=name, stop_fn=recv_stop_msg)
         logger.info("        === Running learner")
         learner.run()
         logger.info("Training complete")

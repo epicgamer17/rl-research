@@ -16,7 +16,7 @@ from utils import update_per_beta
 import torch.distributed.rpc as rpc
 from torch.nn.utils import clip_grad_norm_
 from agent_configs import ApeXLearnerConfig
-from utils import StoppingCriteria, ApexLearnerStoppingCriteria
+from utils import ApexLearnerStoppingCriteria
 
 matplotlib.use("Agg")
 
@@ -303,15 +303,14 @@ class ApeXLearner(ApeXLearnerBase):
         logger.info(f"recv_stop_msg: {worker_info}")
         future = rpc.rpc_async(worker_info, self.stop_fn, (True,))
         future.add_done_callback(
-            lambda x: logger.info(f"{worker_info} successfully shut down")
+            lambda x: logger.info(f"{worker_info} successfully sent shut down msg")
         )
         return future
 
     def _shutdown_actor(self, actor_rref: rpc.RRef[ApeXActor]):
         try:
-            actor_rref.rpc_async().stop().then(
-                lambda x: logger.info(f"{actor_rref.owner()} sucessfully stopped")
-            )  # block until actor is done
+            actor_rref.rpc_sync().stop()  # block until actor is done
+            logger.info(f"{actor_rref.owner()} sucessfully sent stop message")
             return self._shutdown_worker(actor_rref.owner())
         except Exception as e:
             logger.exception(f"error stopping actor {e}")
@@ -328,14 +327,23 @@ class ApeXLearner(ApeXLearnerBase):
         # TODO - async
         logger.info("storing weights")
         attempts = 5
+        t = time.time()
         for attempt in range(attempts):
             try:
                 self.target_network_rref.rpc_async(10).load_state_dict(
                     self.target_model.state_dict()
-                ).then(lambda x: logger.info("target model succesfully updated"))
+                ).then(
+                    lambda x: logger.info(
+                        f"target model succesfully updated in {time.time() - t} s"
+                    )
+                )
                 self.online_network_rref.rpc_async(10).load_state_dict(
                     self.model.state_dict()
-                ).then(lambda x: logger.info("online model succesfully updated"))
+                ).then(
+                    lambda x: logger.info(
+                        f"online model succesfully updated in {time.time() - t} s"
+                    )
+                )
                 return
             except Exception as e:
                 logger.exception(
@@ -345,14 +353,17 @@ class ApeXLearner(ApeXLearnerBase):
         logger.info(f"failed to store weights after {attempts} tries")
 
     def update_replay_priorities(self, samples, priorities):
-        t = Update(
+        t = time.time()
+        u = Update(
             ids=np.array(samples["ids"]),
             indices=np.array(samples["indices"]),
             priorities=np.array(priorities),
         )
         try:
-            self.replay_rref.rpc_async().update_priorities(*t).then(
-                lambda x: logger.debug("sucessfully updated priorities")
+            self.replay_rref.rpc_async().update_priorities(*u).then(
+                lambda x: logger.debug(
+                    f"sucessfully updated priorities in {time.time() - t} s"
+                )
             )
         except Exception as e:
             logger.exception(f"error updating priorities: {e}")
@@ -369,7 +380,7 @@ class ApeXLearner(ApeXLearnerBase):
         for actor in self.actor_rrefs:
             # no timeout
             logger.info(f"starting actor {actor.owner_name()}")
-            actor.rpc_async(timeout=0).learn()
+            actor.rpc_async(timeout=0).learn().then(lambda x: logger.info(f"{actor.owner_name()} learning stopped"))
 
     def on_done(self):
         if self.flag:
@@ -382,15 +393,12 @@ class ApeXLearner(ApeXLearnerBase):
         logger.info("shutting down actors")
 
         worker_shutdown_futures = []
+
+        worker_shutdown_futures.append(self._shutdown_worker(self.parameter_worker_info))
+        worker_shutdown_futures.append(self._shutdown_worker(self.replay_worker_info))
+
         for actor in self.actor_rrefs:
             worker_shutdown_futures.append(self._shutdown_actor(actor))
-
-        worker_shutdown_futures.append(self._shutdown_worker(self.replay_worker_info))
-        worker_shutdown_futures.append(self._shutdown_worker(self.parameter_worker_info))
-
-        logger.debug("rrefs:")
-        for rref in worker_shutdown_futures:
-            logger.debug(rref)
 
         logger.info("shutting down rpc")
         try:
@@ -398,23 +406,24 @@ class ApeXLearner(ApeXLearnerBase):
         except Exception as e:
             logger.exception(f"error shutting down rpc: {e}")
 
-        # try:
-        #     torch.distributed.destroy_process_group()
-        # except:
-        #     pass
+        try:
+            torch.distributed.destroy_process_group()
+        except Exception as e:
+            logger.exception(f"error destroying process group: {e}")
 
     def on_training_step_end(self):
+        t = time.time()
         super().on_training_step_end()
 
         # This beta gets send over to the remote replay buffer
-        new_per_beta = update_per_beta(
+        self.config.per_beta = update_per_beta(
             self.per_sample_beta, self.config.per_beta_final, self.training_steps
         )
 
-        logger.debug(f"updating per beta to {new_per_beta}")
+        logger.debug(f"updating per beta to {self.config.per_beta}")
         try:
-            self.replay_rref.rpc_async(30).set_beta(new_per_beta).then(
-                lambda x: "sucessfully updated per beta"
+            self.replay_rref.rpc_async(30).set_beta(self.config.per_beta).then(
+                lambda x: f"sucessfully updated per beta in {time.time() - t} s"
             )
         except Exception as e:
             logger.exception(f"error updating remote PER beta: {e}")
@@ -429,6 +438,7 @@ class ApeXLearner(ApeXLearnerBase):
             sample = samples.wait()
             if sample == None:
                 # no sample recieved, request another sample after 1 second
+                logger.info("no sample recieved, waiting 1 second")
                 time.sleep(1)
                 dummy_q.put(0)
             else:
@@ -443,9 +453,7 @@ class ApeXLearner(ApeXLearnerBase):
 
             logger.info("requesting batch")
             try:
-                self.replay_rref.rpc_async(10).sample(False).then(
-                    on_sample_recieved
-                )
+                self.replay_rref.rpc_async(10).sample(False).then(on_sample_recieved)
             except Exception as e:
                 logger.exception(f"error getting batch: {e}")
 
@@ -465,6 +473,7 @@ class ApeXLearner(ApeXLearnerBase):
         bootstrapped_distribution = (
             self.predict_target(self.preprocess(next_observations)) * self.support
         )
+        print(bootstrapped_distribution.device)
         bootstrapped = (
             self.config.discount_factor**self.config.n_step
         ) * bootstrapped_distribution[

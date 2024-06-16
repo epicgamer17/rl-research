@@ -61,15 +61,15 @@ def main():
         f'{args.rank} environment: MASTER_ADDR: {os.environ["MASTER_ADDR"]} MASTER_PORT: {os.environ["MASTER_PORT"]} WORLD_SIZE: {os.environ["WORLD_SIZE"]} RANK: {os.environ["RANK"]}'
     )
 
-    # logger.info(
-    #     f"[{args.name}] Initializing process group on remote worker with rank {args.rank}"
-    # )
-    # torch.distributed.init_process_group(backend=torch.distributed.Backend.NCCL)
+    logger.info(
+        f"[{args.name}] Initializing process group on remote worker with rank {args.rank}"
+    )
+    torch.distributed.init_process_group(backend=torch.distributed.Backend.NCCL)
 
-    # assert (
-    #     torch.distributed.is_initialized()
-    #     and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
-    # )
+    assert (
+        torch.distributed.is_initialized()
+        and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
+    )
 
     options = rpc.TensorPipeRpcBackendOptions(devices=[torch.device("cuda:0")])
     for callee in ["parameter_server", "replay_server"]:

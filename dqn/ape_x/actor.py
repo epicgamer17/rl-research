@@ -1,11 +1,12 @@
-from typing import Any
-import torch
+import sys
 import time
+import torch
 import numpy as np
-from typing import NamedTuple
+from typing import Any
 from uuid import uuid4
-import torch.distributed.rpc as rpc
 from gymnasium import Env
+from typing import NamedTuple
+import torch.distributed.rpc as rpc
 from agent_configs import ApeXActorConfig
 from utils import plot_graphs, epsilon_greedy_policy
 
@@ -14,7 +15,8 @@ import logging
 
 matplotlib.use("Agg")
 
-logger = logging.getLogger(__name__)
+logger = logging.Logger(f"actor", logging.DEBUG)
+logger.addHandler(logging.StreamHandler(sys.stdout))
 
 import sys
 
@@ -74,9 +76,9 @@ class ApeXActorBase(ActorAgent):
             predicted_q = self.predict(t.next_state)
             action = self.select_actions(predicted_q, info).item()
 
-            self.precalculated_q[p] = (self.config.discount_factor ** self.config.n_step) * self.predict_target_q(
-                t.next_state, action
-            )
+            self.precalculated_q[p] = (
+                self.config.discount_factor**self.config.n_step
+            ) * self.predict_target_q(t.next_state, action)
 
         return t, info
 
@@ -127,10 +129,15 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
     # override
     def collect_experience(self, state, info) -> tuple[DistreteTransition, Any]:
-        legal_moves = None # sget_legal_moves(info)
+        legal_moves = None  # get_legal_moves(info)
         # (1, output_length, num_atoms)
         values = self.predict(state)
-        action = epsilon_greedy_policy(values, self.config.eg_epsilon, wrapper=lambda values: self.select_actions(values, info).item(), range=self.num_actions)
+        action = epsilon_greedy_policy(
+            values,
+            self.config.eg_epsilon,
+            wrapper=lambda values: self.select_actions(values, info).item(),
+            range=self.num_actions,
+        )
         next_state, reward, terminated, truncated, info = self.env.step(action)
         done = truncated or terminated
 
@@ -142,12 +149,11 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         )
 
         if n_step_t != None and not self.spectator:
-            predicted_q = self.predict(t.next_state)
-            action = self.select_actions(predicted_q, info).item()
+            action = self.select_actions(self.predict(t.next_state), info).item()
 
-            self.precalculated_q[p] = (self.config.discount_factor ** self.config.n_step) * self.predict_target_q(
-                t.next_state, action
-            )
+            self.precalculated_q[p] = (
+                self.config.discount_factor**self.config.n_step
+            ) * self.predict_target_q(t.next_state, action)
 
         if self.spectator:
             self.score += reward
@@ -155,7 +161,6 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
                 score_dict = {"score": self.score}
                 self.stats["score"].append(score_dict)
                 self.score = 0
-                
 
         return t, info
 
@@ -173,7 +178,9 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             # print("Gt",Gt)
 
             # (B)
-            actions = torch.from_numpy(self.replay_buffer.action_buffer).to(self.device).long()
+            actions = (
+                torch.from_numpy(self.replay_buffer.action_buffer).to(self.device).long()
+            )
             # (B, output_size, atoms)
             predicted_distributions = self.predict(self.rb.observation_buffer)
             # print("pred-dist",predicted_distributions)
@@ -212,10 +219,11 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
         try:
             self.remote_replay.rpc_sync().store_batch(batch)
+            print("stored batch")
         except Exception as e:
             logger.info(f"failed to store batch: {e}")
 
-        self.replay_buffer.clear()
+        self.rb.clear()
     def update_params(self):
         ti = time.time()
         logger.info("fetching weights from storage...")
@@ -243,9 +251,6 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
             time.sleep(2)
 
         self.env_state, info = self.env.reset()
-
-    def cleanup(self, failed):
-        rpc.shutdown()
 
     def on_training_step_end(self, training_step):
         if not self.spectator:
