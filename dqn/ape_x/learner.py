@@ -1,25 +1,36 @@
-import torch
+import os
 import sys
-import logging
-import time
-import numpy as np
-import queue
-import threading
-from typing import NamedTuple
 import copy
-from agent_configs import ApeXLearnerConfig
-from actor import ApeXActor
-from utils import update_per_beta
+import time
+import torch
+import queue
+import socket
+import logging
+import threading
+import matplotlib
+import numpy as np
 import torch.distributed
+from actor import ApeXActor
+from typing import NamedTuple
+from utils import update_per_beta
+import torch.distributed.rpc as rpc
 from torch.nn.utils import clip_grad_norm_
+from agent_configs import ApeXLearnerConfig
 from utils import StoppingCriteria, ApexLearnerStoppingCriteria
+
+matplotlib.use("Agg")
+
+
+# to stop remote workers
+def recv_stop_msg(msg):
+    global stop_chan
+    stop_chan.put(msg)  # type: ignore
+
 
 sys.path.append("../")
 from dqn.rainbow.rainbow_agent import RainbowAgent
-
-import matplotlib
-
-matplotlib.use("Agg")
+from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
+from dqn.rainbow.rainbow_network import RainbowNetwork
 
 
 logger = logging.getLogger(__name__)
@@ -130,28 +141,15 @@ class ApeXLearnerBase(RainbowAgent):
             self.on_done()
 
 
-import torch.distributed
-import torch.distributed.rpc
-import torch.distributed.rpc as rpc
-import os
-import socket
-
-
-from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
-from dqn.rainbow.rainbow_network import RainbowNetwork
-
-# to stop workers
-def recv_stop_msg(msg):
-    global chan # queue.Queue
-    chan.put(msg)
 class ApeXLearner(ApeXLearnerBase):
-    def __init__(self, env, config: ApeXLearnerConfig, name: str):
+    def __init__(self, env, config: ApeXLearnerConfig, name: str, stop_fn):
         super().__init__(env, config, name)
         assert torch.distributed.is_available()
         assert torch.distributed.is_nccl_available()
         self.updates_queue = queue.Queue()
         self.config = config
         self.failed = False
+        self.stop_fn = stop_fn
 
         # torch rpc initialization
         os.environ["MASTER_ADDR"] = socket.getfqdn()  # learner is the master
@@ -170,7 +168,7 @@ class ApeXLearner(ApeXLearnerBase):
 
             # for cuda to cuda rpc
             options = rpc.TensorPipeRpcBackendOptions(
-                num_worker_threads=32, devices=["cuda:0"]
+                num_worker_threads=64, devices=["cuda:0"]
             )
 
             for callee in ["parameter_server", "replay_server"]:
@@ -232,7 +230,8 @@ class ApeXLearner(ApeXLearnerBase):
                 self._create_actor_cls_on_remote(self.config.num_actors - 1, 0, True)
             )
             logger.info("waiting for confirmations")
-            self._wait_for_confirmations()
+            all_confirmed = self._wait_for_confirmations()
+            assert all_confirmed
         except Exception as e:
             # error setting up rpc
             logger.exception(f"error initializing learner: {e}")
@@ -250,9 +249,9 @@ class ApeXLearner(ApeXLearnerBase):
         self.store_weights()
         self.ready = True
 
-        self.model.to('cuda')
-        self.target_model.to('cuda')
-        self.device='cuda'
+        self.model.to("cuda")
+        self.target_model.to("cuda")
+        self.device = "cuda"
 
     def _create_cls_on_remote(self, worker_info: str, cls, args=None, kwargs=None):
         rref = rpc.remote(worker_info, cls, args, kwargs)
@@ -297,12 +296,22 @@ class ApeXLearner(ApeXLearnerBase):
                     self._rrefs_to_confirm.remove(rref)
             time.sleep(1)
 
-    def _shutdown_worker(self, worker_info: rpc.WorkerInfo) -> rpc.RRef[None]:
-        return rpc.remote(worker_info, recv_stop_msg, (True,))
+        logger.info(f"{confirmed} / {to_confirm} rrefs confirmed")
+        return confirmed == to_confirm
+
+    def _shutdown_worker(self, worker_info: rpc.WorkerInfo):
+        logger.info(f"recv_stop_msg: {worker_info}")
+        future = rpc.rpc_async(worker_info, self.stop_fn, (True,))
+        future.add_done_callback(
+            lambda x: logger.info(f"{worker_info} successfully shut down")
+        )
+        return future
 
     def _shutdown_actor(self, actor_rref: rpc.RRef[ApeXActor]):
         try:
-            actor_rref.remote().stop() # block until actor is done
+            actor_rref.rpc_async().stop().then(
+                lambda x: logger.info(f"{actor_rref.owner()} sucessfully stopped")
+            )  # block until actor is done
             return self._shutdown_worker(actor_rref.owner())
         except Exception as e:
             logger.exception(f"error stopping actor {e}")
@@ -321,12 +330,12 @@ class ApeXLearner(ApeXLearnerBase):
         attempts = 5
         for attempt in range(attempts):
             try:
-                self.target_network_rref.rpc_async().load_state_dict(
+                self.target_network_rref.rpc_async(10).load_state_dict(
                     self.target_model.state_dict()
-                )
-                self.online_network_rref.rpc_async().load_state_dict(
+                ).then(lambda x: logger.info("target model succesfully updated"))
+                self.online_network_rref.rpc_async(10).load_state_dict(
                     self.model.state_dict()
-                )
+                ).then(lambda x: logger.info("online model succesfully updated"))
                 return
             except Exception as e:
                 logger.exception(
@@ -336,19 +345,23 @@ class ApeXLearner(ApeXLearnerBase):
         logger.info(f"failed to store weights after {attempts} tries")
 
     def update_replay_priorities(self, samples, priorities):
-        self.updates_queue.put(
-            Update(
-                ids=np.array(samples["ids"]),
-                indices=np.array(samples["indices"]),
-                priorities=np.array(priorities),
-            )
+        t = Update(
+            ids=np.array(samples["ids"]),
+            indices=np.array(samples["indices"]),
+            priorities=np.array(priorities),
         )
+        try:
+            self.replay_rref.rpc_async().update_priorities(*t).then(
+                lambda x: logger.debug("sucessfully updated priorities")
+            )
+        except Exception as e:
+            logger.exception(f"error updating priorities: {e}")
 
     def on_run(self):
         self.flag = threading.Event()
 
         self.replay_thread = threading.Thread(
-            target=self._handle_replay_socket, args=(self.flag,)
+            target=self._fetch_batches, args=(self.flag,)
         )
         self.replay_thread.daemon = True
         self.replay_thread.start()
@@ -359,18 +372,25 @@ class ApeXLearner(ApeXLearnerBase):
             actor.rpc_async(timeout=0).learn()
 
     def on_done(self):
-        logger.info("waiting for replay thread to finish")
-        self.flag.set()
-        self.replay_thread.join()
+        if self.flag:
+            logger.info("waiting for replay thread to finish")
+            self.flag.set()
+            self.replay_thread.join()
+        else:
+            logger.info("replay thread never started")
 
         logger.info("shutting down actors")
 
-        worker_shutdown_rrefs = []
+        worker_shutdown_futures = []
         for actor in self.actor_rrefs:
-            worker_shutdown_rrefs.append(self._shutdown_actor(actor))
+            worker_shutdown_futures.append(self._shutdown_actor(actor))
 
-        worker_shutdown_rrefs.append(self._shutdown_worker(self.parameter_worker_info))
-        worker_shutdown_rrefs.append(self._shutdown_worker(self.replay_worker_info))
+        worker_shutdown_futures.append(self._shutdown_worker(self.replay_worker_info))
+        worker_shutdown_futures.append(self._shutdown_worker(self.parameter_worker_info))
+
+        logger.debug("rrefs:")
+        for rref in worker_shutdown_futures:
+            logger.debug(rref)
 
         logger.info("shutting down rpc")
         try:
@@ -383,56 +403,53 @@ class ApeXLearner(ApeXLearnerBase):
         # except:
         #     pass
 
-
     def on_training_step_end(self):
         super().on_training_step_end()
 
         # This beta gets send over to the remote replay buffer
+        new_per_beta = update_per_beta(
+            self.per_sample_beta, self.config.per_beta_final, self.training_steps
+        )
+
+        logger.debug(f"updating per beta to {new_per_beta}")
         try:
-            self.replay_rref.remote(30).set_beta(
-                update_per_beta(
-                    self.per_sample_beta,
-                    self.config.per_beta_final,
-                    self.training_steps,
-                )
+            self.replay_rref.rpc_async(30).set_beta(new_per_beta).then(
+                lambda x: "sucessfully updated per beta"
             )
         except Exception as e:
             logger.exception(f"error updating remote PER beta: {e}")
 
-    def _handle_replay_socket(self, flag: threading.Event):
-        active = False
-        while not flag.is_set():
-            active = False
-            try:
-                if self.samples_queue.qsize() < self.config.samples_queue_size:
-                    logger.info("requesting batch")
-                    samples_rref: rpc.RRef[dict | None] = (
-                        self.replay_rref.remote().sample(False)
-                    )
-                    samples = samples_rref.to_here()
-                    if samples == None:  # replay buffer size < min_size
-                        logger.info("no batch recieved, continuing and waiting")
-                    else:
-                        logger.info("recieved batch")
+    def _fetch_batches(self, flag: threading.Event):
+        dummy_q = queue.Queue(self.config.samples_queue_size)
 
-                        self.samples_queue.put(samples)
-                        active = True
-                else:
-                    logger.debug("queue full")
+        for i in range(self.config.samples_queue_size):
+            dummy_q.put(0)
+
+        def on_sample_recieved(samples):
+            sample = samples.wait()
+            if sample == None:
+                # no sample recieved, request another sample after 1 second
+                time.sleep(1)
+                dummy_q.put(0)
+            else:
+                self.samples_queue.put(samples.wait())
+                dummy_q.put(0)
+
+        while not flag.is_set():
+            try:
+                dummy_q.get(timeout=5)
+            except queue.Empty:
+                continue
+
+            logger.info("requesting batch")
+            try:
+                self.replay_rref.rpc_async(10).sample(False).then(
+                    on_sample_recieved
+                )
             except Exception as e:
                 logger.exception(f"error getting batch: {e}")
 
-            try:
-                t = self.updates_queue.get(block=False)  # (indices, priorities, ids)
-                active = True
-                self.replay_rref.rpc_sync().update_priorities(*t)
-            except queue.Empty:
-                logger.debug("no updates to send, continuing")
-            except Exception as e:
-                logger.exception(f"error updating priorities: {e}")
-
-            if not active:
-                time.sleep(1)
+        logger.info("replay thread exited")
 
     def learn_from_sample(self, samples: dict):
         observations, next_observations, rewards, weights, actions = (
@@ -442,12 +459,24 @@ class ApeXLearner(ApeXLearnerBase):
             samples["weights"],
             torch.from_numpy(samples["actions"]).to(self.device).long(),
         )
-        next_actions = self.select_actions(self.predict(self.preprocess(next_observations)), info=None)
-        bootstrapped_distribution = self.predict_target(self.preprocess(next_observations)) * self.support
-        bootstrapped = (self.config.discount_factor**self.config.n_step) * bootstrapped_distribution[range(self.config.minibatch_size), next_actions].sum(dim=1)
+        next_actions = self.select_actions(
+            self.predict(self.preprocess(next_observations)), info=None
+        )
+        bootstrapped_distribution = (
+            self.predict_target(self.preprocess(next_observations)) * self.support
+        )
+        bootstrapped = (
+            self.config.discount_factor**self.config.n_step
+        ) * bootstrapped_distribution[
+            range(self.config.minibatch_size), next_actions
+        ].sum(
+            dim=1
+        )
         Gt = rewards + bootstrapped  # already discounted
 
-        predicted_q = (self.predict(observations) * self.support)[range(self.config.minibatch_size), actions].sum(dim=1)
+        predicted_q = (self.predict(observations) * self.support)[
+            range(self.config.minibatch_size), actions
+        ].sum(dim=1)
         weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
         elementwise_loss = 1 / 2 * (Gt - predicted_q).square()
         loss = elementwise_loss * weights_cuda

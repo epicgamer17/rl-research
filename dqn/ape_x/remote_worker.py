@@ -1,14 +1,21 @@
-import time
+### DO NOT DELETE THE UNUSED IMPORTS!!!
 import os
-import argparse
+import sys
+import time
 import torch
 import queue
-### DO NOT DELETE THE UNUSED IMPORTS!!!
-import copy
+import logging
+import argparse
 import torch.distributed.rpc as rpc
-import torch.distributed.rpc
 
-import sys
+
+stop_chan = queue.Queue()
+
+
+def recv_stop_msg(msg):
+    global stop_chan
+    stop_chan.put(msg)
+
 
 sys.path.append("../..")
 import dqn
@@ -17,13 +24,6 @@ import dqn.ape_x
 import replay_buffers
 import replay_buffers.prioritized_n_step_replay_buffer
 
-import logging
-
-chan: queue.Queue = queue.Queue()
-
-def recv_stop_msg(msg):
-    global chan
-    chan.put(msg)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -34,7 +34,9 @@ ch.setFormatter(logging.Formatter("%(message)s"))
 logger.addHandler(fh)
 logger.addHandler(ch)
 
+
 def main():
+
     assert torch.distributed.is_available() and torch.distributed.is_nccl_available()
     parser = argparse.ArgumentParser()
 
@@ -86,7 +88,8 @@ def main():
     logger.info(f"[{args.name}] rpc initialized.")
 
     logger.info("waiting for stop signal")
-    chan.get()
+    stop_chan.get()
+    logger.info("recieved stop msg")
     logger.info(f"[{args.name}] shutting down rpc")
     try:
         rpc.shutdown()

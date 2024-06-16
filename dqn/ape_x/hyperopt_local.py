@@ -18,6 +18,10 @@ from learner import ApeXLearner
 import utils
 
 SIGTERM = 15
+def recv_stop_msg(msg):
+    global stop_chan
+    stop_chan.put(msg)
+
 
 import logging
 
@@ -54,7 +58,7 @@ def run_training(config, env: gym.Env, name):
 
     # combined learner and actor config
     conf = (config | distributed_config_placeholder) | {
-        "training_steps": 1000,
+        "training_steps": 300,
         # save on mimi disk quota
         "save_intermediate_weights": False,
         # set for learner, will be overwritten by learner when creating actors
@@ -99,7 +103,7 @@ def run_training(config, env: gym.Env, name):
             cmd = f"{executable} remote_worker.py --rank {3+i} --name actor_{i} --world_size {world_size}"
             actor_procs.append(Popen(cmd.split(" "), stdout=subprocess.PIPE, text=True))
 
-        learner = ApeXLearner(env, learner_generated_config, name=name)
+        learner = ApeXLearner(env, learner_generated_config, name=name, stop_fn=recv_stop_msg)
         logger.info("        === Running learner")
 
         # if there were any errors creating artifacts on workers, return status fail
