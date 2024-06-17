@@ -298,21 +298,18 @@ class BaseAgent:
                     os.makedirs(self.test_env.video_folder)
             for trials in range(num_trials):
                 state, info = self.test_env.reset()
-                # self.test_env.render()
-                legal_moves = get_legal_moves(info)
 
                 done = False
                 score = 0
 
                 while not done:
                     prediction = self.predict(state)
-                    action = self.select_actions(prediction, legal_moves).item()
+                    action = self.select_actions(prediction).item()
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
                     # self.test_env.render()
                     done = terminated or truncated
-                    legal_moves = get_legal_moves(info)
                     state = next_state
                     score += reward
                 average_score += score
