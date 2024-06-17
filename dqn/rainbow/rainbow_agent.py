@@ -271,11 +271,11 @@ class RainbowAgent(BaseAgent):
             print("training step", training_step)
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
-                    values = self.predict(state, info)
+                    values = self.predict(state)
                     action = epsilon_greedy_policy(
                         values,
                         self.config.eg_epsilon,
-                        wrapper=lambda values: self.select_actions(values, info).item(),
+                        wrapper=lambda values: self.select_actions(values).item(),
                         range=self.num_actions,
                     )
                     # action = actions.item()
