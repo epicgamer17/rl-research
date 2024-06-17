@@ -124,7 +124,7 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         compressed_observations: bool = False,
     ):
         self.observation_dimensions = observation_dimensions
-        self._observation_dtype = observation_dtype
+        self.observation_dtype = observation_dtype
         print(observation_dtype)
         super().__init__(
             max_size=max_size,
@@ -163,10 +163,10 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         else:
             observation_buffer_shape = (self.max_size,) + self.observation_dimensions
             self.observation_buffer = np.zeros(
-                observation_buffer_shape, self._observation_dtype
+                observation_buffer_shape, self.observation_dtype
             )
             self.next_observation_buffer = np.zeros(
-                observation_buffer_shape, dtype=self._observation_dtype
+                observation_buffer_shape, dtype=self.observation_dtype
             )
 
         self.id_buffer = np.zeros(self.max_size, dtype=np.object_)
@@ -219,7 +219,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         compressed_observations: bool = False,
     ):
         self.observation_dimensions = observation_dimensions
-        self.observation_dtype = (observation_dtype,)
+        self.observation_dtype = observation_dtype
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         super().__init__(
@@ -265,9 +265,13 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
     def clear(self):
         if self.compressed_observations:
             self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
+            self.next_observation_buffer = np.zeros(self.max_size, dtype=np.object_)
         else:
             observation_buffer_shape = (self.max_size,) + self.observation_dimensions
             self.observation_buffer = np.zeros(
+                observation_buffer_shape, self.observation_dtype
+            )
+            self.next_observation_buffer = np.zeros(
                 observation_buffer_shape, dtype=self.observation_dtype
             )
         self.action_buffer = np.zeros(self.max_size, dtype=np.int8)
