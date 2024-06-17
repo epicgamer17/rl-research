@@ -31,6 +31,9 @@ class ActorAgent(BaseAgent):
 
     def stop(self):
         self.stop_flag = True
+    
+    def cleanup(self):
+        pass
 
     def setup(self):
         """This method is called before starting of the training/collecting experiences loop.
@@ -80,7 +83,7 @@ class ActorAgent(BaseAgent):
                 pass
             finally:
                 self.env.close()
-
+                self.cleanup()
 
 # Config class for PollingActor
 class PollingActorConfig(ConfigBase):

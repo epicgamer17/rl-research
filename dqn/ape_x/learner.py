@@ -307,11 +307,10 @@ class ApeXLearner(ApeXLearnerBase):
         )
         return future
 
-    def _shutdown_actor(self, actor_rref: rpc.RRef[ApeXActor]):
+    def _stop_actor(self, actor_rref: rpc.RRef[ApeXActor]):
         try:
             actor_rref.rpc_sync().stop()  # block until actor is done
             logger.info(f"{actor_rref.owner()} sucessfully sent stop message")
-            return self._shutdown_worker(actor_rref.owner())
         except Exception as e:
             logger.exception(f"error stopping actor {e}")
 
@@ -382,6 +381,13 @@ class ApeXLearner(ApeXLearnerBase):
             logger.info(f"starting actor {actor.owner_name()}")
             actor.rpc_async(timeout=0).learn().then(lambda x: logger.info(f"{actor.owner_name()} learning stopped"))
 
+    def _release_all(self, attr_names):
+        for name in attr_names:
+            try:
+                delattr(self, name)
+            except:
+                pass
+
     def on_done(self):
         if self.flag:
             logger.info("waiting for replay thread to finish")
@@ -390,17 +396,28 @@ class ApeXLearner(ApeXLearnerBase):
         else:
             logger.info("replay thread never started")
 
-        logger.info("shutting down actors")
+        logger.info("shutting down actors and triggering rpc shutdown on workers")
 
         worker_shutdown_futures = []
 
+        all_workers = ["learner", "parameter_server", "replay_server"]
+        for actor in self.actor_rrefs:
+            self._stop_actor(actor)
+            all_workers.append(actor.owner().name)
+
+        # safely release all remote references to allow workers to shutdown rpc
+        self._release_all(["replay_rref", "target_network_rref", "online_network_rref", "actor_rrefs"])
+
+        # let all workers finish
         worker_shutdown_futures.append(self._shutdown_worker(self.parameter_worker_info))
         worker_shutdown_futures.append(self._shutdown_worker(self.replay_worker_info))
+        for i in range(self.config.num_actors):
+            worker_shutdown_futures.append(self._shutdown_worker(f"actor_{i}"))
+            
+        # confirm that everyone is done
+        rpc.api._barrier(all_workers)
 
-        for actor in self.actor_rrefs:
-            worker_shutdown_futures.append(self._shutdown_actor(actor))
-
-        logger.info("shutting down rpc")
+        logger.info("shutting down rpc on learner")
         try:
             rpc.shutdown()
         except Exception as e:

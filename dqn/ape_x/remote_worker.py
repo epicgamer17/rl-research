@@ -89,7 +89,9 @@ def main():
 
     logger.info("waiting for stop signal")
     stop_chan.get()
-    logger.info("recieved stop msg")
+    logger.info("recieved stop msg, waiting for all workers to finish outstanding work")
+    rpc.api._barrier(["learner", "parameter_server", "replay_server", "actor_0", "actor_1", "actor_2"])
+
     logger.info(f"[{args.name}] shutting down rpc")
     try:
         rpc.shutdown()

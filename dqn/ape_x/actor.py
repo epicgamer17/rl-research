@@ -103,7 +103,6 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         spectator=False,
     ):
         super().__init__(env, config, name)
-        self.agent_rref = rpc.RRef(self)
         self.config = config
 
         self.remote_online_params = remote_online_params
@@ -270,3 +269,20 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
 
         if self.should_update_params(training_step):
             self.update_params()
+
+    def cleanup(self):
+        print("cleanup")
+        # safely release all remote references
+        try:
+            del self.remote_online_params
+        except:
+            pass
+        try:
+            del self.remote_online_params
+        except:
+            pass
+        try:
+            del self.remote_target_params
+        except:
+            pass
+        print("all realeased")
