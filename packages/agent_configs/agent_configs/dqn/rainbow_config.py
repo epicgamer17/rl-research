@@ -7,19 +7,25 @@ class RainbowConfig(Config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
 
         self.conv_layers: list = self.parse_field("conv_layers", [])
-        self.dense_layers_widths: int = self.parse_field("dense_layers_widths", [128], tointlists)
+        self.dense_layers_widths: int = self.parse_field(
+            "dense_layers_widths", [128], tointlists
+        )
         self.value_hidden_layers_widths = self.parse_field(
             "value_hidden_layers_widths", [], tointlists
         )
         self.advantage_hidden_layers_widths: int = self.parse_field(
             "advantage_hidden_layers_widths", [], tointlists
         )
+
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
+        self.eg_epsilon: float = self.parse_field("eg_epsilon", 0.00)
 
         self.dueling: bool = self.parse_field("dueling", True)
         self.discount_factor: float = self.parse_field("discount_factor", 0.99)
         self.soft_update: bool = self.parse_field("soft_update", False)
-        self.transfer_interval: int = self.parse_field("transfer_interval", 512, wrapper=int)
+        self.transfer_interval: int = self.parse_field(
+            "transfer_interval", 512, wrapper=int
+        )
         self.ema_beta: float = self.parse_field("ema_beta", 0.99)
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
         self.per_alpha: float = self.parse_field("per_alpha", 0.6)

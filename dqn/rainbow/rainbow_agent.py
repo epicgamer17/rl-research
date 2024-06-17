@@ -8,6 +8,8 @@ from utils import update_per_beta, get_legal_moves, current_timestamp
 
 import sys
 
+from utils.utils import epsilon_greedy_policy
+
 sys.path.append("../../")
 
 from base_agent.agent import BaseAgent
@@ -272,9 +274,14 @@ class RainbowAgent(BaseAgent):
             print("training step", training_step)
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
-                    distributions = self.predict(state, info)
-                    actions = self.select_actions(distributions, info)
-                    action = actions.item()
+                    values = self.predict(state, info)
+                    action = epsilon_greedy_policy(
+                        values,
+                        self.config.eg_epsilon,
+                        wrapper=lambda values: self.select_actions(values, info).item(),
+                        range=self.num_actions,
+                    )
+                    # action = actions.item()
                     next_state, reward, terminated, truncated, info = self.env.step(
                         action
                     )
@@ -301,7 +308,14 @@ class RainbowAgent(BaseAgent):
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
 
-            for _ in range(self.config.num_minibatches):
+                if training_step % self.config.transfer_interval == 0:
+                    target_model_updated = (True, True)
+                    # stats["test_score"].append(
+                    #     {"target_model_weight_update": training_step}
+                    # )
+                    self.update_target_model()
+
+            for minibatch in range(self.config.num_minibatches):
                 losses = self.learn()
                 # print(losses)
                 loss_mean = losses.mean()
@@ -310,13 +324,6 @@ class RainbowAgent(BaseAgent):
                     {"loss": loss_mean, "target_model_updated": target_model_updated[1]}
                 )
                 target_model_updated = (target_model_updated[0], False)
-
-            if training_step % self.config.transfer_interval == 0:
-                target_model_updated = (True, True)
-                # stats["test_score"].append(
-                #     {"target_model_weight_update": training_step}
-                # )
-                self.update_target_model()
 
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 # print(self.stats["score"])
