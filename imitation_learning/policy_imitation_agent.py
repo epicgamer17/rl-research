@@ -74,7 +74,6 @@ class PolicyImitationAgent(BaseAgent):
 
             self.optimizer.zero_grad()
             loss.backward()
-            print(self.config.clipnorm)
             if self.config.clipnorm > 0:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
             self.optimizer.step()

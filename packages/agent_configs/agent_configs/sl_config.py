@@ -1,5 +1,5 @@
 from utils import Loss
-from .base_config import ConfigBase
+from .base_config import ConfigBase, kernel_initializer_wrapper
 from utils import prepare_activations, prepare_kernel_initializers
 from torch.optim import Optimizer, Adam
 
@@ -27,12 +27,13 @@ class SupervisedConfig(ConfigBase):
         )
         self.kernel_initializer = self.parse_field(
             "sl_kernel_initializer",
-            "glorot_uniform",
-            wrapper=prepare_kernel_initializers,
+            None,
+            required=False,
+            wrapper=kernel_initializer_wrapper,
         )
 
-        self.noisy_sigma = self.parse_field("sl_noisy_sigma", False)
+        self.noisy_sigma = self.parse_field("sl_noisy_sigma", 0)
         self.conv_layers = self.parse_field("sl_conv_layers", [])
-        self.dense_layers_widths = self.parse_field("sl_dense_layers", [128])
+        self.dense_layers_widths = self.parse_field("sl_dense_layer_widths", [128])
 
         self.game = None

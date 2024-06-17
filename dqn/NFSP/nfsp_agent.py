@@ -36,6 +36,7 @@ from time import time
 
 from agent_configs import NFSPDQNConfig
 
+from numpy import average
 import torch
 from utils import get_legal_moves, current_timestamp, update_per_beta
 from utils.utils import exploitability, plot_graphs
@@ -96,27 +97,37 @@ class NFSPDQN(BaseAgent):
     def select_actions(self, predicted, info) -> torch.Tensor:
         return self.nfsp_agents[info["player"]].select_actions(predicted, info)
 
-    def learn(self, current_player):
-        return self.nfsp_agents[current_player].learn()
+    def learn(self):
+        rl_losses = []
+        sl_losses = []
+        for p in range(self.config.num_players):
+            rl_loss, sl_loss = self.nfsp_agents[p].learn()
+            rl_losses.append(rl_loss)
+            sl_losses.append(sl_loss)
+        average_rl_loss = (
+            sum(rl_losses) / len(rl_losses) if None not in rl_losses else 0
+        )
+        average_sl_loss = (
+            sum(sl_losses) / len(sl_losses) if None not in sl_losses else 0
+        )
+        return average_rl_loss, average_sl_loss
 
     def train(self):
         training_time = time()
-        training_step = 0
-        while (
-            training_step < self.training_steps
-        ):  # change to training steps and just make it so it ends a game even if the training steps are done
-            self.select_agent_policies()
-            state, info = self.env.reset()
-            done = False
 
-            while not done:
-                with torch.no_grad():
+        self.select_agent_policies()
+        state, info = self.env.reset()
+
+        for training_step in range(self.start_training_step, self.training_steps):
+            with torch.no_grad():
+                for _ in range(self.config.replay_interval):
                     current_player = info["player"]
                     prediction = self.predict(state, info)
                     action = self.select_actions(
                         prediction,
                         info,
                     )
+                    print(action)
                     # should we store this for SL agent if it as sl agent action?
 
                     target_policy = torch.zeros(self.num_actions)
@@ -145,13 +156,17 @@ class NFSPDQN(BaseAgent):
                     state = next_state
                     done = terminated or truncated
 
-                    training_step += 1
-                for minibatch in range(self.config.num_minibatches):
-                    rl_loss, sl_loss = self.learn(current_player)
-                    print(rl_loss, sl_loss)
-                    self.stats["rl_loss"].append({"loss": rl_loss})
-                    self.stats["sl_loss"].append({"loss": sl_loss})
-
+                    if not done:
+                        self.nfsp_agents[current_player].store_transition(
+                            action, state, rewards[current_player], done
+                        )  # stores experiences
+                    else:
+                        for p in range(self.config.num_players):
+                            self.nfsp_agents[p].store_transition(
+                                action, state, rewards[p], done
+                            )
+                        self.select_agent_policies()
+                        state, info = self.env.reset()
                 if (
                     training_step
                     % self.nfsp_agents[current_player].rl_agent.config.transfer_interval
@@ -159,23 +174,22 @@ class NFSPDQN(BaseAgent):
                 ):
                     self.nfsp_agents[current_player].rl_agent.update_target_model()
 
-                if training_step % self.checkpoint_interval == 0:
-                    self.save_checkpoint(
-                        training_step,
-                        training_step * self.config.replay_interval,
-                        time() - training_time,
-                    )
+            for minibatch in range(self.config.num_minibatches):
+                rl_loss, sl_loss = self.learn()
+                print(rl_loss, sl_loss)
+                self.stats["rl_loss"].append({"loss": rl_loss})
+                self.stats["sl_loss"].append({"loss": sl_loss})
 
-                if not done:
-                    self.nfsp_agents[current_player].store_transition(
-                        action, state, rewards[current_player], done
-                    )  # stores experiences
+            if training_step % self.checkpoint_interval == 0:
+                self.save_checkpoint(
+                    training_step,
+                    training_step,
+                    time() - training_time,
+                )
 
-            for p in range(self.config.num_players):
-                self.nfsp_agents[p].store_transition(action, state, rewards[p], done)
         self.save_checkpoint(
             training_step,
-            training_step * self.config.replay_interval,
+            training_step,
             time() - training_time,
         )
         self.env.close()
@@ -286,7 +300,9 @@ class NFSPDQN(BaseAgent):
                     state = next_state
                     average_strategy_reward = reward[player]
                     total_reward = sum(reward)
-                    test_score += (total_reward - average_strategy_reward)/(self.config.num_players - 1)
+                    test_score += (total_reward - average_strategy_reward) / (
+                        self.config.num_players - 1
+                    )
                     if done:
                         break
 
@@ -367,8 +383,8 @@ class NFSPDQNAgent(BaseAgent):
         return action
 
     def learn(self):
-        rl_loss = 0
-        sl_loss = 0
+        rl_loss = None
+        sl_loss = None
         if (
             self.rl_agent.replay_buffer.size
             > self.rl_agent.config.min_replay_buffer_size
