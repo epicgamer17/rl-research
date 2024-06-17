@@ -6,6 +6,7 @@ import torch
 import queue
 import logging
 import argparse
+import torch.distributed
 import torch.distributed.rpc as rpc
 
 
@@ -90,13 +91,26 @@ def main():
     logger.info("waiting for stop signal")
     stop_chan.get()
     logger.info("recieved stop msg, waiting for all workers to finish outstanding work")
-    rpc.api._barrier(["learner", "parameter_server", "replay_server", "actor_0", "actor_1", "actor_2"])
+
+    workers = ["learner", "parameter_server", "replay_server"]
+    workers.extend(f"actor_{i}" for i in range(0, args.world_size - 3))
+    rpc.api._barrier(workers)
 
     logger.info(f"[{args.name}] shutting down rpc")
     try:
         rpc.shutdown()
+        logger.info("rpc shutdown on worker")
     except Exception as e:
         logger.exception(f"[{args.name}] error shutting down rpc: {e}")
+    
+    try:
+        logger.info(f"[{args.name}] destroying process group")
+        torch.distributed.destroy_process_group()
+    except Exception as e:
+        logger.exception(f"[{args.name}] error destroying process group: {e}")
+    
+
+    
 
 
 if __name__ == "__main__":
