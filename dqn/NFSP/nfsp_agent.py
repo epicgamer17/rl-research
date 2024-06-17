@@ -112,6 +112,9 @@ class NFSPDQN(BaseAgent):
         )
         return average_rl_loss, average_sl_loss
 
+    def fill_replay_buffers(self):
+        pass
+
     def train(self):
         training_time = time()
 
@@ -121,10 +124,10 @@ class NFSPDQN(BaseAgent):
         for training_step in range(self.start_training_step, self.training_steps):
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
-                    current_player = info["player"]
-                    current_agent = self.nfsp_agents[current_player]
-                    current_rl_agent = current_agent.rl_agent
-                    current_sl_agent = current_agent.sl_agent
+                    current_player: int = info["player"]
+                    current_agent: NFSPDQNAgent = self.nfsp_agents[current_player]
+                    current_rl_agent: RainbowAgent = current_agent.rl_agent
+                    current_sl_agent: PolicyImitationAgent = current_agent.sl_agent
 
                     prediction = self.predict(state, info)
                     action = self.select_actions(
@@ -132,14 +135,13 @@ class NFSPDQN(BaseAgent):
                         info,
                     )
                     print(action)
-                    # should we store this for SL agent if it as sl agent action?
 
                     target_policy = torch.zeros(self.num_actions)
                     target_policy[action] = 1.0
                     # print(current_player)
                     if current_agent.policy == "best_response":
                         current_sl_agent.replay_buffer.store(
-                            state, target_policy
+                            state, info, target_policy
                         )  # Store best moves in SL Memory
 
                     current_rl_agent.replay_buffer.set_beta(
@@ -150,20 +152,22 @@ class NFSPDQN(BaseAgent):
                         )
                     )
 
-                    next_state, rewards, terminated, truncated, info = self.env.step(
-                        action
+                    next_state, rewards, terminated, truncated, next_info = (
+                        self.env.step(action)
                     )
                     done = terminated or truncated
 
                     # stores experience for previous time step (sets prev experience)
                     # could only do if policy is average strategy mode
                     current_agent.store_transition(
-                        action, state, rewards[current_player], done
+                        action, state, info, rewards[current_player], done
                     )  # stores experiences
                     state = next_state
+                    info = next_info
 
                     # terminal so store experiences for all agents based on terminal state
                     if done:
+                        print(rewards)
                         for p in range(self.config.num_players):
                             # could only do if policy is average strategy mode
                             self.nfsp_agents[p].store_transition(
@@ -298,7 +302,7 @@ class NFSPDQN(BaseAgent):
             while not done:
                 for p in range(self.config.num_players):
                     prediction = self.predict(state, info)
-                    action = self.select_actions(prediction, info)
+                    action = self.select_actions(prediction)
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
@@ -345,25 +349,33 @@ class NFSPDQNAgent(BaseAgent):
         self.policy = "best_response"  # "average_strategy" or "best_response
         # transition = [state, action, reward, next_state, done]
         self.previous_state = None
+        self.previous_info = None
         self.previous_action = None
         self.previous_reward = None
 
-    def store_transition(self, action, state, reward, done):
-        self.transition = [self.previous_state, self.previous_action]
+    def store_transition(self, action, state, info, reward, done):
+        self.transition = [
+            self.previous_state,
+            self.previous_info,
+            self.previous_action,
+        ]
         if (
             self.previous_action is not None
             and self.previous_state is not None
+            and self.previous_info is not None
             and self.previous_reward is not None
         ):
-            self.transition += [self.previous_reward, state, done]
+            self.transition += [self.previous_reward, state, info, done]
             # only do this if it is average policy? (open spiel)
             self.rl_agent.replay_buffer.store(*self.transition)
         if not done:
             self.previous_state = state
+            self.previous_info = info
             self.previous_action = action
             self.previous_reward = reward
         else:
             self.previous_state = None
+            self.previous_info = None
             self.previous_action = None
             self.previous_reward = None
 
@@ -380,11 +392,11 @@ class NFSPDQNAgent(BaseAgent):
             prediction = self.rl_agent.predict(state)
         return prediction
 
-    def select_actions(self, prediction, info):
+    def select_actions(self, prediction):
         if self.policy == "average_strategy":
-            action = self.sl_agent.select_actions(prediction, info)
+            action = self.sl_agent.select_actions(prediction)
         else:
-            action = self.rl_agent.select_actions(prediction, info)
+            action = self.rl_agent.select_actions(prediction)
 
         return action
 

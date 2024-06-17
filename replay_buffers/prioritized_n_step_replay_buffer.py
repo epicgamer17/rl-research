@@ -44,15 +44,17 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
     def store(
         self,
         observation,
+        info: dict,
         action,
         reward: float,
         next_observation,
+        next_info: dict,
         done: bool,
         id=None,
         priority: float = None,
     ):
         transition = super().store(
-            observation, action, reward, next_observation, done, id
+            observation, info, action, reward, next_observation, next_info, done, id
         )
 
         if priority is None:
@@ -72,15 +74,25 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         self.beta = beta
 
     def store_batch(self, batch):
-        observations, actions, rewards, next_observations, dones, ids, priorities = (
-            batch
-        )
+        (
+            observations,
+            infos,
+            actions,
+            rewards,
+            next_observations,
+            next_infos,
+            dones,
+            ids,
+            priorities,
+        ) = batch
         for i in range(len(observations)):
             self.store(
                 observations[i],
+                infos[i],
                 actions[i],
                 rewards[i],
                 next_observations[i],
+                next_infos[i],
                 dones[i],
                 ids[i],
                 priorities[i],
@@ -286,74 +298,3 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
             self.min_priority = min(self.min_priority, priority**self.alpha)
             # priority = np.clip(priority, self.epsilon, self.max_priority)
             self.tree.update(index + self.tree.capacity - 1, priority**self.alpha)
-
-
-# class PrioritizedNStepReplayBuffer(NStepReplayBuffer, PrioritizedReplayBuffer):
-#     def __init__(
-#         self,
-#         observation_dimensions,
-#         max_size: int,
-#         batch_size: int = 32,
-#         max_priority: float = 1.0,
-#         alpha: float = 0.6,
-#         beta: float = 0.4,
-#         # epsilon=0.01,
-#         n_step: float = 1,
-#         gamma: float = 0.99,
-#     ):
-#         NStepReplayBuffer.__init__(
-#             observation_dimensions,
-#             max_size,
-#             batch_size,
-#             n_step=n_step,
-#             gamma=gamma,
-#         )
-#         PrioritizedReplayBuffer.__init__(
-#             observation_dimensions,
-#             max_size,
-#             batch_size,
-#             max_priority=max_priority,
-#             alpha=alpha,
-#             beta=beta,
-#         )
-
-#     def store(
-#         self,
-#         observation,
-#         action,
-#         reward: float,
-#         next_observation,
-#         done: bool,
-#         id=None,
-#         legal_moves=None,
-#         priority: float = None,
-#     ):
-#         transition = NStepReplayBuffer.store(
-#             observation,
-#             action,
-#             reward,
-#             next_observation,
-#             done,
-#             id,
-#             legal_moves=legal_moves,
-#         )
-
-#         if priority is None:
-#             priority = self.max_priority**self.alpha
-#             self.max_priority = max(
-#                 self.max_priority, priority
-#             )  # could remove and clip priorities in experience replay isntead
-
-#         if transition:
-#             self.sum_tree[self.tree_pointer] = priority**self.alpha
-#             self.min_tree[self.tree_pointer] = priority**self.alpha
-#             self.tree_pointer = (self.tree_pointer + 1) % self.max_size
-
-#         return transition
-
-#     def sample(self):
-#         PrioritizedReplayBuffer.sample()
-
-#     def clear(self):
-#         NStepReplayBuffer.clear()
-#         PrioritizedReplayBuffer.clear()

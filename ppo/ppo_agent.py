@@ -91,33 +91,24 @@ class PPOAgent(BaseAgent):
             "actor_loss": self.config.target_kl,
         }
 
-    def predict(self, state, info):
+    def predict(self, state):
         state_input = self.preprocess(state)
         value = self.model.critic(inputs=state_input)
         if self.discrete_action_space:
             policy = self.model.actor(inputs=state_input)[0]
-            # print(policy)
-            policy = action_mask(
-                policy, get_legal_moves(info), self.num_actions, mask_value=0
-            )
-            # print(policy)
-            policy = normalize_policy(policy)
-            # print(policy)
+            # policy = action_mask(
+            #     policy, get_legal_moves(info), self.num_actions, mask_value=0
+            # )
+            # policy = normalize_policy(policy)
             distribution = torch.distributions.Categorical(probs=policy)
         else:
             mean, std = self.model.actor(inputs=state_input)
             distribution = torch.distributions.Normal(mean, std)
         return distribution, value
 
-    def select_actions(self, predictions, info):
+    def select_actions(self, predictions):
         distribution = predictions[0]
-        # if self.is_test:
-        #     selected_action = distribution.mode
-        # else:
-        #     selected_action = distribution.sample().numpy()
         selected_action = distribution.sample()
-        # if len(selected_action) == 1:
-        #     selected_action = selected_action[0]
 
         return selected_action
 
@@ -294,13 +285,10 @@ class PPOAgent(BaseAgent):
                 score = 0
                 for timestep in range(self.config.steps_per_epoch):
                     predictions = self.predict(state)
-                    action = self.select_actions(
-                        predictions,
-                        get_legal_moves(info),
-                    ).item()
+                    action = self.select_actions(predictions).item()
 
-                    next_state, reward, terminated, truncated, info = self.env.step(
-                        action
+                    next_state, reward, terminated, truncated, next_info = (
+                        self.env.step(action)
                     )
 
                     distribution, value = predictions
@@ -308,11 +296,12 @@ class PPOAgent(BaseAgent):
                     value = value[0][0]
 
                     self.replay_buffer.store(
-                        state, action, value, log_probability, reward
+                        state, info, action, value, log_probability, reward
                     )
 
                     done = terminated or truncated
                     state = next_state
+                    info = next_info
                     score += reward
 
                     if done or timestep == self.config.steps_per_epoch - 1:
