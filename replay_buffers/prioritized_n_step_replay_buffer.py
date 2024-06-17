@@ -1,6 +1,5 @@
 from time import time
 import numpy as np
-from replay_buffers.prioritized_replay_buffer import PrioritizedReplayBuffer
 from replay_buffers.segment_tree import SumSegmentTree, MinSegmentTree
 from replay_buffers.fast_sum_tree import FastSumTree
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
