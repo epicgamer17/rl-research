@@ -22,7 +22,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             compressed_observations=compressed_observations,
         )
 
-    def store(self, observation, target_policy: list[int], id=None):
+    def store(self, observation, info: dict, target_policy: list[int], id=None):
         """
         Store a transition in the replay buffer.
         :param observation: the current observation
@@ -30,6 +30,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         :param id: the id of the transition
         """
         self.observation_buffer[self.pointer] = observation
+        self.info_buffer[self.pointer] = info
         self.target_policy_buffer[self.pointer] = target_policy
         self.size = min(self.size + 1, self.max_size)
         self.pointer = (self.pointer + 1) % self.max_size
@@ -38,6 +39,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         # http://erikerlandson.github.io/blog/2015/11/20/very-fast-reservoir-sampling/
         assert len(self) >= self.batch_size
         observation_reservoir = self.observation_buffer[: self.batch_size]
+        info_reservoir = self.info_buffer[: self.batch_size]
         target_policy_reservoir = self.target_policy_buffer[: self.batch_size]
         threshold = self.batch_size * 4
         index = self.batch_size
@@ -45,6 +47,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             i = np.random.randint(0, index)
             if i < self.batch_size:
                 observation_reservoir[i] = self.observation_buffer[index]
+                info_reservoir[i] = self.info_buffer[index]
                 target_policy_reservoir[i] = self.target_policy_buffer[index]
             index += 1
 
@@ -56,11 +59,13 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             if index < len(self):
                 i = np.random.randint(0, self.batch_size - 1)
                 observation_reservoir[i] = self.observation_buffer[index]
+                info_reservoir[i] = self.info_buffer[index]
                 target_policy_reservoir[i] = self.target_policy_buffer[index]
             index += 1
 
         return dict(
             observations=observation_reservoir,
+            infos=info_reservoir,
             targets=target_policy_reservoir,
         )
 
@@ -72,6 +77,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             self.observation_buffer = np.zeros(
                 observation_buffer_shape, dtype=self.observation_dtype
             )
+        self.info_buffer = np.zeros(self.max_size, dtype=np.object_)
         self.target_policy_buffer = np.zeros(
             (self.max_size, self.num_actions), dtype=np.float16
         )

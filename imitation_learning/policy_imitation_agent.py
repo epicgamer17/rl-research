@@ -46,13 +46,13 @@ class PolicyImitationAgent(BaseAgent):
             eps=self.config.adam_epsilon,
         )
 
-    def select_actions(self, predictions, info):
+    def select_actions(self, predictions):
         distribution = torch.distributions.Categorical(probs=predictions)
 
         selected_action = distribution.sample()
         return selected_action
 
-    def predict(self, state, info={}):
+    def predict(self, state):
         state_input = self.preprocess(state)
         policy = self.model(inputs=state_input)
         # policy = action_mask(

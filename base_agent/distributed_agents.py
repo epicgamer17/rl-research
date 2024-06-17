@@ -10,14 +10,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-
 class DistreteTransition(NamedTuple):
     state: Any
+    info: dict
     action: int
     reward: float
     next_state: Any
+    next_info: dict
     done: bool
-    legal_moves: list
 
 
 class ActorAgent(BaseAgent):
@@ -31,7 +31,7 @@ class ActorAgent(BaseAgent):
 
     def stop(self):
         self.stop_flag = True
-    
+
     def cleanup(self):
         pass
 
@@ -42,14 +42,13 @@ class ActorAgent(BaseAgent):
         pass
 
     def collect_experience(self, state, info) -> tuple[DistreteTransition, Any]:
-        legal_moves = None # sget_legal_moves(info)
         values = self.predict(state)
         action = self.select_actions(values).item()
-        next_state, reward, terminated, truncated, info = self.env.step(action)
+        next_state, reward, terminated, truncated, next_info = self.env.step(action)
         done = truncated or terminated
 
-        t = (state, action, reward, next_state, done, legal_moves)
-        return DistreteTransition(*t), info
+        t = (state, info, action, reward, next_state, next_info, done)
+        return DistreteTransition(*t), next_info
 
     def on_experience_collected(self, t):
         pass
@@ -84,6 +83,7 @@ class ActorAgent(BaseAgent):
             finally:
                 self.env.close()
                 self.cleanup()
+
 
 # Config class for PollingActor
 class PollingActorConfig(ConfigBase):

@@ -28,12 +28,13 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
     def store(
         self,
         observation,
+        info: dict,
         action,
         reward: float,
         next_observation,
+        next_info: dict,
         done: bool,
         id=None,
-        legal_moves=None,
     ):
         """Store a (s_t, a, r, s_t+1) transtion to the replay buffer.
            Returns a valid generated n-step transition (s_t-n, a, r, s_t) with the
@@ -42,7 +43,15 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
         Returns:
             (s_t-n, a, r, s_t): where r is the n-step return calculated with the replay buffer's gamma
         """
-        transition = (observation, action, reward, next_observation, done)
+        transition = (
+            observation,
+            info,
+            action,
+            reward,
+            next_observation,
+            next_info,
+            done,
+        )
         # print("store t:", transition)
         self.n_step_buffer.append(transition)
 
@@ -50,10 +59,18 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
             return None
 
         # compute n-step return and store
-        reward, next_observation, done = self._get_n_step_info()
+        reward, next_observation, next_info, done = self._get_n_step_info()
         observation, action = self.n_step_buffer[0][:2]
-        n_step_transition = (observation, action, reward, next_observation, done)
-        super().store(*n_step_transition, id=id, legal_moves=legal_moves)
+        n_step_transition = (
+            observation,
+            info,
+            action,
+            reward,
+            next_observation,
+            next_info,
+            done,
+        )
+        super().store(*n_step_transition, id=id)
         return n_step_transition
 
     def clear(self):
@@ -61,11 +78,13 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
         self.n_step_buffer = deque(maxlen=self.n_step)
 
     def _get_n_step_info(self):
-        reward, next_observation, done = self.n_step_buffer[-1][-3:]
+        reward, next_observation, next_info, done = self.n_step_buffer[-1][-4:]
 
         for transition in reversed(list(self.n_step_buffer)[:-1]):
-            r, n_o, d = transition[-3:]
+            r, n_o, n_i, d = transition[-4:]
             reward = r + self.gamma * reward * (1 - d)
-            next_observation, done = (n_o, d) if d else (next_observation, done)
+            next_observation, next_info, done = (
+                (n_o, n_i, d) if d else (next_observation, next_info, done)
+            )
 
-        return reward, next_observation, done
+        return reward, next_observation, next_info, done

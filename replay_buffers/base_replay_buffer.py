@@ -135,12 +135,13 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
     def store(
         self,
         observation,
+        info: dict,
         action,
         reward: float,
         next_observation,
+        next_info: dict,
         done: bool,
         id=None,
-        legal_moves=None,
     ):
         # compute n-step return and store
         self.id_buffer[self.pointer] = id
@@ -149,9 +150,8 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         self.reward_buffer[self.pointer] = reward
         self.next_observation_buffer[self.pointer] = next_observation
         self.done_buffer[self.pointer] = done
-        self.legal_moves_buffer[self.pointer] = (
-            legal_moves if legal_moves is not None else 0
-        )
+        self.info_buffer[self.pointer] = info
+        self.next_info_buffer[self.pointer] = next_info
 
         self.pointer = (self.pointer + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
@@ -173,8 +173,8 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         self.action_buffer = np.zeros(self.max_size, dtype=np.uint8)
         self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.done_buffer = np.zeros(self.max_size, dtype=np.bool_)
-        self.legal_moves_buffer = np.zeros(self.max_size, dtype=np.uint8)
-
+        self.info_buffer = np.zeros(self.max_size, dtype=np.object_)
+        self.next_info_buffer = np.zeros(self.max_size, dtype=np.object_)
         self.pointer = 0
         self.size = 0
 
@@ -188,7 +188,8 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             rewards=self.reward_buffer[indices],
             dones=self.done_buffer[indices],
             ids=self.id_buffer[indices],
-            legal_moves=self.legal_moves_buffer[indices],
+            info=self.info_buffer[indices],
+            next_info=self.next_info_buffer[indices],
         )
 
     def sample_from_indices(self, indices: list[int]):
@@ -199,7 +200,8 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             rewards=self.reward_buffer[indices],
             dones=self.done_buffer[indices],
             ids=self.id_buffer[indices],
-            legal_moves=self.legal_moves_buffer[indices],
+            infos=self.info_buffer[indices],
+            next_infos=self.next_info_buffer[indices],
         )
 
     def __check_id__(self, index: int, id: str) -> bool:
@@ -227,16 +229,19 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
     def store(
         self,
         observation,
+        info: dict,
         action,
         value: float,
         log_probability: float,
         reward: float,
+        id=None,
     ):
         self.observation_buffer[self.pointer] = observation
         self.action_buffer[self.pointer] = action
         self.reward_buffer[self.pointer] = reward
         self.value_buffer[self.pointer] = value
         self.log_probability_buffer[self.pointer] = log_probability
+        self.info_buffer[self.pointer] = info
 
         self.pointer = (self.pointer + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
@@ -254,6 +259,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
             advantages=self.advantage_buffer,
             returns=self.return_buffer,
             log_probabilities=self.log_probability_buffer,
+            infos=self.info_buffer,
         )
 
     def clear(self):
@@ -270,6 +276,8 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         self.return_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.value_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.log_probability_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.info_buffer = np.zeros(self.max_size, dtype=np.object_)
+
         self.pointer = 0
         self.trajectory_start_index = 0
         self.size = 0

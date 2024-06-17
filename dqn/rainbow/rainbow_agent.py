@@ -1,5 +1,6 @@
 import gc
 from time import time
+from pkg_resources import get_distribution
 import torch
 from torch.nn.utils import clip_grad_norm_
 import numpy as np
@@ -98,10 +99,11 @@ class RainbowAgent(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
-    def predict(self, states, info={}) -> torch.Tensor:
+    def predict(self, states) -> torch.Tensor:
         # could change type later
         state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)
+        masked_q_distribution = q_distribution
         return q_distribution
 
     def predict_target(self, states) -> torch.Tensor:
@@ -110,18 +112,8 @@ class RainbowAgent(BaseAgent):
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(self, distribution, info):
-        # (B, output_size, atom_size) *
-        # (                atom_size)
-        # is valid broadcasting
+    def select_actions(self, distribution):
         q_values = distribution * self.support
-        # q_values = action_mask(
-        #     actions=q_values,
-        #     legal_moves=legal_moves,
-        #     num_actions=self.num_actions,
-        #     mask_value=-torch.inf,
-        # )
-        # print(q_values)
         selected_actions = q_values.sum(2, keepdim=False).argmax(1, keepdim=False)
         return selected_actions
 
@@ -201,7 +193,7 @@ class RainbowAgent(BaseAgent):
             online_distributions = self.predict(next_observations)
             target_distributions = self.predict_target(next_observations)
             next_actions = self.select_actions(
-                online_distributions, {}
+                online_distributions
             )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[
@@ -244,12 +236,17 @@ class RainbowAgent(BaseAgent):
                 # dist = self.predict(state)
                 # action = self.select_actions(dist).item()
                 action = self.env.action_space.sample()
-                next_state, reward, terminated, truncated, info = self.env.step(action)
+                next_state, reward, terminated, truncated, next_info = self.env.step(
+                    action
+                )
                 done = terminated or truncated
                 # print(state)
-                self.replay_buffer.store(state, action, reward, next_state, done)
+                self.replay_buffer.store(
+                    state, info, action, reward, next_state, next_info, done
+                )
                 # print(self.replay_buffer.observation_buffer[0])
                 state = next_state
+                info = next_info
                 if done:
                     state, info = self.env.reset()
                 # gc.collect()
@@ -282,13 +279,16 @@ class RainbowAgent(BaseAgent):
                         range=self.num_actions,
                     )
                     # action = actions.item()
-                    next_state, reward, terminated, truncated, info = self.env.step(
-                        action
+                    next_state, reward, terminated, truncated, next_info = (
+                        self.env.step(action)
                     )
                     done = terminated or truncated
                     # print(state)
-                    self.replay_buffer.store(state, action, reward, next_state, done)
+                    self.replay_buffer.store(
+                        state, info, action, reward, next_state, next_info, done
+                    )
                     state = next_state
+                    info = next_info
                     score += reward
                     self.replay_buffer.set_beta(
                         update_per_beta(
