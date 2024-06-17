@@ -60,7 +60,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
 
         # compute n-step return and store
         reward, next_observation, next_info, done = self._get_n_step_info()
-        observation, action = self.n_step_buffer[0][:2]
+        observation, info, action = self.n_step_buffer[0][:3]
         n_step_transition = (
             observation,
             info,
