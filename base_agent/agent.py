@@ -180,7 +180,7 @@ class BaseAgent:
         with open(
             Path(
                 dir,
-                f"replay_buffers/replay_buffer.pkl",
+                f"replay_buffers/{self.model_name}_replay_buffer.pkl",
             ),
             "rb",
         ) as f:
@@ -201,6 +201,7 @@ class BaseAgent:
         # load optimizer (pickle doesn't work but dill does)
         with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "rb") as f:
             self.config.optimizer = dill.load(f)
+            self.optimizer = dill.load(f)
 
         # load replay buffer
         self.load_replay_buffers(training_step_dir)
@@ -217,7 +218,7 @@ class BaseAgent:
         with open(
             Path(
                 dir,
-                f"replay_buffers/replay_buffer.pkl",
+                f"replay_buffers/{self.model_name}_replay_buffer.pkl",
             ),
             "wb",
         ) as f:
@@ -250,7 +251,7 @@ class BaseAgent:
 
             # save optimizer (pickle doesn't work but dill does)
             with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "wb") as f:
-                dill.dump(self.config.optimizer, f)
+                dill.dump(self.optimizer, f)
 
             # save replay buffer
             self.save_replay_buffers(training_step_dir)
@@ -280,11 +281,14 @@ class BaseAgent:
         )
 
     def test(self, num_trials, step, dir="./checkpoints") -> None:
+        if num_trials == 0:
+            return
         with torch.no_grad():
             """Test the agent."""
             average_score = 0
             max_score = float("-inf")
             min_score = float("inf")
+            # self.test_env.reset()
             if self.test_env.render_mode == "rgb_array":
                 self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
                 self.test_env.video_folder = "{}/videos/{}/{}".format(
@@ -317,8 +321,8 @@ class BaseAgent:
                 print("score: ", score)
 
             # reset
-            if self.test_env.render_mode != "rgb_array":
-                self.test_env.render()
+            # if self.test_env.render_mode != "rgb_array":
+            #     self.test_env.render()
             # self.test_env.close()
             average_score /= num_trials
             return {

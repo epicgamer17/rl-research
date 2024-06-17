@@ -52,7 +52,7 @@ class PolicyImitationAgent(BaseAgent):
         selected_action = distribution.sample()
         return selected_action
 
-    def predict(self, state, info):
+    def predict(self, state, info={}):
         state_input = self.preprocess(state)
         policy = self.model(inputs=state_input)
         # policy = action_mask(

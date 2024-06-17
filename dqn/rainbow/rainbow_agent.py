@@ -96,7 +96,7 @@ class RainbowAgent(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
-    def predict(self, states) -> torch.Tensor:
+    def predict(self, states, info={}) -> torch.Tensor:
         # could change type later
         state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)

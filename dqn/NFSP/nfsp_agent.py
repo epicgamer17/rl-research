@@ -28,6 +28,9 @@
 # end for
 # end function
 
+import os
+from pathlib import Path
+import pickle
 import sys
 from time import time
 
@@ -35,7 +38,8 @@ from agent_configs import NFSPDQNConfig
 
 import torch
 from utils import get_legal_moves, current_timestamp, update_per_beta
-
+from utils.utils import exploitability, plot_graphs
+import dill
 
 sys.path.append("../../")
 
@@ -67,7 +71,7 @@ class NFSPDQN(BaseAgent):
         super().__init__(env, config, "NFSPDQN")
         rl_configs = self.config.rl_configs
         sl_configs = self.config.sl_configs
-        self.nfsp_agents = [
+        self.nfsp_agents: list[NFSPDQNAgent] = [
             NFSPDQNAgent(env, rl_configs[i], sl_configs[i], f"NFSPAgent_{i}", device)
             for i in range(self.config.num_players)
         ]
@@ -144,6 +148,9 @@ class NFSPDQN(BaseAgent):
                     training_step += 1
                 for minibatch in range(self.config.num_minibatches):
                     rl_loss, sl_loss = self.learn(current_player)
+                    print(rl_loss, sl_loss)
+                    self.stats["rl_loss"].append({"loss": rl_loss})
+                    self.stats["sl_loss"].append({"loss": sl_loss})
 
                 if (
                     training_step
@@ -153,13 +160,11 @@ class NFSPDQN(BaseAgent):
                     self.nfsp_agents[current_player].rl_agent.update_target_model()
 
                 if training_step % self.checkpoint_interval == 0:
-                    for p in range(self.config.num_players):
-                        self.nfsp_agents[p].save_checkpoint(
-                            training_step,
-                            training_step * self.config.replay_interval,
-                            time() - training_time,
-                        )
-                    # CALL CHECKPOINTING ON THE INDIVIDUAL AGENTS
+                    self.save_checkpoint(
+                        training_step,
+                        training_step * self.config.replay_interval,
+                        time() - training_time,
+                    )
 
                 if not done:
                     self.nfsp_agents[current_player].store_transition(
@@ -168,13 +173,102 @@ class NFSPDQN(BaseAgent):
 
             for p in range(self.config.num_players):
                 self.nfsp_agents[p].store_transition(action, state, rewards[p], done)
+        self.save_checkpoint(
+            training_step,
+            training_step * self.config.replay_interval,
+            time() - training_time,
+        )
         self.env.close()
 
-    def test(self, num_trials):
+    def save_checkpoint(
+        self,
+        training_step,
+        frames_seen,
+        time_taken,
+    ):
+        exploitability = 0
+
+        dir = Path("checkpoints", self.model_name)
+        training_step_dir = Path(dir, f"step_{training_step}")
+        os.makedirs(dir, exist_ok=True)
+        os.makedirs(Path(dir, "graphs"), exist_ok=True)
+        os.makedirs(Path(dir, "configs"), exist_ok=True)
+        for p in range(self.config.num_players):
+            if self.config.save_intermediate_weights:
+                weights_path = str(Path(training_step_dir, f"model_weights"))
+                os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
+                os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
+                os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
+                os.makedirs(Path(training_step_dir, "graphs_stats"), exist_ok=True)
+                if self.env.render_mode == "rgb_array":
+                    os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
+
+                # save the model weights
+                torch.save(
+                    self.nfsp_agents[p].rl_agent.model.state_dict(),
+                    f"{weights_path}/{self.nfsp_agents[p].rl_agent.model_name}_weights.keras",
+                )
+                torch.save(
+                    self.nfsp_agents[p].sl_agent.model.state_dict(),
+                    f"{weights_path}/{self.nfsp_agents[p].sl_agent.model_name}_weights.keras",
+                )
+
+                # save optimizer (pickle doesn't work but dill does)
+                with open(
+                    Path(
+                        training_step_dir,
+                        f"optimizers/{self.nfsp_agents[p].rl_agent.model_name}_optimizer.dill",
+                    ),
+                    "wb",
+                ) as f:
+                    dill.dump(self.nfsp_agents[p].rl_agent.optimizer, f)
+
+                with open(
+                    Path(
+                        training_step_dir,
+                        f"optimizers/{self.nfsp_agents[p].sl_agent.model_name}_optimizer.dill",
+                    ),
+                    "wb",
+                ) as f:
+                    dill.dump(self.nfsp_agents[p].sl_agent.optimizer, f)
+
+                # save replay buffer
+                self.nfsp_agents[p].rl_agent.save_replay_buffers(training_step_dir)
+                self.nfsp_agents[p].sl_agent.save_replay_buffers(training_step_dir)
+
+            exploitability += self.test(self.checkpoint_trials, p)
+
+        # save config
+        self.config.dump(f"{dir}/configs/config.yaml")
+
+        exploitability /= self.config.num_players
+        exploitability = abs(exploitability)
+        self.stats["test_score"].append({"score": exploitability})
+
+        # save the graph stats and targets
+        stats_path = Path(training_step_dir, f"graphs_stats", exist_ok=True)
+        os.makedirs(stats_path, exist_ok=True)
+        with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
+            pickle.dump(self.stats, f)
+        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
+            pickle.dump(self.targets, f)
+
+        # plot the graphs (and save the graph)
+        plot_graphs(
+            self.stats,
+            self.targets,
+            training_step,
+            frames_seen,
+            time_taken,
+            self.model_name,
+            f"{dir}/graphs",
+        )
+
+    def test(self, num_trials, player):
         policies = [self.nfsp_agents[p].policy for p in range(self.config.num_players)]
         for p in range(self.config.num_players):
             self.nfsp_agents[p].policy = "best_response"
-        self.nfsp_agents[0].policy = "average_strategy"
+        self.nfsp_agents[player].policy = "average_strategy"
         test_score = 0
 
         for _ in range(num_trials):
@@ -190,15 +284,15 @@ class NFSPDQN(BaseAgent):
                     )
                     done = terminated or truncated
                     state = next_state
+                    average_strategy_reward = reward[player]
+                    total_reward = sum(reward)
+                    test_score += (total_reward - average_strategy_reward)/(self.config.num_players - 1)
                     if done:
                         break
-            test_score += 1 if reward[0] >= 0 else 0
 
         for p in range(self.config.num_players):
             self.nfsp_agents[p].policy = policies[p]
-        return 1 - (
-            test_score / num_trials
-        )  # I THINK THIS IS NOT THE RIGHT THING FOR EXPLOITABILITY
+        return test_score / num_trials  # is this correct for exploitability?
 
 
 class NFSPDQNAgent(BaseAgent):
@@ -220,8 +314,12 @@ class NFSPDQNAgent(BaseAgent):
         ),
     ) -> None:
         super().__init__(env, rl_config, name)
-        self.rl_agent = RainbowAgent(env, rl_config, name, device)
-        self.sl_agent = PolicyImitationAgent(env, sl_config, name, device)
+        self.rl_agent: RainbowAgent = RainbowAgent(
+            env, rl_config, f"rl_agent_{name}", device
+        )
+        self.sl_agent: PolicyImitationAgent = PolicyImitationAgent(
+            env, sl_config, f"sl_agent_{name}", device
+        )
         self.policy = "best_response"  # "average_strategy" or "best_response
         # transition = [state, action, reward, next_state, done]
         self.previous_state = None
@@ -275,7 +373,7 @@ class NFSPDQNAgent(BaseAgent):
             self.rl_agent.replay_buffer.size
             > self.rl_agent.config.min_replay_buffer_size
         ):  # only do if not in rl agent mode? (open spiel)
-            rl_loss = self.rl_agent.learn()
+            rl_loss = self.rl_agent.learn().mean()
         if (
             self.sl_agent.replay_buffer.size
             > self.sl_agent.config.min_replay_buffer_size
