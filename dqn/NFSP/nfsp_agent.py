@@ -122,6 +122,10 @@ class NFSPDQN(BaseAgent):
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     current_player = info["player"]
+                    current_agent = self.nfsp_agents[current_player]
+                    current_rl_agent = current_agent.rl_agent
+                    current_sl_agent = current_agent.sl_agent
+
                     prediction = self.predict(state, info)
                     action = self.select_actions(
                         prediction,
@@ -133,46 +137,48 @@ class NFSPDQN(BaseAgent):
                     target_policy = torch.zeros(self.num_actions)
                     target_policy[action] = 1.0
                     # print(current_player)
-                    self.nfsp_agents[current_player].sl_agent.replay_buffer.store(
-                        state, target_policy
-                    )  # Store best moves in SL Memory
+                    if current_agent.policy == "best_response":
+                        current_sl_agent.replay_buffer.store(
+                            state, target_policy
+                        )  # Store best moves in SL Memory
 
-                    self.nfsp_agents[current_player].rl_agent.replay_buffer.set_beta(
+                    current_rl_agent.replay_buffer.set_beta(
                         update_per_beta(
-                            self.nfsp_agents[
-                                current_player
-                            ].rl_agent.replay_buffer.beta,
-                            self.nfsp_agents[
-                                current_player
-                            ].rl_agent.config.per_beta_final,
+                            current_rl_agent.replay_buffer.beta,
+                            current_rl_agent.config.per_beta_final,
                             self.training_steps,
                         )
                     )
 
-                    # self.nfsp_agents[0].rl_agent.transition = [state_p1, action_p1]
                     next_state, rewards, terminated, truncated, info = self.env.step(
                         action
                     )
-                    state = next_state
                     done = terminated or truncated
 
-                    if not done:
-                        self.nfsp_agents[current_player].store_transition(
-                            action, state, rewards[current_player], done
-                        )  # stores experiences
-                    else:
+                    # stores experience for previous time step (sets prev experience)
+                    # could only do if policy is average strategy mode
+                    current_agent.store_transition(
+                        action, state, rewards[current_player], done
+                    )  # stores experiences
+                    state = next_state
+
+                    # terminal so store experiences for all agents based on terminal state
+                    if done:
                         for p in range(self.config.num_players):
+                            # could only do if policy is average strategy mode
                             self.nfsp_agents[p].store_transition(
                                 action, state, rewards[p], done
                             )
                         self.select_agent_policies()
                         state, info = self.env.reset()
-                if (
-                    training_step
-                    % self.nfsp_agents[current_player].rl_agent.config.transfer_interval
-                    == 0
-                ):
-                    self.nfsp_agents[current_player].rl_agent.update_target_model()
+
+                for p in range(self.config.num_players):
+                    if (
+                        training_step
+                        % self.nfsp_agents[p].rl_agent.config.transfer_interval
+                        == 0
+                    ):
+                        self.nfsp_agents[p].rl_agent.update_target_model()
 
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
