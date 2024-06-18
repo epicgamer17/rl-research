@@ -277,8 +277,7 @@ class RainbowAgent(BaseAgent):
                         self.config.eg_epsilon,
                         wrapper=lambda values: self.select_actions(values).item(),
                         range=self.num_actions,
-                    )
-                    # action = actions.item()
+                    ).item()
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )

@@ -68,7 +68,7 @@ class PolicyImitationAgent(BaseAgent):
             observations = sample["observations"]
             targets = torch.from_numpy(sample["targets"]).to(self.device)
 
-            policy = self.predict(observations, {})
+            policy = self.predict(observations)
             # LEGAL MOVE MASKING?
             loss = self.config.loss_function(targets, policy).mean()
 

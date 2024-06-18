@@ -34,7 +34,7 @@ class SupervisedNetwork(nn.Module):
                 kernel_sizes=kernel_sizes,
                 strides=strides,
                 activation=self.config.activation,
-                sigma=config.noisy_sigma,
+                noisy_sigma=config.noisy_sigma,
             )
             current_shape = (
                 B,
@@ -92,6 +92,9 @@ class SupervisedNetwork(nn.Module):
         x = inputs
         if self.has_conv_layers:
             x: Tensor = self.conv_layers(x)
+
+        x = x.flatten(1, -1)
+
         if self.has_dense_layers:
             x: Tensor = self.dense_layers(x)
         x: Tensor = self.output_layer(x).view(-1, self.output_size)

@@ -95,7 +95,7 @@ class NFSPDQN(BaseAgent):
         return self.nfsp_agents[info["player"]].predict(state)
 
     def select_actions(self, predicted, info) -> torch.Tensor:
-        return self.nfsp_agents[info["player"]].select_actions(predicted, info)
+        return self.nfsp_agents[info["player"]].select_actions(predicted)
 
     def learn(self):
         rl_losses = []
@@ -125,6 +125,7 @@ class NFSPDQN(BaseAgent):
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     current_player: int = info["player"]
+                    print("Current player", current_player)
                     current_agent: NFSPDQNAgent = self.nfsp_agents[current_player]
                     current_rl_agent: RainbowAgent = current_agent.rl_agent
                     current_sl_agent: PolicyImitationAgent = current_agent.sl_agent
@@ -133,8 +134,8 @@ class NFSPDQN(BaseAgent):
                     action = self.select_actions(
                         prediction,
                         info,
-                    )
-                    print(action)
+                    ).item()
+                    print("Action", action)
 
                     target_policy = torch.zeros(self.num_actions)
                     target_policy[action] = 1.0
@@ -167,11 +168,11 @@ class NFSPDQN(BaseAgent):
 
                     # terminal so store experiences for all agents based on terminal state
                     if done:
-                        print(rewards)
+                        print("Rewards", rewards)
                         for p in range(self.config.num_players):
                             # could only do if policy is average strategy mode
                             self.nfsp_agents[p].store_transition(
-                                action, state, rewards[p], done
+                                action, state, info, rewards[p], done
                             )
                         self.select_agent_policies()
                         state, info = self.env.reset()
@@ -186,7 +187,7 @@ class NFSPDQN(BaseAgent):
 
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
-                print(rl_loss, sl_loss)
+                print("Losses", rl_loss, sl_loss)
                 self.stats["rl_loss"].append({"loss": rl_loss})
                 self.stats["sl_loss"].append({"loss": sl_loss})
 
@@ -302,7 +303,7 @@ class NFSPDQN(BaseAgent):
             while not done:
                 for p in range(self.config.num_players):
                     prediction = self.predict(state, info)
-                    action = self.select_actions(prediction)
+                    action = self.select_actions(prediction, info).item()
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
