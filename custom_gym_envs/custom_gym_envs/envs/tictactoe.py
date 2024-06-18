@@ -21,7 +21,7 @@ class TicTacToeEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=0,
             high=1,
-            shape=(self.size, self.size, 3),
+            shape=(3 if player_turn_as_plane else 2, self.size, self.size),
             dtype=np.uint8,
         )
 
@@ -43,9 +43,9 @@ class TicTacToeEnv(gym.Env):
 
     def _get_obs(self):
         if self.player_turn_as_plane:
-            return self._grid  # deepcopy?
+            return copy.deepcopy(self._grid)
         else:
-            return self._grid[:, :, :2]
+            return copy.deepcopy(self._grid[:2, :, :])
 
     def _get_info(self):
         return {"legal_moves": self._legal_moves, "player": self.current_player}
@@ -55,8 +55,8 @@ class TicTacToeEnv(gym.Env):
         super().reset(seed=seed)
 
         # Set a blank board
-        self._grid = np.zeros((self.size, self.size, 3))
-        self._grid[:, :, 2] = 0  # It's player 1's turn
+        self._grid = np.zeros((3, self.size, self.size))
+        self._grid[2, :, :] = 0  # It's player 1's turn
         self.current_player = 0
 
         # Reset legal moves
@@ -95,19 +95,19 @@ class TicTacToeEnv(gym.Env):
             return observation, reward, False, False, info
 
         # output next player's token first (since that's the one we're inputting to)
-        current_player_board = copy.deepcopy(self._grid[:, :, 0])
-        self._grid[:, :, 0] = self._grid[:, :, 1]
-        self._grid[:, :, 1] = current_player_board
+        current_player_board = copy.deepcopy(self._grid[0, :, :])
+        self._grid[0, :, :] = self._grid[1, :, :]
+        self._grid[1, :, :] = current_player_board
         # print(self._grid[:, :, 0])
         # print(self._grid[:, :, 1])
         # print(self._grid[:, :, 2])
         # print("================")
-        self._grid[action // self.size, action % self.size, 1] = 1
+        self._grid[1, action // self.size, action % self.size] = 1
 
         self._legal_moves = self._legal_moves[self._legal_moves != action]
         # encode turn as 1 or 0
         self.current_player = (self.current_player + 1) % 2
-        self._grid[:, :, 2] = 1 - self._grid[:, :, 2]
+        self._grid[2, :, :] = 1 - self._grid[2, :, :]
         # An episode is done iff there is a winner or the board is full
         terminated = self.winner()
         truncated = len(self._legal_moves) == 0
@@ -145,10 +145,10 @@ class TicTacToeEnv(gym.Env):
         )  # The size of a single grid square in pixels
 
         # First we draw the X's and 0's
-        turn = int(self._grid[0, 0, 2])
+        turn = int(self._grid[2, 0, 0])
         for i in range(self.size):
             for j in range(self.size):
-                if self._grid[i, j, turn] == 1:
+                if self._grid[turn, i, j] == 1:
                     pygame.draw.line(
                         canvas,
                         (0, 0, 255),
@@ -163,7 +163,7 @@ class TicTacToeEnv(gym.Env):
                         ((j + 0.165) * pix_square_size, (i + 0.835) * pix_square_size),
                         width=3,
                     )
-                if self._grid[i, j, 1 - turn] == 1:
+                if self._grid[1 - turn, i, j] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 0, 0),
@@ -214,17 +214,17 @@ class TicTacToeEnv(gym.Env):
     def winner(self):
         for i in range(self.size):
             for j in range(self.size):
-                if self._grid[i, j, 1] == 1:
+                if self._grid[1, i, j] == 1:
                     if self._check_win(i, j):
                         return True
         return False
 
     def _check_win(self, i, j):
         # Check row
-        if np.all([self._grid[i, k, 1] for k in range(self.win_length)]):
+        if np.all([self._grid[1, i, k] for k in range(self.win_length)]):
             return True
         # Check column
-        if np.all([self._grid[k, j, 1] for k in range(self.win_length)]):
+        if np.all([self._grid[1, k, j] for k in range(self.win_length)]):
             return True
 
         # if np.all(self._grid[i, :, 1] == 1):
@@ -235,15 +235,15 @@ class TicTacToeEnv(gym.Env):
 
         # Check diagonals for any cell
         if i + self.win_length <= self.size and j + self.win_length <= self.size:
-            if np.all([self._grid[i + k, j + k, 1] for k in range(self.win_length)]):
+            if np.all([self._grid[1, i + k, j + k] for k in range(self.win_length)]):
                 return True
         if i - self.win_length >= -1 and j + self.win_length <= self.size:
-            if np.all([self._grid[i - k, j + k, 1] for k in range(self.win_length)]):
+            if np.all([self._grid[1, i - k, j + k] for k in range(self.win_length)]):
                 return True
         if i + self.win_length <= self.size and j - self.win_length >= -1:
-            if np.all([self._grid[i + k, j - k, 1] for k in range(self.win_length)]):
+            if np.all([self._grid[1, i + k, j - k] for k in range(self.win_length)]):
                 return True
         if i - self.win_length >= -1 and j - self.win_length >= -1:
-            if np.all([self._grid[i - k, j - k, 1] for k in range(self.win_length)]):
+            if np.all([self._grid[1, i - k, j - k] for k in range(self.win_length)]):
                 return True
         return False

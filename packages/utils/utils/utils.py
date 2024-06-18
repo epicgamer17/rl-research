@@ -30,29 +30,43 @@ import pandas as pd
 # from replay_buffers.segment_tree import SumSegmentTree
 
 
-def normalize_policy(policy: torch.float32):
-    policy /= policy.sum(axis=-1, keepdims=False)
-    return policy
+def normalize_policies(policies: torch.float32):
+    # print(policies)
+    policy_sums = policies.sum(axis=-1, keepdims=True)
+    # print(policy_sums)
+    policies = policies / policy_sums
+    return policies
 
 
-def action_mask(
-    actions: Tensor, legal_moves, num_actions: int, mask_value: float = 0
-) -> Tensor:
+def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
     """
     Mask actions that are not legal moves
     actions: Tensor, probabilities of actions or q-values
     """
-    # print(legal_moves)
-    mask = torch.zeros(num_actions, dtype=np.int8)
-    mask[legal_moves] = 1
+    # add a dimension if the legal moves are not a list of lists
+    if len(legal_moves) != actions.shape[0]:
+        legal_moves = [legal_moves]
+
+    assert (
+        len(legal_moves) == actions.shape[0]
+    ), "Legal moves should be the same length as the batch size"
+
+    mask = torch.zeros_like(actions, dtype=torch.bool)
+    for i, legal in enumerate(legal_moves):
+        mask[i, legal] = True
     # print(mask)
-    actions[mask == 0] = mask_value
+    # print(actions)
+    # actions[mask == 0] = mask_value
+    actions = torch.where(mask, actions, torch.tensor(mask_value))
+    # print(mask)
     return actions
 
 
-def get_legal_moves(info: dict):
-    # info["legal_moves"] if self.config.game.has_legal_moves else None
-    return info["legal_moves"] if "legal_moves" in info else None
+def get_legal_moves(info: dict | list[dict]):
+    if isinstance(info, dict):
+        return info["legal_moves"] if "legal_moves" in info else None
+    else:
+        return [(i["legal_moves"] if "legal_moves" in i else None) for i in info]
 
 
 def normalize_images(image: Tensor) -> Tensor:

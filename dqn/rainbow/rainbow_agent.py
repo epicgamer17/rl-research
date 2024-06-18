@@ -1,15 +1,18 @@
 import gc
 from time import time
-from pkg_resources import get_distribution
 import torch
 from torch.nn.utils import clip_grad_norm_
 import numpy as np
 from agent_configs import RainbowConfig
-from utils import update_per_beta, get_legal_moves, current_timestamp
+from utils import (
+    update_per_beta,
+    get_legal_moves,
+    current_timestamp,
+    action_mask,
+    epsilon_greedy_policy,
+)
 
 import sys
-
-from utils.utils import epsilon_greedy_policy
 
 sys.path.append("../../")
 
@@ -103,7 +106,6 @@ class RainbowAgent(BaseAgent):
         # could change type later
         state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)
-        masked_q_distribution = q_distribution
         return q_distribution
 
     def predict_target(self, states) -> torch.Tensor:
@@ -112,9 +114,18 @@ class RainbowAgent(BaseAgent):
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(self, distribution):
+    def select_actions(
+        self, distribution, info: dict = None, mask_actions: bool = True
+    ):
+        assert info is not None if mask_actions else True, "Need info to mask actions"
+        # print(info)
         q_values = distribution * self.support
-        selected_actions = q_values.sum(2, keepdim=False).argmax(1, keepdim=False)
+        q_values = q_values.sum(2, keepdim=False)
+        if mask_actions:
+            legal_moves = get_legal_moves(info)
+            q_values = action_mask(q_values, legal_moves, mask_value=-float("inf"))
+        selected_actions = q_values.argmax(1, keepdim=False)
+
         return selected_actions
 
     def learn(self) -> np.ndarray:
@@ -193,7 +204,8 @@ class RainbowAgent(BaseAgent):
             online_distributions = self.predict(next_observations)
             target_distributions = self.predict_target(next_observations)
             next_actions = self.select_actions(
-                online_distributions
+                online_distributions,
+                info=samples["next_infos"],
             )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[
@@ -275,7 +287,7 @@ class RainbowAgent(BaseAgent):
                     action = epsilon_greedy_policy(
                         values,
                         self.config.eg_epsilon,
-                        wrapper=lambda values: self.select_actions(values).item(),
+                        wrapper=lambda values: self.select_actions(values, info).item(),
                         range=self.num_actions,
                     ).item()
                     next_state, reward, terminated, truncated, next_info = (

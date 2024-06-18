@@ -1,5 +1,5 @@
 import torch
-from utils import action_mask, normalize_policy, current_timestamp, get_legal_moves
+from utils import action_mask, normalize_policies, current_timestamp, get_legal_moves
 from base_agent.agent import BaseAgent
 from torch.nn.utils import clip_grad_norm_
 
@@ -52,14 +52,14 @@ class PolicyImitationAgent(BaseAgent):
         selected_action = distribution.sample()
         return selected_action
 
-    def predict(self, state):
+    def predict(self, state, info: dict = None, mask_actions: bool = True):
+        assert info is not None if mask_actions else True, "Need info to mask actions"
         state_input = self.preprocess(state)
         policy = self.model(inputs=state_input)
-        # policy = action_mask(
-        #     policy, get_legal_moves(info), self.num_actions, mask_value=0
-        # )
-        # policy = normalize_policy(policy)
-
+        if mask_actions:
+            legal_moves = get_legal_moves(info)
+            policy = action_mask(policy, legal_moves, mask_value=0)
+            policy = normalize_policies(policy)
         return policy
 
     def learn(self):
@@ -68,8 +68,7 @@ class PolicyImitationAgent(BaseAgent):
             observations = sample["observations"]
             targets = torch.from_numpy(sample["targets"]).to(self.device)
 
-            policy = self.predict(observations)
-            # LEGAL MOVE MASKING?
+            policy = self.predict(observations, info=sample["infos"])
             loss = self.config.loss_function(targets, policy).mean()
 
             self.optimizer.zero_grad()
