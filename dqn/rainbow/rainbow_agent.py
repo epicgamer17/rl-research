@@ -124,6 +124,7 @@ class RainbowAgent(BaseAgent):
         if mask_actions:
             legal_moves = get_legal_moves(info)
             q_values = action_mask(q_values, legal_moves, mask_value=-float("inf"))
+        # print("Q Values", q_values)
         selected_actions = q_values.argmax(1, keepdim=False)
 
         return selected_actions
@@ -189,6 +190,7 @@ class RainbowAgent(BaseAgent):
         self.replay_buffer.update_priorities(samples["indices"], priorities)
 
     def compute_target_distributions(self, samples):
+        # print("computing target distributions")
         with torch.no_grad():
             discount_factor = self.config.discount_factor**self.config.n_step
             delta_z = (
@@ -203,6 +205,8 @@ class RainbowAgent(BaseAgent):
             )
             online_distributions = self.predict(next_observations)
             target_distributions = self.predict_target(next_observations)
+
+            # print(samples["next_infos"])
             next_actions = self.select_actions(
                 online_distributions,
                 info=samples["next_infos"],

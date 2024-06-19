@@ -48,7 +48,7 @@ class PolicyImitationAgent(BaseAgent):
 
     def select_actions(self, predictions):
         distribution = torch.distributions.Categorical(probs=predictions)
-
+        # print("Probabilities", predictions)
         selected_action = distribution.sample()
         return selected_action
 

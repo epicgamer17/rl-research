@@ -1,3 +1,4 @@
+import gc
 import os
 from pathlib import Path
 import numpy as np
@@ -268,6 +269,9 @@ class BaseAgent:
             pickle.dump(self.stats, f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
             pickle.dump(self.targets, f)
+
+        # to periodically clear uneeded memory, if it is drastically slowing down training you can comment this out, checkpoint less often, or do less trials
+        gc.collect()
 
         # plot the graphs (and save the graph)
         plot_graphs(

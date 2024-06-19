@@ -28,6 +28,7 @@
 # end for
 # end function
 
+import gc
 import os
 from pathlib import Path
 import pickle
@@ -58,6 +59,7 @@ class NFSPDQN(BaseAgent):
         self,
         env,
         config: NFSPDQNConfig,
+        name: str = f"nfsp_dqn_{current_timestamp():.1f}",
         device: torch.device = (
             torch.device("cuda")
             if torch.cuda.is_available()
@@ -69,7 +71,7 @@ class NFSPDQN(BaseAgent):
             )
         ),
     ) -> None:
-        super().__init__(env, config, "NFSPDQN")
+        super().__init__(env, config, name)
         rl_configs = self.config.rl_configs
         sl_configs = self.config.sl_configs
         self.nfsp_agents: list[NFSPDQNAgent] = [
@@ -136,7 +138,7 @@ class NFSPDQN(BaseAgent):
                         prediction,
                         info,
                     ).item()
-                    print("Action", action, "Prediction", prediction)
+                    # print("Action", action)
 
                     # only average strategy mode? (open spiel)
                     current_agent.store_transition(
@@ -160,7 +162,7 @@ class NFSPDQN(BaseAgent):
 
                     # terminal so store experiences for all agents based on terminal state
                     if done:
-                        print("Rewards", rewards)
+                        # print("Rewards", rewards)
                         for p in range(self.config.num_players):
                             # could only do if policy is average strategy mode
                             self.nfsp_agents[p].store_transition(
@@ -191,7 +193,7 @@ class NFSPDQN(BaseAgent):
 
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
-                print("Losses", rl_loss, sl_loss)
+                # print("Losses", rl_loss, sl_loss)
                 if rl_loss is not None:
                     self.stats["rl_loss"].append({"loss": rl_loss})
                 if sl_loss is not None:
@@ -284,6 +286,8 @@ class NFSPDQN(BaseAgent):
             pickle.dump(self.stats, f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
             pickle.dump(self.targets, f)
+
+        gc.collect()
 
         # plot the graphs (and save the graph)
         plot_graphs(
@@ -378,6 +382,12 @@ class NFSPDQNAgent(BaseAgent):
             and self.previous_state is not None
             and self.previous_info is not None
         ):
+            assert (
+                self.previous_info["player"] == info["player"] or done == True
+            ), "Players don't match, {} != {}".format(
+                self.previous_info["player"], info["player"]
+            )
+
             self.transition += [reward, state, info, done]
             # only do this if it is average policy? (open spiel)
             self.rl_agent.replay_buffer.store(*self.transition)
@@ -391,12 +401,13 @@ class NFSPDQNAgent(BaseAgent):
             self.previous_action = None
 
     def select_policy(self, anticipatory_param):
+        # print("Selecting policy")
         if random.random() < anticipatory_param:
-            print("best_response")
-            return "best_response"
+            # print("best_response")
+            self.policy = "best_response"
         else:
-            print("average_strategy")
-            return "average_strategy"
+            # print("average_strategy")
+            self.policy = "average_strategy"
 
     def predict(self, state, info: dict):
         if self.policy == "average_strategy":
@@ -407,8 +418,10 @@ class NFSPDQNAgent(BaseAgent):
 
     def select_actions(self, prediction, info: dict):
         if self.policy == "average_strategy":
+            # print("selecting with average strategy")
             action = self.sl_agent.select_actions(prediction)
         else:
+            # print("selecting with best response")
             action = self.rl_agent.select_actions(prediction, info)
 
         return action

@@ -43,10 +43,11 @@ def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
     Mask actions that are not legal moves
     actions: Tensor, probabilities of actions or q-values
     """
-    # add a dimension if the legal moves are not a list of lists
-    if len(legal_moves) != actions.shape[0]:
-        legal_moves = [legal_moves]
+    assert isinstance(legal_moves, list), "Legal moves should be a list"
 
+    # add a dimension if the legal moves are not a list of lists
+    # if len(legal_moves) != actions.shape[0]:
+    #     legal_moves = [legal_moves]
     assert (
         len(legal_moves) == actions.shape[0]
     ), "Legal moves should be the same length as the batch size"
@@ -64,7 +65,7 @@ def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
 
 def get_legal_moves(info: dict | list[dict]):
     if isinstance(info, dict):
-        return info["legal_moves"] if "legal_moves" in info else None
+        return [info["legal_moves"] if "legal_moves" in info else None]
     else:
         return [(i["legal_moves"] if "legal_moves" in i else None) for i in info]
 

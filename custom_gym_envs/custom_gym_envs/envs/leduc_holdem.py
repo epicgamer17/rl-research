@@ -36,14 +36,14 @@ class LeducHoldemEnv(gym.Env):
     #     return self.game.get_state()
 
     def _get_info(self):
-        return {"legal_moves": self._legal_moves, "player": self._player}
+        return {"legal_moves": copy.deepcopy(self._legal_moves), "player": self._player}
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
         dict, self._player = self.game.reset()
-        self._legal_moves = dict["legal_actions"]
+        self._legal_moves = list(dict["legal_actions"].keys())
         observation = dict["obs"]
         move_history = dict["action_record"]
 
@@ -65,7 +65,7 @@ class LeducHoldemEnv(gym.Env):
         # )
 
         dict, self._player = self.game.step(action)
-        self._legal_moves = dict["legal_actions"]
+        self._legal_moves = list(dict["legal_actions"].keys())
         observation = dict["obs"]
         move_history = dict["action_record"]
 
