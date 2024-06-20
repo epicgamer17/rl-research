@@ -275,7 +275,74 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
 def plot_exploitability(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    default_plot_func(axs, key, values, targets, row, col)
+    if len(values) == 0:
+        return
+    exploitability = [value["exploitability"] for value in values]
+    x = np.arange(1, len(values) + 1)
+    axs[row][col].plot(x, exploitability)
+
+    has_target_model_updates = "target_model_updated" in values[0]
+    has_model_updates = "model_updated" in values[0]
+
+    if has_target_model_updates:
+        weight_updates = [value["target_model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="black",
+                    linestyle="dotted",
+                    # label="Target Model Weight Update",
+                )
+
+    if has_model_updates:
+        weight_updates = [value["model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="gray",
+                    linestyle="dotted",
+                    # label="Model Weight Update",
+                )
+
+    if len(exploitability) > 1:
+        best_fit_x, best_fit_y = np.polyfit(x, exploitability, 1)
+        axs[row][col].plot(
+            x,
+            best_fit_x * x + best_fit_y,
+            color="g",
+            label="Best Fit Line",
+            linestyle="dotted",
+        )
+
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(exploitability[-10:])} | latest: {exploitability[-1]}"
+    )
+
+    axs[row][col].set_xlabel("Game")
+    axs[row][col].set_ylabel("Exploitability")
+
+    axs[row][col].set_xscale("log")
+    axs[row][col].set_yscale("symlog")
+
+    axs[row][col].set_xlim(1, len(values))
+    max_exploitability = max(exploitability)
+    min_exploitability = min(exploitability)
+    axs[row][col].set_ylim(
+        -(10 ** math.ceil(math.log10(abs(min_exploitability)))),
+        10 ** math.ceil(math.log10(max_exploitability)),
+    )
+
+    if key in targets and targets[key] is not None:
+        axs[row][col].axhline(
+            y=targets[key],
+            color="r",
+            linestyle="dashed",
+            label="Target Exploitability: {}".format(targets[key]),
+        )
+
+    axs[row][col].legend()
 
 
 def plot_trials(scores: list, file_name: str, final_trial: int = 0):
@@ -609,11 +676,6 @@ def reward_clipping(reward: float, lower_bound: float = -1, upper_bound: float =
 def discounted_cumulative_sums(x, discount):
     # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
-
-
-def exploitability(env, average_policy, best_response_policies, num_episodes):
-    # play average against best responses and measure the reward the expected value or value
-    pass
 
 
 def nash_convergence(env, average_policies, best_response_policies, num_episodes):

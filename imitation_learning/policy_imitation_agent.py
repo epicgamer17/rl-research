@@ -69,7 +69,7 @@ class PolicyImitationAgent(BaseAgent):
             targets = torch.from_numpy(sample["targets"]).to(self.device)
 
             policy = self.predict(observations, info=sample["infos"])
-            loss = self.config.loss_function(targets, policy).mean()
+            loss = self.config.loss_function(policy, targets).mean()
 
             self.optimizer.zero_grad()
             loss.backward()

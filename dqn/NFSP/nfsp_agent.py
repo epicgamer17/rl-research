@@ -39,8 +39,7 @@ from agent_configs import NFSPDQNConfig
 
 from numpy import average
 import torch
-from utils import get_legal_moves, current_timestamp, update_per_beta
-from utils.utils import exploitability, plot_graphs
+from utils import get_legal_moves, current_timestamp, update_per_beta, plot_graphs
 import dill
 
 sys.path.append("../../")
@@ -82,11 +81,11 @@ class NFSPDQN(BaseAgent):
         self.stats = {
             "rl_loss": [],
             "sl_loss": [],
-            "test_score": [],
+            "exploitability": [],
         }
 
         self.targets = {
-            "test_score": 0,
+            "exploitability": 0,
         }
 
     def select_agent_policies(self):
@@ -193,7 +192,7 @@ class NFSPDQN(BaseAgent):
 
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
-                # print("Losses", rl_loss, sl_loss)
+                print("Losses", rl_loss, sl_loss)
                 if rl_loss is not None:
                     self.stats["rl_loss"].append({"loss": rl_loss})
                 if sl_loss is not None:
@@ -202,13 +201,13 @@ class NFSPDQN(BaseAgent):
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
                     training_step,
-                    training_step,
+                    training_step * self.config.replay_interval,
                     time() - training_time,
                 )
 
         self.save_checkpoint(
             training_step,
-            training_step,
+            training_step * self.config.replay_interval,
             time() - training_time,
         )
         self.env.close()
@@ -277,7 +276,7 @@ class NFSPDQN(BaseAgent):
         self.config.dump(f"{dir}/configs/config.yaml")
 
         exploitability /= self.config.num_players
-        self.stats["test_score"].append({"score": exploitability})
+        self.stats["exploitability"].append({"exploitability": exploitability})
 
         # save the graph stats and targets
         stats_path = Path(training_step_dir, f"graphs_stats", exist_ok=True)
@@ -321,6 +320,7 @@ class NFSPDQN(BaseAgent):
             while not done:
                 for p in range(self.config.num_players):
                     prediction = self.predict(state, info)
+                    print("Prediction", prediction)
                     action = self.select_actions(prediction, info).item()
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
