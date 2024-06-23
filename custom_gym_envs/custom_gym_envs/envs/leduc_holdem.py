@@ -66,11 +66,13 @@ class LeducHoldemEnv(gym.Env):
 
         dict, self._player = self.game.step(action)
         self._legal_moves = list(dict["legal_actions"].keys())
-        observation = dict["obs"]
+        observation = dict["obs"]  # copy.deepcopy(dict["obs"])?
         move_history = dict["action_record"]
 
-        terminated = self.game.is_over()
-        rewards = self.game.get_payoffs() if terminated else [0] * self.players
+        terminated = self.game.is_over()  # copy.deepcopy(self.game.is_over())?
+        rewards = (
+            self.game.get_payoffs() if terminated else [0] * self.players
+        )  # copy.deepcopy(self.game.get_payoffs()) if terminated else [0] * self.players
         info = self._get_info()
 
         if self.render_mode == "human":

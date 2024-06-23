@@ -192,7 +192,7 @@ class NFSPDQN(BaseAgent):
 
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
-                print("Losses", rl_loss, sl_loss)
+                # print("Losses", rl_loss, sl_loss)
                 if rl_loss is not None:
                     self.stats["rl_loss"].append({"loss": rl_loss})
                 if sl_loss is not None:
@@ -275,7 +275,7 @@ class NFSPDQN(BaseAgent):
         # save config
         self.config.dump(f"{dir}/configs/config.yaml")
 
-        exploitability /= self.config.num_players
+        # exploitability /= self.config.num_players
         self.stats["exploitability"].append({"exploitability": exploitability})
 
         # save the graph stats and targets
@@ -322,6 +322,16 @@ class NFSPDQN(BaseAgent):
                     prediction = self.predict(state, info)
                     print("Prediction", prediction)
                     action = self.select_actions(prediction, info).item()
+                    action_string = (
+                        "call"
+                        if action == 0
+                        else (
+                            "raise"
+                            if action == 1
+                            else "fold" if action == 2 else "check"
+                        )
+                    )
+                    print(action_string)
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )

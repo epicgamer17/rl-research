@@ -1,4 +1,5 @@
 import gc
+from math import e
 from time import time
 import torch
 from torch.nn.utils import clip_grad_norm_
@@ -13,6 +14,14 @@ from utils import (
 )
 
 import sys
+
+from utils.utils import (
+    CategoricalCrossentropyLoss,
+    HuberLoss,
+    KLDivergenceLoss,
+    update_inverse_sqrt_schedule,
+    update_linear_schedule,
+)
 
 sys.path.append("../../")
 
@@ -92,6 +101,8 @@ class RainbowAgent(BaseAgent):
         """row vector Tensor(atom_size)
         """
 
+        self.eg_epsilon = self.config.eg_epsilon
+
         self.stats = {
             "score": [],
             "loss": [],
@@ -119,8 +130,11 @@ class RainbowAgent(BaseAgent):
     ):
         assert info is not None if mask_actions else True, "Need info to mask actions"
         # print(info)
-        q_values = distribution * self.support
-        q_values = q_values.sum(2, keepdim=False)
+        if self.config.atom_size > 1:
+            q_values = distribution * self.support
+            q_values = q_values.sum(2, keepdim=False)
+        else:
+            q_values = distribution
         if mask_actions:
             legal_moves = get_legal_moves(info)
             q_values = action_mask(q_values, legal_moves, mask_value=-float("inf"))
@@ -146,20 +160,43 @@ class RainbowAgent(BaseAgent):
         # print("actions", actions)
 
         # print(observations[0])
-
         # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
-        online_distributions = self.predict(observations)[
+        online_predictions = self.predict(observations)[
             range(self.config.minibatch_size), actions
         ]
         # (B, atom_size)
-        target_distributions = self.compute_target_distributions(samples)
+        if self.config.atom_size > 1:
+            assert isinstance(
+                self.config.loss_function, KLDivergenceLoss
+            ) or isinstance(
+                self.config.loss_function, CategoricalCrossentropyLoss
+            ), "Only KLDivergenceLoss and CategoricalCrossentropyLoss are supported for atom_size > 1, recieved {}".format(
+                self.config.loss_function
+            )
+            target_predictions = self.compute_target_distributions(samples)
+        else:
+            assert isinstance(
+                self.config.loss_function, HuberLoss
+            ), "Only HuberLoss is supported for atom_size = 1, recieved {}".format(
+                self.config.loss_function
+            )
+            next_observations, rewards, dones = (
+                torch.from_numpy(samples["next_observations"]).to(self.device),
+                torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
+                torch.from_numpy(samples["dones"]).to(self.device).view(-1, 1),
+            )
+            target_predictions = self.predict_target(next_observations)
+            target_predictions = target_predictions.max(1, keepdim=True)[0]
+            target_predictions = (
+                rewards + self.config.discount_factor * (~dones) * target_predictions
+            ).view(-1)
         # print("predicted", online_distributions)
         # print("target", target_distributions)
 
         weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
         # (B)
         elementwise_loss = self.config.loss_function(
-            online_distributions, target_distributions
+            online_predictions, target_predictions
         )
         assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
             elementwise_loss
@@ -274,6 +311,27 @@ class RainbowAgent(BaseAgent):
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
+    def update_eg_epsilon(self, training_step: int = None):
+        if self.config.eg_epsilon_decay_type == "linear":
+            self.eg_epsilon = update_linear_schedule(
+                self.eg_epsilon,
+                self.config.eg_epsilon_final,
+                self.training_steps,
+                self.config.eg_epsilon,
+                training_step,
+            )
+        elif self.config.eg_epsilon_decay_type == "inverse_sqrt":
+            self.eg_epsilon = update_inverse_sqrt_schedule(
+                self.config.eg_epsilon,
+                training_step,
+            )
+        else:
+            raise ValueError(
+                "Invalid epsilon decay type: {}".format(
+                    self.config.eg_epsilon_decay_type
+                )
+            )
+
     def train(self):
         start_time = time()
         score = 0
@@ -290,10 +348,11 @@ class RainbowAgent(BaseAgent):
                     values = self.predict(state)
                     action = epsilon_greedy_policy(
                         values,
-                        self.config.eg_epsilon,
+                        self.eg_epsilon,
                         wrapper=lambda values: self.select_actions(values, info).item(),
                         range=self.num_actions,
                     ).item()
+                    self.update_eg_epsilon()
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )

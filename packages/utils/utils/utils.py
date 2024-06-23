@@ -112,29 +112,34 @@ def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int)
     return per_beta
 
 
-def update_linear_lr_schedule(
-    learning_rate: float,
+def update_linear_schedule(
+    value: float,
     final_value: float,
     total_steps: int,
     initial_value: float = None,
     current_step: int = None,
 ):
     # learning_rate = initial_value
-    if initial_value < final_value or learning_rate < final_value:
+    if initial_value < final_value or value < final_value:
         clamp_func = min
     else:
         clamp_func = max
     if initial_value is not None and current_step is not None:
-        learning_rate = clamp_func(
+        value = clamp_func(
             final_value,
             initial_value
             + (final_value - initial_value) * (current_step / total_steps),
         )
     else:
-        learning_rate = clamp_func(
-            final_value, learning_rate + (final_value - learning_rate) / total_steps
-        )
-    return learning_rate
+        value = clamp_func(final_value, value + (final_value - value) / total_steps)
+    return value
+
+
+def update_inverse_sqrt_schedule(
+    initial_value: float = None,
+    current_step: int = None,
+):
+    return initial_value / math.sqrt(current_step + 1)
 
 
 def default_plot_func(
@@ -277,7 +282,7 @@ def plot_exploitability(
 ):
     if len(values) == 0:
         return
-    exploitability = [value["exploitability"] for value in values]
+    exploitability = [abs(value["exploitability"]) for value in values]
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, exploitability)
 
@@ -324,15 +329,36 @@ def plot_exploitability(
     axs[row][col].set_ylabel("Exploitability")
 
     axs[row][col].set_xscale("log")
-    axs[row][col].set_yscale("symlog")
+    axs[row][col].set_yscale("log")
 
     axs[row][col].set_xlim(1, len(values))
     max_exploitability = max(exploitability)
     min_exploitability = min(exploitability)
-    axs[row][col].set_ylim(
-        -(10 ** math.ceil(math.log10(abs(min_exploitability)))),
-        10 ** math.ceil(math.log10(max_exploitability)),
-    )
+    # axs[row][col].set_ylim(
+    #     -(10 ** math.ceil(math.log10(abs(min_exploitability)))),
+    #     10 ** math.ceil(math.log10(max_exploitability)),
+    # )
+
+    # axs[row][col].set_yticks(
+    #     [
+    #         -(10**i)
+    #         for i in range(
+    #             math.ceil(math.log10(abs(min_exploitability))),
+    #             math.floor(math.log10(abs(min_exploitability))) - 1,
+    #             -1,
+    #         )
+    #         if -(10**i) < min_exploitability
+    #     ]
+    #     + [0]
+    #     + [
+    #         10**i
+    #         for i in range(
+    #             math.ceil(math.log10(max_exploitability)),
+    #             math.floor(math.log10(max_exploitability)) + 1,
+    #         )
+    #         if 10**i > max_exploitability
+    #     ]
+    # )
 
     if key in targets and targets[key] is not None:
         axs[row][col].axhline(
