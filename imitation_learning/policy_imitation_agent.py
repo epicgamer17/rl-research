@@ -2,6 +2,7 @@ import torch
 from utils import action_mask, normalize_policies, current_timestamp, get_legal_moves
 from base_agent.agent import BaseAgent
 from torch.nn.utils import clip_grad_norm_
+from torch.optim import Adam, SGD
 
 from imitation_learning.supervised_network import SupervisedNetwork
 from replay_buffers.nfsp_reservoir_buffer import NFSPReservoirBuffer
@@ -39,12 +40,17 @@ class PolicyImitationAgent(BaseAgent):
             self.num_actions,
             (self.config.minibatch_size,) + self.observation_dimensions,
         )
-
-        self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-            params=self.model.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-        )
+        if self.config.optimizer == Adam:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+            )
+        elif self.config.optimizer == SGD:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+            )
 
     def select_actions(self, predictions):
         distribution = torch.distributions.Categorical(probs=predictions)

@@ -300,54 +300,107 @@ class NFSPDQN(BaseAgent):
         )
 
     def test(self, num_trials, player, step, dir="./checkpoints"):
-        policies = [self.nfsp_agents[p].policy for p in range(self.config.num_players)]
-        for p in range(self.config.num_players):
-            self.nfsp_agents[p].policy = "best_response"
-        self.nfsp_agents[player].policy = "average_strategy"
-        test_score = 0
-        if self.test_env.render_mode == "rgb_array":
-            self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
-            self.test_env.video_folder = "{}/videos/{}/{}".format(
-                dir, self.nfsp_agents[player].model_name, step
-            )
-            if not os.path.exists(self.test_env.video_folder):
-                os.makedirs(self.test_env.video_folder)
+        if num_trials == 0:
+            return
+        with torch.no_grad():
+            policies = [
+                self.nfsp_agents[p].policy for p in range(self.config.num_players)
+            ]
+            for p in range(self.config.num_players):
+                self.nfsp_agents[p].policy = "best_response"
+            self.nfsp_agents[player].policy = "average_strategy"
+            test_score = 0
+            if self.test_env.render_mode == "rgb_array":
+                self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
+                self.test_env.video_folder = "{}/videos/{}/{}".format(
+                    dir, self.nfsp_agents[player].model_name, step
+                )
+                if not os.path.exists(self.test_env.video_folder):
+                    os.makedirs(self.test_env.video_folder)
 
-        for _ in range(num_trials):
-            print("Trial ", _)
-            state, info = self.test_env.reset()
-            done = False
-            while not done:
-                for p in range(self.config.num_players):
-                    prediction = self.predict(state, info)
-                    print("Prediction", prediction)
-                    action = self.select_actions(prediction, info).item()
-                    action_string = (
-                        "call"
-                        if action == 0
-                        else (
-                            "raise"
-                            if action == 1
-                            else "fold" if action == 2 else "check"
+            for _ in range(num_trials):
+                print("Trial ", _)
+                state, info = self.test_env.reset()
+                done = False
+                while not done:
+                    for p in range(self.config.num_players):
+                        prediction = self.predict(state, info)
+                        print("Prediction", prediction)
+                        action = self.select_actions(prediction, info).item()
+                        action_string = (
+                            "call"
+                            if action == 0
+                            else (
+                                "raise"
+                                if action == 1
+                                else "fold" if action == 2 else "check"
+                            )
                         )
-                    )
-                    print(action_string)
-                    next_state, reward, terminated, truncated, info = (
-                        self.test_env.step(action)
-                    )
-                    done = terminated or truncated
-                    state = next_state
-                    average_strategy_reward = reward[player]
-                    total_reward = sum(reward)
-                    test_score += (total_reward - average_strategy_reward) / (
-                        self.config.num_players - 1
-                    )
-                    if done:
-                        break
+                        print(action_string)
+                        next_state, reward, terminated, truncated, info = (
+                            self.test_env.step(action)
+                        )
+                        done = terminated or truncated
+                        state = next_state
+                        average_strategy_reward = reward[player]
+                        total_reward = sum(reward)
+                        test_score += (total_reward - average_strategy_reward) / (
+                            self.config.num_players - 1
+                        )
+                        if done:
+                            break
 
+            for p in range(self.config.num_players):
+                self.nfsp_agents[p].policy = policies[p]
+            return test_score / num_trials  # is this correct for exploitability?
+
+    def load_from_checkpoint(self, dir: str, training_step):
+        dir = Path("checkpoints", self.model_name)
+        training_step_dir = Path(dir, f"step_{training_step}")
+        self.config = self.config.__class__.load(Path(dir, "configs/config.yaml"))
+        rl_configs = self.config.rl_configs
+        sl_configs = self.config.sl_configs
         for p in range(self.config.num_players):
-            self.nfsp_agents[p].policy = policies[p]
-        return test_score / num_trials  # is this correct for exploitability?
+            weights_path = str(Path(training_step_dir, f"model_weights"))
+            # save the model weights
+            self.nfsp_agents[p].rl_agent.load_model_weights(
+                f"{weights_path}/{self.nfsp_agents[p].rl_agent.model_name}_weights.keras"
+            )
+            self.nfsp_agents[p].sl_agent.load_model_weights(
+                f"{weights_path}/{self.nfsp_agents[p].sl_agent.model_name}_weights.keras"
+            )
+            self.nfsp_agents[p].rl_agent.config = rl_configs[p]
+            self.nfsp_agents[p].sl_agent.config = sl_configs[p]
+
+            with open(
+                Path(
+                    training_step_dir,
+                    f"optimizers/{self.nfsp_agents[p].rl_agent.model_name}_optimizer.dill",
+                ),
+                "rb",
+            ) as f:
+                self.nfsp_agents[p].rl_agent.optimizer = dill.load(f)
+
+            with open(
+                Path(
+                    training_step_dir,
+                    f"optimizers/{self.nfsp_agents[p].sl_agent.model_name}_optimizer.dill",
+                ),
+                "rb",
+            ) as f:
+                self.nfsp_agents[p].sl_agent.optimizer = dill.load(f)
+
+            # save replay buffer
+            self.nfsp_agents[p].rl_agent.load_replay_buffers(training_step_dir)
+            self.nfsp_agents[p].sl_agent.load_replay_buffers(training_step_dir)
+
+        # save the graph stats and targets
+        with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "rb") as f:
+            self.stats = pickle.load(f)
+        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "rb") as f:
+            self.targets = pickle.load(f)
+
+        self.start_training_step = training_step
 
 
 class NFSPDQNAgent(BaseAgent):

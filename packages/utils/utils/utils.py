@@ -146,7 +146,7 @@ def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
     axs[row][col].set_title(
-        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
+        "{} | rolling average: {}".format(key, np.mean(values[-5:]))
     )
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
@@ -198,7 +198,7 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
                 )
 
     axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(scores[-10:])} | latest: {scores[-1]}"
+        f"{key} | rolling average: {np.mean(scores[-5:])} | latest: {scores[-1]}"
     )
 
     axs[row][col].set_xlabel("Game")
@@ -258,7 +258,7 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
                 )
 
     axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(loss[-10:])} | latest: {loss[-1]}"
+        f"{key} | rolling average: {np.mean(loss[-5:])} | latest: {loss[-1]}"
     )
 
     axs[row][col].set_xlabel("Time Step")
@@ -283,8 +283,12 @@ def plot_exploitability(
     if len(values) == 0:
         return
     exploitability = [abs(value["exploitability"]) for value in values]
+    rolling_averages = [
+        np.mean(exploitability[i - 5 : i]) if i >= 5 else np.mean(exploitability[0:i])
+        for i in range(len(exploitability))
+    ]
     x = np.arange(1, len(values) + 1)
-    axs[row][col].plot(x, exploitability)
+    axs[row][col].plot(x, rolling_averages)
 
     has_target_model_updates = "target_model_updated" in values[0]
     has_model_updates = "model_updated" in values[0]
@@ -311,8 +315,8 @@ def plot_exploitability(
                     # label="Model Weight Update",
                 )
 
-    if len(exploitability) > 1:
-        best_fit_x, best_fit_y = np.polyfit(x, exploitability, 1)
+    if len(rolling_averages) > 1:
+        best_fit_x, best_fit_y = np.polyfit(x, rolling_averages, 1)
         axs[row][col].plot(
             x,
             best_fit_x * x + best_fit_y,
@@ -322,18 +326,16 @@ def plot_exploitability(
         )
 
     axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(exploitability[-10:])} | latest: {exploitability[-1]}"
+        f"{key} | rolling average: {np.mean(exploitability[-5:])} | latest: {exploitability[-1]}"
     )
 
     axs[row][col].set_xlabel("Game")
-    axs[row][col].set_ylabel("Exploitability")
+    axs[row][col].set_ylabel("Exploitability (rolling average)")
 
     axs[row][col].set_xscale("log")
     axs[row][col].set_yscale("log")
 
     axs[row][col].set_xlim(1, len(values))
-    max_exploitability = max(exploitability)
-    min_exploitability = min(exploitability)
     # axs[row][col].set_ylim(
     #     -(10 ** math.ceil(math.log10(abs(min_exploitability)))),
     #     10 ** math.ceil(math.log10(max_exploitability)),
@@ -778,6 +780,15 @@ class HuberLoss:
         return huber(predicted, target, axis=self.axis, delta=self.delta)
 
 
+def mse(predicted: torch.Tensor, target: torch.Tensor):
+    return (predicted - target) ** 2
+
+
+class MSELoss:
+    def __call__(self, predicted, target):
+        return mse(predicted, target)
+
+
 from typing import Callable
 
 Loss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
@@ -865,11 +876,11 @@ def hyperopt_analysis(
             )
             max_score = 0
 
-            # print([stat_dict["score"] for stat_dict in stats["test_score"][-10:]])
+            # print([stat_dict["score"] for stat_dict in stats["test_score"][-5:]])
             final_rolling_averages.append(
                 np.around(
                     np.mean(
-                        [stat_dict["score"] for stat_dict in stats["test_score"][-10:]]
+                        [stat_dict["score"] for stat_dict in stats["test_score"][-5:]]
                     ),
                     1,
                 )
@@ -878,7 +889,7 @@ def hyperopt_analysis(
             final_std_devs.append(
                 np.around(
                     np.std(
-                        [stat_dict["score"] for stat_dict in stats["test_score"][-10:]]
+                        [stat_dict["score"] for stat_dict in stats["test_score"][-5:]]
                     ),
                     1,
                 )

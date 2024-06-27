@@ -3,6 +3,8 @@ from math import e
 from time import time
 import torch
 from torch.nn.utils import clip_grad_norm_
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
 import numpy as np
 from agent_configs import RainbowConfig
 from utils import (
@@ -11,17 +13,15 @@ from utils import (
     current_timestamp,
     action_mask,
     epsilon_greedy_policy,
-)
-
-import sys
-
-from utils.utils import (
     CategoricalCrossentropyLoss,
     HuberLoss,
     KLDivergenceLoss,
+    MSELoss,
     update_inverse_sqrt_schedule,
     update_linear_schedule,
 )
+
+import sys
 
 sys.path.append("../../")
 
@@ -66,11 +66,19 @@ class RainbowAgent(BaseAgent):
         self.target_model.to(device)
         self.target_model.load_state_dict(self.model.state_dict())
         self.target_model.eval()
-        self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-            params=self.model.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-        )
+
+        if self.config.optimizer == Adam:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+            )
+        elif self.config.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+            )
 
         self.replay_buffer = PrioritizedNStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
@@ -175,9 +183,9 @@ class RainbowAgent(BaseAgent):
             )
             target_predictions = self.compute_target_distributions(samples)
         else:
-            assert isinstance(
-                self.config.loss_function, HuberLoss
-            ), "Only HuberLoss is supported for atom_size = 1, recieved {}".format(
+            assert isinstance(self.config.loss_function, HuberLoss) or isinstance(
+                self.config.loss_function, MSELoss
+            ), "Only HuberLoss or MSELoss are supported for atom_size = 1, recieved {}".format(
                 self.config.loss_function
             )
             next_observations, rewards, dones = (
