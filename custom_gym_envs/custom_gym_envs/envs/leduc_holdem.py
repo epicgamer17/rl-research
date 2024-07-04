@@ -9,10 +9,14 @@ import rlcard
 class LeducHoldemEnv(gym.Env):
     metadata = {"render_modes": [], "render_fps": 1}
 
-    def __init__(self, render_mode=None, players=2):
+    def __init__(self, render_mode=None, players=2, encode_player_turn=False):
         self.game = rlcard.make("leduc-holdem")
+        self.encode_player_turn = encode_player_turn
         self.observation_space = spaces.Box(
-            low=-10, high=10, shape=(36,), dtype=np.int8
+            low=-10,
+            high=10,
+            shape=(37,) if self.encode_player_turn else (36,),
+            dtype=np.int8,
         )
         self.players = players
 
@@ -45,6 +49,9 @@ class LeducHoldemEnv(gym.Env):
         dict, self._player = self.game.reset()
         self._legal_moves = list(dict["legal_actions"].keys())
         observation = dict["obs"]
+        if self.encode_player_turn:
+            observation = np.append(observation, [self._player])
+            observation = np.reshape(observation, (37,))
         move_history = dict["action_record"]
 
         info = self._get_info()
@@ -67,6 +74,9 @@ class LeducHoldemEnv(gym.Env):
         dict, self._player = self.game.step(action)
         self._legal_moves = list(dict["legal_actions"].keys())
         observation = dict["obs"]  # copy.deepcopy(dict["obs"])?
+        if self.encode_player_turn:
+            observation = np.append(observation, [self._player])
+            observation = np.reshape(observation, (37,))
         move_history = dict["action_record"]
 
         terminated = self.game.is_over()  # copy.deepcopy(self.game.is_over())?

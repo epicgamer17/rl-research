@@ -4,6 +4,7 @@ import copy
 import math
 from operator import itemgetter
 import os
+from cv2 import exp
 import matplotlib
 
 matplotlib.use("Agg")
@@ -283,10 +284,12 @@ def plot_exploitability(
     if len(values) == 0:
         return
     exploitability = [abs(value["exploitability"]) for value in values]
+    print(values)
     rolling_averages = [
-        np.mean(exploitability[i - 5 : i]) if i >= 5 else np.mean(exploitability[0:i])
-        for i in range(len(exploitability))
+        np.mean(exploitability[max(0, i - 5) : i])
+        for i in range(1, len(exploitability) + 1)
     ]
+    # print(rolling_averages)
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, rolling_averages)
 
@@ -336,6 +339,7 @@ def plot_exploitability(
     axs[row][col].set_yscale("log")
 
     axs[row][col].set_xlim(1, len(values))
+    # axs[row][col].set_ylim(0.01, 10)
     # axs[row][col].set_ylim(
     #     -(10 ** math.ceil(math.log10(abs(min_exploitability)))),
     #     10 ** math.ceil(math.log10(max_exploitability)),
@@ -460,6 +464,55 @@ def plot_graphs(
 
     # plt.show()
     assert os.path.exists(dir), f"Directory {dir} does not exist"
+    plt.savefig("{}/{}.png".format(dir, model_name))
+
+    plt.close(fig)
+
+
+def plot_comparisons(
+    stats: list[dict],
+    model_name: str,
+    dir: str = "./checkpoints/graphs",
+):
+    num_plots = len(stats[0])
+    sqrt_num_plots = math.ceil(np.sqrt(num_plots))
+    fig, axs = plt.subplots(
+        sqrt_num_plots,
+        sqrt_num_plots,
+        figsize=(10 * sqrt_num_plots, 5 * sqrt_num_plots),
+        squeeze=False,
+    )
+
+    fig.suptitle("Comparison of training stats")
+
+    for i, (key, _) in enumerate(stats[0].items()):
+        row = i // sqrt_num_plots
+        col = i % sqrt_num_plots
+        # max_value = float("-inf")
+        # min_value = float("inf")
+        max_len = 0
+        for s in stats:
+            values = s[key]
+            # print(values)
+            max_len = max(max_len, len(values))
+            print(max_len)
+            # max_value = max(max_value, max(values))
+            # min_value = min(min_value, min(values))
+            if key in stat_keys_to_plot_funcs:
+                stat_keys_to_plot_funcs[key](axs, key, values, {}, row, col)
+                axs[row][col].set_xlim(0, max_len)
+            else:
+                default_plot_func(axs, key, values, {}, row, col)
+
+        # axs[row][col].set_ylim(min_value, max_value)
+
+    for i in range(num_plots, sqrt_num_plots**2):
+        row = i // sqrt_num_plots
+        col = i % sqrt_num_plots
+        fig.delaxes(axs[row][col])
+
+    # plt.show()
+    os.makedirs(dir, exist_ok=True)
     plt.savefig("{}/{}.png".format(dir, model_name))
 
     plt.close(fig)

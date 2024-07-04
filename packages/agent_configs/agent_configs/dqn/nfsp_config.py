@@ -22,5 +22,9 @@ class NFSPDQNConfig(Config):
 
         self.anticipatory_param = self.parse_field("anticipatory_param", 0.5)
 
+        self.shared_networks_and_buffers = self.parse_field(
+            "shared_networks_and_buffers", False
+        )
+
     def _verify_game(self):
         assert self.game.is_discrete, "NFSP only supports discrete action spaces"
