@@ -94,14 +94,6 @@ class LearnerTest:
             self.do_stop(info)
 
         print("deleting refs")
-        del self.actor_rrefs
-        del self.replay_rref
-        del self.target_rref
-        del self.online_rref
-
-        import gc
-        print("collecting garbage")
-        gc.collect()
 
     def do_stop(self, info):
         print("stopping", info)
@@ -151,9 +143,6 @@ class ActorTest:
 
     def cleanup(self):
         pass
-        del self.replay_rref
-        del self.target_rref
-        del self.online_rref
 
     def stop(self):
         self.stop_flag = True
