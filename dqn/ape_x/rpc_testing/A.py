@@ -21,8 +21,9 @@ def recv_stop_msg(msg):
 
 
 def main():
-    l = classes.LearnerTest(recv_stop_msg)
+    l = classes.LearnerTest(stop_fn=recv_stop_msg)
     l.run()
+
     logger.info("deleting l")
     del l
     try:

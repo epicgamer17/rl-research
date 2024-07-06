@@ -42,7 +42,7 @@ def main():
     parser.add_argument("--rank", type=int, default=2)
     # "parameter" or "replay"
     parser.add_argument("--name", type=str, default="parameter_server")
-    parser.add_argument("--world_size", type=int, default=6)
+    parser.add_argument("--world_size", type=int, default=3)
 
     args = parser.parse_args()
 
@@ -76,6 +76,10 @@ def main():
     workers.extend(f"actor_{i}" for i in range(0, args.world_size - 3))
     rpc.api._barrier(workers)
     time.sleep(1)
+
+    logger.info("collecting garbage")
+    import gc
+    gc.collect()
 
     logger.info(f"[{args.name}] shutting down rpc")
     try:
