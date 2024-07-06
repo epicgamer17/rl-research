@@ -50,7 +50,7 @@ class LearnerTest:
 
         for i in range(3):
             print("creating actor", i)
-            self.actor_rrefs.append(rpc.remote(f"actor_{i}", ActorTest))
+            self.actor_rrefs.append(rpc.remote(f"actor_{i}", ActorTest, (self.replay_rref, self.target_rref, self.online_rref)))
 
         a = [self.replay_rref, self.target_rref, self.online_rref]
         a.extend(self.actor_rrefs)
@@ -115,12 +115,12 @@ class ReplayTest:
 
 
 class ActorTest:
-    def __init__(self) -> None:
+    def __init__(self, replay_rref, target_rref, online_rref) -> None:
         self.stop_flag = False
 
-        self.replay_rref = rpc.remote("replay", ReplayTest)
-        self.target_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
-        self.online_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
+        self.replay_rref = replay_rref
+        self.target_rref = target_rref
+        self.online_rref = online_rref
 
         self._wait_for_confirmations(
             [self.replay_rref, self.target_rref, self.online_rref]
