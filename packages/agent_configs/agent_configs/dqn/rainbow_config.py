@@ -19,6 +19,13 @@ class RainbowConfig(Config):
 
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
         self.eg_epsilon: float = self.parse_field("eg_epsilon", 0.00)
+        self.eg_epsilon_final: float = self.parse_field("eg_epsilon_final", 0.00)
+        self.eg_epsilon_decay_type: str = self.parse_field(
+            "eg_epsilon_decay_type", "linear"
+        )
+        self.eg_epsilon_decay_final_step: int = self.parse_field(
+            "eg_epsilon_decay_final_step", self.training_steps
+        )
 
         self.dueling: bool = self.parse_field("dueling", True)
         self.discount_factor: float = self.parse_field("discount_factor", 0.99)
@@ -34,9 +41,9 @@ class RainbowConfig(Config):
         self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
         self.n_step: int = self.parse_field("n_step", 3)
         self.atom_size: int = self.parse_field("atom_size", 51, wrapper=int)
-        assert (
-            self.atom_size > 1
-        ), "Atom size must be greater than 1, as softmax and Q distribution to Q value calculation requires more than 1 atom"
+        # assert (
+        #     self.atom_size > 1
+        # ), "Atom size must be greater than 1, as softmax and Q distribution to Q value calculation requires more than 1 atom"
 
         assert not (
             self.game.is_image and len(self.conv_layers) == 0

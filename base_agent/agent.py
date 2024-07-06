@@ -1,3 +1,4 @@
+import gc
 import os
 from pathlib import Path
 import numpy as np
@@ -184,10 +185,13 @@ class BaseAgent:
             ),
             "rb",
         ) as f:
+            print(f)
             self.replay_buffer = pickle.load(f)
 
     def load_model_weights(self, weights_path: str):
-        raise NotImplementedError
+        print("Warning using default load model weights")
+        state_dict = torch.load(weights_path)
+        self.model.load_state_dict(state_dict)
 
     def load_from_checkpoint(self, dir: str, training_step):
         training_step_dir = Path(dir, f"step_{training_step}")
@@ -200,7 +204,6 @@ class BaseAgent:
 
         # load optimizer (pickle doesn't work but dill does)
         with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "rb") as f:
-            self.config.optimizer = dill.load(f)
             self.optimizer = dill.load(f)
 
         # load replay buffer
@@ -268,6 +271,9 @@ class BaseAgent:
             pickle.dump(self.stats, f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
             pickle.dump(self.targets, f)
+
+        # to periodically clear uneeded memory, if it is drastically slowing down training you can comment this out, checkpoint less often, or do less trials
+        gc.collect()
 
         # plot the graphs (and save the graph)
         plot_graphs(

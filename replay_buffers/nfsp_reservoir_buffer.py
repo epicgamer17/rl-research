@@ -29,11 +29,18 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         :param target_policy: the target policy for the current observation, in this case it is of type list[int] since it will be a one-hot encoded vector of the action selected by the best agent network
         :param id: the id of the transition
         """
-        self.observation_buffer[self.pointer] = observation
-        self.info_buffer[self.pointer] = info
-        self.target_policy_buffer[self.pointer] = target_policy
-        self.size = min(self.size + 1, self.max_size)
-        self.pointer = (self.pointer + 1) % self.max_size
+        if self.size < self.max_size:
+            self.observation_buffer[self.add_calls] = observation
+            self.info_buffer[self.add_calls] = info
+            self.target_policy_buffer[self.add_calls] = target_policy
+            self.size = min(self.size + 1, self.max_size)
+        else:
+            idx = np.random.randint(0, self.add_calls + 1)
+            if idx < self.max_size:
+                self.observation_buffer[idx] = observation
+                self.info_buffer[idx] = info
+                self.target_policy_buffer[idx] = target_policy
+        self.add_calls += 1
 
     def sample(self):
         # http://erikerlandson.github.io/blog/2015/11/20/very-fast-reservoir-sampling/
@@ -82,4 +89,4 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             (self.max_size, self.num_actions), dtype=np.float16
         )
         self.size = 0
-        self.pointer = 0
+        self.add_calls = 0

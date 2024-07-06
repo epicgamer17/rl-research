@@ -4,6 +4,7 @@ import copy
 import math
 from operator import itemgetter
 import os
+from cv2 import exp
 import matplotlib
 
 matplotlib.use("Agg")
@@ -30,29 +31,44 @@ import pandas as pd
 # from replay_buffers.segment_tree import SumSegmentTree
 
 
-def normalize_policy(policy: torch.float32):
-    policy /= policy.sum(axis=-1, keepdims=False)
-    return policy
+def normalize_policies(policies: torch.float32):
+    # print(policies)
+    policy_sums = policies.sum(axis=-1, keepdims=True)
+    # print(policy_sums)
+    policies = policies / policy_sums
+    return policies
 
 
-def action_mask(
-    actions: Tensor, legal_moves, num_actions: int, mask_value: float = 0
-) -> Tensor:
+def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
     """
     Mask actions that are not legal moves
     actions: Tensor, probabilities of actions or q-values
     """
-    # print(legal_moves)
-    mask = torch.zeros(num_actions, dtype=np.int8)
-    mask[legal_moves] = 1
+    assert isinstance(legal_moves, list), "Legal moves should be a list"
+
+    # add a dimension if the legal moves are not a list of lists
+    # if len(legal_moves) != actions.shape[0]:
+    #     legal_moves = [legal_moves]
+    assert (
+        len(legal_moves) == actions.shape[0]
+    ), "Legal moves should be the same length as the batch size"
+
+    mask = torch.zeros_like(actions, dtype=torch.bool)
+    for i, legal in enumerate(legal_moves):
+        mask[i, legal] = True
     # print(mask)
-    actions[mask == 0] = mask_value
+    # print(actions)
+    # actions[mask == 0] = mask_value
+    actions = torch.where(mask, actions, torch.tensor(mask_value))
+    # print(mask)
     return actions
 
 
-def get_legal_moves(info: dict):
-    # info["legal_moves"] if self.config.game.has_legal_moves else None
-    return info["legal_moves"] if "legal_moves" in info else None
+def get_legal_moves(info: dict | list[dict]):
+    if isinstance(info, dict):
+        return [info["legal_moves"] if "legal_moves" in info else None]
+    else:
+        return [(i["legal_moves"] if "legal_moves" in i else None) for i in info]
 
 
 def normalize_images(image: Tensor) -> Tensor:
@@ -97,36 +113,41 @@ def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int)
     return per_beta
 
 
-def update_linear_lr_schedule(
-    learning_rate: float,
+def update_linear_schedule(
+    value: float,
     final_value: float,
     total_steps: int,
     initial_value: float = None,
     current_step: int = None,
 ):
     # learning_rate = initial_value
-    if initial_value < final_value or learning_rate < final_value:
+    if initial_value < final_value or value < final_value:
         clamp_func = min
     else:
         clamp_func = max
     if initial_value is not None and current_step is not None:
-        learning_rate = clamp_func(
+        value = clamp_func(
             final_value,
             initial_value
             + (final_value - initial_value) * (current_step / total_steps),
         )
     else:
-        learning_rate = clamp_func(
-            final_value, learning_rate + (final_value - learning_rate) / total_steps
-        )
-    return learning_rate
+        value = clamp_func(final_value, value + (final_value - value) / total_steps)
+    return value
+
+
+def update_inverse_sqrt_schedule(
+    initial_value: float = None,
+    current_step: int = None,
+):
+    return initial_value / math.sqrt(current_step + 1)
 
 
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
     axs[row][col].set_title(
-        "{} | rolling average: {}".format(key, np.mean(values[-10:]))
+        "{} | rolling average: {}".format(key, np.mean(values[-5:]))
     )
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
@@ -178,7 +199,7 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
                 )
 
     axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(scores[-10:])} | latest: {scores[-1]}"
+        f"{key} | rolling average: {np.mean(scores[-5:])} | latest: {scores[-1]}"
     )
 
     axs[row][col].set_xlabel("Game")
@@ -238,7 +259,7 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
                 )
 
     axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(loss[-10:])} | latest: {loss[-1]}"
+        f"{key} | rolling average: {np.mean(loss[-5:])} | latest: {loss[-1]}"
     )
 
     axs[row][col].set_xlabel("Time Step")
@@ -260,7 +281,100 @@ def plot_loss(axs, key: str, values: list[dict], targets: dict, row: int, col: i
 def plot_exploitability(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    default_plot_func(axs, key, values, targets, row, col)
+    if len(values) == 0:
+        return
+    exploitability = [abs(value["exploitability"]) for value in values]
+    print(values)
+    rolling_averages = [
+        np.mean(exploitability[max(0, i - 5) : i])
+        for i in range(1, len(exploitability) + 1)
+    ]
+    # print(rolling_averages)
+    x = np.arange(1, len(values) + 1)
+    axs[row][col].plot(x, rolling_averages)
+
+    has_target_model_updates = "target_model_updated" in values[0]
+    has_model_updates = "model_updated" in values[0]
+
+    if has_target_model_updates:
+        weight_updates = [value["target_model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="black",
+                    linestyle="dotted",
+                    # label="Target Model Weight Update",
+                )
+
+    if has_model_updates:
+        weight_updates = [value["model_updated"] for value in values]
+        for i, weight_update in enumerate(weight_updates):
+            if weight_update:
+                axs[row][col].axvline(
+                    x=i,
+                    color="gray",
+                    linestyle="dotted",
+                    # label="Model Weight Update",
+                )
+
+    if len(rolling_averages) > 1:
+        best_fit_x, best_fit_y = np.polyfit(x, rolling_averages, 1)
+        axs[row][col].plot(
+            x,
+            best_fit_x * x + best_fit_y,
+            color="g",
+            label="Best Fit Line",
+            linestyle="dotted",
+        )
+
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(exploitability[-5:])} | latest: {exploitability[-1]}"
+    )
+
+    axs[row][col].set_xlabel("Game")
+    axs[row][col].set_ylabel("Exploitability (rolling average)")
+
+    axs[row][col].set_xscale("log")
+    axs[row][col].set_yscale("log")
+
+    axs[row][col].set_xlim(1, len(values))
+    # axs[row][col].set_ylim(0.01, 10)
+    # axs[row][col].set_ylim(
+    #     -(10 ** math.ceil(math.log10(abs(min_exploitability)))),
+    #     10 ** math.ceil(math.log10(max_exploitability)),
+    # )
+
+    # axs[row][col].set_yticks(
+    #     [
+    #         -(10**i)
+    #         for i in range(
+    #             math.ceil(math.log10(abs(min_exploitability))),
+    #             math.floor(math.log10(abs(min_exploitability))) - 1,
+    #             -1,
+    #         )
+    #         if -(10**i) < min_exploitability
+    #     ]
+    #     + [0]
+    #     + [
+    #         10**i
+    #         for i in range(
+    #             math.ceil(math.log10(max_exploitability)),
+    #             math.floor(math.log10(max_exploitability)) + 1,
+    #         )
+    #         if 10**i > max_exploitability
+    #     ]
+    # )
+
+    if key in targets and targets[key] is not None:
+        axs[row][col].axhline(
+            y=targets[key],
+            color="r",
+            linestyle="dashed",
+            label="Target Exploitability: {}".format(targets[key]),
+        )
+
+    axs[row][col].legend()
 
 
 def plot_trials(scores: list, file_name: str, final_trial: int = 0):
@@ -350,6 +464,55 @@ def plot_graphs(
 
     # plt.show()
     assert os.path.exists(dir), f"Directory {dir} does not exist"
+    plt.savefig("{}/{}.png".format(dir, model_name))
+
+    plt.close(fig)
+
+
+def plot_comparisons(
+    stats: list[dict],
+    model_name: str,
+    dir: str = "./checkpoints/graphs",
+):
+    num_plots = len(stats[0])
+    sqrt_num_plots = math.ceil(np.sqrt(num_plots))
+    fig, axs = plt.subplots(
+        sqrt_num_plots,
+        sqrt_num_plots,
+        figsize=(10 * sqrt_num_plots, 5 * sqrt_num_plots),
+        squeeze=False,
+    )
+
+    fig.suptitle("Comparison of training stats")
+
+    for i, (key, _) in enumerate(stats[0].items()):
+        row = i // sqrt_num_plots
+        col = i % sqrt_num_plots
+        # max_value = float("-inf")
+        # min_value = float("inf")
+        max_len = 0
+        for s in stats:
+            values = s[key]
+            # print(values)
+            max_len = max(max_len, len(values))
+            print(max_len)
+            # max_value = max(max_value, max(values))
+            # min_value = min(min_value, min(values))
+            if key in stat_keys_to_plot_funcs:
+                stat_keys_to_plot_funcs[key](axs, key, values, {}, row, col)
+                axs[row][col].set_xlim(0, max_len)
+            else:
+                default_plot_func(axs, key, values, {}, row, col)
+
+        # axs[row][col].set_ylim(min_value, max_value)
+
+    for i in range(num_plots, sqrt_num_plots**2):
+        row = i // sqrt_num_plots
+        col = i % sqrt_num_plots
+        fig.delaxes(axs[row][col])
+
+    # plt.show()
+    os.makedirs(dir, exist_ok=True)
     plt.savefig("{}/{}.png".format(dir, model_name))
 
     plt.close(fig)
@@ -596,11 +759,6 @@ def discounted_cumulative_sums(x, discount):
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
-def exploitability(env, average_policy, best_response_policies, num_episodes):
-    # play average against best responses and measure the reward the expected value or value
-    pass
-
-
 def nash_convergence(env, average_policies, best_response_policies, num_episodes):
     # for every player (average policy) play against the corresponding best policies
     # sum the exploitability of each player and then divide by the number of players
@@ -673,6 +831,15 @@ class HuberLoss:
 
     def __call__(self, predicted, target):
         return huber(predicted, target, axis=self.axis, delta=self.delta)
+
+
+def mse(predicted: torch.Tensor, target: torch.Tensor):
+    return (predicted - target) ** 2
+
+
+class MSELoss:
+    def __call__(self, predicted, target):
+        return mse(predicted, target)
 
 
 from typing import Callable
@@ -762,11 +929,11 @@ def hyperopt_analysis(
             )
             max_score = 0
 
-            # print([stat_dict["score"] for stat_dict in stats["test_score"][-10:]])
+            # print([stat_dict["score"] for stat_dict in stats["test_score"][-5:]])
             final_rolling_averages.append(
                 np.around(
                     np.mean(
-                        [stat_dict["score"] for stat_dict in stats["test_score"][-10:]]
+                        [stat_dict["score"] for stat_dict in stats["test_score"][-5:]]
                     ),
                     1,
                 )
@@ -775,7 +942,7 @@ def hyperopt_analysis(
             final_std_devs.append(
                 np.around(
                     np.std(
-                        [stat_dict["score"] for stat_dict in stats["test_score"][-10:]]
+                        [stat_dict["score"] for stat_dict in stats["test_score"][-5:]]
                     ),
                     1,
                 )

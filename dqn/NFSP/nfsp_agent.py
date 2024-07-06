@@ -28,6 +28,7 @@
 # end for
 # end function
 
+import gc
 import os
 from pathlib import Path
 import pickle
@@ -38,8 +39,7 @@ from agent_configs import NFSPDQNConfig
 
 from numpy import average
 import torch
-from utils import get_legal_moves, current_timestamp, update_per_beta
-from utils.utils import exploitability, plot_graphs
+from utils import get_legal_moves, current_timestamp, update_per_beta, plot_graphs
 import dill
 
 sys.path.append("../../")
@@ -58,6 +58,7 @@ class NFSPDQN(BaseAgent):
         self,
         env,
         config: NFSPDQNConfig,
+        name: str = f"nfsp_dqn_{current_timestamp():.1f}",
         device: torch.device = (
             torch.device("cuda")
             if torch.cuda.is_available()
@@ -69,7 +70,7 @@ class NFSPDQN(BaseAgent):
             )
         ),
     ) -> None:
-        super().__init__(env, config, "NFSPDQN")
+        super().__init__(env, config, name)
         rl_configs = self.config.rl_configs
         sl_configs = self.config.sl_configs
         self.nfsp_agents: list[NFSPDQNAgent] = [
@@ -80,11 +81,11 @@ class NFSPDQN(BaseAgent):
         self.stats = {
             "rl_loss": [],
             "sl_loss": [],
-            "test_score": [],
+            "exploitability": [],
         }
 
         self.targets = {
-            "test_score": self.env.spec.reward_threshold,
+            "exploitability": 0,
         }
 
     def select_agent_policies(self):
@@ -92,9 +93,9 @@ class NFSPDQN(BaseAgent):
             self.nfsp_agents[p].select_policy(self.config.anticipatory_param)
 
     def predict(self, state, info):
-        return self.nfsp_agents[info["player"]].predict(state)
+        return self.nfsp_agents[info["player"]].predict(state, info)
 
-    def select_actions(self, predicted, info) -> torch.Tensor:
+    def select_actions(self, predicted, info: dict) -> torch.Tensor:
         return self.nfsp_agents[info["player"]].select_actions(predicted, info)
 
     def learn(self):
@@ -105,10 +106,10 @@ class NFSPDQN(BaseAgent):
             rl_losses.append(rl_loss)
             sl_losses.append(sl_loss)
         average_rl_loss = (
-            sum(rl_losses) / len(rl_losses) if None not in rl_losses else 0
+            sum(rl_losses) / len(rl_losses) if None not in rl_losses else None
         )
         average_sl_loss = (
-            sum(sl_losses) / len(sl_losses) if None not in sl_losses else 0
+            sum(sl_losses) / len(sl_losses) if None not in sl_losses else None
         )
         return average_rl_loss, average_sl_loss
 
@@ -120,6 +121,8 @@ class NFSPDQN(BaseAgent):
 
         self.select_agent_policies()
         state, info = self.env.reset()
+        rewards = [None] * self.config.num_players
+        done = False
 
         for training_step in range(self.start_training_step, self.training_steps):
             with torch.no_grad():
@@ -133,8 +136,13 @@ class NFSPDQN(BaseAgent):
                     action = self.select_actions(
                         prediction,
                         info,
-                    )
-                    print(action)
+                    ).item()
+                    # print("Action", action)
+
+                    # only average strategy mode? (open spiel)
+                    current_agent.store_transition(
+                        action, state, info, rewards[current_player], done
+                    )  # stores experiences
 
                     target_policy = torch.zeros(self.num_actions)
                     target_policy[action] = 1.0
@@ -144,37 +152,27 @@ class NFSPDQN(BaseAgent):
                             state, info, target_policy
                         )  # Store best moves in SL Memory
 
-                    current_rl_agent.replay_buffer.set_beta(
-                        update_per_beta(
-                            current_rl_agent.replay_buffer.beta,
-                            current_rl_agent.config.per_beta_final,
-                            self.training_steps,
-                        )
-                    )
-
                     next_state, rewards, terminated, truncated, next_info = (
                         self.env.step(action)
                     )
                     done = terminated or truncated
-
-                    # stores experience for previous time step (sets prev experience)
-                    # could only do if policy is average strategy mode
-                    current_agent.store_transition(
-                        action, state, info, rewards[current_player], done
-                    )  # stores experiences
                     state = next_state
                     info = next_info
 
                     # terminal so store experiences for all agents based on terminal state
                     if done:
-                        print(rewards)
+                        # print("Rewards", rewards)
                         for p in range(self.config.num_players):
                             # could only do if policy is average strategy mode
                             self.nfsp_agents[p].store_transition(
-                                action, state, rewards[p], done
+                                action, state, info, rewards[p], done
                             )
                         self.select_agent_policies()
                         state, info = self.env.reset()
+                        rewards = [
+                            None
+                        ] * self.config.num_players  # ugly but makes code cleaner for storing in rl
+                        done = False  # ugly but makes code cleaner for storing in rl
 
                 for p in range(self.config.num_players):
                     if (
@@ -184,22 +182,32 @@ class NFSPDQN(BaseAgent):
                     ):
                         self.nfsp_agents[p].rl_agent.update_target_model()
 
+                    self.nfsp_agents[p].rl_agent.replay_buffer.set_beta(
+                        update_per_beta(
+                            self.nfsp_agents[p].rl_agent.replay_buffer.beta,
+                            self.nfsp_agents[p].rl_agent.config.per_beta_final,
+                            self.training_steps,
+                        )
+                    )
+
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
-                print(rl_loss, sl_loss)
-                self.stats["rl_loss"].append({"loss": rl_loss})
-                self.stats["sl_loss"].append({"loss": sl_loss})
+                # print("Losses", rl_loss, sl_loss)
+                if rl_loss is not None:
+                    self.stats["rl_loss"].append({"loss": rl_loss})
+                if sl_loss is not None:
+                    self.stats["sl_loss"].append({"loss": sl_loss})
 
-            if training_step % self.checkpoint_interval == 0:
+            if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
                     training_step,
-                    training_step,
+                    training_step * self.config.replay_interval,
                     time() - training_time,
                 )
 
         self.save_checkpoint(
             training_step,
-            training_step,
+            training_step * self.config.replay_interval,
             time() - training_time,
         )
         self.env.close()
@@ -218,14 +226,14 @@ class NFSPDQN(BaseAgent):
         os.makedirs(Path(dir, "graphs"), exist_ok=True)
         os.makedirs(Path(dir, "configs"), exist_ok=True)
         for p in range(self.config.num_players):
+            if self.env.render_mode == "rgb_array":
+                os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
             if self.config.save_intermediate_weights:
                 weights_path = str(Path(training_step_dir, f"model_weights"))
                 os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
                 os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
                 os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
                 os.makedirs(Path(training_step_dir, "graphs_stats"), exist_ok=True)
-                if self.env.render_mode == "rgb_array":
-                    os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
                 # save the model weights
                 torch.save(
@@ -260,14 +268,15 @@ class NFSPDQN(BaseAgent):
                 self.nfsp_agents[p].rl_agent.save_replay_buffers(training_step_dir)
                 self.nfsp_agents[p].sl_agent.save_replay_buffers(training_step_dir)
 
-            exploitability += self.test(self.checkpoint_trials, p)
+            exploitability += self.test(
+                self.checkpoint_trials, p, training_step, training_step_dir
+            )
 
         # save config
         self.config.dump(f"{dir}/configs/config.yaml")
 
-        exploitability /= self.config.num_players
-        exploitability = abs(exploitability)
-        self.stats["test_score"].append({"score": exploitability})
+        # exploitability /= self.config.num_players
+        self.stats["exploitability"].append({"exploitability": exploitability})
 
         # save the graph stats and targets
         stats_path = Path(training_step_dir, f"graphs_stats", exist_ok=True)
@@ -276,6 +285,8 @@ class NFSPDQN(BaseAgent):
             pickle.dump(self.stats, f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
             pickle.dump(self.targets, f)
+
+        gc.collect()
 
         # plot the graphs (and save the graph)
         plot_graphs(
@@ -288,37 +299,108 @@ class NFSPDQN(BaseAgent):
             f"{dir}/graphs",
         )
 
-    def test(self, num_trials, player):
-        policies = [self.nfsp_agents[p].policy for p in range(self.config.num_players)]
-        for p in range(self.config.num_players):
-            self.nfsp_agents[p].policy = "best_response"
-        self.nfsp_agents[player].policy = "average_strategy"
-        test_score = 0
+    def test(self, num_trials, player, step, dir="./checkpoints"):
+        if num_trials == 0:
+            return
+        with torch.no_grad():
+            policies = [
+                self.nfsp_agents[p].policy for p in range(self.config.num_players)
+            ]
+            for p in range(self.config.num_players):
+                self.nfsp_agents[p].policy = "best_response"
+            self.nfsp_agents[player].policy = "average_strategy"
+            test_score = 0
+            if self.test_env.render_mode == "rgb_array":
+                self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
+                self.test_env.video_folder = "{}/videos/{}/{}".format(
+                    dir, self.nfsp_agents[player].model_name, step
+                )
+                if not os.path.exists(self.test_env.video_folder):
+                    os.makedirs(self.test_env.video_folder)
 
-        for _ in range(num_trials):
-            print("Trial ", _)
-            state, info = self.test_env.reset()
-            done = False
-            while not done:
-                for p in range(self.config.num_players):
-                    prediction = self.predict(state, info)
-                    action = self.select_actions(prediction)
-                    next_state, reward, terminated, truncated, info = (
-                        self.test_env.step(action)
-                    )
-                    done = terminated or truncated
-                    state = next_state
-                    average_strategy_reward = reward[player]
-                    total_reward = sum(reward)
-                    test_score += (total_reward - average_strategy_reward) / (
-                        self.config.num_players - 1
-                    )
-                    if done:
-                        break
+            for _ in range(num_trials):
+                print("Trial ", _)
+                state, info = self.test_env.reset()
+                done = False
+                while not done:
+                    for p in range(self.config.num_players):
+                        prediction = self.predict(state, info)
+                        print("Prediction", prediction)
+                        action = self.select_actions(prediction, info).item()
+                        action_string = (
+                            "call"
+                            if action == 0
+                            else (
+                                "raise"
+                                if action == 1
+                                else "fold" if action == 2 else "check"
+                            )
+                        )
+                        print(action_string)
+                        next_state, reward, terminated, truncated, info = (
+                            self.test_env.step(action)
+                        )
+                        done = terminated or truncated
+                        state = next_state
+                        average_strategy_reward = reward[player]
+                        total_reward = sum(reward)
+                        test_score += (total_reward - average_strategy_reward) / (
+                            self.config.num_players - 1
+                        )
+                        if done:
+                            break
 
+            for p in range(self.config.num_players):
+                self.nfsp_agents[p].policy = policies[p]
+            return test_score / num_trials  # is this correct for exploitability?
+
+    def load_from_checkpoint(self, dir: str, training_step):
+        dir = Path("checkpoints", self.model_name)
+        training_step_dir = Path(dir, f"step_{training_step}")
+        self.config = self.config.__class__.load(Path(dir, "configs/config.yaml"))
+        rl_configs = self.config.rl_configs
+        sl_configs = self.config.sl_configs
         for p in range(self.config.num_players):
-            self.nfsp_agents[p].policy = policies[p]
-        return test_score / num_trials  # is this correct for exploitability?
+            weights_path = str(Path(training_step_dir, f"model_weights"))
+            # save the model weights
+            self.nfsp_agents[p].rl_agent.load_model_weights(
+                f"{weights_path}/{self.nfsp_agents[p].rl_agent.model_name}_weights.keras"
+            )
+            self.nfsp_agents[p].sl_agent.load_model_weights(
+                f"{weights_path}/{self.nfsp_agents[p].sl_agent.model_name}_weights.keras"
+            )
+            self.nfsp_agents[p].rl_agent.config = rl_configs[p]
+            self.nfsp_agents[p].sl_agent.config = sl_configs[p]
+
+            with open(
+                Path(
+                    training_step_dir,
+                    f"optimizers/{self.nfsp_agents[p].rl_agent.model_name}_optimizer.dill",
+                ),
+                "rb",
+            ) as f:
+                self.nfsp_agents[p].rl_agent.optimizer = dill.load(f)
+
+            with open(
+                Path(
+                    training_step_dir,
+                    f"optimizers/{self.nfsp_agents[p].sl_agent.model_name}_optimizer.dill",
+                ),
+                "rb",
+            ) as f:
+                self.nfsp_agents[p].sl_agent.optimizer = dill.load(f)
+
+            # save replay buffer
+            self.nfsp_agents[p].rl_agent.load_replay_buffers(training_step_dir)
+            self.nfsp_agents[p].sl_agent.load_replay_buffers(training_step_dir)
+
+        # save the graph stats and targets
+        with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "rb") as f:
+            self.stats = pickle.load(f)
+        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "rb") as f:
+            self.targets = pickle.load(f)
+
+        self.start_training_step = training_step
 
 
 class NFSPDQNAgent(BaseAgent):
@@ -351,7 +433,6 @@ class NFSPDQNAgent(BaseAgent):
         self.previous_state = None
         self.previous_info = None
         self.previous_action = None
-        self.previous_reward = None
 
     def store_transition(self, action, state, info, reward, done):
         self.transition = [
@@ -363,40 +444,48 @@ class NFSPDQNAgent(BaseAgent):
             self.previous_action is not None
             and self.previous_state is not None
             and self.previous_info is not None
-            and self.previous_reward is not None
         ):
-            self.transition += [self.previous_reward, state, info, done]
+            assert (
+                self.previous_info["player"] == info["player"] or done == True
+            ), "Players don't match, {} != {}".format(
+                self.previous_info["player"], info["player"]
+            )
+
+            self.transition += [reward, state, info, done]
             # only do this if it is average policy? (open spiel)
             self.rl_agent.replay_buffer.store(*self.transition)
         if not done:
             self.previous_state = state
             self.previous_info = info
             self.previous_action = action
-            self.previous_reward = reward
         else:
             self.previous_state = None
             self.previous_info = None
             self.previous_action = None
-            self.previous_reward = None
 
     def select_policy(self, anticipatory_param):
+        # print("Selecting policy")
         if random.random() < anticipatory_param:
-            return "best_response"
+            # print("best_response")
+            self.policy = "best_response"
         else:
-            return "average_strategy"
+            # print("average_strategy")
+            self.policy = "average_strategy"
 
-    def predict(self, state):
+    def predict(self, state, info: dict):
         if self.policy == "average_strategy":
-            prediction = self.sl_agent.predict(state)
+            prediction = self.sl_agent.predict(state, info)
         else:
             prediction = self.rl_agent.predict(state)
         return prediction
 
-    def select_actions(self, prediction):
+    def select_actions(self, prediction, info: dict):
         if self.policy == "average_strategy":
+            # print("selecting with average strategy")
             action = self.sl_agent.select_actions(prediction)
         else:
-            action = self.rl_agent.select_actions(prediction)
+            # print("selecting with best response")
+            action = self.rl_agent.select_actions(prediction, info)
 
         return action
 

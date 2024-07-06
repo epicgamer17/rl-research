@@ -51,7 +51,7 @@ class Connect4Env(gym.Env):
 
         # Set a blank board
         self._grid = np.zeros(self.size + (3,))
-        self._grid[:, :, 2] = 0  # It's player 1's turn
+        self._grid[2, :, :] = 0  # It's player 1's turn
 
         # Reset legal moves
         self._legal_moves = np.array(list(range(self.action_space.n)))
@@ -73,13 +73,13 @@ class Connect4Env(gym.Env):
                 "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
             )
         # output next player's token first (since that's the one we're inputting to)
-        current_player_board = copy.deepcopy(self._grid[:, :, 0])
-        self._grid[:, :, 0] = self._grid[:, :, 1]
-        self._grid[:, :, 1] = current_player_board
+        current_player_board = copy.deepcopy(self._grid[0, :, :])
+        self._grid[0, :, :] = self._grid[:, :, 1]
+        self._grid[1, :, :] = current_player_board
         # place token
         for i in range(self.size[0] - 1, -1, -1):
-            if self._grid[i, action, 0] == 0 and self._grid[i, action, 1] == 0:
-                self._grid[i, action, 1] = 1
+            if self._grid[0, i, action] == 0 and self._grid[1, i, action] == 0:
+                self._grid[1, i, action] = 1
                 break
         if i == 0:
             self._legal_moves = np.delete(
@@ -87,11 +87,18 @@ class Connect4Env(gym.Env):
             )
 
         # encode turn as 1 or 0
-        self._grid[:, :, 2] = 1 - self._grid[:, :, 2]
+        self._grid[2, :, :] = 1 - self._grid[2, :, :]
         # An episode is done iff there is a winner or the board is full
         terminated = self.winner()
         truncated = len(self._legal_moves) == 0
-        reward = 1 if terminated else 0  # Binary sparse rewards
+        if terminated:
+            if self._grid[2, 0, 0] == 0:
+                reward = [-1, 1]
+            else:
+                reward = [1, -1]
+        else:
+            reward = [0, 0]
+
         observation = self._get_obs()
         info = self._get_info()
 
@@ -119,7 +126,7 @@ class Connect4Env(gym.Env):
         )  # The size of a single grid square in pixels
 
         # First we draw the X's and 0's
-        turn = int(self._grid[0, 0, 2])
+        turn = int(self._grid[2, 0, 0])
         for i in range(self.size[0]):
             for j in range(self.size[1]):
                 if self._grid[i, j, turn] == 1:
@@ -133,7 +140,7 @@ class Connect4Env(gym.Env):
                         pix_square_size // 3,
                         width=3,
                     )
-                if self._grid[i, j, 1 - turn] == 1:
+                if self._grid[1 - turn, i, j] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 255, 0),
@@ -183,7 +190,7 @@ class Connect4Env(gym.Env):
     def winner(self):
         for i in range(self.size[0]):
             for j in range(self.size[1]):
-                if self._grid[i, j, 1] == 1:
+                if self._grid[1, i, j] == 1:
                     if self._check_win(i, j):
                         return True
         return False
@@ -191,19 +198,19 @@ class Connect4Env(gym.Env):
     def _check_win(self, i, j):
         # Check row
         if j + self.win_length <= self.size[1]:
-            if np.all(self._grid[i, j : j + self.win_length, 1]):
+            if np.all(self._grid[1, i, j : j + self.win_length]):
                 return True
         # Check column
         if i + self.win_length <= self.size[0]:
-            if np.all(self._grid[i : i + self.win_length, j, 1]):
+            if np.all(self._grid[1, i : i + self.win_length, j]):
                 return True
         # Check diagonal
         if i + self.win_length <= self.size[0] and j + self.win_length <= self.size[1]:
-            if np.all([self._grid[i + k, j + k, 1] for k in range(self.win_length)]):
+            if np.all([self._grid[1, i + k, j + k] for k in range(self.win_length)]):
                 return True
         # Check other diagonal
         if i + self.win_length <= self.size[0] and j - self.win_length + 1 >= 0:
-            if np.all([self._grid[i + k, j - k, 1] for k in range(self.win_length)]):
+            if np.all([self._grid[1, i + k, j - k] for k in range(self.win_length)]):
                 return True
 
         return False

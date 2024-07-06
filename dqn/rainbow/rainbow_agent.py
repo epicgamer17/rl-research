@@ -1,11 +1,26 @@
 import gc
+from math import e
 from time import time
 from pkg_resources import get_distribution
 import torch
 from torch.nn.utils import clip_grad_norm_
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
 import numpy as np
 from agent_configs import RainbowConfig
-from utils import update_per_beta, get_legal_moves, current_timestamp
+from utils import (
+    update_per_beta,
+    get_legal_moves,
+    current_timestamp,
+    action_mask,
+    epsilon_greedy_policy,
+    CategoricalCrossentropyLoss,
+    HuberLoss,
+    KLDivergenceLoss,
+    MSELoss,
+    update_inverse_sqrt_schedule,
+    update_linear_schedule,
+)
 
 import sys
 
@@ -54,11 +69,19 @@ class RainbowAgent(BaseAgent):
         self.target_model.to(device)
         self.target_model.load_state_dict(self.model.state_dict())
         self.target_model.eval()
-        self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-            params=self.model.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-        )
+
+        if self.config.optimizer == Adam:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+            )
+        elif self.config.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+            )
 
         self.replay_buffer = PrioritizedNStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
@@ -89,6 +112,8 @@ class RainbowAgent(BaseAgent):
         """row vector Tensor(atom_size)
         """
 
+        self.eg_epsilon = self.config.eg_epsilon
+
         self.stats = {
             "score": [],
             "loss": [],
@@ -112,9 +137,22 @@ class RainbowAgent(BaseAgent):
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(self, distribution):
-        q_values = distribution * self.support
-        selected_actions = q_values.sum(2, keepdim=False).argmax(1, keepdim=False)
+    def select_actions(
+        self, distribution, info: dict = None, mask_actions: bool = True
+    ):
+        assert info is not None if mask_actions else True, "Need info to mask actions"
+        # print(info)
+        if self.config.atom_size > 1:
+            q_values = distribution * self.support
+            q_values = q_values.sum(2, keepdim=False)
+        else:
+            q_values = distribution
+        if mask_actions:
+            legal_moves = get_legal_moves(info)
+            q_values = action_mask(q_values, legal_moves, mask_value=-float("inf"))
+        # print("Q Values", q_values)
+        selected_actions = q_values.argmax(1, keepdim=False)
+
         return selected_actions
 
     def learn(self) -> np.ndarray:
@@ -134,20 +172,43 @@ class RainbowAgent(BaseAgent):
         # print("actions", actions)
 
         # print(observations[0])
-
         # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
-        online_distributions = self.predict(observations)[
+        online_predictions = self.predict(observations)[
             range(self.config.minibatch_size), actions
         ]
         # (B, atom_size)
-        target_distributions = self.compute_target_distributions(samples)
+        if self.config.atom_size > 1:
+            assert isinstance(
+                self.config.loss_function, KLDivergenceLoss
+            ) or isinstance(
+                self.config.loss_function, CategoricalCrossentropyLoss
+            ), "Only KLDivergenceLoss and CategoricalCrossentropyLoss are supported for atom_size > 1, recieved {}".format(
+                self.config.loss_function
+            )
+            target_predictions = self.compute_target_distributions(samples)
+        else:
+            assert isinstance(self.config.loss_function, HuberLoss) or isinstance(
+                self.config.loss_function, MSELoss
+            ), "Only HuberLoss or MSELoss are supported for atom_size = 1, recieved {}".format(
+                self.config.loss_function
+            )
+            next_observations, rewards, dones = (
+                torch.from_numpy(samples["next_observations"]).to(self.device),
+                torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
+                torch.from_numpy(samples["dones"]).to(self.device).view(-1, 1),
+            )
+            target_predictions = self.predict_target(next_observations)
+            target_predictions = target_predictions.max(1, keepdim=True)[0]
+            target_predictions = (
+                rewards + self.config.discount_factor * (~dones) * target_predictions
+            ).view(-1)
         # print("predicted", online_distributions)
         # print("target", target_distributions)
 
         weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
         # (B)
         elementwise_loss = self.config.loss_function(
-            online_distributions, target_distributions
+            online_predictions, target_predictions
         )
         assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
             elementwise_loss
@@ -178,6 +239,7 @@ class RainbowAgent(BaseAgent):
         self.replay_buffer.update_priorities(samples["indices"], priorities)
 
     def compute_target_distributions(self, samples):
+        # print("computing target distributions")
         with torch.no_grad():
             discount_factor = self.config.discount_factor**self.config.n_step
             delta_z = (
@@ -192,8 +254,11 @@ class RainbowAgent(BaseAgent):
             )
             online_distributions = self.predict(next_observations)
             target_distributions = self.predict_target(next_observations)
+
+            # print(samples["next_infos"])
             next_actions = self.select_actions(
-                online_distributions
+                online_distributions,
+                info=samples["next_infos"],
             )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[
@@ -258,6 +323,27 @@ class RainbowAgent(BaseAgent):
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
+    def update_eg_epsilon(self, training_step: int = None):
+        if self.config.eg_epsilon_decay_type == "linear":
+            self.eg_epsilon = update_linear_schedule(
+                self.eg_epsilon,
+                self.config.eg_epsilon_final,
+                self.training_steps,
+                self.config.eg_epsilon,
+                training_step,
+            )
+        elif self.config.eg_epsilon_decay_type == "inverse_sqrt":
+            self.eg_epsilon = update_inverse_sqrt_schedule(
+                self.config.eg_epsilon,
+                training_step,
+            )
+        else:
+            raise ValueError(
+                "Invalid epsilon decay type: {}".format(
+                    self.config.eg_epsilon_decay_type
+                )
+            )
+
     def train(self):
         start_time = time()
         score = 0
@@ -274,11 +360,11 @@ class RainbowAgent(BaseAgent):
                     values = self.predict(state)
                     action = epsilon_greedy_policy(
                         values,
-                        self.config.eg_epsilon,
-                        wrapper=lambda values: self.select_actions(values).item(),
+                        self.eg_epsilon,
+                        wrapper=lambda values: self.select_actions(values, info).item(),
                         range=self.num_actions,
-                    )
-                    # action = actions.item()
+                    ).item()
+                    self.update_eg_epsilon()
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )

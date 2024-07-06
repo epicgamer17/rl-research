@@ -1,15 +1,16 @@
+from agent_configs.dqn.rainbow_config import RainbowConfig
 from agent_configs.sl_config import SupervisedConfig
 from ..base_config import Config
 from torch.optim import Optimizer, Adam
 
 
 class NFSPDQNConfig(Config):
-    def __init__(self, config_dict, game_config, rl_config_type):
+    def __init__(self, config_dict, game_config):
         # Config type should be a DQN Type
         super(NFSPDQNConfig, self).__init__(config_dict, game_config)
         self.num_players = self.parse_field("num_players", required=True)
         self.rl_configs = [
-            rl_config_type(config_dict, game_config) for _ in range(self.num_players)
+            RainbowConfig(config_dict, game_config) for _ in range(self.num_players)
         ]
         self.sl_configs = [
             SupervisedConfig(config_dict) for _ in range(self.num_players)
@@ -20,6 +21,10 @@ class NFSPDQNConfig(Config):
         self.replay_interval = self.parse_field("replay_interval", 16)
 
         self.anticipatory_param = self.parse_field("anticipatory_param", 0.5)
+
+        self.shared_networks_and_buffers = self.parse_field(
+            "shared_networks_and_buffers", False
+        )
 
     def _verify_game(self):
         assert self.game.is_discrete, "NFSP only supports discrete action spaces"

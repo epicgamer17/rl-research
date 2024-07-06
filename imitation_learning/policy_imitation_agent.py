@@ -1,7 +1,8 @@
 import torch
-from utils import action_mask, normalize_policy, current_timestamp, get_legal_moves
+from utils import action_mask, normalize_policies, current_timestamp, get_legal_moves
 from base_agent.agent import BaseAgent
 from torch.nn.utils import clip_grad_norm_
+from torch.optim import Adam, SGD
 
 from imitation_learning.supervised_network import SupervisedNetwork
 from replay_buffers.nfsp_reservoir_buffer import NFSPReservoirBuffer
@@ -39,27 +40,32 @@ class PolicyImitationAgent(BaseAgent):
             self.num_actions,
             (self.config.minibatch_size,) + self.observation_dimensions,
         )
-
-        self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-            params=self.model.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-        )
+        if self.config.optimizer == Adam:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+            )
+        elif self.config.optimizer == SGD:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+            )
 
     def select_actions(self, predictions):
         distribution = torch.distributions.Categorical(probs=predictions)
-
+        # print("Probabilities", predictions)
         selected_action = distribution.sample()
         return selected_action
 
-    def predict(self, state):
+    def predict(self, state, info: dict = None, mask_actions: bool = True):
+        assert info is not None if mask_actions else True, "Need info to mask actions"
         state_input = self.preprocess(state)
         policy = self.model(inputs=state_input)
-        # policy = action_mask(
-        #     policy, get_legal_moves(info), self.num_actions, mask_value=0
-        # )
-        # policy = normalize_policy(policy)
-
+        if mask_actions:
+            legal_moves = get_legal_moves(info)
+            policy = action_mask(policy, legal_moves, mask_value=0)
+            policy = normalize_policies(policy)
         return policy
 
     def learn(self):
@@ -68,9 +74,8 @@ class PolicyImitationAgent(BaseAgent):
             observations = sample["observations"]
             targets = torch.from_numpy(sample["targets"]).to(self.device)
 
-            policy = self.predict(observations, {})
-            # LEGAL MOVE MASKING?
-            loss = self.config.loss_function(targets, policy).mean()
+            policy = self.predict(observations, info=sample["infos"])
+            loss = self.config.loss_function(policy, targets).mean()
 
             self.optimizer.zero_grad()
             loss.backward()

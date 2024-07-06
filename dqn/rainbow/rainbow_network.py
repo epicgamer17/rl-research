@@ -29,6 +29,11 @@ class RainbowNetwork(nn.Module):
         self.has_advantage_hidden_layers = (
             len(config.advantage_hidden_layers_widths) > 0
         )
+        if not self.config.dueling:
+            assert not (
+                self.has_value_hidden_layers or self.has_advantage_hidden_layers
+            ), "Value or Advantage hidden layers are only used in dueling networks"
+
         self.output_size = output_size
 
         current_shape = input_shape
@@ -134,9 +139,9 @@ class RainbowNetwork(nn.Module):
             self.value_hidden_layers.initialize(initializer)
         if self.has_advantage_hidden_layers:
             self.advantage_hidden_layers.initialize(initializer)
-
-        self.value_layer.initialize(initializer)
-        self.advantage_layer.initialize(initializer)
+        if self.config.dueling:
+            self.value_layer.initialize(initializer)
+            self.advantage_layer.initialize(initializer)
 
     def forward(self, inputs: Tensor) -> Tensor:
         if self.has_conv_layers:
@@ -194,7 +199,11 @@ class RainbowNetwork(nn.Module):
             Q = self.distribution_layer(S).view(
                 -1, self.output_size, self.config.atom_size
             )
-        return Q.softmax(dim=-1)
+
+        if self.config.atom_size == 1:
+            return Q.squeeze(-1)
+        else:
+            return Q.softmax(dim=-1)
 
     def reset_noise(self):
         if self.config.noisy_sigma != 0:
@@ -206,5 +215,6 @@ class RainbowNetwork(nn.Module):
                 self.value_hidden_layers.reset_noise()
             if self.has_advantage_hidden_layers:
                 self.advantage_hidden_layers.reset_noise()
-            self.value_layer.reset_noise()
-            self.advantage_layer.reset_noise()
+            if self.config.dueling:
+                self.value_layer.reset_noise()
+                self.advantage_layer.reset_noise()
