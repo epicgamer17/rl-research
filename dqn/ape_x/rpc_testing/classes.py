@@ -118,14 +118,13 @@ class ActorTest:
     def __init__(self) -> None:
         self.stop_flag = False
 
-        # self.replay_rref = rpc.remote("replay", ReplayTest)
-        # self.target_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
-        # self.online_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
+        self.replay_rref = rpc.remote("replay", ReplayTest)
+        self.target_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
+        self.online_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
 
-        # self._wait_for_confirmations(
-        #     [self.replay_rref, self.target_rref, self.online_rref]
-        # )
-        pass
+        self._wait_for_confirmations(
+            [self.replay_rref, self.target_rref, self.online_rref]
+        )
 
     def _wait_for_confirmations(self, rrefs):
         logger.info("waiting for confirmations")
@@ -152,9 +151,9 @@ class ActorTest:
 
     def cleanup(self):
         pass
-        # del self.replay_rref
-        # del self.target_rref
-        # del self.online_rref
+        del self.replay_rref
+        del self.target_rref
+        del self.online_rref
 
     def stop(self):
         self.stop_flag = True
