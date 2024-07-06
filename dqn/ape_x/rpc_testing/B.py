@@ -42,7 +42,7 @@ def main():
     parser.add_argument("--rank", type=int, default=2)
     # "parameter" or "replay"
     parser.add_argument("--name", type=str, default="parameter_server")
-    parser.add_argument("--world_size", type=int, default=3)
+    parser.add_argument("--world_size", type=int, default=6)
 
     args = parser.parse_args()
 
