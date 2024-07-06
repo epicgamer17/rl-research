@@ -70,11 +70,8 @@ def main():
 
     logger.info("waiting for stop signal")
     stop_chan.get()
-    logger.info("recieved stop msg, waiting for all workers to finish outstanding work")
+    logger.info("recieved stop msg")
 
-    workers = ["learner", "parameter", "replay"]
-    workers.extend(f"actor_{i}" for i in range(0, args.world_size - 3))
-    rpc.api._barrier(workers)
     time.sleep(1)
 
     logger.info("collecting garbage")
