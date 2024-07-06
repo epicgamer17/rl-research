@@ -33,7 +33,7 @@ class LearnerTest:
             rpc.init_rpc(
                 name="learner",
                 rank=0,
-                world_size=3,
+                world_size=6,
                 rpc_backend_options=options,
             )
         except Exception as e:
@@ -46,21 +46,21 @@ class LearnerTest:
         print("creating online")
         self.online_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
 
-        # self.actor_rrefs: list[rpc.RRef[ActorTest]] = []
+        self.actor_rrefs: list[rpc.RRef[ActorTest]] = []
 
-        # for i in range(3):
-        #     print("creating actor", i)
-        #     self.actor_rrefs.append(rpc.remote(f"actor_{i}", ActorTest))
+        for i in range(3):
+            print("creating actor", i)
+            self.actor_rrefs.append(rpc.remote(f"actor_{i}", ActorTest))
 
         a = [self.replay_rref, self.target_rref, self.online_rref]
-        # a.extend(self.actor_rrefs)
+        a.extend(self.actor_rrefs)
 
         print("waiting for confirmations")
         self._wait_for_confirmations(a)
 
-        # for actor in self.actor_rrefs:
-        #     print("starting actor on", actor.owner_name())
-        #     actor.remote().run()
+        for actor in self.actor_rrefs:
+            print("starting actor on", actor.owner_name())
+            actor.remote().run()
 
     def _wait_for_confirmations(self, rrefs):
         logger.info("waiting for confirmations")
@@ -86,15 +86,15 @@ class LearnerTest:
         self.cleanup()
 
     def cleanup(self):
-        # print("stopping actors:")
-        # for actor in self.actor_rrefs:
-        #     actor.rpc_async().stop()
+        print("stopping actors:")
+        for actor in self.actor_rrefs:
+            actor.rpc_async().stop()
 
-        for info in ["replay", "parameter"]:#, "actor_0", "actor_1", "actor_2"]:
+        for info in ["replay", "parameter", "actor_0", "actor_1", "actor_2"]:
             self.do_stop(info)
 
         print("deleting refs")
-        # del self.actor_rrefs
+        del self.actor_rrefs
         del self.replay_rref
         del self.target_rref
         del self.online_rref
