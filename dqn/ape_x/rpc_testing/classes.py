@@ -5,6 +5,8 @@ import time
 import pathlib
 import logging
 import gymnasium as gym
+import threading
+import queue
 
 
 import sys
@@ -19,6 +21,8 @@ import os
 class LearnerTest:
     def __init__(self, stop_fn):
         self.stop_fn = stop_fn
+
+        self.samples_queue = queue.Queue(maxsize=5)
 
         path = pathlib.Path(pathlib.Path.cwd(), "generated", "learner")
 
@@ -86,9 +90,6 @@ class LearnerTest:
         print("waiting for confirmations")
         self._wait_for_confirmations(a)
 
-        for actor in self.actor_rrefs:
-            print("starting actor on", actor.owner_name())
-            actor.remote().run()
 
     def _wait_for_confirmations(self, rrefs):
         logger.info("waiting for confirmations")
@@ -107,13 +108,58 @@ class LearnerTest:
         return confirmed == to_confirm
 
     def run(self):
+        self.flag = threading.Event()
+
+        self.replay_thread = threading.Thread(
+            target=self._fetch_batches, args=(self.flag,)
+        )
+        self.replay_thread.daemon = True
+        self.replay_thread.start()
+
+        for actor in self.actor_rrefs:
+            print("starting actor on", actor.owner_name())
+            actor.remote().run()
+
         for i in range(5):
             print(i)
             time.sleep(1)
 
         self.cleanup()
+        
+    def _fetch_batches(self, flag: threading.Event):
+        samples_queue_size = 5
+        dummy_q = queue.Queue(samples_queue_size)
+
+        for i in range(samples_queue_size):
+            dummy_q.put(0)
+
+        def on_sample_recieved(samples):
+            sample = samples.wait()
+            if sample == None:
+                # no sample recieved, request another sample after 1 second
+                logger.info("no sample recieved, waiting 1 second")
+                time.sleep(1)
+                dummy_q.put(0)
+            else:
+                self.samples_queue.put(samples.wait())
+                dummy_q.put(0)
+
+        while not flag.is_set():
+            try:
+                dummy_q.get(timeout=5)
+            except queue.Empty:
+                continue
+
+            print("requesting batch")
+            try:
+                self.replay_rref.rpc_async(10).sample(False).then(on_sample_recieved)
+            except Exception as e:
+                logger.exception(f"error getting batch: {e}")
+
+        logger.info("replay thread exited")
 
     def cleanup(self):
+        self.flag.set()
         print("stopping actors:")
         for actor in self.actor_rrefs:
             actor.rpc_async().stop()
