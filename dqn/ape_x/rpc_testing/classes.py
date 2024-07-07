@@ -7,11 +7,14 @@ import logging
 import gymnasium as gym
 import threading
 import queue
+from typing import NamedTuple
 
 
 import sys
-sys.path.append('../../..')
+
+sys.path.append("../../..")
 from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
+
 logger = logging.getLogger()
 
 
@@ -48,7 +51,6 @@ class LearnerTest:
         except Exception as e:
             logger.exception(f"[learner] error initializing rpc: {e}")
 
-    
         env: gym.Env = gym.make("CartPole-v1", render_mode="rgb_array")
         self.observation_dimensions = env.observation_space.shape
         replay_buffer_args = dict(
@@ -61,10 +63,7 @@ class LearnerTest:
 
         print("creating replay")
         self.replay_rref = rpc.remote(
-            "replay",
-            PrioritizedNStepReplayBuffer,
-            args=None,
-            kwargs=replay_buffer_args
+            "replay", PrioritizedNStepReplayBuffer, args=None, kwargs=replay_buffer_args
         )
 
         print("creating target")
@@ -89,7 +88,6 @@ class LearnerTest:
 
         print("waiting for confirmations")
         self._wait_for_confirmations(a)
-
 
     def _wait_for_confirmations(self, rrefs):
         logger.info("waiting for confirmations")
@@ -120,12 +118,12 @@ class LearnerTest:
             print("starting actor on", actor.owner_name())
             actor.remote().run()
 
-        for i in range(5):
-            print(i)
-            time.sleep(1)
+        for i in range(100):
+            sample = self.samples_queue.get()
+            print(sample)
 
         self.cleanup()
-        
+
     def _fetch_batches(self, flag: threading.Event):
         samples_queue_size = 5
         dummy_q = queue.Queue(samples_queue_size)
@@ -141,7 +139,9 @@ class LearnerTest:
                 time.sleep(1)
                 dummy_q.put(0)
             else:
-                self.samples_queue.put(samples.wait())
+                batch = samples.wait()
+                print("got batch", batch)
+                self.samples_queue.put(batch)
                 dummy_q.put(0)
 
         while not flag.is_set():
@@ -168,19 +168,39 @@ class LearnerTest:
             self.do_stop(info)
 
         print("deleting refs")
+        del self.samples_queue
 
     def do_stop(self, info):
         print("stopping", info)
         return rpc.remote(info, self.stop_fn, (True,))
 
 
+from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
+
+
+class Batch(NamedTuple):
+    observations: np.ndarray
+    infos: np.ndarray
+    actions: np.ndarray
+    rewards: np.ndarray
+    next_observations: np.ndarray
+    next_infos: np.ndarray
+    dones: np.ndarray
+    ids: np.ndarray
+    priorities: np.ndarray
+
+
 class ActorTest:
     def __init__(self, replay_rref, target_rref, online_rref) -> None:
         self.stop_flag = False
 
+        self.env: gym.Env = gym.make("CartPole-v1", render_mode="rgb_array")
         self.replay_rref = replay_rref
         self.target_rref = target_rref
         self.online_rref = online_rref
+        self.rb = NStepReplayBuffer(
+            self.env.observation_space.shape, self.env.observation_space.dtype, 16, 16, 1
+        )
 
         self._wait_for_confirmations(
             [self.replay_rref, self.target_rref, self.online_rref]
@@ -203,13 +223,49 @@ class ActorTest:
         return confirmed == to_confirm
 
     def run(self):
+        state, info = self.env.reset()
         while not self.stop_flag:
             print("loop")
             time.sleep(1)
 
+            for i in range(100):
+
+                action = 1
+                next_state, reward, terminated, truncated, next_info = self.env.step(
+                    action
+                )
+                done = terminated or truncated
+                self.rb.store(state, info, action, reward, next_state, next_info, done, 0)
+                state = next_state
+                info = next_info
+                if done:
+                    state, info = self.env.reset()
+
+                if self.rb.size == 16:
+                    try:
+
+                        batch = Batch(
+                            observations=self.rb.observation_buffer,
+                            infos=self.rb.info_buffer,
+                            actions=self.rb.action_buffer,
+                            rewards=self.rb.reward_buffer,
+                            next_observations=self.rb.next_observation_buffer,
+                            next_infos=self.rb.next_info_buffer,
+                            dones=self.rb.done_buffer,
+                            ids=np.zeros_like(self.rb.action_buffer, dtype=str),
+                            priorities=np.ones_like(self.rb.reward_buffer),
+                        )
+
+                        self.replay_rref.rpc_sync().store_batch(batch)
+                        print("stored batch")
+                        self.rb.clear()
+                    except Exception as e:
+                        print(f"failed to store batch: {e}")
+
         self.cleanup()
 
     def cleanup(self):
+        del self.replay_rref
         pass
 
     def stop(self):
