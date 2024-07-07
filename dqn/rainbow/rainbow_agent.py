@@ -1,6 +1,7 @@
 import gc
 from math import e
 from time import time
+from pkg_resources import get_distribution
 import torch
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.sgd import SGD
@@ -22,6 +23,8 @@ from utils import (
 )
 
 import sys
+
+from utils.utils import epsilon_greedy_policy
 
 sys.path.append("../../")
 
@@ -125,6 +128,7 @@ class RainbowAgent(BaseAgent):
         # could change type later
         state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)
+        masked_q_distribution = q_distribution
         return q_distribution
 
     def predict_target(self, states) -> torch.Tensor:

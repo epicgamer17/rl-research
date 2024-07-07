@@ -307,7 +307,5 @@ def main():
     best_trial = space_eval(search_space, best)
 
 
-# objective function - needs to launch
-
 if __name__ == "__main__":
     main()
