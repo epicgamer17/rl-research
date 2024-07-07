@@ -4,7 +4,12 @@ import numpy as np
 import time
 import pathlib
 import logging
+import gymnasium as gym
 
+
+import sys
+sys.path.append('../../..')
+from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
 logger = logging.getLogger()
 
 
@@ -39,8 +44,25 @@ class LearnerTest:
         except Exception as e:
             logger.exception(f"[learner] error initializing rpc: {e}")
 
+    
+        env: gym.Env = gym.make("CartPole-v1", render_mode="rgb_array")
+        self.observation_dimensions = env.observation_space.shape
+        replay_buffer_args = dict(
+            observation_dimensions=self.observation_dimensions,
+            observation_dtype=env.observation_space.dtype,
+            max_size=128,
+            batch_size=16,
+            n_step=5,
+        )
+
         print("creating replay")
-        self.replay_rref = rpc.remote("replay", ReplayTest)
+        self.replay_rref = rpc.remote(
+            "replay",
+            PrioritizedNStepReplayBuffer,
+            args=None,
+            kwargs=replay_buffer_args
+        )
+
         print("creating target")
         self.target_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
         print("creating online")
@@ -50,7 +72,13 @@ class LearnerTest:
 
         for i in range(3):
             print("creating actor", i)
-            self.actor_rrefs.append(rpc.remote(f"actor_{i}", ActorTest, (self.replay_rref, self.target_rref, self.online_rref)))
+            self.actor_rrefs.append(
+                rpc.remote(
+                    f"actor_{i}",
+                    ActorTest,
+                    (self.replay_rref, self.target_rref, self.online_rref),
+                )
+            )
 
         a = [self.replay_rref, self.target_rref, self.online_rref]
         a.extend(self.actor_rrefs)
@@ -98,12 +126,6 @@ class LearnerTest:
     def do_stop(self, info):
         print("stopping", info)
         return rpc.remote(info, self.stop_fn, (True,))
-
-
-class ReplayTest:
-    def __init__(self) -> None:
-        self.replay_buffer = np.zeros((100, 16))
-        pass
 
 
 class ActorTest:
