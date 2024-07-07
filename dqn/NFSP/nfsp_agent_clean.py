@@ -357,10 +357,12 @@ class NFSPDQN(BaseAgent):
                 # save replay buffer
                 self.rl_agents[p].save_replay_buffers(training_step_dir)
                 self.sl_agents[p].save_replay_buffers(training_step_dir)
-
-            exploitability += self.test(
+        for p in range(self.config.num_players):
+            test_score = self.test(
                 self.checkpoint_trials, p, training_step, training_step_dir
             )
+            print(test_score)
+            exploitability += test_score
         print(exploitability)
         # save config
         self.config.dump(f"{dir}/configs/config.yaml")
