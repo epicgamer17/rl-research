@@ -33,6 +33,7 @@ class SupervisedConfig(ConfigBase):
         )
 
         self.noisy_sigma = self.parse_field("sl_noisy_sigma", 0)
+        self.residual_layers = self.parse_field("sl_residual_layers", [])
         self.conv_layers = self.parse_field("sl_conv_layers", [])
         self.dense_layers_widths = self.parse_field("sl_dense_layer_widths", [128])
 

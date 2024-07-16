@@ -6,6 +6,7 @@ class RainbowConfig(Config):
     def __init__(self, config_dict: dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
 
+        self.residual_layers: list = self.parse_field("residual_layers", [])
         self.conv_layers: list = self.parse_field("conv_layers", [])
         self.dense_layers_widths: int = self.parse_field(
             "dense_layers_widths", [128], tointlists
@@ -46,7 +47,9 @@ class RainbowConfig(Config):
         # ), "Atom size must be greater than 1, as softmax and Q distribution to Q value calculation requires more than 1 atom"
 
         assert not (
-            self.game.is_image and len(self.conv_layers) == 0
+            self.game.is_image
+            and len(self.conv_layers) == 0
+            and len(self.residual_layers) == 0
         ), "Convolutional layers must be defined for image based games"
 
         if len(self.conv_layers) > 0:

@@ -148,7 +148,7 @@ class Connect4Env(gym.Env):
         turn = int(self._grid[2, 0, 0])
         for i in range(self.size[0]):
             for j in range(self.size[1]):
-                if self._grid[i, j, turn] == 1:
+                if self._grid[turn, i, j] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 0, 0),

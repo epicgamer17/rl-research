@@ -455,7 +455,7 @@ class NFSPDQN(BaseAgent):
                                 (prediction * self.rl_agents[0].support).sum(
                                     -1, keepdim=False
                                 ),
-                                info["legal_moves"],
+                                [info["legal_moves"]],
                                 mask_value=float("-inf"),
                             ),
                         )

@@ -4,6 +4,7 @@ from utils.utils import to_lists
 from modules.conv import Conv2dStack
 
 from modules.dense import DenseStack, build_dense
+from modules.residual import ResidualStack
 import torch.nn as nn
 
 
@@ -11,16 +12,40 @@ class SupervisedNetwork(nn.Module):
     def __init__(self, config, output_size, input_shape, *args, **kwargs):
         super().__init__()
         self.config = config
+        self.has_residual_layers = len(config.residual_layers) > 0
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layers_widths) > 0
         assert (
-            self.has_conv_layers or self.has_dense_layers
+            self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
         ), "At least one of the layers should be present."
 
         self.output_size = output_size
 
         current_shape = input_shape
         B = current_shape[0]
+
+        if self.has_residual_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.residual_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.residual_layers = ResidualStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.residual_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
         if self.has_conv_layers:
             assert (
                 len(input_shape) == 4
@@ -77,6 +102,8 @@ class SupervisedNetwork(nn.Module):
         )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_residual_layers:
+            self.residual_layers.initialize(initializer)
         if self.has_conv_layers:
             self.conv_layers.initialize(initializer)
         if self.has_dense_layers:
@@ -90,6 +117,9 @@ class SupervisedNetwork(nn.Module):
             assert inputs.dim() == 4
 
         x = inputs
+        if self.has_residual_layers:
+            x: Tensor = self.residual_layers(x)
+
         if self.has_conv_layers:
             x: Tensor = self.conv_layers(x)
 
@@ -101,6 +131,8 @@ class SupervisedNetwork(nn.Module):
         return x.softmax(dim=-1)
 
     def reset_noise(self):
+        if self.has_residual_layers:
+            self.residual_layers.reset_noise()
         if self.has_conv_layers:
             self.conv_layers.reset_noise()
         if self.has_dense_layers:

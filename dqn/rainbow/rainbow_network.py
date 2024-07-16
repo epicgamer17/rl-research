@@ -6,6 +6,7 @@ from agent_configs import RainbowConfig
 from modules.conv import Conv2dStack
 from modules.dense import DenseStack, build_dense
 from utils import to_lists
+from modules.residual import ResidualStack
 
 
 class RainbowNetwork(nn.Module):
@@ -19,10 +20,11 @@ class RainbowNetwork(nn.Module):
     ):
         super().__init__(*args, **kwargs)
         self.config = config
+        self.has_residual_layers = len(config.residual_layers) > 0
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layers_widths) > 0
         assert (
-            self.has_conv_layers or self.has_dense_layers
+            self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
         ), "At least one of the layers should be present."
 
         self.has_value_hidden_layers = len(config.value_hidden_layers_widths) > 0
@@ -38,6 +40,29 @@ class RainbowNetwork(nn.Module):
 
         current_shape = input_shape
         B = current_shape[0]
+
+        if self.has_residual_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.residual_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.residual_layers = ResidualStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.residual_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
         if self.has_conv_layers:
             assert (
                 len(input_shape) == 4
@@ -131,6 +156,8 @@ class RainbowNetwork(nn.Module):
             )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_residual_layers:
+            self.residual_layers.initialize(initializer)
         if self.has_conv_layers:
             self.conv_layers.initialize(initializer)
         if self.has_dense_layers:
@@ -149,6 +176,10 @@ class RainbowNetwork(nn.Module):
 
         # (B, *)
         S = inputs
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_residual_layers:
+            S = self.residual_layers(S)
+
         # (B, C_in, H, W) -> (B, C_out, H, W)
         if self.has_conv_layers:
             S = self.conv_layers(S)
@@ -207,6 +238,8 @@ class RainbowNetwork(nn.Module):
 
     def reset_noise(self):
         if self.config.noisy_sigma != 0:
+            if self.has_residual_layers:
+                self.residual_layers.reset_noise()
             if self.has_conv_layers:
                 self.conv_layers.reset_noise()
             if self.has_dense_layers:

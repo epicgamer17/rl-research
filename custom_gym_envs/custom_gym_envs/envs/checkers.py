@@ -1,3 +1,4 @@
+from tabnanny import check
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -56,17 +57,9 @@ class CheckersEnv(gym.Env):
 
     def _get_info(self):
         return {
-            "legal_moves": (
-                self._legal_moves_p1
-                if self._current_player == 0
-                else self._legal_moves_p2
-            ),
+            "legal_moves": self._legal_moves,
             "player": self._current_player,
         }
-
-    def _update_legal_moves(self):
-        self._legal_moves_p1 = np.array(list(range(self.action_space.n)))
-        self._legal_moves_p2 = np.array(list(range(self.action_space.n)))
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
@@ -102,7 +95,7 @@ class CheckersEnv(gym.Env):
         # 2 0 2 0 2 0 2 0
         # 0, 1, 2, 3, 4, 5, 6, 7 * 32 squares + 1
 
-        self._legal_moves_p1 = np.array(
+        self._legal_moves = np.array(
             [
                 20 * 8 + 1,
                 21 * 8 + 0,
@@ -113,17 +106,17 @@ class CheckersEnv(gym.Env):
                 23 * 8 + 1,
             ]
         )
-        self._legal_moves_p2 = np.array(
-            [
-                8 * 8 + 2,
-                8 * 8 + 3,
-                9 * 8 + 2,
-                9 * 8 + 3,
-                10 * 8 + 2,
-                10 * 8 + 3,
-                11 * 8 + 3,
-            ]
-        )
+        # self._legal_moves_p2 = np.array(
+        #     [
+        #         8 * 8 + 2,
+        #         8 * 8 + 3,
+        #         9 * 8 + 2,
+        #         9 * 8 + 3,
+        #         10 * 8 + 2,
+        #         10 * 8 + 3,
+        #         11 * 8 + 3,
+        #     ]
+        # )
 
         observation = self._get_obs()
         info = self._get_info()
@@ -141,6 +134,60 @@ class CheckersEnv(gym.Env):
             raise ValueError(
                 "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
             )
+
+        # convert action to from_square and action_type
+        from_square = action // 8
+        action_type = action % 8
+        # convert from square to row and column
+        # from_square 0-3 is row 0, from_square 4-7 is row 1, etc.
+        # from_square 0 is col 1, from_square 1 is col 3, from_square 2 is col 5, from_square 3 is col 7, from_square 4 is col 0, etc.
+        from_row = from_square // 4
+        from_col = (from_square % 4) * 2 + (1 - from_row % 2)
+        # move token
+        capture = False
+        if action_type == 0:
+            to_row = from_row - 1
+            to_col = from_col - 1
+        elif action_type == 1:
+            to_row = from_row - 1
+            to_col = from_col + 1
+        elif action_type == 2:
+            to_row = from_row + 1
+            to_col = from_col + 1
+        elif action_type == 3:
+            to_row = from_row + 1
+            to_col = from_col - 1
+        elif action_type == 4:
+            to_row = from_row - 2
+            to_col = from_col - 2
+            capture = True
+        elif action_type == 5:
+            to_row = from_row - 2
+            to_col = from_col + 2
+            capture = True
+        elif action_type == 6:
+            to_row = from_row + 2
+            to_col = from_col + 2
+            capture = True
+        elif action_type == 7:
+            to_row = from_row + 2
+            to_col = from_col - 2
+            capture = True
+        # check if move is valid?
+
+        # update board state
+        self._grid[0, to_row, to_col] = self._grid[0, from_row, from_col]
+        self._grid[0, from_row, from_col] = 0
+        self._grid[1, to_row, to_col] = self._grid[1, from_row, from_col]
+        self._grid[1, from_row, from_col] = 0
+        if to_row == 0 and self._grid[0, to_row, to_col] == 1:
+            self._grid[1, to_row, to_col] = 1
+            self._grid[0, to_row, to_col] = 0
+
+        if capture:
+            self._grid[2, (from_row + to_row) // 2, (from_col + to_col) // 2] = 0
+            self._grid[3, (from_row + to_row) // 2, (from_col + to_col) // 2] = 0
+
         # output next player's token first (since that's the one we're inputting to)
         current_player_tokens = copy.deepcopy(self._grid[0, :, :])
         self._grid[0, :, :] = self._grid[:, :, 2]
@@ -150,21 +197,181 @@ class CheckersEnv(gym.Env):
         self._grid[1, :, :] = self._grid[:, :, 3]
         self._grid[3, :, :] = current_player_kings
 
-        # convert action to from_square and action_type
-        from_square = action // 8
-        action_type = action % 8
-        # convert from square to row and column
-        from_row = from_square // 8
-        from_col = (from_square + 1) % 8
-        # move token
-        # 1:
-
-        # update legal moves for both players
+        # flip board vertically
+        self._grid[0, :, :] = np.flip(self._grid[0, :, :], axis=0)
+        self._grid[1, :, :] = np.flip(self._grid[1, :, :], axis=0)
+        self._grid[2, :, :] = np.flip(self._grid[2, :, :], axis=0)
+        self._grid[3, :, :] = np.flip(self._grid[3, :, :], axis=0)
 
         # encode turn as 1 or 0
         self._grid[4, :, :] = 1 - self._grid[4, :, :]
         self._current_player = (self._current_player + 1) % 2
         # An episode is done iff there is a winner or the board is full
+
+        # output new legal moves
+        self._legal_moves = []
+        for i in range(32):
+            check_row = i // 4
+            check_col = (i % 4) * 2 + (1 - check_row % 2)
+            if self._grid[0, check_row, check_col] == 1:
+                if (
+                    check_row - 1 >= 0
+                    and check_col - 1 >= 0
+                    and (
+                        self._grid[0, check_row - 1, check_col - 1] == 0
+                        and self._grid[1, check_row - 1, check_col - 1] == 0
+                        and self._grid[2, check_row - 1, check_col - 1] == 0
+                        and self._grid[3, check_row - 1, check_col - 1] == 0
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8)
+                if (
+                    check_row - 1 >= 0
+                    and check_col + 1 < 8
+                    and (
+                        self._grid[0, check_row - 1, check_col + 1] == 0
+                        and self._grid[1, check_row - 1, check_col + 1] == 0
+                        and self._grid[2, check_row - 1, check_col + 1] == 0
+                        and self._grid[3, check_row - 1, check_col + 1] == 0
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 1)
+                if (
+                    check_row - 2 >= 0
+                    and check_col - 2 >= 0
+                    and (
+                        self._grid[0, check_row - 2, check_col - 2] == 0
+                        and self._grid[1, check_row - 2, check_col - 2] == 0
+                        and self._grid[2, check_row - 2, check_col - 2] == 0
+                        and self._grid[3, check_row - 2, check_col - 2] == 0
+                        and (
+                            self._grid[2, check_row - 1, check_col - 1] == 1
+                            or self._grid[3, check_row - 1, check_col - 1] == 1
+                        )
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 4)
+                if (
+                    check_row - 2 >= 0
+                    and check_col + 2 < 8
+                    and (
+                        self._grid[0, check_row - 2, check_col + 2] == 0
+                        and self._grid[1, check_row - 2, check_col + 2] == 0
+                        and self._grid[2, check_row - 2, check_col + 2] == 0
+                        and self._grid[3, check_row - 2, check_col + 2] == 0
+                        and (
+                            self._grid[2, check_row - 1, check_col + 1] == 1
+                            or self._grid[3, check_row - 1, check_col + 1] == 1
+                        )
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 5)
+
+            if self._grid[1, check_row, check_col] == 1:
+                if (
+                    check_row - 1 >= 0
+                    and check_col - 1 >= 0
+                    and (
+                        self._grid[0, check_row - 1, check_col - 1] == 0
+                        and self._grid[1, check_row - 1, check_col - 1] == 0
+                        and self._grid[2, check_row - 1, check_col - 1] == 0
+                        and self._grid[3, check_row - 1, check_col - 1] == 0
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 5)
+                if (
+                    check_row - 1 >= 0
+                    and check_col + 1 < 8
+                    and (
+                        self._grid[0, check_row - 1, check_col + 1] == 0
+                        and self._grid[1, check_row - 1, check_col + 1] == 0
+                        and self._grid[2, check_row - 1, check_col + 1] == 0
+                        and self._grid[3, check_row - 1, check_col + 1] == 0
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 4)
+                if (
+                    check_row + 1 < 8
+                    and check_col + 1 < 8
+                    and (
+                        self._grid[0, check_row + 1, check_col + 1] == 0
+                        and self._grid[1, check_row + 1, check_col + 1] == 0
+                        and self._grid[2, check_row + 1, check_col + 1] == 0
+                        and self._grid[3, check_row + 1, check_col + 1] == 0
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 2)
+                if (
+                    check_row + 1 < 8
+                    and check_col - 1 >= 0
+                    and (
+                        self._grid[0, check_row + 1, check_col - 1] == 0
+                        and self._grid[1, check_row + 1, check_col - 1] == 0
+                        and self._grid[2, check_row + 1, check_col - 1] == 0
+                        and self._grid[3, check_row + 1, check_col - 1] == 0
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 3)
+                if (
+                    check_row - 2 >= 0
+                    and check_col - 2 >= 0
+                    and (
+                        self._grid[0, check_row - 2, check_col - 2] == 0
+                        and self._grid[1, check_row - 2, check_col - 2] == 0
+                        and self._grid[2, check_row - 2, check_col - 2] == 0
+                        and self._grid[3, check_row - 2, check_col - 2] == 0
+                        and (
+                            self._grid[2, check_row - 1, check_col - 1] == 1
+                            or self._grid[3, check_row - 1, check_col - 1] == 1
+                        )
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 6)
+                if (
+                    check_row - 2 >= 0
+                    and check_col + 2 < 8
+                    and (
+                        self._grid[0, check_row - 2, check_col + 2] == 0
+                        and self._grid[1, check_row - 2, check_col + 2] == 0
+                        and self._grid[2, check_row - 2, check_col + 2] == 0
+                        and self._grid[3, check_row - 2, check_col + 2] == 0
+                        and (
+                            self._grid[2, check_row - 1, check_col + 1] == 1
+                            or self._grid[3, check_row - 1, check_col + 1] == 1
+                        )
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 7)
+                if (
+                    check_row + 2 < 8
+                    and check_col + 2 < 8
+                    and (
+                        self._grid[0, check_row + 2, check_col + 2] == 0
+                        and self._grid[1, check_row + 2, check_col + 2] == 0
+                        and self._grid[2, check_row + 2, check_col + 2] == 0
+                        and self._grid[3, check_row + 2, check_col + 2] == 0
+                        and (
+                            self._grid[2, check_row + 1, check_col + 1] == 1
+                            or self._grid[3, check_row + 1, check_col + 1] == 1
+                        )
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 2)
+                if (
+                    check_row + 2 < 8
+                    and check_col - 2 >= 0
+                    and (
+                        self._grid[0, check_row + 2, check_col - 2] == 0
+                        and self._grid[1, check_row + 2, check_col - 2] == 0
+                        and self._grid[2, check_row + 2, check_col - 2] == 0
+                        and self._grid[3, check_row + 2, check_col - 2] == 0
+                        and (
+                            self._grid[2, check_row + 1, check_col - 1] == 1
+                            or self._grid[3, check_row + 1, check_col - 1] == 1
+                        )
+                    )
+                ):
+                    self._legal_moves = np.append(self._legal_moves, i * 8 + 3)
         terminated = self.winner()
         truncated = len(self._legal_moves) == 0
         if terminated:
@@ -198,14 +405,14 @@ class CheckersEnv(gym.Env):
         canvas = pygame.Surface(self.window_size)
         canvas.fill((255, 255, 255))
         pix_square_size = (
-            self.window_size[0] / self.size[1]
+            self.window_size[0] / 8
         )  # The size of a single grid square in pixels
 
         # First we draw the X's and 0's
-        turn = int(self._grid[2, 0, 0])
-        for i in range(self.size[0]):
-            for j in range(self.size[1]):
-                if self._grid[i, j, turn] == 1:
+        turn = int(self._grid[4, 0, 0])
+        for i in range(8):
+            for j in range(8):
+                if self._grid[2 * turn, i, j] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 0, 0),
@@ -216,7 +423,33 @@ class CheckersEnv(gym.Env):
                         pix_square_size // 3,
                         width=3,
                     )
-                if self._grid[1 - turn, i, j] == 1:
+                if self._grid[2 * turn + 1, i, j] == 1:
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.165) * pix_square_size, (i + 0.165) * pix_square_size),
+                        ((j + 0.165) * pix_square_size, (i + 0.835) * pix_square_size),
+                    )
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.165) * pix_square_size, (i + 0.835) * pix_square_size),
+                        ((j + 0.835) * pix_square_size, (i + 0.835) * pix_square_size),
+                    )
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.835) * pix_square_size, (i + 0.835) * pix_square_size),
+                        ((j + 0.835) * pix_square_size, (i + 0.165) * pix_square_size),
+                    )
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.835) * pix_square_size, (i + 0.165) * pix_square_size),
+                        ((j + 0.165) * pix_square_size, (i + 0.165) * pix_square_size),
+                    )
+
+                if self._grid[2 - 2 * turn, i, j] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 255, 0),
@@ -227,16 +460,40 @@ class CheckersEnv(gym.Env):
                         pix_square_size // 3,
                         width=3,
                     )
-
+                if self._grid[3 - 2 * turn, i, j] == 1:
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.165) * pix_square_size, (i + 0.165) * pix_square_size),
+                        ((j + 0.165) * pix_square_size, (i + 0.835) * pix_square_size),
+                    )
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.165) * pix_square_size, (i + 0.835) * pix_square_size),
+                        ((j + 0.835) * pix_square_size, (i + 0.835) * pix_square_size),
+                    )
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.835) * pix_square_size, (i + 0.835) * pix_square_size),
+                        ((j + 0.835) * pix_square_size, (i + 0.165) * pix_square_size),
+                    )
+                    pygame.draw.line(
+                        canvas,
+                        (255, 0, 0),
+                        ((j + 0.835) * pix_square_size, (i + 0.165) * pix_square_size),
+                        ((j + 0.165) * pix_square_size, (i + 0.165) * pix_square_size),
+                    )
         # Finally, add some gridlines
-        for i in range(self.size[0]):
+        for i in range(8):
             pygame.draw.line(
                 canvas,
                 (0, 0, 0),
                 (0, i * pix_square_size),
                 (self.window_size[0], i * pix_square_size),
             )
-        for j in range(self.size[1]):
+        for j in range(8):
             pygame.draw.line(
                 canvas,
                 (0, 0, 0),
@@ -264,5 +521,12 @@ class CheckersEnv(gym.Env):
             pygame.quit()
 
     def winner(self):
-        # Check if one of the player planes is empty, that player loses
+        if np.sum(self._grid[0, :, :]) == 0:
+            return True
+        if np.sum(self._grid[1, :, :]) == 0:
+            return True
+        if np.sum(self._grid[2, :, :]) == 0:
+            return True
+        if np.sum(self._grid[3, :, :]) == 0:
+            return True
         return False
