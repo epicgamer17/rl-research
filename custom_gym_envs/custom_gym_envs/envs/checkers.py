@@ -5,26 +5,38 @@ import pygame
 import copy
 
 
-class Connect4Env(gym.Env):
+class CheckersEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 1}
 
-    def __init__(self, render_mode=None, size=(6, 7), win_length=4):
-        self.size = size  # The size of the square grid
-        self.win_length = win_length  # The number of consecutive tokens needed to win
-        self.window_size = (
-            size[1] * (512 / size[0]),
-            512,
-        )  # The size of the PyGame window
+    def __init__(self, render_mode=None):
+        self.window_size = (512, 512)  # The size of the PyGame window
 
         # Observations are planes.
         # The first plane represents player 1s tokens, the second player 2s and the third encodes the current players turn.
         self.observation_space = spaces.Box(
-            low=0, high=1, shape=(3,) + self.size, dtype=np.float64
+            low=0,
+            high=1,
+            shape=(
+                5,
+                8,
+                8,
+            ),  # 5 planes: player 1, player 2, player 1 king, player 2 king, current player
+            dtype=np.float64,
         )
         print(self.observation_space)
 
         # We have 9 actions, corresponding to each cell
-        self.action_space = spaces.Discrete(self.size[1])
+        self.action_space = spaces.Discrete(8 * 32 + 1)
+        # 0, 1, 2, 3, 4, 5, 6, 7 * 32 squares + 1
+        # from, action_type = num // 8 == from_square?, num % 8 == action type
+        # 0 1 0 1 0 1 0 1
+        # 1 0 1 0 1 0 1 0
+        # 0 1 0 1 0 1 0 1
+        # 0 0 0 0 0 0 0 0
+        # 0 0 0 0 0 0 0 0
+        # 2 0 2 0 2 0 2 0
+        # 0 2 0 2 0 2 0 2
+        # 2 0 2 0 2 0 2 0
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -43,19 +55,75 @@ class Connect4Env(gym.Env):
         return copy.deepcopy(self._grid)
 
     def _get_info(self):
-        return {"legal_moves": self._legal_moves, "player": self._current_player}
+        return {
+            "legal_moves": (
+                self._legal_moves_p1
+                if self._current_player == 0
+                else self._legal_moves_p2
+            ),
+            "player": self._current_player,
+        }
+
+    def _update_legal_moves(self):
+        self._legal_moves_p1 = np.array(list(range(self.action_space.n)))
+        self._legal_moves_p2 = np.array(list(range(self.action_space.n)))
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
         # Set a blank board
-        self._grid = np.zeros((3,), self.size)
-        self._grid[2, :, :] = 0  # It's player 1's turn
+        self._grid = np.zeros(
+            (
+                5,
+                8,
+                8,
+            )
+        )
+        # set player ones and twos tokens
+        for i in range(0, 8, 2):
+            self._grid[1, 1, i] = 1
+            self._grid[1, 5, i] = 1
+            self._grid[0, 7, i] = 1
+        for i in range(1, 8, 2):
+            self._grid[1, 0, i] = 1
+            self._grid[0, 2, i] = 1
+            self._grid[0, 6, i] = 1
+        self._grid[4, :, :] = 0  # It's player 1's turn
         self._current_player = 0
-
         # Reset legal moves
-        self._legal_moves = np.array(list(range(self.action_space.n)))
+        # 0 1 0 1 0 1 0 1
+        # 1 0 1 0 1 0 1 0
+        # 0 1 0 1 0 1 0 1
+        # 0 0 0 0 0 0 0 0
+        # 0 0 0 0 0 0 0 0
+        # 2 0 2 0 2 0 2 0
+        # 0 2 0 2 0 2 0 2
+        # 2 0 2 0 2 0 2 0
+        # 0, 1, 2, 3, 4, 5, 6, 7 * 32 squares + 1
+
+        self._legal_moves_p1 = np.array(
+            [
+                20 * 8 + 1,
+                21 * 8 + 0,
+                21 * 8 + 1,
+                22 * 8 + 0,
+                22 * 8 + 1,
+                23 * 8 + 0,
+                23 * 8 + 1,
+            ]
+        )
+        self._legal_moves_p2 = np.array(
+            [
+                8 * 8 + 2,
+                8 * 8 + 3,
+                9 * 8 + 2,
+                9 * 8 + 3,
+                10 * 8 + 2,
+                10 * 8 + 3,
+                11 * 8 + 3,
+            ]
+        )
 
         observation = self._get_obs()
         info = self._get_info()
@@ -66,52 +134,41 @@ class Connect4Env(gym.Env):
         return observation, info
 
     def step(self, action):
-        illegal_move = False
-        if action < 0 or action > self.action_space.n - 1:
-            raise ValueError(
-                "Action must be between 0 and {}".format(self.action_space.n - 1)
-            )
-            illegal_move = True
+        if action < 0 or action > 8:
+            raise ValueError("Action must be between 0 and 8")
         if action not in self._legal_moves:
             # could return a negative reward
-            # raise ValueError(
-            #     "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
-            # )
-            print("Illegal move {} Legal Moves {}".format(action, self._legal_moves))
-            illegal_move = True
-        if illegal_move:
-            observation = self._get_obs()
-            info = self._get_info()
-
-            if self.render_mode == "human":
-                self._render_frame()
-
-            reward = [0, 0]
-            reward[self._current_player] = -1
-            return observation, reward, False, False, info
-
-        # output next player's token first (since that's the one we're inputting to)
-        current_player_board = copy.deepcopy(self._grid[0, :, :])
-        self._grid[0, :, :] = self._grid[:, :, 1]
-        self._grid[1, :, :] = current_player_board
-        # place token
-        for i in range(self.size[0] - 1, -1, -1):
-            if self._grid[0, i, action] == 0 and self._grid[1, i, action] == 0:
-                self._grid[1, i, action] = 1
-                break
-        if i == 0:
-            self._legal_moves = np.delete(
-                self._legal_moves, np.where(self._legal_moves == action)
+            raise ValueError(
+                "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
             )
+        # output next player's token first (since that's the one we're inputting to)
+        current_player_tokens = copy.deepcopy(self._grid[0, :, :])
+        self._grid[0, :, :] = self._grid[:, :, 2]
+        self._grid[2, :, :] = current_player_tokens
+
+        current_player_kings = copy.deepcopy(self._grid[1, :, :])
+        self._grid[1, :, :] = self._grid[:, :, 3]
+        self._grid[3, :, :] = current_player_kings
+
+        # convert action to from_square and action_type
+        from_square = action // 8
+        action_type = action % 8
+        # convert from square to row and column
+        from_row = from_square // 8
+        from_col = (from_square + 1) % 8
+        # move token
+        # 1:
+
+        # update legal moves for both players
 
         # encode turn as 1 or 0
-        self._grid[2, :, :] = 1 - self._grid[2, :, :]
+        self._grid[4, :, :] = 1 - self._grid[4, :, :]
         self._current_player = (self._current_player + 1) % 2
         # An episode is done iff there is a winner or the board is full
         terminated = self.winner()
         truncated = len(self._legal_moves) == 0
         if terminated:
-            if self._current_player == 0:
+            if self._grid[2, 0, 0] == 0:
                 reward = [-1, 1]
             else:
                 reward = [1, -1]
@@ -207,29 +264,5 @@ class Connect4Env(gym.Env):
             pygame.quit()
 
     def winner(self):
-        for i in range(self.size[0]):
-            for j in range(self.size[1]):
-                if self._grid[1, i, j] == 1:
-                    if self._check_win(i, j):
-                        return True
-        return False
-
-    def _check_win(self, i, j):
-        # Check row
-        if j + self.win_length <= self.size[1]:
-            if np.all(self._grid[1, i, j : j + self.win_length]):
-                return True
-        # Check column
-        if i + self.win_length <= self.size[0]:
-            if np.all(self._grid[1, i : i + self.win_length, j]):
-                return True
-        # Check diagonal
-        if i + self.win_length <= self.size[0] and j + self.win_length <= self.size[1]:
-            if np.all([self._grid[1, i + k, j + k] for k in range(self.win_length)]):
-                return True
-        # Check other diagonal
-        if i + self.win_length <= self.size[0] and j - self.win_length + 1 >= 0:
-            if np.all([self._grid[1, i + k, j - k] for k in range(self.win_length)]):
-                return True
-
+        # Check if one of the player planes is empty, that player loses
         return False

@@ -20,7 +20,9 @@ class NFSPDQNConfig(Config):
 
         self.replay_interval = self.parse_field("replay_interval", 16)
 
-        self.anticipatory_param = self.parse_field("anticipatory_param", 0.5)
+        self.anticipatory_param = self.parse_field("anticipatory_param", 0.1)
+
+        # if self.anticipatory_param == 1.0 and self.game.is_deterministic:
 
         self.shared_networks_and_buffers = self.parse_field(
             "shared_networks_and_buffers", False

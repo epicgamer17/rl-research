@@ -8,10 +8,11 @@ Includes:
 5. Noisy DQN 
 6. N Step DQN
 7. Categorical DQN
-8. Rainbow DQN 
+8. Rainbow DQN
 These can be used by passing in the correct config into RainbowAgent (You can also mix and match these by creating your own configs)
 9. Ape-X
-10. Neural Ficticious Self Play
+10. Neural Ficticious Self Play (NFSP)
+NFSP allows traditional RL agents to work well on imperfect information games and multi agent environments. It also can be used to train Rainbow on multi agent games by passing in an anticipatory param of 1.0, this should really only be used for deterministic games though, like Tic Tac Toe or Connect 4. 
 11. PPO 
 12. AlphaZero
 13. MuZero
@@ -21,6 +22,8 @@ Envs we have implimented:
 1. Tic Tac Toe
 2. CartPole
 3. Connect 4 
+4. Mississippi Marbles
+5. LeDuc Holdem
 
 
 Some envs we want to test in the future:
@@ -30,10 +33,9 @@ Some envs we want to test in the future:
 4. Shogi
 5. Risk
 6. Monopoly 
-7. Mississippi Marbles
-8. Starcraft
-9. Clash Royale
-10. RL Card (Card Games): https://rlcard.org/ https://github.com/datamllab/rlcard 
+7. Starcraft
+8. Clash Royale
+9. RL Card (Card Games): https://rlcard.org/ https://github.com/datamllab/rlcard 
     Black Jack
     Leduc Hold'em
     Limit Texas Hold'em
@@ -44,23 +46,23 @@ Some envs we want to test in the future:
     UNO 
     Gin Rummy 
     Bridge
-11. Eclipse Sumo (Traffic Simulation): https://eclipse.dev/sumo/about/ https://github.com/AndreaVidali/Deep-QLearning-Agent-for-Traffic-Signal-Control 
-12. Any Trading (Simple): https://github.com/AminHP/gym-anytrading
-13. MTSIM Trading (Complex): https://github.com/AminHP/gym-mtsim 
-14. TensorTrade: https://www.tensortrade.org/en/latest/examples/train_and_evaluate_using_ray.html https://github.com/tensortrade-org/tensortrade?tab=readme-ov-file 
-15. Atari 57: https://gymnasium.farama.org/environments/atari/ 
-16. MineCraft: https://minerl.io/ 
-17. Racing: https://aws.amazon.com/deepracer/ 
-18. Robo Sumo: https://github.com/openai/robosumo 
-19. Unity ML Agents: https://github.com/Unity-Technologies/ml-agents 
-20. Multi Agent Emergence Environements: https://github.com/openai/multi-agent-emergence-environments/tree/master/examples 
-21. All Open AI Gym Environments: https://gymnasium.farama.org/
+10. Eclipse Sumo (Traffic Simulation): https://eclipse.dev/sumo/about/ https://github.com/AndreaVidali/Deep-QLearning-Agent-for-Traffic-Signal-Control 
+11. Any Trading (Simple): https://github.com/AminHP/gym-anytrading
+12. MTSIM Trading (Complex): https://github.com/AminHP/gym-mtsim 
+13. TensorTrade: https://www.tensortrade.org/en/latest/examples/train_and_evaluate_using_ray.html https://github.com/tensortrade-org/tensortrade?tab=readme-ov-file 
+14. Atari 57: https://gymnasium.farama.org/environments/atari/ 
+15. MineCraft: https://minerl.io/ 
+16. Racing: https://aws.amazon.com/deepracer/ 
+17. Robo Sumo: https://github.com/openai/robosumo 
+18. Unity ML Agents: https://github.com/Unity-Technologies/ml-agents 
+19. Multi Agent Emergence Environements: https://github.com/openai/multi-agent-emergence-environments/tree/master/examples 
+20. All Open AI Gym Environments: https://gymnasium.farama.org/
     Classic Control
     Box 2D
     Toy Text
     MuJoCo
     Atari
-22. All Open Spiel Environments: https://github.com/google-deepmind/open_spiel?tab=readme-ov-file
+21. All Open Spiel Environments: https://github.com/google-deepmind/open_spiel?tab=readme-ov-file
 More at: https://github.com/clvrai/awesome-rl-envs?tab=readme-ov-file 
 
 

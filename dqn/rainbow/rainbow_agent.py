@@ -411,7 +411,10 @@ class RainbowAgent(BaseAgent):
                 )
                 target_model_updated = (target_model_updated[0], False)
 
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
+            if (
+                training_step % self.checkpoint_interval == 0
+                and training_step > self.start_training_step
+            ):
                 # print(self.stats["score"])
                 self.save_checkpoint(
                     training_step,

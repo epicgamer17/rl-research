@@ -40,17 +40,20 @@ class LeducHoldemEnv(gym.Env):
     #     return self.game.get_state()
 
     def _get_info(self):
-        return {"legal_moves": copy.deepcopy(self._legal_moves), "player": self._player}
+        return {
+            "legal_moves": copy.deepcopy(self._legal_moves),
+            "player": self._current_player,
+        }
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
-        dict, self._player = self.game.reset()
+        dict, self._current_player = self.game.reset()
         self._legal_moves = list(dict["legal_actions"].keys())
         observation = dict["obs"]
         if self.encode_player_turn:
-            observation = np.append(observation, [self._player])
+            observation = np.append(observation, [self._current_player])
             observation = np.reshape(observation, (37,))
         move_history = dict["action_record"]
 
@@ -71,11 +74,11 @@ class LeducHoldemEnv(gym.Env):
         #     "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
         # )
 
-        dict, self._player = self.game.step(action)
+        dict, self._current_player = self.game.step(action)
         self._legal_moves = list(dict["legal_actions"].keys())
         observation = dict["obs"]  # copy.deepcopy(dict["obs"])?
         if self.encode_player_turn:
-            observation = np.append(observation, [self._player])
+            observation = np.append(observation, [self._current_player])
             observation = np.reshape(observation, (37,))
         move_history = dict["action_record"]
 

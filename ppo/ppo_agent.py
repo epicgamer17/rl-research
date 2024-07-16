@@ -320,7 +320,10 @@ class PPOAgent(BaseAgent):
             self.learn()
 
             # self.old_actor.set_weights(self.actor.get_weights())
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
+            if (
+                training_step % self.checkpoint_interval == 0
+                and training_step > self.start_training_step
+            ):
                 self.save_checkpoint(
                     training_step,
                     training_step * self.config.steps_per_epoch,
