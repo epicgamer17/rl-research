@@ -43,7 +43,7 @@ from numpy import average
 import torch
 from utils import get_legal_moves, current_timestamp, update_per_beta, plot_graphs
 import dill
-from utils.utils import action_mask
+from utils.utils import action_mask, epsilon_greedy_policy
 
 sys.path.append("../../")
 
@@ -78,7 +78,13 @@ class NFSPDQN(BaseAgent):
         sl_configs = self.config.sl_configs
 
         if self.config.shared_networks_and_buffers:
-            rl_agent = RainbowAgent(env, rl_configs[0], f"rl_agent_{name}_0", device)
+            rl_agent = RainbowAgent(
+                env,
+                rl_configs[0],
+                f"rl_agent_{name}_0",
+                device,
+                num_players=self.config.num_players,
+            )
             self.rl_agents = [rl_agent] * self.config.num_players
             if self.config.anticipatory_param != 1.0:
                 sl_agent = PolicyImitationAgent(
@@ -144,8 +150,15 @@ class NFSPDQN(BaseAgent):
             action = self.sl_agents[info["player"]].select_actions(prediction)
         else:
             # print("selecting with best response")
-            action = self.rl_agents[info["player"]].select_actions(prediction, info)
-
+            # action = self.rl_agents[info["player"]].select_actions(prediction, info)
+            action = epsilon_greedy_policy(
+                prediction,
+                self.rl_agents[info["player"]].eg_epsilon,
+                wrapper=lambda prediction: self.rl_agents[
+                    info["player"]
+                ].select_actions(prediction, info),
+                range=self.num_actions,
+            ).item()
         return action
 
     def learn(self):
@@ -203,7 +216,7 @@ class NFSPDQN(BaseAgent):
                 done,
             ]
             # only do this if it is average policy? (open spiel)
-            self.rl_agents[player].replay_buffer.store(*transition)
+            self.rl_agents[player].replay_buffer.store(*transition, player=player)
         if not done:
             self.previous_states[player] = state
             self.previous_infos[player] = info
@@ -234,6 +247,12 @@ class NFSPDQN(BaseAgent):
                         info,
                     ).item()
                     # print("Action", action)
+                    for p in (
+                        [0]
+                        if self.config.shared_networks_and_buffers
+                        else range(self.config.num_players)
+                    ):
+                        self.rl_agents[p].update_eg_epsilon()
 
                     # only average strategy mode? (open spiel)
                     self.store_transition(
@@ -396,9 +415,7 @@ class NFSPDQN(BaseAgent):
             # exploitability /= self.config.num_players
             self.stats["exploitability"].append({"exploitability": exploitability})
         else:
-            test_score = -self.test(
-                self.checkpoint_trials, 0, training_step, training_step_dir
-            )
+            test_score = -self.test(1, 0, training_step, training_step_dir)
             self.stats["test_score"].append({"score": test_score})
 
         # save the graph stats and targets

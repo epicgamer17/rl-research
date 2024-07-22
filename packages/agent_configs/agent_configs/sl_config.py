@@ -12,6 +12,7 @@ class SupervisedConfig(ConfigBase):
         self.loss_function: Loss = self.parse_field("sl_loss_function", required=True)
         self.clipnorm = self.parse_field("sl_clipnorm", 0)
         self.optimizer: Optimizer = self.parse_field("sl_optimizer", Adam)
+        self.weight_decay = self.parse_field("sl_weight_decay", 0.0)
         self.training_steps = self.parse_field("training_steps", required=True)
         self.training_iterations = self.parse_field("sl_training_iterations", 1)
         self.num_minibatches = self.parse_field("sl_num_minibatches", 1)
@@ -31,6 +32,8 @@ class SupervisedConfig(ConfigBase):
             required=False,
             wrapper=kernel_initializer_wrapper,
         )
+
+        self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.01)
 
         self.noisy_sigma = self.parse_field("sl_noisy_sigma", 0)
         self.residual_layers = self.parse_field("sl_residual_layers", [])

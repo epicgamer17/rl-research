@@ -173,7 +173,7 @@ class NFSPDQN(BaseAgent):
                 done,
             ]
             # only do this if it is average policy? (open spiel)
-            self.rl_agent.replay_buffer.store(*transition)
+            self.rl_agent.replay_buffer.store(*transition, player)
         if not done:
             self.previous_states[player] = state
             self.previous_infos[player] = info

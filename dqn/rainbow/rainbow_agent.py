@@ -49,6 +49,7 @@ class RainbowAgent(BaseAgent):
                 else torch.device("cpu")
             )
         ),
+        num_players: int = 1,
     ):
         super(RainbowAgent, self).__init__(env, config, name, device=device)
         self.model = RainbowNetwork(
@@ -75,12 +76,14 @@ class RainbowAgent(BaseAgent):
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
                 eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
             )
         elif self.config.optimizer == SGD:
             print("Warning: SGD does not use adam_epsilon param")
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
             )
 
         self.replay_buffer = PrioritizedNStepReplayBuffer(
@@ -97,6 +100,7 @@ class RainbowAgent(BaseAgent):
             compressed_observations=(
                 self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
             ),
+            num_players=num_players,
         )
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
@@ -151,8 +155,14 @@ class RainbowAgent(BaseAgent):
             legal_moves = get_legal_moves(info)
             q_values = action_mask(q_values, legal_moves, mask_value=-float("inf"))
         # print("Q Values", q_values)
-        selected_actions = q_values.argmax(1, keepdim=False)
-
+        # q_values with argmax ties
+        selected_actions = torch.stack(
+            [
+                torch.tensor(np.random.choice(np.where(x == x.max())[0]))
+                for x in q_values
+            ]
+        )
+        # selected_actions = q_values.argmax(1, keepdim=False)
         return selected_actions
 
     def learn(self) -> np.ndarray:
@@ -242,10 +252,8 @@ class RainbowAgent(BaseAgent):
         # print("computing target distributions")
         with torch.no_grad():
             discount_factor = self.config.discount_factor**self.config.n_step
-            delta_z = (
-                (self.config.v_max - self.config.v_min) / (self.config.atom_size - 1)
-                if self.config.atom_size > 1
-                else (self.config.v_max - self.config.v_min)
+            delta_z = (self.config.v_max - self.config.v_min) / (
+                self.config.atom_size - 1
             )
             next_observations, rewards, dones = (
                 samples["next_observations"],
@@ -287,10 +295,23 @@ class RainbowAgent(BaseAgent):
             u[(l < (self.config.atom_size - 1)) * (l == u)] += 1
             # print("fixed l", l)
             # print("fixed u", u)
+            # dones = dones.squeeze()
+            # masked_probs = torch.ones_like(probabilities) / self.config.atom_size
+            # masked_probs[~dones] = probabilities[~dones]
 
             m = torch.zeros_like(probabilities)
             m.scatter_add_(dim=1, index=l, src=probabilities * ((u.float()) - b))
             m.scatter_add_(dim=1, index=u, src=probabilities * ((b - l.float())))
+            # print("old_m", (m * self.support).sum(-1))
+
+            # projected_distribution = torch.zeros_like(probabilities)
+            # projected_distribution.scatter_add_(
+            #     dim=1, index=l, src=masked_probs * (u.float() - b)
+            # )
+            # projected_distribution.scatter_add_(
+            #     dim=1, index=u, src=masked_probs * (b - l.float())
+            # )
+            # print("m", (projected_distribution * self.support).sum(-1))
             return m
 
     def fill_replay_buffer(self):
@@ -328,7 +349,7 @@ class RainbowAgent(BaseAgent):
             self.eg_epsilon = update_linear_schedule(
                 self.eg_epsilon,
                 self.config.eg_epsilon_final,
-                self.training_steps,
+                self.training_steps * self.config.replay_interval,
                 self.config.eg_epsilon,
                 training_step,
             )

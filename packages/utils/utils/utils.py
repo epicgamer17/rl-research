@@ -64,6 +64,21 @@ def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
     return actions
 
 
+def clip_low_prob_actions(actions: Tensor, low_prob: float = 0.01) -> Tensor:
+    """
+    Clip actions with probability lower than low_prob to 0
+    actions: Tensor, probabilities of actions
+    """
+    # print("Actions in low prob func", actions)
+    if low_prob == 0:
+        return actions
+    mask = actions < low_prob
+    # print("Mask", mask)
+    actions = torch.where(mask, 0.0, actions)
+    # print("Actions after clipping", actions)
+    return actions
+
+
 def get_legal_moves(info: dict | list[dict]):
     if isinstance(info, dict):
         return [info["legal_moves"] if "legal_moves" in info else None]

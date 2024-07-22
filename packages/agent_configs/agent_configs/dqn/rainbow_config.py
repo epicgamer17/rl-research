@@ -46,11 +46,11 @@ class RainbowConfig(Config):
         #     self.atom_size > 1
         # ), "Atom size must be greater than 1, as softmax and Q distribution to Q value calculation requires more than 1 atom"
 
-        assert not (
-            self.game.is_image
-            and len(self.conv_layers) == 0
-            and len(self.residual_layers) == 0
-        ), "Convolutional layers must be defined for image based games"
+        # assert not (
+        #     self.game.is_image
+        #     and len(self.conv_layers) == 0
+        #     and len(self.residual_layers) == 0
+        # ), "Convolutional layers must be defined for image based games"
 
         if len(self.conv_layers) > 0:
             assert len(self.conv_layers[0]) == 3

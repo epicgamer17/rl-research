@@ -74,8 +74,12 @@ class PPOConfig(Config):
         self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
 
+        self.clip_low_prob = self.parse_field("clip_low_prob", 0.01)
+
         assert not (
-            self.game.is_image and self.conv_layers is not None
+            self.game.is_image
+            and self.actor_conv_layers is not None
+            and self.critic_conv_layers is not None
         ), "Convolutional layers must be defined for image based games"
 
     def _verify_game(self):

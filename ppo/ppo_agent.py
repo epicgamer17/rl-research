@@ -13,7 +13,7 @@ from utils import (
     get_legal_moves,
     update_linear_lr_schedule,
 )
-from utils.utils import normalize_policies
+from utils.utils import clip_low_prob_actions, normalize_policies
 
 sys.path.append("../")
 
@@ -52,12 +52,14 @@ class PPOAgent(BaseAgent):
             params=self.model.actor.parameters(),
             lr=self.config.learning_rate,
             eps=self.config.adam_epsilon,
+            weigh_decay=self.config.actor.weight_decay,
         )
 
         self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
             params=self.model.critic.parameters(),
             lr=self.config.learning_rate,
             eps=self.config.adam_epsilon,
+            weigh_decay=self.config.critic.weight_decay,
         )
 
         # self.actor = ActorNetwork(
@@ -101,6 +103,7 @@ class PPOAgent(BaseAgent):
             if mask_actions:
                 legal_moves = get_legal_moves(info)
                 policy = action_mask(policy, legal_moves, mask_value=0)
+                policy = clip_low_prob_actions(policy, self.config.clip_low_prob)
                 policy = normalize_policies(policy)
             distribution = torch.distributions.Categorical(probs=policy)
         else:
