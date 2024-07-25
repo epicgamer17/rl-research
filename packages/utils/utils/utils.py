@@ -610,15 +610,18 @@ def prepare_activations(activation: str):
 
 
 def epsilon_greedy_policy(
-    q_values: list[float], epsilon: float, range=None, wrapper=np.argmax
+    q_values: list[float], info: dict, epsilon: float, wrapper=np.argmax
 ):
     if np.random.rand() < epsilon:
-        if range is not None:
-            return np.random.randint(range)
+        if "legal_moves" in info:
+            return random.choice(info["legal_moves"])
         else:
-            return np.random.randint(len(q_values))
+            return random.choice(range(len(q_values)))
     else:
-        return wrapper(q_values)
+        try:
+            return wrapper(q_values, info)
+        except:
+            return wrapper(q_values)
 
 
 def add_dirichlet_noise(

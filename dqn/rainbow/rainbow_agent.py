@@ -344,7 +344,7 @@ class RainbowAgent(BaseAgent):
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
-    def update_eg_epsilon(self, training_step: int = None):
+    def update_eg_epsilon(self, training_step: int):
         if self.config.eg_epsilon_decay_type == "linear":
             self.eg_epsilon = update_linear_schedule(
                 self.eg_epsilon,
@@ -381,11 +381,11 @@ class RainbowAgent(BaseAgent):
                     values = self.predict(state)
                     action = epsilon_greedy_policy(
                         values,
+                        info,
                         self.eg_epsilon,
-                        wrapper=lambda values: self.select_actions(values, info).item(),
-                        range=self.num_actions,
-                    ).item()
-                    self.update_eg_epsilon()
+                        wrapper=lambda values, info: self.select_actions(values, info).item(),
+                    )
+                    self.update_eg_epsilon(training_step)
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )

@@ -150,15 +150,7 @@ class NFSPDQN(BaseAgent):
             action = self.sl_agents[info["player"]].select_actions(prediction)
         else:
             # print("selecting with best response")
-            # action = self.rl_agents[info["player"]].select_actions(prediction, info)
-            action = epsilon_greedy_policy(
-                prediction,
-                self.rl_agents[info["player"]].eg_epsilon,
-                wrapper=lambda prediction: self.rl_agents[
-                    info["player"]
-                ].select_actions(prediction, info),
-                range=self.num_actions,
-            ).item()
+            action = self.rl_agents[info["player"]].select_actions(prediction, info)
         return action
 
     def learn(self):
@@ -242,17 +234,25 @@ class NFSPDQN(BaseAgent):
                 for _ in range(self.config.replay_interval):
                     current_player: int = info["player"]
                     prediction = self.predict(state, info)
-                    action = self.select_actions(
-                        prediction,
-                        info,
-                    ).item()
+                    if self.policies[current_player] == "best_response":
+                        action = epsilon_greedy_policy(
+                            prediction,
+                            info,
+                            self.rl_agents[info["player"]].eg_epsilon,
+                            wrapper=lambda prediction: self.select_actions(prediction, info).item(),
+                        )
+                    else:
+                        action = self.select_actions(
+                            prediction,
+                            info,
+                        ).item()
                     # print("Action", action)
                     for p in (
                         [0]
                         if self.config.shared_networks_and_buffers
                         else range(self.config.num_players)
                     ):
-                        self.rl_agents[p].update_eg_epsilon()
+                        self.rl_agents[p].update_eg_epsilon(training_step)
 
                     # only average strategy mode? (open spiel)
                     self.store_transition(
@@ -315,15 +315,20 @@ class NFSPDQN(BaseAgent):
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
                 # print("Losses", rl_loss, sl_loss)
-                if rl_loss is not None:
-                    self.stats["rl_loss"].append({"loss": rl_loss})
-                if sl_loss is not None:
-                    self.stats["sl_loss"].append({"loss": sl_loss})
+                # if rl_loss is not None:
+                #     self.stats["rl_loss"].append({"loss": rl_loss})
+                # if sl_loss is not None:
+                #     self.stats["sl_loss"].append({"loss": sl_loss})
 
             if (
                 training_step % self.checkpoint_interval == 0
                 and training_step > self.start_training_step
             ):
+                if rl_loss is not None:
+                    self.stats["rl_loss"].append({"loss": rl_loss})
+                if sl_loss is not None:
+                    self.stats["sl_loss"].append({"loss": sl_loss})
+
                 self.save_checkpoint(
                     training_step,
                     training_step * self.config.replay_interval,
