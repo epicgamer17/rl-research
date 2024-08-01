@@ -50,7 +50,7 @@ class Connect4Env(gym.Env):
         super().reset(seed=seed)
 
         # Set a blank board
-        self._grid = np.zeros((3,), self.size)
+        self._grid = np.zeros((3,) + self.size)
         self._grid[2, :, :] = 0  # It's player 1's turn
         self._current_player = 0
 
