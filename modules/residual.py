@@ -71,6 +71,15 @@ class ResidualStack(nn.Module):
         # for layer in self.conv_layers:
         #     # layer.reset_noise()
         # return
+    
+    def remove_noise(self):
+        assert self.noisy
+
+        # noisy not implemented
+
+        # for layer in self.conv_layers:
+        #     # layer.reset_noise()
+        # return
 
     @property
     def output_channels(self):

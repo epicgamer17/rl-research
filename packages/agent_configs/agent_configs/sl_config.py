@@ -7,6 +7,7 @@ from torch.optim import Optimizer, Adam
 class SupervisedConfig(ConfigBase):
     def __init__(self, config_dict):
         super().__init__(config_dict)
+        print("SupervisedConfig")
         self.adam_epsilon = self.parse_field("sl_adam_epsilon", 1e-7)
         self.learning_rate = self.parse_field("sl_learning_rate", 0.005)
         self.loss_function: Loss = self.parse_field("sl_loss_function", required=True)
@@ -33,7 +34,7 @@ class SupervisedConfig(ConfigBase):
             wrapper=kernel_initializer_wrapper,
         )
 
-        self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.01)
+        self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.00)
 
         self.noisy_sigma = self.parse_field("sl_noisy_sigma", 0)
         self.residual_layers = self.parse_field("sl_residual_layers", [])

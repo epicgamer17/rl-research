@@ -5,17 +5,17 @@ from utils import CategoricalCrossentropyLoss, tointlists
 class RainbowConfig(Config):
     def __init__(self, config_dict: dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
-
+        print("RainbowConfig")
         self.residual_layers: list = self.parse_field("residual_layers", [])
         self.conv_layers: list = self.parse_field("conv_layers", [])
-        self.dense_layers_widths: int = self.parse_field(
-            "dense_layers_widths", [128], tointlists
+        self.dense_layer_widths: int = self.parse_field(
+            "dense_layer_widths", [128], tointlists
         )
-        self.value_hidden_layers_widths = self.parse_field(
-            "value_hidden_layers_widths", [], tointlists
+        self.value_hidden_layer_widths = self.parse_field(
+            "value_hidden_layer_widths", [], tointlists
         )
-        self.advantage_hidden_layers_widths: int = self.parse_field(
-            "advantage_hidden_layers_widths", [], tointlists
+        self.advantage_hidden_layer_widths: int = self.parse_field(
+            "advantage_hidden_layer_widths", [], tointlists
         )
 
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)

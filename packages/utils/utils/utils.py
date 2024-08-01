@@ -115,14 +115,17 @@ def make_stack(item: Tensor) -> Tensor:
     return item.view(1, *item.shape)
 
 
-def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int):
+def update_per_beta(
+    per_beta: float, per_beta_final: float, per_beta_steps: int, initial_per_beta: int
+):
     # could also use an initial per_beta instead of current (multiply below equation by current step)
     if per_beta < per_beta_final:
         clamp_func = min
     else:
         clamp_func = max
     per_beta = clamp_func(
-        per_beta_final, per_beta + (per_beta_final - per_beta) / (per_beta_steps)
+        per_beta_final,
+        per_beta + (per_beta_final - initial_per_beta) / (per_beta_steps),
     )
 
     return per_beta
@@ -635,9 +638,7 @@ def add_dirichlet_noise(
     return policy
 
 
-def augment_board(
-    self, game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False
-):
+def augment_game(game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False):
     # augmented_games[0] = rotate 90
     # augmented_games[1] = rotate 180
     # augmented_games[2] = rotate 270
@@ -712,6 +713,50 @@ def augment_board(
 
     augemented_games.append(game)
     return augemented_games
+
+
+def augment_board(
+    board, policy, flip_y: bool = False, flip_x: bool = False, rot90: bool = False
+):
+    if (rot90 and flip_y) or (rot90 and flip_x):
+        augemented_boards = [copy.deepcopy(board) for _ in range(7)]
+        augmented_policies = [copy.deepcopy(policy) for _ in range(7)]
+        augemented_boards[0] = np.rot90(board)
+        augmented_policies[0] = np.rot90(policy)
+        augemented_boards[1] = np.rot90(np.rot90(board))
+        augmented_policies[1] = np.rot90(np.rot90(policy))
+        augemented_boards[2] = np.rot90(np.rot90(np.rot90(board)))
+        augmented_policies[2] = np.rot90(np.rot90(np.rot90(policy)))
+        augemented_boards[3] = np.flipud(board)
+        augmented_policies[3] = np.flipud(policy)
+        augemented_boards[4] = np.flipud(np.rot90(board))
+        augmented_policies[4] = np.flipud(np.rot90(policy))
+        augemented_boards[5] = np.flipud(np.rot90(np.rot90(board)))
+        augmented_policies[5] = np.flipud(np.rot90(np.rot90(policy)))
+        augemented_boards[6] = np.rot90(np.flipud(board))
+        augmented_policies[6] = np.rot90(np.flipud(policy))
+    elif rot90 and not flip_y and not flip_x:
+        augemented_boards = [copy.deepcopy(board) for _ in range(3)]
+        augmented_policies = [copy.deepcopy(policy) for _ in range(3)]
+        augemented_boards[0] = np.rot90(board)
+        augmented_policies[0] = np.rot90(policy)
+        augemented_boards[1] = np.rot90(np.rot90(board))
+        augmented_policies[1] = np.rot90(np.rot90(policy))
+        augemented_boards[2] = np.rot90(np.rot90(np.rot90(board)))
+        augmented_policies[2] = np.rot90(np.rot90(np.rot90(policy)))
+    elif flip_y and not rot90 and not flip_x:
+        augemented_boards = [copy.deepcopy(board)]
+        augmented_policies = [copy.deepcopy(policy)]
+        augemented_boards[0] = np.flipud(board)
+        augmented_policies[0] = np.flipud(policy)
+    elif flip_x and not rot90 and not flip_y:
+        augemented_boards = [copy.deepcopy(board)]
+        augmented_policies = [copy.deepcopy(policy)]
+        augemented_boards[0] = np.fliplr(board)
+        augmented_policies[0] = np.fliplr(policy)
+    augemented_boards.append(board)
+    augmented_policies.append(policy)
+    return augemented_boards, augmented_policies
 
 
 def calculate_observation_buffer_shape(max_size, observation_dimensions):

@@ -379,7 +379,9 @@ class ApeXLearner(ApeXLearnerBase):
         for actor in self.actor_rrefs:
             # no timeout
             logger.info(f"starting actor {actor.owner_name()}")
-            actor.rpc_async(timeout=0).learn().then(lambda x: logger.info(f"{actor.owner_name()} learning stopped"))
+            actor.rpc_async(timeout=0).learn().then(
+                lambda x: logger.info(f"{actor.owner_name()} learning stopped")
+            )
 
     def _release_all(self, attr_names):
         for name in attr_names:
@@ -406,14 +408,18 @@ class ApeXLearner(ApeXLearnerBase):
             all_workers.append(actor.owner().name)
 
         # safely release all remote references to allow workers to shutdown rpc
-        self._release_all(["replay_rref", "target_network_rref", "online_network_rref", "actor_rrefs"])
+        self._release_all(
+            ["replay_rref", "target_network_rref", "online_network_rref", "actor_rrefs"]
+        )
 
         # let all workers finish
-        worker_shutdown_futures.append(self._shutdown_worker(self.parameter_worker_info))
+        worker_shutdown_futures.append(
+            self._shutdown_worker(self.parameter_worker_info)
+        )
         worker_shutdown_futures.append(self._shutdown_worker(self.replay_worker_info))
         for i in range(self.config.num_actors):
             worker_shutdown_futures.append(self._shutdown_worker(f"actor_{i}"))
-            
+
         # confirm that everyone is done
         rpc.api._barrier(all_workers)
 
@@ -434,7 +440,10 @@ class ApeXLearner(ApeXLearnerBase):
 
         # This beta gets send over to the remote replay buffer
         self.config.per_beta = update_per_beta(
-            self.per_sample_beta, self.config.per_beta_final, self.training_steps
+            self.per_sample_beta,
+            self.config.per_beta_final,
+            self.training_steps,
+            self.config.per_beta,
         )
 
         logger.debug(f"updating per beta to {self.config.per_beta}")

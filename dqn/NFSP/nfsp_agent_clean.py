@@ -208,7 +208,10 @@ class NFSPDQN(BaseAgent):
                 done,
             ]
             # only do this if it is average policy? (open spiel)
-            self.rl_agents[player].replay_buffer.store(*transition, player=player)
+            self.rl_agents[player].replay_buffer.store(
+                *transition,
+                player=player if self.config.shared_networks_and_buffers else 0,
+            )
         if not done:
             self.previous_states[player] = state
             self.previous_infos[player] = info
@@ -239,7 +242,9 @@ class NFSPDQN(BaseAgent):
                             prediction,
                             info,
                             self.rl_agents[info["player"]].eg_epsilon,
-                            wrapper=lambda prediction: self.select_actions(prediction, info).item(),
+                            wrapper=lambda prediction: self.select_actions(
+                                prediction, info
+                            ).item(),
                         )
                     else:
                         action = self.select_actions(
@@ -309,6 +314,7 @@ class NFSPDQN(BaseAgent):
                         self.rl_agents[p].replay_buffer.beta,
                         self.rl_agents[p].config.per_beta_final,
                         self.training_steps,
+                        self.rl_agents[p].config.per_beta,
                     )
                 )
 
@@ -455,6 +461,12 @@ class NFSPDQN(BaseAgent):
                 if self.config.anticipatory_param != 1.0
                 else "best_response"
             )
+            for p in (
+                [0]
+                if self.config.shared_networks_and_buffers
+                else range(self.config.num_players)
+            ):
+                self.rl_agents[p].model.remove_noise()
             test_score = 0
             if self.test_env.render_mode == "rgb_array":
                 self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
@@ -496,6 +508,12 @@ class NFSPDQN(BaseAgent):
                     test_score += (total_reward - average_strategy_reward) / (
                         self.config.num_players - 1
                     )
+            for p in (
+                [0]
+                if self.config.shared_networks_and_buffers
+                else range(self.config.num_players)
+            ):
+                self.rl_agents[p].model.reset_noise()
             self.policies = training_policies
             return test_score / num_trials  # is this correct for exploitability?
 

@@ -22,15 +22,13 @@ class RainbowNetwork(nn.Module):
         self.config = config
         self.has_residual_layers = len(config.residual_layers) > 0
         self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = len(config.dense_layers_widths) > 0
+        self.has_dense_layers = len(config.dense_layer_widths) > 0
         assert (
             self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
         ), "At least one of the layers should be present."
 
-        self.has_value_hidden_layers = len(config.value_hidden_layers_widths) > 0
-        self.has_advantage_hidden_layers = (
-            len(config.advantage_hidden_layers_widths) > 0
-        )
+        self.has_value_hidden_layers = len(config.value_hidden_layer_widths) > 0
+        self.has_advantage_hidden_layers = len(config.advantage_hidden_layer_widths) > 0
         if not self.config.dueling:
             assert not (
                 self.has_value_hidden_layers or self.has_advantage_hidden_layers
@@ -95,7 +93,7 @@ class RainbowNetwork(nn.Module):
             # (B, width_in) -> (B, width_out)
             self.dense_layers = DenseStack(
                 initial_width=initial_width,
-                widths=self.config.dense_layers_widths,
+                widths=self.config.dense_layer_widths,
                 activation=self.config.activation,
                 noisy_sigma=self.config.noisy_sigma,
             )
@@ -117,13 +115,13 @@ class RainbowNetwork(nn.Module):
                 # (B, width_in) -> (B, value_in_features) -> (B, atom_size)
                 self.value_hidden_layers = DenseStack(
                     initial_width=initial_width,
-                    widths=self.config.value_hidden_layers_widths,
+                    widths=self.config.value_hidden_layer_widths,
                     activation=self.config.activation,
                     noisy_sigma=self.config.noisy_sigma,
                 )
                 value_in_features = self.value_hidden_layers.output_width
             else:
-                value_in_features = self.dense_layers.output_width
+                value_in_features = initial_width
             # (B, value_in_features) -> (B, atom_size)
             self.value_layer = build_dense(
                 in_features=value_in_features,
@@ -135,13 +133,13 @@ class RainbowNetwork(nn.Module):
                 # (B, width_in) -> (B, advantage_in_features)
                 self.advantage_hidden_layers = DenseStack(
                     initial_width=initial_width,
-                    widths=self.config.advantage_hidden_layers_widths,
+                    widths=self.config.advantage_hidden_layer_widths,
                     activation=self.config.activation,
                     noisy_sigma=self.config.noisy_sigma,
                 )
                 advantage_in_features = self.advantage_hidden_layers.output_width
             else:
-                advantage_in_features = self.dense_layers.output_width
+                advantage_in_features = initial_width
             # (B, advantage_in_features) -> (B, output_size * atom_size)
             self.advantage_layer = build_dense(
                 in_features=advantage_in_features,
@@ -251,3 +249,19 @@ class RainbowNetwork(nn.Module):
             if self.config.dueling:
                 self.value_layer.reset_noise()
                 self.advantage_layer.reset_noise()
+
+    def remove_noise(self):
+        if self.config.noisy_sigma != 0:
+            if self.has_residual_layers:
+                self.residual_layers.remove_noise()
+            if self.has_conv_layers:
+                self.conv_layers.remove_noise()
+            if self.has_dense_layers:
+                self.dense_layers.remove_noise()
+            if self.has_value_hidden_layers:
+                self.value_hidden_layers.remove_noise()
+            if self.has_advantage_hidden_layers:
+                self.advantage_hidden_layers.remove_noise()
+            if self.config.dueling:
+                self.value_layer.remove_noise()
+                self.advantage_layer.remove_noise()

@@ -74,7 +74,7 @@ class PPOConfig(Config):
         self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
 
-        self.clip_low_prob = self.parse_field("clip_low_prob", 0.01)
+        self.clip_low_prob = self.parse_field("clip_low_prob", 0.00)
 
         assert not (
             self.game.is_image

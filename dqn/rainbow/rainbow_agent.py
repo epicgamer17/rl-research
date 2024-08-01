@@ -383,7 +383,9 @@ class RainbowAgent(BaseAgent):
                         values,
                         info,
                         self.eg_epsilon,
-                        wrapper=lambda values, info: self.select_actions(values, info).item(),
+                        wrapper=lambda values, info: self.select_actions(
+                            values, info
+                        ).item(),
                     )
                     self.update_eg_epsilon(training_step)
                     next_state, reward, terminated, truncated, next_info = (
@@ -402,6 +404,7 @@ class RainbowAgent(BaseAgent):
                             self.replay_buffer.beta,
                             self.config.per_beta_final,
                             self.training_steps,
+                            self.config.per_beta,
                         )
                     )
 

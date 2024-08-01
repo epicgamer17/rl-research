@@ -2,6 +2,8 @@ import numpy as np
 
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
 
+from utils import augment_board
+
 
 class NFSPReservoirBuffer(BaseReplayBuffer):
     def __init__(
@@ -22,12 +24,20 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             compressed_observations=compressed_observations,
         )
 
-    def store(self, observation, info: dict, target_policy: list[int], id=None):
+    def store(
+        self,
+        observation,
+        info: dict,
+        target_policy: list[int],
+        id=None,
+        augmentations=(False, False, False),
+    ):
         """
         Store a transition in the replay buffer.
         :param observation: the current observation
         :param target_policy: the target policy for the current observation, in this case it is of type list[int] since it will be a one-hot encoded vector of the action selected by the best agent network
         :param id: the id of the transition
+        :param augmentations: a tuple of booleans indicating which augmentations to apply to the observation (flipy, flipx, rotate90)
         """
         if self.size < self.max_size:
             self.observation_buffer[self.add_calls] = observation
