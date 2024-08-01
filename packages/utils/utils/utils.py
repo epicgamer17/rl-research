@@ -623,10 +623,10 @@ def epsilon_greedy_policy(
         else:
             return random.choice(range(len(q_values)))
     else:
-        try:
+        # try:
             return wrapper(q_values, info)
-        except:
-            return wrapper(q_values)
+        # except:
+        #     return wrapper(q_values)
 
 
 def add_dirichlet_noise(

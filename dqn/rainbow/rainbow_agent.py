@@ -159,7 +159,7 @@ class RainbowAgent(BaseAgent):
         # q_values with argmax ties
         selected_actions = torch.stack(
             [
-                torch.tensor(np.random.choice(np.where(x == x.max())[0]))
+                torch.tensor(np.random.choice(np.where(x.cpu() == x.cpu().max())[0]))
                 for x in q_values
             ]
         )
