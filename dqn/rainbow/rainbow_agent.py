@@ -268,6 +268,7 @@ class RainbowAgent(BaseAgent):
             next_actions = self.select_actions(
                 online_distributions,
                 info=samples["next_infos"],
+                mask_actions=self.config.game.has_legal_moves,
             )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[

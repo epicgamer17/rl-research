@@ -138,7 +138,7 @@ class BaseAgent:
         """
         raise NotImplementedError
 
-    def select_actions(self, predicted, info) -> torch.Tensor:
+    def select_actions(self, predicted, info, mask_actions=False) -> torch.Tensor:
         """Return actions determined from the model output, appling postprocessing steps such as masking beforehand
 
         Args:
@@ -310,7 +310,9 @@ class BaseAgent:
 
                 while not done:
                     prediction = self.predict(state)
-                    action = self.select_actions(prediction,info).item()
+                    action = self.select_actions(
+                        prediction, info, self.config.game.has_legal_moves
+                    ).item()
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
