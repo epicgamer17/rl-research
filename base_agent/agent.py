@@ -310,7 +310,7 @@ class BaseAgent:
 
                 while not done:
                     prediction = self.predict(state)
-                    action = self.select_actions(prediction).item()
+                    action = self.select_actions(prediction,info).item()
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
