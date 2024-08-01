@@ -132,7 +132,6 @@ class RainbowAgent(BaseAgent):
         # could change type later
         state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)
-        masked_q_distribution = q_distribution
         return q_distribution
 
     def predict_target(self, states) -> torch.Tensor:
@@ -153,7 +152,9 @@ class RainbowAgent(BaseAgent):
             q_values = distribution
         if mask_actions:
             legal_moves = get_legal_moves(info)
-            q_values = action_mask(q_values, legal_moves, mask_value=-float("inf"))
+            q_values = action_mask(
+                q_values, legal_moves, mask_value=-float("inf"), device=self.device
+            )
         # print("Q Values", q_values)
         # q_values with argmax ties
         selected_actions = torch.stack(

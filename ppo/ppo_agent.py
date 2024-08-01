@@ -102,7 +102,9 @@ class PPOAgent(BaseAgent):
             policy = self.model.actor(inputs=state_input)[0]
             if mask_actions:
                 legal_moves = get_legal_moves(info)
-                policy = action_mask(policy, legal_moves, mask_value=0)
+                policy = action_mask(
+                    policy, legal_moves, mask_value=0, device=self.device
+                )
                 policy = clip_low_prob_actions(policy, self.config.clip_low_prob)
                 policy = normalize_policies(policy)
             distribution = torch.distributions.Categorical(probs=policy)

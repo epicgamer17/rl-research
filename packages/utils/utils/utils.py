@@ -39,7 +39,9 @@ def normalize_policies(policies: torch.float32):
     return policies
 
 
-def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
+def action_mask(
+    actions: Tensor, legal_moves, mask_value: float = 0, device="cpu"
+) -> Tensor:
     """
     Mask actions that are not legal moves
     actions: Tensor, probabilities of actions or q-values
@@ -53,13 +55,13 @@ def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
         len(legal_moves) == actions.shape[0]
     ), "Legal moves should be the same length as the batch size"
 
-    mask = torch.zeros_like(actions, dtype=torch.bool)
+    mask = torch.zeros_like(actions, dtype=torch.bool).to(device)
     for i, legal in enumerate(legal_moves):
         mask[i, legal] = True
     # print(mask)
     # print(actions)
     # actions[mask == 0] = mask_value
-    actions = torch.where(mask, actions, torch.tensor(mask_value))
+    actions = torch.where(mask, actions, torch.tensor(mask_value).to(device)).to(device)
     # print(mask)
     return actions
 
