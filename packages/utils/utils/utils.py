@@ -134,25 +134,20 @@ def update_per_beta(
 
 
 def update_linear_schedule(
-    value: float,
     final_value: float,
     total_steps: int,
-    initial_value: float = None,
-    current_step: int = None,
+    initial_value: float,
+    current_step: int,
 ):
     # learning_rate = initial_value
-    if initial_value < final_value or value < final_value:
+    if initial_value < final_value:
         clamp_func = min
     else:
         clamp_func = max
-    if initial_value is not None and current_step is not None:
-        value = clamp_func(
-            final_value,
-            initial_value
-            + (final_value - initial_value) * (current_step / total_steps),
-        )
-    else:
-        value = clamp_func(final_value, value + (final_value - value) / total_steps)
+    value = clamp_func(
+        final_value,
+        initial_value + ((final_value - initial_value) * (current_step / total_steps)),
+    )
     return value
 
 
@@ -618,15 +613,19 @@ def epsilon_greedy_policy(
     q_values: list[float], info: dict, epsilon: float, wrapper=np.argmax
 ):
     if np.random.rand() < epsilon:
+        # print("selecting a random move")
         if "legal_moves" in info:
+            # print("using legal moves")
             return random.choice(info["legal_moves"])
         else:
+            q_values = q_values.reshape(-1)
             return random.choice(range(len(q_values)))
     else:
         # try:
-            return wrapper(q_values, info)
-        # except:
-        #     return wrapper(q_values)
+        # print("using provided wrapper to select action")
+        return wrapper(q_values, info)
+    # except:
+    #     return wrapper(q_values)
 
 
 def add_dirichlet_noise(
@@ -761,17 +760,6 @@ def augment_board(
     return augemented_boards, augmented_policies
 
 
-def calculate_observation_buffer_shape(max_size, observation_dimensions):
-    raise DeprecationWarning(
-        "This function is deprecated simply use (max_size,) + observation_dimensions"
-    )
-    # observation_buffer_shape = []
-    # observation_buffer_shape += [max_size]
-    # observation_buffer_shape += list(observation_dimensions)
-    observation_buffer_shape = (max_size,) + observation_dimensions
-    return list(observation_buffer_shape)
-
-
 def sample_by_random_indices(
     max_index_or_1darray, batch_size: int, with_replacement=False
 ) -> npt.NDArray[np.int64]:
@@ -822,12 +810,6 @@ def reward_clipping(reward: float, lower_bound: float = -1, upper_bound: float =
 def discounted_cumulative_sums(x, discount):
     # Discounted cumulative sums of vectors for computing rewards-to-go and advantage estimates
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
-
-
-def nash_convergence(env, average_policies, best_response_policies, num_episodes):
-    # for every player (average policy) play against the corresponding best policies
-    # sum the exploitability of each player and then divide by the number of players
-    pass
 
 
 def to_lists(l: list[Iterable]) -> list[Tuple]:

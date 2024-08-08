@@ -101,6 +101,8 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
         else:
             observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+            print(observation_buffer_shape)
+            print(self.observation_dtype)
             self.observation_buffer = np.zeros(
                 observation_buffer_shape, dtype=self.observation_dtype
             )

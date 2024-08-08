@@ -150,7 +150,9 @@ class NFSPDQN(BaseAgent):
             action = self.sl_agents[info["player"]].select_actions(prediction)
         else:
             # print("selecting with best response")
-            action = self.rl_agents[info["player"]].select_actions(prediction, info)
+            action = self.rl_agents[info["player"]].select_actions(
+                prediction, info=info
+            )
         return action
 
     def learn(self):
@@ -197,7 +199,7 @@ class NFSPDQN(BaseAgent):
             ), "Players don't match, {} != {}".format(
                 self.previous_infos[player]["player"], info["player"]
             )
-
+            # print("stored transition in rl buffer")
             transition = [
                 previous_state,
                 previous_info,
@@ -212,11 +214,17 @@ class NFSPDQN(BaseAgent):
                 *transition,
                 player=player if self.config.shared_networks_and_buffers else 0,
             )
+            # print(
+            #     "rl agent {} has {} elements in its buffer".format(
+            #         player, len(self.rl_agents[player].replay_buffer)
+            #     )
+            # )
         if not done:
             self.previous_states[player] = state
             self.previous_infos[player] = info
             self.previous_actions[player] = action
         else:
+            # print("clearing short term previous buffers")
             self.previous_states[player] = None
             self.previous_infos[player] = None
             self.previous_actions[player] = None
@@ -233,16 +241,19 @@ class NFSPDQN(BaseAgent):
         done = False
 
         for training_step in range(self.start_training_step, self.training_steps):
+            # print("Training step", training_step)
+            # print("Replay buffer size", len(self.rl_agents[0].replay_buffer))
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     current_player: int = info["player"]
+                    # print("current player", current_player)
                     prediction = self.predict(state, info)
                     if self.policies[current_player] == "best_response":
                         action = epsilon_greedy_policy(
                             prediction,
                             info,
                             self.rl_agents[info["player"]].eg_epsilon,
-                            wrapper=lambda prediction: self.select_actions(
+                            wrapper=lambda prediction, info: self.select_actions(
                                 prediction, info
                             ).item(),
                         )
@@ -257,6 +268,7 @@ class NFSPDQN(BaseAgent):
                         if self.config.shared_networks_and_buffers
                         else range(self.config.num_players)
                     ):
+                        # print("updating eg epsilon")
                         self.rl_agents[p].update_eg_epsilon(training_step)
 
                     # only average strategy mode? (open spiel)
@@ -279,13 +291,22 @@ class NFSPDQN(BaseAgent):
                         self.sl_agents[current_player].replay_buffer.store(
                             state, info, target_policy
                         )  # Store best moves in SL Memory
+                        # print("storing in sl buffer")
+                        # print(
+                        #     "sl buffer size {} for player {}",
+                        #     len(self.sl_agents[current_player].replay_buffer),
+                        #     current_player,
+                        # )
 
                     next_state, rewards, terminated, truncated, next_info = (
                         self.env.step(action)
                     )
+                    # print("State", state)
+                    # rewards = [rewards]
                     done = terminated or truncated
                     state = next_state
                     info = next_info
+                    # info["player"] = 0
 
                     # terminal so store experiences for all agents based on terminal state
                     if done:
@@ -297,6 +318,7 @@ class NFSPDQN(BaseAgent):
                             )
                         self.select_agent_policies()
                         state, info = self.env.reset()
+                        # info["player"] = 0
                         rewards = [
                             None
                         ] * self.config.num_players  # ugly but makes code cleaner for storing in rl
@@ -410,7 +432,7 @@ class NFSPDQN(BaseAgent):
                 self.rl_agents[p].save_replay_buffers(training_step_dir)
                 if self.config.anticipatory_param != 1.0:
                     self.sl_agents[p].save_replay_buffers(training_step_dir)
-
+        # print("Replay buffer length", len(self.rl_agents[0].replay_buffer))
         # save config
         self.config.dump(f"{dir}/configs/config.yaml")
 
@@ -426,7 +448,9 @@ class NFSPDQN(BaseAgent):
             # exploitability /= self.config.num_players
             self.stats["exploitability"].append({"exploitability": exploitability})
         else:
-            test_score = -self.test(1, 0, training_step, training_step_dir)
+            test_score = -self.test(
+                self.checkpoint_trials, 0, training_step, training_step_dir
+            )
             self.stats["test_score"].append({"score": test_score})
 
         # save the graph stats and targets
@@ -479,7 +503,9 @@ class NFSPDQN(BaseAgent):
             for _ in range(num_trials):
                 print("Trial ", _)
                 state, info = self.test_env.reset()
+                # info["player"] = 0
                 done = False
+                # print(state)
                 while not done:
                     prediction = self.predict(state, info)
                     if len(prediction.shape) > 2:
@@ -501,9 +527,13 @@ class NFSPDQN(BaseAgent):
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
+                    # reward = [reward]
+                    # info["player"] = 0
                     done = terminated or truncated
                     state = next_state
+                    # print(state)
                     average_strategy_reward = reward[player]
+                    print("Reward", reward)
                     total_reward = sum(reward)
                     test_score += (total_reward - average_strategy_reward) / (
                         self.config.num_players - 1

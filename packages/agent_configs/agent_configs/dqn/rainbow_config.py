@@ -24,8 +24,8 @@ class RainbowConfig(Config):
         self.eg_epsilon_decay_type: str = self.parse_field(
             "eg_epsilon_decay_type", "linear"
         )
-        self.eg_epsilon_decay_final_step: int = self.parse_field(
-            "eg_epsilon_decay_final_step", self.training_steps
+        self.eg_epsilon_final_step: int = self.parse_field(
+            "eg_epsilon_final_step", self.training_steps
         )
 
         self.dueling: bool = self.parse_field("dueling", True)

@@ -163,6 +163,7 @@ class RainbowAgent(BaseAgent):
                 for x in q_values
             ]
         )
+        # print(selected_actions)
         # selected_actions = q_values.argmax(1, keepdim=False)
         return selected_actions
 
@@ -198,6 +199,7 @@ class RainbowAgent(BaseAgent):
             )
             target_predictions = self.compute_target_distributions(samples)
         else:
+            # print("using default dqn loss")
             assert isinstance(self.config.loss_function, HuberLoss) or isinstance(
                 self.config.loss_function, MSELoss
             ), "Only HuberLoss or MSELoss are supported for atom_size = 1, recieved {}".format(
@@ -205,14 +207,29 @@ class RainbowAgent(BaseAgent):
             )
             next_observations, rewards, dones = (
                 torch.from_numpy(samples["next_observations"]).to(self.device),
-                torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
-                torch.from_numpy(samples["dones"]).to(self.device).view(-1, 1),
+                torch.from_numpy(samples["rewards"]).to(self.device),
+                torch.from_numpy(samples["dones"]).to(self.device),
             )
-            target_predictions = self.predict_target(next_observations)
-            target_predictions = target_predictions.max(1, keepdim=True)[0]
+            next_infos = samples["next_infos"]
+            target_predictions = self.predict_target(next_observations)  # next q values
+
+            # print("Next q values", target_predictions)
+            # print("Current q values", online_predictions)
+            next_actions = self.select_actions(
+                self.predict(next_observations),  # current q values
+                info=next_infos,
+                mask_actions=self.config.game.has_legal_moves,
+            )
+            # print("Next actions", next_actions)
+
+            target_predictions = target_predictions[
+                range(self.config.minibatch_size), next_actions
+            ]  # this might not work
+
             target_predictions = (
                 rewards + self.config.discount_factor * (~dones) * target_predictions
-            ).view(-1)
+            )
+
         # print("predicted", online_distributions)
         # print("target", target_distributions)
 
@@ -348,10 +365,10 @@ class RainbowAgent(BaseAgent):
 
     def update_eg_epsilon(self, training_step: int):
         if self.config.eg_epsilon_decay_type == "linear":
+            # print("decaying eg epsilon linearly")
             self.eg_epsilon = update_linear_schedule(
-                self.eg_epsilon,
                 self.config.eg_epsilon_final,
-                self.training_steps * self.config.replay_interval,
+                self.config.eg_epsilon_final_step,
                 self.config.eg_epsilon,
                 training_step,
             )
@@ -377,10 +394,12 @@ class RainbowAgent(BaseAgent):
 
         # self.training_steps += self.start_training_step
         for training_step in range(self.start_training_step, self.training_steps):
-            print("training step", training_step)
+            # print("training step", training_step)
+            # print("replay buffer size", len(self.replay_buffer))
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     values = self.predict(state)
+                    # print(values)
                     action = epsilon_greedy_policy(
                         values,
                         info,
@@ -389,12 +408,14 @@ class RainbowAgent(BaseAgent):
                             values, info
                         ).item(),
                     )
+                    # print("Action", action)
+                    # print("Epislon Greedy Epsilon", self.eg_epsilon)
                     self.update_eg_epsilon(training_step)
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )
                     done = terminated or truncated
-                    # print(state)
+                    # print("State", state)
                     self.replay_buffer.store(
                         state, info, action, reward, next_state, next_info, done
                     )
@@ -442,6 +463,7 @@ class RainbowAgent(BaseAgent):
                 and training_step > self.start_training_step
             ):
                 # print(self.stats["score"])
+                # print(len(self.replay_buffer))
                 self.save_checkpoint(
                     training_step,
                     training_step * self.config.replay_interval,
