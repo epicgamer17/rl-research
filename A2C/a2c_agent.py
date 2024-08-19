@@ -1,5 +1,7 @@
 from base_agent.agent import BaseAgent
 import torch
+import torch.nn as nn
+
 config = {"discountfactor": 0.9}
 
 class A2CAgent():
