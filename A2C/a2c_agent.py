@@ -74,7 +74,7 @@ class A2CAgent():
                 b = self.actorloss(currentep[-2], advantage)
 
                 #If the layers are joint then we have to accumulate the gradients and do it that way. 
-                # IF GRADIENTS ACCUMULATE, THEN HOW DOES BACKWARD WORK FOR THE HEADS? I guess it does it all at once with the backward graph
+                # IF GRADIENTS ACCUMULATE, THEN HOW DOES BACKWARD WORK FOR THE HEADS? I guess it does it all at once with the backward
                 if (config["jointlay"]):
                     a.backward(retain_graph=True)
                     b.backward()
