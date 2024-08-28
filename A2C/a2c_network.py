@@ -52,9 +52,12 @@ class CriticStack(nn.Module):
 start = time.time()
 ### Your code .......
 
-for i in range(1000):
+def loss(advantage,logprob):
+    return logprob*advantage
+
+if (1):
     config = {"criticstack": [nn.Linear(625,100), nn.ReLU(), nn.Linear(100,25),nn.ReLU(),nn.Linear(25,1)],
-            "actorstack": [nn.Linear(625,100), nn.ReLU(), nn.Linear(100,25),nn.ReLU(),nn.Linear(25,4)],
+            "actorstack": [nn.Linear(625,100), nn.ReLU(), nn.Linear(100,25),nn.ReLU(),nn.Linear(25,4),nn.Softmax(dim=0)],
             "inputsize": 625,
             "jointlay": 1,
             "actorhead": [nn.Linear(25, 4)],
@@ -66,29 +69,29 @@ for i in range(1000):
 
     x=torch.flatten(torch.rand(25,25))
     optimizer = torch.optim.SGD(network.parameters(), lr=1e-3)
-    for i in range(100):
+    for i in range(1):
         a = network(x)
-        loss = torch.nn.MSELoss()
+        print(a)
         if (config["jointlay"]):
-            b = loss(a[0], torch.tensor([0,0,0,1.0]))
+            print(network.parameters)
+            b = loss(a[0][1], torch.tensor(2))
             b.backward(retain_graph=True)
-            c = loss(a[1], torch.tensor(1.0))
+            c = loss(a[1], torch.tensor(5))
             c.backward()
             optimizer.step()
             optimizer.zero_grad()
+            print(network.parameters)
         else:
-            b = loss(a[0], torch.tensor([0,0,0,1.0]))
+            b = loss(a[0][1], torch.tensor(2))
             b.backward()
             optimizer.step()
             optimizer.zero_grad()
-            c = loss(a[1], torch.tensor(1.0))
+            c = loss(a[1], torch.tensor(5))
             c.backward()
             optimizer.step()
             optimizer.zero_grad()
 
-end = time.time()
-print((end - start)/100)
-
+print(a)
 
 
 #nn.Linear(config["inputsize"], 100),
