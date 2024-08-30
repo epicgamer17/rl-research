@@ -1,8 +1,8 @@
+import gymnasium as gym
 import torch
+import numpy
 
-a = 1
-b = torch.tensor(a)
+distribution = torch.tensor([0.1,0.5,0.4])
+a = torch.distributions.Categorical(distribution)
 
-print(b)
-print(b*2)
-print(b + 4)
+print(a.sample())
