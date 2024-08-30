@@ -48,19 +48,35 @@ class PPOAgent(BaseAgent):
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
         )
 
-        self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
-            params=self.model.actor.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-            weigh_decay=self.config.actor.weight_decay,
-        )
+        if self.config.actor.optimizer == Adam:
+            self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
+            )
+        elif self.config.actor.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
+            )
 
-        self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
-            params=self.model.critic.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-            weigh_decay=self.config.critic.weight_decay,
-        )
+        if self.config.critic.optimizer == Adam:
+            self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
+            )
+        elif self.config.critic.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
+            )
 
         # self.actor = ActorNetwork(
         #     input_shape=self.observation_dimensions,

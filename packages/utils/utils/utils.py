@@ -307,6 +307,7 @@ def plot_exploitability(
     # print(rolling_averages)
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, rolling_averages)
+    axs[row][col].plot(x, exploitability)
 
     has_target_model_updates = "target_model_updated" in values[0]
     has_model_updates = "model_updated" in values[0]

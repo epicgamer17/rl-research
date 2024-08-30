@@ -117,7 +117,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             else:
                 return None
 
-        indices = self._sample_proportional()
+        if self.alpha != 0.0:
+            indices = self._sample_proportional()
+        else:
+            indices = np.random.choice(self.size, size=self.batch_size, replace=False)
+            # print(indices)
         weights = np.array([self._calculate_weight(i) for i in indices])
 
         n_step_samples = self.sample_from_indices(indices)

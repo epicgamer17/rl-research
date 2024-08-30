@@ -157,14 +157,14 @@ class RainbowAgent(BaseAgent):
             )
         # print("Q Values", q_values)
         # q_values with argmax ties
-        selected_actions = torch.stack(
-            [
-                torch.tensor(np.random.choice(np.where(x.cpu() == x.cpu().max())[0]))
-                for x in q_values
-            ]
-        )
+        # selected_actions = torch.stack(
+        #     [
+        #         torch.tensor(np.random.choice(np.where(x.cpu() == x.cpu().max())[0]))
+        #         for x in q_values
+        #     ]
+        # )
         # print(selected_actions)
-        # selected_actions = q_values.argmax(1, keepdim=False)
+        selected_actions = q_values.argmax(1, keepdim=False)
         return selected_actions
 
     def learn(self) -> np.ndarray:
@@ -183,11 +183,15 @@ class RainbowAgent(BaseAgent):
         )
         # print("actions", actions)
 
-        # print(observations[0])
+        # print("Observations", observations)
         # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
         online_predictions = self.predict(observations)[
             range(self.config.minibatch_size), actions
         ]
+        # for param in self.model.parameters():
+        #     print(param)
+        # print(self.predict(observations))
+        # print(online_predictions)
         # (B, atom_size)
         if self.config.atom_size > 1:
             assert isinstance(
@@ -212,23 +216,23 @@ class RainbowAgent(BaseAgent):
             )
             next_infos = samples["next_infos"]
             target_predictions = self.predict_target(next_observations)  # next q values
-
             # print("Next q values", target_predictions)
             # print("Current q values", online_predictions)
+            # print(self.predict(next_observations))
             next_actions = self.select_actions(
                 self.predict(next_observations),  # current q values
                 info=next_infos,
                 mask_actions=self.config.game.has_legal_moves,
             )
             # print("Next actions", next_actions)
-
             target_predictions = target_predictions[
                 range(self.config.minibatch_size), next_actions
             ]  # this might not work
-
+            # print(target_predictions)
             target_predictions = (
                 rewards + self.config.discount_factor * (~dones) * target_predictions
             )
+            # print(target_predictions)
 
         # print("predicted", online_distributions)
         # print("target", target_distributions)
@@ -238,6 +242,7 @@ class RainbowAgent(BaseAgent):
         elementwise_loss = self.config.loss_function(
             online_predictions, target_predictions
         )
+        # print("Loss", elementwise_loss.mean())
         assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
             elementwise_loss
         )
@@ -394,8 +399,7 @@ class RainbowAgent(BaseAgent):
 
         # self.training_steps += self.start_training_step
         for training_step in range(self.start_training_step, self.training_steps):
-            # print("training step", training_step)
-            # print("replay buffer size", len(self.replay_buffer))
+            print("training step", training_step)
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     values = self.predict(state)
@@ -410,7 +414,6 @@ class RainbowAgent(BaseAgent):
                     )
                     # print("Action", action)
                     # print("Epislon Greedy Epsilon", self.eg_epsilon)
-                    self.update_eg_epsilon(training_step)
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )
@@ -441,14 +444,11 @@ class RainbowAgent(BaseAgent):
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
 
-                if training_step % self.config.transfer_interval == 0:
-                    target_model_updated = (True, True)
-                    # stats["test_score"].append(
-                    #     {"target_model_weight_update": training_step}
-                    # )
-                    self.update_target_model()
-
+            self.update_eg_epsilon(training_step + 1)
+            # print("replay buffer size", len(self.replay_buffer))
             for minibatch in range(self.config.num_minibatches):
+                if len(self.replay_buffer) < self.config.min_replay_buffer_size:
+                    break
                 losses = self.learn()
                 # print(losses)
                 loss_mean = losses.mean()
@@ -457,6 +457,13 @@ class RainbowAgent(BaseAgent):
                     {"loss": loss_mean, "target_model_updated": target_model_updated[1]}
                 )
                 target_model_updated = (target_model_updated[0], False)
+
+            if training_step % self.config.transfer_interval == 0:
+                target_model_updated = (True, True)
+                # stats["test_score"].append(
+                #     {"target_model_weight_update": training_step}
+                # )
+                self.update_target_model()
 
             if (
                 training_step % self.checkpoint_interval == 0

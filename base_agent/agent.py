@@ -17,7 +17,6 @@ from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
 # 3. A loss function
 # 4. A training method
 #       this method should have training iterations, minibatches, and training steps
-# 5. A step method
 # 6. A select_action method
 # 7. A predict method
 

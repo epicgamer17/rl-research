@@ -165,17 +165,19 @@ class NFSPDQN(BaseAgent):
         ):
             if (
                 self.rl_agents[p].replay_buffer.size
-                > self.rl_agents[p].config.min_replay_buffer_size
+                >= self.rl_agents[p].config.min_replay_buffer_size
             ):  # only do if not in rl agent mode? (open spiel)
+                # print("rl learning")
                 rl_loss = self.rl_agents[p].learn().mean()
                 rl_losses.append(rl_loss)
             if (
                 self.config.anticipatory_param != 1.0
                 and self.sl_agents[p].replay_buffer.size
-                > self.sl_agents[p].config.min_replay_buffer_size
+                >= self.sl_agents[p].config.min_replay_buffer_size
             ):
                 sl_loss = self.sl_agents[p].learn()
                 sl_losses.append(sl_loss)
+
         average_rl_loss = (
             sum(rl_losses) / len(rl_losses) if len(rl_losses) > 0 else None
         )
@@ -263,14 +265,6 @@ class NFSPDQN(BaseAgent):
                             info,
                         ).item()
                     # print("Action", action)
-                    for p in (
-                        [0]
-                        if self.config.shared_networks_and_buffers
-                        else range(self.config.num_players)
-                    ):
-                        # print("updating eg epsilon")
-                        self.rl_agents[p].update_eg_epsilon(training_step)
-
                     # only average strategy mode? (open spiel)
                     self.store_transition(
                         action,
@@ -281,13 +275,13 @@ class NFSPDQN(BaseAgent):
                         current_player,
                     )  # stores experiences
 
-                    target_policy = torch.zeros(self.num_actions)
-                    target_policy[action] = 1.0
                     # print(current_player)
                     if (
                         self.policies[current_player] == "best_response"
                         and self.config.anticipatory_param != 1.0
                     ):
+                        target_policy = torch.zeros(self.num_actions)
+                        target_policy[action] = 1.0
                         self.sl_agents[current_player].replay_buffer.store(
                             state, info, target_policy
                         )  # Store best moves in SL Memory
@@ -328,8 +322,8 @@ class NFSPDQN(BaseAgent):
                 if self.config.shared_networks_and_buffers
                 else range(self.config.num_players)
             ):
-                if training_step % self.rl_agents[p].config.transfer_interval == 0:
-                    self.rl_agents[p].update_target_model()
+                # print("updating eg epsilon")
+                self.rl_agents[p].update_eg_epsilon(training_step)
 
                 self.rl_agents[p].replay_buffer.set_beta(
                     update_per_beta(
@@ -347,6 +341,9 @@ class NFSPDQN(BaseAgent):
                 #     self.stats["rl_loss"].append({"loss": rl_loss})
                 # if sl_loss is not None:
                 #     self.stats["sl_loss"].append({"loss": sl_loss})
+
+            if training_step % self.rl_agents[p].config.transfer_interval == 0:
+                self.rl_agents[p].update_target_model()
 
             if (
                 training_step % self.checkpoint_interval == 0
@@ -443,6 +440,7 @@ class NFSPDQN(BaseAgent):
                 )
                 print(test_score)
                 exploitability += test_score
+            exploitability /= self.config.num_players
             print(exploitability)
 
             # exploitability /= self.config.num_players
