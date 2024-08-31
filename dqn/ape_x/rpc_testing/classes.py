@@ -247,6 +247,9 @@ class ActorTest:
             self.env.observation_space.shape, self.env.observation_space.dtype, 16, 16, 1
         )
 
+        self.online_network = torch.nn.Linear(16, 1, False)
+        self.target_network = torch.nn.Linear(16, 1, False)
+
         self._wait_for_confirmations(
             [self.replay_rref, self.target_rref, self.online_rref]
         )
@@ -268,6 +271,8 @@ class ActorTest:
         return confirmed == to_confirm
 
     def run(self):
+        self.setup()
+
         state, info = self.env.reset()
         while not self.stop_flag:
             print("loop")
@@ -288,7 +293,6 @@ class ActorTest:
 
                 if self.rb.size == 16:
                     try:
-
                         batch = Batch(
                             observations=self.rb.observation_buffer,
                             infos=self.rb.info_buffer,
@@ -306,6 +310,8 @@ class ActorTest:
                         self.rb.clear()
                     except Exception as e:
                         print(f"failed to store batch: {e}")
+                    
+                    self.update_params()
 
         self.cleanup()
 
@@ -315,3 +321,30 @@ class ActorTest:
 
     def stop(self):
         self.stop_flag = True
+
+    def setup(self):
+        # if self.spectator:
+        #     self.t_i = time.time()
+        # wait for initial network parameters
+        logger.info("fetching initial network params from learner...")
+        has_weights = self.update_params()
+        while not has_weights:
+            print("no weights, trying again")
+            has_weights = self.update_params()
+            time.sleep(2)
+
+
+    def update_params(self):
+        ti = time.time()
+        logger.info("fetching weights from storage...")
+        try:
+            remote_model_params = self.target_rref.rpc_sync(10).state_dict()
+            remote_target_params = self.online_rref.rpc_sync(10).state_dict()
+
+            self.online_network.load_state_dict(remote_model_params)
+            self.target_network.load_state_dict(remote_target_params)
+            logger.info(f"fetching weights took {time.time() - ti} s")
+        except Exception as e:
+            logger.info(f"failed to fetch weights: {e}")
+            return False
+        return True
