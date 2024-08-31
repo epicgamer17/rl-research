@@ -66,10 +66,15 @@ class LearnerTest:
             "replay", PrioritizedNStepReplayBuffer, args=None, kwargs=replay_buffer_args
         )
 
-        print("creating target")
-        self.target_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
+        self.online_network = torch.nn.Linear(16, 1, False)
+        self.target_network = torch.nn.Linear(16, 1, False)
+
         print("creating online")
-        self.online_rref = rpc.remote("parameter", torch.nn.Identity, (16,))
+        self.online_rref = rpc.remote("parameter", torch.nn.Linear, (16, 1, False))
+        print("creating target")
+        self.target_rref = rpc.remote("parameter", torch.nn.Linear, (16, 1, False))
+
+        self.store_weights()
 
         self.actor_rrefs: list[rpc.RRef[ActorTest]] = []
 
@@ -120,7 +125,10 @@ class LearnerTest:
 
         for i in range(100):
             sample = self.samples_queue.get()
-            print(sample)
+
+            del sample
+
+            self.store_weights()
 
         self.cleanup()
 
@@ -140,7 +148,7 @@ class LearnerTest:
                 dummy_q.put(0)
             else:
                 batch = samples.wait()
-                print("got batch", batch)
+                # print("got batch", batch)
                 self.samples_queue.put(batch)
                 dummy_q.put(0)
 
@@ -173,6 +181,43 @@ class LearnerTest:
     def do_stop(self, info):
         print("stopping", info)
         return rpc.remote(info, self.stop_fn, (True,))
+
+    def store_weights(self):
+        # TODO - async
+        logger.info("storing weights")
+        attempts = 5
+        t = time.time()
+        for attempt in range(attempts):
+            try:
+                with torch.no_grad():
+                    self.target_network.weight = torch.nn.Parameter(
+                        torch.rand_like(self.target_network.weight)
+                    )
+                    self.online_network.weight = torch.nn.Parameter(
+                        torch.rand_like(self.target_network.weight)
+                    )
+
+                self.target_rref.rpc_async(10).load_state_dict(
+                    self.target_network.state_dict()
+                ).then(
+                    lambda x: logger.info(
+                        f"target model succesfully updated in {time.time() - t} s"
+                    )
+                )
+                self.online_rref.rpc_async(10).load_state_dict(
+                    self.online_network.state_dict()
+                ).then(
+                    lambda x: logger.info(
+                        f"online model succesfully updated in {time.time() - t} s"
+                    )
+                )
+                return
+            except Exception as e:
+                logger.exception(
+                    f"try {attempt+1} of {attempts}: error setting weights: {e}"
+                )
+                time.sleep(1)
+        logger.info(f"failed to store weights after {attempts} tries")
 
 
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
