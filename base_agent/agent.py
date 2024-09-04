@@ -275,6 +275,8 @@ class BaseAgent:
         gc.collect()
 
         # plot the graphs (and save the graph)
+        print(self.stats)
+        print(self.targets)
         plot_graphs(
             self.stats,
             self.targets,

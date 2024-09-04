@@ -11,10 +11,11 @@ from .distributed_configs import (
 )
 from .base_config import ConfigBase, Config
 from .muzero_config import MuZeroConfig
-from .ppo_actor_config import PPOActorConfig
-from .ppo_critic_config import PPOCriticConfig
+from .actor_config import ActorConfig
+from .critic_config import CriticConfig
 from .ppo_config import PPOConfig
 from .dqn.rainbow_config import RainbowConfig
 from .replay_config import ReplayBufferConfig
 from .dqn.nfsp_config import NFSPDQNConfig
 from .sl_config import SupervisedConfig
+from .a2c_config import A2CConfig

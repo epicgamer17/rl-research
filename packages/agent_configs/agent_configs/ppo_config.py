@@ -1,6 +1,6 @@
 from .base_config import Config
-from .ppo_actor_config import PPOActorConfig
-from .ppo_critic_config import PPOCriticConfig
+from .actor_config import ActorConfig
+from .critic_config import CriticConfig
 
 
 class PPOConfig(Config):
@@ -8,8 +8,8 @@ class PPOConfig(Config):
         self,
         config_dict,
         game_config,
-        actor_config: PPOActorConfig,
-        critic_config: PPOCriticConfig,
+        actor_config: ActorConfig,
+        critic_config: CriticConfig,
     ):
         super(PPOConfig, self).__init__(config_dict, game_config)
         # config_dict["optimizer"] = -1
