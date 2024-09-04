@@ -56,7 +56,7 @@ class A2CConfig(Config):
             "replay_buffer_size", self.max_steps_per_episode
         )
         self.discount_factor: float = self.parse_field("discount_factor", 0.99)
-        self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
+        self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.01)
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
 
         self.clip_low_prob = self.parse_field("clip_low_prob", 0.00)

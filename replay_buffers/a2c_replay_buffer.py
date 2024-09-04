@@ -53,7 +53,7 @@ class A2CReplayBuffer(BaseReplayBuffer):
         self.advantage_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.return_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.value_buffer = np.zeros(self.max_size, dtype=torch.Tensor)
-        self.log_probability_buffer = np.zeros(self.max_size, dtype=np.float16)
+        self.log_probability_buffer = np.zeros(self.max_size, dtype=torch.Tensor)
         self.distribution_buffer = np.zeros(self.max_size, dtype=torch.distributions.Categorical)
 
         self.size = 0

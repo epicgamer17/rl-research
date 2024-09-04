@@ -54,31 +54,31 @@ class A2CAgent(BaseAgent):
 
         if self.config.actor.optimizer == Adam:
             self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
-                eps=self.config.adam_epsilon,
+                params=self.model.actor.parameters(),
+                lr=self.config.actor.learning_rate,
+                eps=self.config.actor.adam_epsilon,
                 weight_decay=self.config.weight_decay,
             )
         elif self.config.actor.optimizer == SGD:
             print("Warning: SGD does not use adam_epsilon param")
             self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
+                params=self.model.actor.parameters(),
+                lr=self.config.actor.learning_rate,
                 weight_decay=self.config.weight_decay,
             )
 
         if self.config.critic.optimizer == Adam:
             self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
-                eps=self.config.adam_epsilon,
+                params=self.model.critic.parameters(),
+                lr=self.config.critic.learning_rate,
+                eps=self.config.critic.adam_epsilon,
                 weight_decay=self.config.weight_decay,
             )
         elif self.config.critic.optimizer == SGD:
             print("Warning: SGD does not use adam_epsilon param")
             self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
+                params=self.model.critic.parameters(),
+                lr=self.config.critic.learning_rate,
                 weight_decay=self.config.weight_decay,
             )
 
@@ -155,11 +155,10 @@ class A2CAgent(BaseAgent):
     def learn(self):
         # add training iterations?
         samples = self.replay_buffer.sample()
-        log_probabilities = torch.from_numpy(samples["log_probabilities"])
+        log_probabilities = (samples["log_probabilities"])
         values = samples["values"]
         advantages = torch.from_numpy(samples["advantages"])
         returns = torch.from_numpy(samples["returns"])
-        log_probabilities = log_probabilities.to(self.device)
         distributions = samples["distributions"]
         
         advantages = advantages.to(self.device)
@@ -169,8 +168,11 @@ class A2CAgent(BaseAgent):
 
     def actor_learn(self, advantages, log_probabilities, distributions):
         # minimizing the loss
-    
-        actor_loss = torch.mean(log_probabilities * advantages)
+
+        actor_loss = 0.0
+        for i in range(len(log_probabilities)):
+            actor_loss += log_probabilities[i] * advantages[i]
+        actor_loss = actor_loss / len(log_probabilities)
         entropy_loss = 0
         for i in distributions:
             entropy_loss += i.entropy()
@@ -186,6 +188,7 @@ class A2CAgent(BaseAgent):
         return actor_loss
 
     def critic_learn(self, returns, values):
+
         critic_loss = 0.0
         for i in range(len(values)):
             critic_loss += (self.config.critic_coefficient * (returns[i] - values[i]) ** 2)
