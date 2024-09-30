@@ -12,4 +12,5 @@ class CartPoleConfig(GameConfig):
             has_legal_moves=False,
             perfect_information=True,
             multi_agent=False,
+            num_players=1,
         )

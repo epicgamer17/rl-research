@@ -71,7 +71,7 @@ class ResidualStack(nn.Module):
         # for layer in self.conv_layers:
         #     # layer.reset_noise()
         # return
-    
+
     def remove_noise(self):
         assert self.noisy
 
@@ -93,9 +93,6 @@ class Residual(nn.Module):
         out_channels,
         kernel_size,
         stride,
-        kernel_initializer="he_uniform",
-        regularizer=None,
-        **kwargs,
     ):
         super(Residual, self).__init__()
         self.conv1 = nn.Conv2d(

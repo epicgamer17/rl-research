@@ -6,6 +6,8 @@ import torch
 from torch.nn.utils import clip_grad_norm_
 
 from agent_configs import PPOConfig
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
 
 from utils import (
     normalize_policy,
@@ -75,6 +77,7 @@ class PPOAgent(BaseAgent):
             self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
+                momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
 
@@ -129,7 +132,7 @@ class PPOAgent(BaseAgent):
             distribution = torch.distributions.Normal(mean, std)
         return distribution, value
 
-    def select_actions(self, predictions):
+    def select_actions(self, predictions, *args, **kwargs):
         distribution = predictions[0]
         selected_action = distribution.sample()
 

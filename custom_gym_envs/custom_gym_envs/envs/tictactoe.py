@@ -46,7 +46,11 @@ class TicTacToeEnv(gym.Env):
             return copy.deepcopy(self._grid[:2, :, :])
 
     def _get_info(self):
-        return {"legal_moves": self._legal_moves, "player": self._current_player}
+        return {
+            "legal_moves": self._legal_moves,
+            "player": self._current_player,
+            "step": self._step_count,
+        }
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
@@ -56,6 +60,8 @@ class TicTacToeEnv(gym.Env):
         self._grid = np.zeros((3, self.size, self.size))
         self._grid[2, :, :] = 0  # It's player 1's turn
         self._current_player = 0
+
+        self._step_count = 0
 
         # Reset legal moves
         self._legal_moves = np.array(list(range(self.action_space.n)))
@@ -91,7 +97,7 @@ class TicTacToeEnv(gym.Env):
             reward[self._current_player] = -1
 
             return observation, reward, False, False, info
-
+        self._step_count += 1
         # output next player's token first (since that's the one we're inputting to)
         current_player_board = copy.deepcopy(self._grid[0, :, :])
         self._grid[0, :, :] = self._grid[1, :, :]

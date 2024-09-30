@@ -12,4 +12,5 @@ class MississippiMarblesConfig(GameConfig):
             has_legal_moves=True,
             perfect_information=False,
             multi_agent=True,
+            num_players=2,  # could be more
         )

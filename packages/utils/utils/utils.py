@@ -46,7 +46,11 @@ def action_mask(
     Mask actions that are not legal moves
     actions: Tensor, probabilities of actions or q-values
     """
-    assert isinstance(legal_moves, list), "Legal moves should be a list"
+    assert isinstance(
+        legal_moves, list
+    ), "Legal moves should be a list got {} of type {}".format(
+        legal_moves, type(legal_moves)
+    )
 
     # add a dimension if the legal moves are not a list of lists
     # if len(legal_moves) != actions.shape[0]:
@@ -82,6 +86,7 @@ def clip_low_prob_actions(actions: Tensor, low_prob: float = 0.01) -> Tensor:
 
 
 def get_legal_moves(info: dict | list[dict]):
+    # print(info)
     if isinstance(info, dict):
         return [info["legal_moves"] if "legal_moves" in info else None]
     else:
@@ -173,6 +178,7 @@ def default_plot_func(
 def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col: int):
     if len(values) == 0:
         return
+    print(values)
     scores = [value["score"] for value in values]
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, scores)
@@ -834,8 +840,11 @@ _epsilon = 1e-7
 
 
 def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    # print(predicted)
     predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
+    # print(predicted)
     predicted = torch.clamp(predicted, _epsilon, 1.0 - _epsilon)
+    # print(predicted)
     log_prob = torch.log(predicted)
     return -torch.sum(log_prob * target, axis=axis)
 
@@ -882,10 +891,15 @@ class HuberLoss:
 
 
 def mse(predicted: torch.Tensor, target: torch.Tensor):
+    # print(predicted)
+    # print(target)
     return (predicted - target) ** 2
 
 
 class MSELoss:
+    def __init__(self):
+        pass
+
     def __call__(self, predicted, target):
         return mse(predicted, target)
 

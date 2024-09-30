@@ -83,31 +83,31 @@ class NFSPDQN(BaseAgent):
                 rl_configs[0],
                 f"rl_agent_{name}_0",
                 device,
-                num_players=self.config.num_players,
+                num_players=self.config.game.num_players,
             )
-            self.rl_agents = [rl_agent] * self.config.num_players
+            self.rl_agents = [rl_agent] * self.config.game.num_players
             if self.config.anticipatory_param != 1.0:
                 sl_agent = PolicyImitationAgent(
                     env, sl_configs[0], f"sl_agent_{name}_0", device
                 )
-                self.sl_agents = [sl_agent] * self.config.num_players
+                self.sl_agents = [sl_agent] * self.config.game.num_players
         else:
             self.rl_agents: list[RainbowAgent] = [
                 RainbowAgent(env, rl_configs[p], f"rl_agent_{name}_{p}", device)
-                for p in range(self.config.num_players)
+                for p in range(self.config.game.num_players)
             ]
             if self.config.anticipatory_param != 1.0:
                 self.sl_agents: list[PolicyImitationAgent] = [
                     PolicyImitationAgent(
                         env, sl_configs[p], f"sl_agent_{name}_{p}", device
                     )
-                    for p in range(self.config.num_players)
+                    for p in range(self.config.game.num_players)
                 ]
-        self.policies = ["average_strategy"] * self.config.num_players
+        self.policies = ["average_strategy"] * self.config.game.num_players
 
-        self.previous_states = [None] * self.config.num_players
-        self.previous_infos = [None] * self.config.num_players
-        self.previous_actions = [None] * self.config.num_players
+        self.previous_states = [None] * self.config.game.num_players
+        self.previous_infos = [None] * self.config.game.num_players
+        self.previous_actions = [None] * self.config.game.num_players
 
         self.stats = (
             {
@@ -128,7 +128,7 @@ class NFSPDQN(BaseAgent):
         )
 
     def select_agent_policies(self):
-        for p in range(self.config.num_players):
+        for p in range(self.config.game.num_players):
             # print("Selecting policy")
             if random.random() <= self.config.anticipatory_param:
                 # print("best_response")
@@ -161,7 +161,7 @@ class NFSPDQN(BaseAgent):
         for p in (
             [0]
             if self.config.shared_networks_and_buffers
-            else range(self.config.num_players)
+            else range(self.config.game.num_players)
         ):
             if (
                 self.rl_agents[p].replay_buffer.size
@@ -239,7 +239,7 @@ class NFSPDQN(BaseAgent):
 
         self.select_agent_policies()
         state, info = self.env.reset()
-        rewards = [None] * self.config.num_players
+        rewards = [None] * self.config.game.num_players
         done = False
 
         for training_step in range(self.start_training_step, self.training_steps):
@@ -305,7 +305,7 @@ class NFSPDQN(BaseAgent):
                     # terminal so store experiences for all agents based on terminal state
                     if done:
                         # print("Rewards", rewards)
-                        for p in range(self.config.num_players):
+                        for p in range(self.config.game.num_players):
                             # could only do if policy is average strategy mode
                             self.store_transition(
                                 action, state, info, rewards[p], done, p
@@ -315,12 +315,12 @@ class NFSPDQN(BaseAgent):
                         # info["player"] = 0
                         rewards = [
                             None
-                        ] * self.config.num_players  # ugly but makes code cleaner for storing in rl
+                        ] * self.config.game.num_players  # ugly but makes code cleaner for storing in rl
                         done = False  # ugly but makes code cleaner for storing in rl
             for p in (
                 [0]
                 if self.config.shared_networks_and_buffers
-                else range(self.config.num_players)
+                else range(self.config.game.num_players)
             ):
                 # print("updating eg epsilon")
                 self.rl_agents[p].update_eg_epsilon(training_step)
@@ -385,7 +385,7 @@ class NFSPDQN(BaseAgent):
         for p in (
             [0]
             if self.config.shared_networks_and_buffers
-            else range(self.config.num_players)
+            else range(self.config.game.num_players)
         ):
             if self.config.save_intermediate_weights:
                 weights_path = str(Path(training_step_dir, f"model_weights"))
@@ -434,13 +434,13 @@ class NFSPDQN(BaseAgent):
         self.config.dump(f"{dir}/configs/config.yaml")
 
         if self.config.anticipatory_param != 1.0:
-            for p in range(self.config.num_players):
+            for p in range(self.config.game.num_players):
                 test_score = self.test(
                     self.checkpoint_trials, p, training_step, training_step_dir
                 )
                 print(test_score)
                 exploitability += test_score
-            exploitability /= self.config.num_players
+            exploitability /= self.config.game.num_players
             print(exploitability)
 
             # exploitability /= self.config.num_players
@@ -477,7 +477,7 @@ class NFSPDQN(BaseAgent):
             return
         with torch.no_grad():
             training_policies = copy.deepcopy(self.policies)
-            self.policies = ["best_response"] * self.config.num_players
+            self.policies = ["best_response"] * self.config.game.num_players
             self.policies[player] = (
                 "average_strategy"
                 if self.config.anticipatory_param != 1.0
@@ -486,7 +486,7 @@ class NFSPDQN(BaseAgent):
             for p in (
                 [0]
                 if self.config.shared_networks_and_buffers
-                else range(self.config.num_players)
+                else range(self.config.game.num_players)
             ):
                 self.rl_agents[p].model.remove_noise()
             test_score = 0
@@ -534,12 +534,12 @@ class NFSPDQN(BaseAgent):
                     print("Reward", reward)
                     total_reward = sum(reward)
                     test_score += (total_reward - average_strategy_reward) / (
-                        self.config.num_players - 1
+                        self.config.game.num_players - 1
                     )
             for p in (
                 [0]
                 if self.config.shared_networks_and_buffers
-                else range(self.config.num_players)
+                else range(self.config.game.num_players)
             ):
                 self.rl_agents[p].model.reset_noise()
             self.policies = training_policies
@@ -555,7 +555,7 @@ class NFSPDQN(BaseAgent):
         for p in (
             [0]
             if self.config.shared_networks_and_buffers
-            else range(self.config.num_players)
+            else range(self.config.game.num_players)
         ):
             self.rl_agents[p].load_model_weights(
                 f"{weights_path}/{self.rl_agents[p].model_name}_weights.keras"

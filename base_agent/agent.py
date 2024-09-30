@@ -310,7 +310,9 @@ class BaseAgent:
                 score = 0
 
                 while not done:
-                    prediction = self.predict(state)
+                    prediction = self.predict(
+                        state, info, env=self.test_env
+                    )  # env = self.test_env is there for alpha_zero which needs to use the test env here instead of the normal env for the tree search (might be able to just use the regular env still)
                     action = self.select_actions(
                         prediction, info, self.config.game.has_legal_moves
                     ).item()
@@ -320,7 +322,7 @@ class BaseAgent:
                     # self.test_env.render()
                     done = terminated or truncated
                     state = next_state
-                    score += reward
+                    score += reward[0] if isinstance(reward, list) else reward
                 average_score += score
                 max_score = max(max_score, score)
                 min_score = min(min_score, score)

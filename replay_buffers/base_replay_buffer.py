@@ -49,7 +49,7 @@ class Game:
         self.policy_history = []
         self.value_history = []
         self.action_history = []
-        self.legal_moves_history = []
+        self.info_history = []
 
         self.num_players = num_players
 
@@ -60,14 +60,14 @@ class Game:
         policy,
         value=None,
         action=None,
-        legal_moves=None,
+        info=None,
     ):
         self.observation_history.append(copy.deepcopy(observation))
         self.rewards.append(reward)
         self.policy_history.append(policy)
         self.value_history.append(value)
         self.action_history.append(action)
-        self.legal_moves_history.append(legal_moves)
+        self.info_history.append(info)
         self.length += 1
 
     def set_rewards(self):
@@ -75,9 +75,9 @@ class Game:
         final_reward = self.rewards[-1]
         for i in reversed(range(self.length)):
             self.rewards[i] = (
-                final_reward
-                if i % self.num_players == (self.length - 1) % self.num_players
-                else -final_reward
+                final_reward[i % self.num_players]
+                # if i % self.num_players == (self.length - 1) % self.num_players
+                # else -final_reward
             )
         print("Updated Rewards", self.rewards)
 

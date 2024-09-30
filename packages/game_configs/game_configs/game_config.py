@@ -9,6 +9,7 @@ class GameConfig:
         has_legal_moves,
         perfect_information,
         multi_agent,
+        num_players,
     ):
         self.max_score = max_score
         self.min_score = min_score
@@ -21,6 +22,7 @@ class GameConfig:
         self.has_legal_moves = has_legal_moves
         self.perfect_information = perfect_information
         self.multi_agent = multi_agent
+        self.num_players = num_players
 
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, GameConfig):
@@ -33,4 +35,7 @@ class GameConfig:
             and self.is_image == o.is_image
             and self.is_deterministic == o.is_deterministic
             and self.has_legal_moves == o.has_legal_moves
+            and self.perfect_information == o.perfect_information
+            and self.multi_agent == o.multi_agent
+            and self.num_players == o.num_players
         )

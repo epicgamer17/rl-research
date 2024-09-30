@@ -5,27 +5,32 @@ import numpy as np
 
 
 class Node:
-    def __init__(self, prior_policy, state, legal_moves):
+    def __init__(self, prior_policy, state, info):
         self.visits = 0
         self.to_play = -1
+        # print("Prior Policy", prior_policy)
         self.prior_policy = prior_policy
         self.value_sum = 0
         self.children = {}
         self.state = copy.deepcopy(state)
-        self.legal_moves = legal_moves
+        self.info = info
 
     def expand(self, policy, env):
         # print("Expanding")
         base_env = copy.deepcopy(env)
         env = copy.deepcopy(base_env)
-        policy = {a: policy[a] for a in self.legal_moves}
+        # print("MCTS Policy", policy)
+        # print("MCTS legal moves", self.info["legal_moves"])
+        policy = {a: policy[a] for a in self.info["legal_moves"]}
         policy_sum = sum(policy.values())
-
+        # print("Legal Policy", policy)
+        # print("Legal Moves", self.info["legal_moves"])
+        # print("Policy Sum", policy_sum)
         for action, p in policy.items():
-            child_state, reward, terminated, truncated, info = env.step(action)
-            child_legal_moves = info["legal_moves"] if "legal_moves" in info else None
+            # print("Action", action)
+            child_state, reward, terminated, truncated, child_info = env.step(action)
             # Create Children Nodes (New Leaf Nodes)
-            self.children[action] = Node(p / policy_sum, child_state, child_legal_moves)
+            self.children[action] = Node(p / policy_sum, child_state, child_info)
             env = copy.deepcopy(base_env)
 
     def expanded(self):
@@ -39,11 +44,10 @@ class Node:
     def add_noise(self, dirichlet_alpha, exploration_fraction):
         actions = list(self.children.keys())
         noise = np.random.dirichlet([dirichlet_alpha] * len(actions))
-        frac = exploration_fraction
         for a, n in zip(actions, noise):
-            self.children[a].prior_policy = (1 - frac) * self.children[
+            self.children[a].prior_policy = (1 - exploration_fraction) * self.children[
                 a
-            ].prior_policy + frac * n
+            ].prior_policy + exploration_fraction * n
 
     def select_child(self, pb_c_base, pb_c_init):
         # Select the child with the highest UCB
@@ -53,6 +57,19 @@ class Node:
                 for action, child in self.children.items()
             ]
         )
+        # print("Selected Action", action)
+        # print("Selected Child Visits", child.visits)
+        # print("Selected Child Value", child.value())
+        # print("Selected Child Prior Policy", child.prior_policy)
+        # print("Selected Child UCB", self.child_ucb_score(child, pb_c_base, pb_c_init))
+
+        # for a, c in self.children.items():
+        #     print("Child Action", a)
+        #     print("Child Visits", c.visits)
+        #     print("Child Value", c.value())
+        #     print("Child Prior Policy", c.prior_policy)
+        #     print("Child UCB", self.child_ucb_score(c, pb_c_base, pb_c_init))
+
         return action, child
 
     def child_ucb_score(self, child, pb_c_base, pb_c_init):

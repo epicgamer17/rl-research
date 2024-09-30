@@ -64,6 +64,7 @@ class A2CAgent(BaseAgent):
             self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
                 params=self.model.actor.parameters(),
                 lr=self.config.actor.learning_rate,
+                momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
 
@@ -79,6 +80,7 @@ class A2CAgent(BaseAgent):
             self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
                 params=self.model.critic.parameters(),
                 lr=self.config.critic.learning_rate,
+                momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
 

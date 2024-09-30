@@ -52,6 +52,7 @@ class PolicyImitationAgent(BaseAgent):
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
+                momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
 

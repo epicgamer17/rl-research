@@ -83,6 +83,7 @@ class RainbowAgent(BaseAgent):
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
+                momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
 
@@ -128,7 +129,7 @@ class RainbowAgent(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
-    def predict(self, states) -> torch.Tensor:
+    def predict(self, states, *args, **kwargs) -> torch.Tensor:
         # could change type later
         state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)

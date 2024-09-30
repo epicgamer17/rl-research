@@ -1,47 +1,31 @@
-import os
 import datetime
-import gc
+from email import policy
+from re import M
 from time import time
 from agent_configs import AlphaZeroConfig
-from utils import normalize_policy, action_mask, get_legal_moves
+import torch
+from utils import (
+    clip_low_prob_actions,
+    normalize_policies,
+    action_mask,
+    get_legal_moves,
+    CategoricalCrossentropyLoss,
+    MSELoss,
+)
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
 
 import sys
 
 sys.path.append("../")
 from base_agent.agent import BaseAgent
 
-
-os.environ["OMP_NUM_THREADS"] = f"{8}"
-os.environ["MKL_NUM_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTEROP_THREADS"] = f"{8}"
-os.environ["TF_NUM_INTRAOP_THREADS"] = f"{8}"
-
-import tensorflow as tf
-
-tf.config.threading.set_intra_op_parallelism_threads(0)
-tf.config.threading.set_inter_op_parallelism_threads(0)
-
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.list_logical_devices("GPU")
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
-        print(e)
-
 import copy
 import numpy as np
-import tensorflow as tf
-from replay_buffers.alphazero_replay_buffer import ReplayBuffer, Game
-import math
+from replay_buffers.alphazero_replay_buffer import AlphaZeroReplayBuffer, Game
 from alphazero.alphazero_mcts import Node
 from alphazero.alphazero_network import Network
-import matplotlib.pyplot as plt
-import gymnasium as gym
+from torch.nn.utils import clip_grad_norm_
 
 
 class AlphaZeroAgent(BaseAgent):
@@ -50,85 +34,107 @@ class AlphaZeroAgent(BaseAgent):
         env,
         config: AlphaZeroConfig,
         name=datetime.datetime.now().timestamp(),
+        device: torch.device = (
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
+            # else (
+            #     torch.device("mps")
+            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
+            else torch.device("cpu")
+            # )
+        ),
     ):
-        super(AlphaZeroAgent, self).__init__(env, config, name)
+        super(AlphaZeroAgent, self).__init__(env, config, name, device=device)
 
         # Add learning rate scheduler
 
-        self.model = Network(config, self.observation_dimensions, self.num_actions)
+        self.model = Network(
+            config=config,
+            output_size=self.num_actions,
+            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+        )
 
-        self.replay_buffer = ReplayBuffer(
+        self.model.to(device)
+
+        self.replay_buffer = AlphaZeroReplayBuffer(
             self.config.replay_buffer_size, self.config.minibatch_size
         )
 
-    def step(self, action):
-        if not self.is_test:
-            next_state, reward, terminated, truncated, info = self.env.step(action)
-        else:
-            next_state, reward, terminated, truncated, info = self.test_env.step(action)
+        if self.config.optimizer == Adam:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
+            )
+        elif self.config.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                momentum=self.config.momentum,
+                weight_decay=self.config.weight_decay,
+            )
 
-        return next_state, reward, terminated, truncated, info
+        self.stats = {
+            "score": [],
+            "policy_loss": [],
+            "value_loss": [],
+            # "l2_loss": [],
+            "loss": [],
+            "test_score": [],
+        }
+        self.targets = {
+            "score": self.env.spec.reward_threshold,
+            "value_loss": 0,
+            "policy_loss": 0,
+            # "l2_loss": 0,
+            "loss": 0,
+            "test_score": self.env.spec.reward_threshold,
+        }
 
     def train(self):
         training_time = time()
         total_environment_steps = 0
 
-        stats = {
-            "score": [],
-            "policy_loss": [],
-            "value_loss": [],
-            "l2_loss": [],
-            "loss": [],
-            "test_score": [],
-        }
-        targets = {
-            "score": self.env.spec.reward_threshold,
-            "value_loss": 0,
-            "policy_loss": 0,
-            "l2_loss": 0,
-            "loss": 0,
-            "test_score": self.env.spec.reward_threshold,
-        }
-
         for training_step in range(self.training_steps):
             print("Training Step ", training_step + 1)
             for training_game in range(self.config.games_per_generation):
+                print("Training Game ", training_game + 1)
                 score, num_steps = self.play_game()
                 total_environment_steps += num_steps
-                stats["score"].append(score)  # score for player one
+                self.stats["score"].append({"score": score})  # score for player one
 
             # STAT TRACKING
             for minibatch in range(self.config.num_minibatches):
-                value_loss, policy_loss, l2_loss, loss = self.learn()
-                stats["value_loss"].append(value_loss)
-                stats["policy_loss"].append(policy_loss)
-                stats["l2_loss"].append(l2_loss)
-                stats["loss"].append(loss)
+                value_loss, policy_loss, loss = self.learn()
+                self.stats["value_loss"].append({"loss": value_loss})
+                self.stats["policy_loss"].append({"loss": policy_loss})
+                # self.stats["l2_loss"].append(l2_loss)
+                self.stats["loss"].append({"loss": loss})
+                print("Losses", value_loss, policy_loss, loss)
 
             # CHECKPOINTING
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
                 self.save_checkpoint(
-                    stats,
-                    targets,
-                    5,
                     training_step,
                     total_environment_steps,
                     time() - training_time,
                 )
 
         self.save_checkpoint(
-            stats,
-            targets,
-            5,
             training_step,
             total_environment_steps,
             time() - training_time,
         )
         # save model to shared storage @Ezra
 
-    def monte_carlo_tree_search(self, env, state, legal_moves):
-        root = Node(0, state, legal_moves)
-        value, policy = self.predict(state, legal_moves)
+    def monte_carlo_tree_search(self, env, state, info):
+        root = Node(0, state, info)
+        value, policy = self.predict_no_mcts(state, info, mask_actions=True)
+        policy = policy[0]
+        value = value[0][0]
         print("Predicted Policy ", policy)
         print("Predicted Value ", value)
         root.to_play = int(
@@ -137,12 +143,13 @@ class AlphaZeroAgent(BaseAgent):
         # print("Root Turn", root.to_play)
         root.expand(policy, env)
 
-        if not self.is_test:
+        if env == self.env: # ghetto way of checking if we are in test mode
             root.add_noise(
                 self.config.root_dirichlet_alpha, self.config.root_exploration_fraction
             )
 
         for _ in range(self.config.num_simulations):
+            # print(_)
             node = root
             mcts_env = copy.deepcopy(env)
             search_path = [node]
@@ -154,19 +161,26 @@ class AlphaZeroAgent(BaseAgent):
                 )
                 _, reward, terminated, truncated, info = mcts_env.step(action)
                 search_path.append(node)
-                legal_moves = get_legal_moves(info)
 
             # Turn of the leaf node
-            leaf_node_turn = node.state[0][0][2]
+            leaf_node_turn = node.info["player"]  # info[]
             # print("Leaf Turn", leaf_node_turn)
             node.to_play = int(
                 leaf_node_turn
             )  ## FRAME STACKING ADD A DIMENSION TO THE FRONT
 
             if terminated or truncated:
-                value = -reward
+                value = reward[
+                    leaf_node_turn
+                ]  # o instead of leaf_node_turn do info["player"]
+                # value of a leaf node is always negative for the current player
+                # print(value)
             else:
-                value, policy = self.predict(node.state, legal_moves)
+                value, policy = self.predict_no_mcts(
+                    node.state, info, mask_actions=True
+                )
+                policy = policy[0]
+                value = value[0][0]
                 node.expand(policy, mcts_env)
 
             # UNCOMMENT FOR DEBUGGING
@@ -177,95 +191,113 @@ class AlphaZeroAgent(BaseAgent):
         visit_counts = [
             (child.visits, action) for action, child in root.children.items()
         ]
+        # print(visit_counts)
         return visit_counts
 
     def learn(self):
         samples = self.replay_buffer.sample()
         observations = samples["observations"]
-        target_policies = samples["policy"]
+        target_policies = samples["policies"]
         target_values = samples["rewards"]
+        infos = samples["infos"]
+        # print("Observations", observations)
+        # print("Target Policies", target_policies)
+        # print("Target Values", target_values)
+        # print("Infos", infos)
         inputs = self.preprocess(observations)
         for training_iteration in range(self.config.training_iterations):
-            with tf.GradientTape() as tape:
-                values, policies = self.model(inputs)
-                # Set illegal moves probability to zero and renormalize
-                legal_moves_mask = (np.array(target_policies) > 0).astype(int)
-                policies = tf.math.multiply(policies, legal_moves_mask)
-                policies = tf.math.divide(
-                    policies, tf.reduce_sum(policies, axis=1, keepdims=True)
-                )
-
-                # compute losses
-                value_loss = self.config.value_loss_factor * tf.losses.MSE(
-                    target_values, values
-                )
-                policy_loss = tf.losses.categorical_crossentropy(
-                    target_policies, policies
-                )
-                l2_loss = sum(self.model.losses)
-                loss = (value_loss + policy_loss) + l2_loss
-                loss = tf.reduce_mean(loss)
-
-            gradients = tape.gradient(loss, self.model.trainable_variables)
-            self.config.optimizer.apply_gradients(
-                grads_and_vars=zip(gradients, self.model.trainable_variables)
+            values, policies = self.predict_no_mcts(inputs, infos, mask_actions=True)
+            print(values)
+            print(policies)
+            # compute losses
+            value_loss = self.config.value_loss_factor * MSELoss()(
+                values, torch.Tensor(target_values).to(self.device)
             )
-        # RIGHT NOW THIS RETURNS THE LAST ITERATION OF THE LOSSES BUT SHOULD RETURN ONE FOR EACH ITERATION
+            policy_loss = CategoricalCrossentropyLoss()(
+                policies, torch.Tensor(target_policies).to(self.device)
+            )
+            # l2_loss = sum(self.model.losses)
+            # loss = (value_loss + policy_loss) + l2_loss
+            loss = value_loss + policy_loss
+            loss = loss.mean()
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        if self.config.clipnorm > 0:
+            clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+
+        self.optimizer.step()
         return (
-            tf.reduce_mean(value_loss),
-            tf.reduce_mean(policy_loss),
-            tf.reduce_mean(l2_loss),
-            loss,
+            value_loss.mean().detach().cpu().numpy(),
+            policy_loss.mean().detach().cpu().numpy(),
+            # l2_loss.mean(),
+            loss.detach().cpu().numpy(),
         )
 
-    def predict(self, state, legal_moves=None):
+    def predict_no_mcts(self, state, info: dict = None, mask_actions: bool = True):
+        assert (
+            info is not None if mask_actions else True
+        ), "Need info to mask actions, got {}".format(info)
         state_input = self.preprocess(state)
         value, policy = self.model(inputs=state_input)
-        policy = policy.numpy()[0]
-        value = value.numpy().item()
-        # Set illegal moves probability to zero and renormalize
-        policy = action_mask(policy, legal_moves, self.num_actions, mask_value=0)
-        policy = normalize_policy(policy)
+        # print("Value", value)
+        # print("Policy", policy)
+        if mask_actions:
+            legal_moves = get_legal_moves(info)
+            # print("Legal Moves", legal_moves)
+            policy = action_mask(policy, legal_moves, mask_value=0, device=self.device)
+            # print("Masked Policy", policy)
+            policy = clip_low_prob_actions(policy, self.config.clip_low_prob)
+            # print("Clipped Policy", policy)
+            policy = normalize_policies(policy)
+            # print("Normalized Policy", policy)
+        # distribution = torch.distributions.Categorical(probs=policy)
         return value, policy
 
-    def select_actions(self, state, legal_moves=None, game=None):
-        visit_counts = self.monte_carlo_tree_search(self.env, state, legal_moves)
+    def predict(self, state, info: dict = None, env=None, temperature=1.0, *args, **kwargs):
+        visit_counts = self.monte_carlo_tree_search(env, state, info)
         actions = [action for _, action in visit_counts]
         visit_counts = np.array([count for count, _ in visit_counts], dtype=np.float32)
 
-        if (not self.is_test) and game.length < self.config.num_sampling_moves:
-            temperature = self.config.exploration_temperature
-        else:
-            temperature = self.config.exploitation_temperature
-
         temperature_visit_counts = np.power(visit_counts, 1 / temperature)
         temperature_visit_counts /= np.sum(temperature_visit_counts)
-        action = np.random.choice(actions, p=temperature_visit_counts)
 
         target_policy = np.zeros(self.num_actions)
         target_policy[actions] = visit_counts / np.sum(visit_counts)
-        print("Target Policy", target_policy)
-        if self.is_test:
-            return action
-        else:
-            return action, target_policy
+        # print("Target Policy", target_policy)
+
+        # SHOULD TARGET POLICY BE TEMPERATURE VISIT COUNTS??? 
+        return temperature_visit_counts, target_policy, actions
+
+    def select_actions(self, predictions, *args, **kwargs):
+        action = np.random.choice(predictions[2], p=predictions[0])
+        return action
 
     def play_game(self):
         state, info = self.env.reset()
-        game = Game()
+        game = Game(self.config.game.num_players)
 
         done = False
         while not done:
-            action, target_policy = self.select_actions(
-                state,
-                get_legal_moves(info),
-                game=game,
-            )
+
+            # we are doing this here instead of in predict to make sure this is not done in test mode 
+            # although.... maybe it should be done in test mode? because the last moves should be exploitive? 
+            if info["step"] < self.config.num_sampling_moves:  # and (not self.is_test)
+                temperature = self.config.exploration_temperature
+            else:
+                temperature = self.config.exploitation_temperature
+
+            prediction = self.predict(state, info, env=self.env, temperature=temperature)
+            print("Target Policy", prediction[1])
+            print("Temperature Policy ", prediction[0])
+            action = self.select_actions(prediction)
             print("Action ", action)
-            next_state, reward, terminated, truncated, info = self.step(action)
+            next_state, reward, terminated, truncated, next_info = self.env.step(action)
+
             done = terminated or truncated
-            game.append(state, reward, target_policy)
+            game.append(state, reward, prediction[1], info=info)
             state = next_state
+            info = next_info
         game.set_rewards()
         self.replay_buffer.store(game)
         return game.rewards[0], game.length

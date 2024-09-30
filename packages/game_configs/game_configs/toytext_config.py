@@ -12,4 +12,5 @@ class ToyTextConfig(GameConfig):
             has_legal_moves=False,
             perfect_information=False,
             multi_agent=False,
+            num_players=1,
         )
