@@ -8,20 +8,18 @@ import copy
 class TicTacToeEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 1}
 
-    def __init__(
-        self, render_mode=None, size=3, win_length=3, player_turn_as_plane=True
-    ):
+    def __init__(self, render_mode=None, size=3, win_length=3, encode_player_turn=True):
         self.size = size  # The size of the square grid
         self.win_length = win_length  # The number of consecutive tokens needed to win
         self.window_size = 512  # The size of the PyGame window
 
         # Observations are planes.
-        # The first plane represents player 1s tokens, the second player 2s and the third encodes the current players turn. (if player_turn_as_plane == True)
-        self.player_turn_as_plane = player_turn_as_plane
+        # The first plane represents player 1s tokens, the second player 2s and the third encodes the current players turn. (if encode_player_turn == True)
+        self.encode_player_turn = encode_player_turn
         self.observation_space = spaces.Box(
             low=0,
             high=1,
-            shape=(3 if player_turn_as_plane else 2, self.size, self.size),
+            shape=(3 if encode_player_turn else 2, self.size, self.size),
             dtype=np.uint8,
         )
 
@@ -42,13 +40,17 @@ class TicTacToeEnv(gym.Env):
         self.clock = None
 
     def _get_obs(self):
-        if self.player_turn_as_plane:
+        if self.encode_player_turn:
             return copy.deepcopy(self._grid)
         else:
             return copy.deepcopy(self._grid[:2, :, :])
 
     def _get_info(self):
-        return {"legal_moves": self._legal_moves, "player": self.current_player}
+        return {
+            "legal_moves": self._legal_moves,
+            "player": self._current_player,
+            "step": self._step_count,
+        }
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
@@ -57,7 +59,9 @@ class TicTacToeEnv(gym.Env):
         # Set a blank board
         self._grid = np.zeros((3, self.size, self.size))
         self._grid[2, :, :] = 0  # It's player 1's turn
-        self.current_player = 0
+        self._current_player = 0
+
+        self._step_count = 0
 
         # Reset legal moves
         self._legal_moves = np.array(list(range(self.action_space.n)))
@@ -72,7 +76,7 @@ class TicTacToeEnv(gym.Env):
 
     def step(self, action):
         illegal_move = False
-        if action < 0 or action > 8:
+        if action < 0 or action > self.size * self.size - 1:
             raise ValueError("Action must be between 0 and 8")
             illegal_move = True
         if action not in self._legal_moves:
@@ -90,10 +94,10 @@ class TicTacToeEnv(gym.Env):
                 self._render_frame()
 
             reward = [0, 0]
-            reward[self.current_player] = -1
+            reward[self._current_player] = -1
 
             return observation, reward, False, False, info
-
+        self._step_count += 1
         # output next player's token first (since that's the one we're inputting to)
         current_player_board = copy.deepcopy(self._grid[0, :, :])
         self._grid[0, :, :] = self._grid[1, :, :]
@@ -106,13 +110,13 @@ class TicTacToeEnv(gym.Env):
 
         self._legal_moves = self._legal_moves[self._legal_moves != action]
         # encode turn as 1 or 0
-        self.current_player = (self.current_player + 1) % 2
+        self._current_player = (self._current_player + 1) % 2
         self._grid[2, :, :] = 1 - self._grid[2, :, :]
         # An episode is done iff there is a winner or the board is full
         terminated = self.winner()
         truncated = len(self._legal_moves) == 0
         if terminated:
-            if self.current_player == 0:
+            if self._current_player == 0:
                 reward = [-1, 1]
             else:
                 reward = [1, -1]

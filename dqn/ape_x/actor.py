@@ -142,9 +142,9 @@ class ApeXActor(ApeXActorBase, RainbowAgent):
         values = self.predict(state)
         action = epsilon_greedy_policy(
             values,
+            info,
             self.config.eg_epsilon,
             wrapper=lambda values: self.select_actions(values, info).item(),
-            range=self.num_actions,
         )
         next_state, reward, terminated, truncated, next_info = self.env.step(action)
         done = truncated or terminated

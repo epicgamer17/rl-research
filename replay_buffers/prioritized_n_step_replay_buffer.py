@@ -19,6 +19,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         n_step: float = 1,
         gamma: float = 0.99,
         compressed_observations: bool = False,
+        num_players: int = 1,
     ):
         assert alpha >= 0 and alpha <= 1
         assert beta >= 0 and beta <= 1
@@ -34,6 +35,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             n_step=n_step,
             gamma=gamma,
             compressed_observations=compressed_observations,
+            num_players=num_players,
         )
 
         self.alpha = alpha  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
@@ -51,9 +53,18 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         done: bool,
         id=None,
         priority: float = None,
+        player: int = 0,
     ):
         transition = super().store(
-            observation, info, action, reward, next_observation, next_info, done, id
+            observation,
+            info,
+            action,
+            reward,
+            next_observation,
+            next_info,
+            done,
+            id,
+            player=player,
         )
 
         if priority is None:
@@ -106,7 +117,11 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             else:
                 return None
 
-        indices = self._sample_proportional()
+        if self.alpha != 0.0:
+            indices = self._sample_proportional()
+        else:
+            indices = np.random.choice(self.size, size=self.batch_size, replace=False)
+            # print(indices)
         weights = np.array([self._calculate_weight(i) for i in indices])
 
         n_step_samples = self.sample_from_indices(indices)

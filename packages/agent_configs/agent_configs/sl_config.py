@@ -7,11 +7,13 @@ from torch.optim import Optimizer, Adam
 class SupervisedConfig(ConfigBase):
     def __init__(self, config_dict):
         super().__init__(config_dict)
+        print("SupervisedConfig")
         self.adam_epsilon = self.parse_field("sl_adam_epsilon", 1e-7)
         self.learning_rate = self.parse_field("sl_learning_rate", 0.005)
         self.loss_function: Loss = self.parse_field("sl_loss_function", required=True)
         self.clipnorm = self.parse_field("sl_clipnorm", 0)
         self.optimizer: Optimizer = self.parse_field("sl_optimizer", Adam)
+        self.weight_decay = self.parse_field("sl_weight_decay", 0.0)
         self.training_steps = self.parse_field("training_steps", required=True)
         self.training_iterations = self.parse_field("sl_training_iterations", 1)
         self.num_minibatches = self.parse_field("sl_num_minibatches", 1)
@@ -32,7 +34,10 @@ class SupervisedConfig(ConfigBase):
             wrapper=kernel_initializer_wrapper,
         )
 
+        self.clip_low_prob = self.parse_field("sl_clip_low_prob", 0.00)
+
         self.noisy_sigma = self.parse_field("sl_noisy_sigma", 0)
+        self.residual_layers = self.parse_field("sl_residual_layers", [])
         self.conv_layers = self.parse_field("sl_conv_layers", [])
         self.dense_layers_widths = self.parse_field("sl_dense_layer_widths", [128])
 

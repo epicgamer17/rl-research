@@ -17,7 +17,6 @@ from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
 # 3. A loss function
 # 4. A training method
 #       this method should have training iterations, minibatches, and training steps
-# 5. A step method
 # 6. A select_action method
 # 7. A predict method
 
@@ -138,7 +137,7 @@ class BaseAgent:
         """
         raise NotImplementedError
 
-    def select_actions(self, predicted, info) -> torch.Tensor:
+    def select_actions(self, predicted, info, mask_actions=False) -> torch.Tensor:
         """Return actions determined from the model output, appling postprocessing steps such as masking beforehand
 
         Args:
@@ -276,6 +275,8 @@ class BaseAgent:
         gc.collect()
 
         # plot the graphs (and save the graph)
+        print(self.stats)
+        print(self.targets)
         plot_graphs(
             self.stats,
             self.targets,
@@ -309,15 +310,19 @@ class BaseAgent:
                 score = 0
 
                 while not done:
-                    prediction = self.predict(state)
-                    action = self.select_actions(prediction).item()
+                    prediction = self.predict(
+                        state, info, env=self.test_env
+                    )  # env = self.test_env is there for alpha_zero which needs to use the test env here instead of the normal env for the tree search (might be able to just use the regular env still)
+                    action = self.select_actions(
+                        prediction, info, self.config.game.has_legal_moves
+                    ).item()
                     next_state, reward, terminated, truncated, info = (
                         self.test_env.step(action)
                     )
                     # self.test_env.render()
                     done = terminated or truncated
                     state = next_state
-                    score += reward
+                    score += reward[0] if isinstance(reward, list) else reward
                 average_score += score
                 max_score = max(max_score, score)
                 min_score = min(min_score, score)

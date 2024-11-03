@@ -1,5 +1,6 @@
 import torch
 from utils import action_mask, normalize_policies, current_timestamp, get_legal_moves
+from utils.utils import clip_low_prob_actions
 from base_agent.agent import BaseAgent
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam, SGD
@@ -45,11 +46,14 @@ class PolicyImitationAgent(BaseAgent):
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
                 eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
             )
         elif self.config.optimizer == SGD:
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
+                momentum=self.config.momentum,
+                weight_decay=self.config.weight_decay,
             )
 
     def select_actions(self, predictions):
@@ -65,7 +69,11 @@ class PolicyImitationAgent(BaseAgent):
         if mask_actions:
             legal_moves = get_legal_moves(info)
             policy = action_mask(policy, legal_moves, mask_value=0)
+            # print("Original", policy)
             policy = normalize_policies(policy)
+            policy = clip_low_prob_actions(policy, self.config.clip_low_prob)
+            policy = normalize_policies(policy)
+            # print("Masked for low probs", policy)
         return policy
 
     def learn(self):

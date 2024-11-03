@@ -12,4 +12,5 @@ class LeducHoldemConfig(GameConfig):
             has_legal_moves=False,
             perfect_information=False,
             multi_agent=True,
+            num_players=2,
         )

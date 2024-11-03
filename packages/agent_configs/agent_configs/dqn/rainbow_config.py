@@ -5,16 +5,17 @@ from utils import CategoricalCrossentropyLoss, tointlists
 class RainbowConfig(Config):
     def __init__(self, config_dict: dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
-
+        print("RainbowConfig")
+        self.residual_layers: list = self.parse_field("residual_layers", [])
         self.conv_layers: list = self.parse_field("conv_layers", [])
-        self.dense_layers_widths: int = self.parse_field(
-            "dense_layers_widths", [128], tointlists
+        self.dense_layer_widths: int = self.parse_field(
+            "dense_layer_widths", [128], tointlists
         )
-        self.value_hidden_layers_widths = self.parse_field(
-            "value_hidden_layers_widths", [], tointlists
+        self.value_hidden_layer_widths = self.parse_field(
+            "value_hidden_layer_widths", [], tointlists
         )
-        self.advantage_hidden_layers_widths: int = self.parse_field(
-            "advantage_hidden_layers_widths", [], tointlists
+        self.advantage_hidden_layer_widths: int = self.parse_field(
+            "advantage_hidden_layer_widths", [], tointlists
         )
 
         self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
@@ -23,8 +24,8 @@ class RainbowConfig(Config):
         self.eg_epsilon_decay_type: str = self.parse_field(
             "eg_epsilon_decay_type", "linear"
         )
-        self.eg_epsilon_decay_final_step: int = self.parse_field(
-            "eg_epsilon_decay_final_step", self.training_steps
+        self.eg_epsilon_final_step: int = self.parse_field(
+            "eg_epsilon_final_step", self.training_steps
         )
 
         self.dueling: bool = self.parse_field("dueling", True)
@@ -45,9 +46,11 @@ class RainbowConfig(Config):
         #     self.atom_size > 1
         # ), "Atom size must be greater than 1, as softmax and Q distribution to Q value calculation requires more than 1 atom"
 
-        assert not (
-            self.game.is_image and len(self.conv_layers) == 0
-        ), "Convolutional layers must be defined for image based games"
+        # assert not (
+        #     self.game.is_image
+        #     and len(self.conv_layers) == 0
+        #     and len(self.residual_layers) == 0
+        # ), "Convolutional layers must be defined for image based games"
 
         if len(self.conv_layers) > 0:
             assert len(self.conv_layers[0]) == 3

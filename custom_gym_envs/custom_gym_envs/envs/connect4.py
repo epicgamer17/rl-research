@@ -19,7 +19,7 @@ class Connect4Env(gym.Env):
         # Observations are planes.
         # The first plane represents player 1s tokens, the second player 2s and the third encodes the current players turn.
         self.observation_space = spaces.Box(
-            low=0, high=1, shape=self.size + (3,), dtype=np.float64
+            low=0, high=1, shape=(3,) + self.size, dtype=np.float64
         )
         print(self.observation_space)
 
@@ -43,15 +43,18 @@ class Connect4Env(gym.Env):
         return copy.deepcopy(self._grid)
 
     def _get_info(self):
-        return {"legal_moves": self._legal_moves}
+        return {"legal_moves": self._legal_moves, "player": self._current_player, "step": self._step_count}
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
         # Set a blank board
-        self._grid = np.zeros(self.size + (3,))
+        self._grid = np.zeros((3,) + self.size)
         self._grid[2, :, :] = 0  # It's player 1's turn
+        self._current_player = 0
+
+        self._step_count = 0
 
         # Reset legal moves
         self._legal_moves = np.array(list(range(self.action_space.n)))
@@ -65,16 +68,34 @@ class Connect4Env(gym.Env):
         return observation, info
 
     def step(self, action):
-        if action < 0 or action > 8:
-            raise ValueError("Action must be between 0 and 8")
+        illegal_move = False
+        if action < 0 or action > self.action_space.n - 1:
+            raise ValueError(
+                "Action must be between 0 and {}".format(self.action_space.n - 1)
+            )
+            illegal_move = True
         if action not in self._legal_moves:
             # could return a negative reward
-            raise ValueError(
-                "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
-            )
+            # raise ValueError(
+            #     "Illegal move {} Legal Moves {}".format(action, self._legal_moves)
+            # )
+            print("Illegal move {} Legal Moves {}".format(action, self._legal_moves))
+            illegal_move = True
+        if illegal_move:
+            observation = self._get_obs()
+            info = self._get_info()
+
+            if self.render_mode == "human":
+                self._render_frame()
+
+            reward = [0, 0]
+            reward[self._current_player] = -1
+            return observation, reward, False, False, info
+
+        self._step_count += 1
         # output next player's token first (since that's the one we're inputting to)
         current_player_board = copy.deepcopy(self._grid[0, :, :])
-        self._grid[0, :, :] = self._grid[:, :, 1]
+        self._grid[0, :, :] = self._grid[1, :, :]
         self._grid[1, :, :] = current_player_board
         # place token
         for i in range(self.size[0] - 1, -1, -1):
@@ -88,11 +109,12 @@ class Connect4Env(gym.Env):
 
         # encode turn as 1 or 0
         self._grid[2, :, :] = 1 - self._grid[2, :, :]
+        self._current_player = (self._current_player + 1) % 2
         # An episode is done iff there is a winner or the board is full
         terminated = self.winner()
         truncated = len(self._legal_moves) == 0
         if terminated:
-            if self._grid[2, 0, 0] == 0:
+            if self._current_player == 0:
                 reward = [-1, 1]
             else:
                 reward = [1, -1]
@@ -129,7 +151,7 @@ class Connect4Env(gym.Env):
         turn = int(self._grid[2, 0, 0])
         for i in range(self.size[0]):
             for j in range(self.size[1]):
-                if self._grid[i, j, turn] == 1:
+                if self._grid[turn, i, j] == 1:
                     pygame.draw.circle(
                         canvas,
                         (255, 0, 0),

@@ -1,11 +1,11 @@
 README.md
 setup.py
 agent_configs/__init__.py
+agent_configs/a2c_config.py
 agent_configs/alphazero_config.py
 agent_configs/base_config.py
 agent_configs/distributed_configs.py
 agent_configs/muzero_config.py
-agent_configs/nfsp_config.py
 agent_configs/ppo_actor_config.py
 agent_configs/ppo_config.py
 agent_configs/ppo_critic_config.py

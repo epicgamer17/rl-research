@@ -6,6 +6,8 @@ import torch
 from torch.nn.utils import clip_grad_norm_
 
 from agent_configs import PPOConfig
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
 
 from utils import (
     normalize_policy,
@@ -13,6 +15,7 @@ from utils import (
     get_legal_moves,
     update_linear_lr_schedule,
 )
+from utils.utils import clip_low_prob_actions, normalize_policies
 
 sys.path.append("../")
 
@@ -47,17 +50,36 @@ class PPOAgent(BaseAgent):
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
         )
 
-        self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
-            params=self.model.actor.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-        )
+        if self.config.actor.optimizer == Adam:
+            self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
+            )
+        elif self.config.actor.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
+            )
 
-        self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
-            params=self.model.critic.parameters(),
-            lr=self.config.learning_rate,
-            eps=self.config.adam_epsilon,
-        )
+        if self.config.critic.optimizer == Adam:
+            self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
+            )
+        elif self.config.critic.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.critic_optimizer: torch.optim.Optimizer = self.config.critic.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                momentum=self.config.momentum,
+                weight_decay=self.config.weight_decay,
+            )
 
         # self.actor = ActorNetwork(
         #     input_shape=self.observation_dimensions,
@@ -91,28 +113,41 @@ class PPOAgent(BaseAgent):
             "actor_loss": self.config.target_kl,
         }
 
-    def predict(self, state):
+    def predict(self, state, info: dict = None, mask_actions: bool = True):
+        assert info is not None if mask_actions else True, "Need info to mask actions"
         state_input = self.preprocess(state)
         value = self.model.critic(inputs=state_input)
         if self.discrete_action_space:
             policy = self.model.actor(inputs=state_input)[0]
-            # policy = action_mask(
-            #     policy, get_legal_moves(info), self.num_actions, mask_value=0
-            # )
-            # policy = normalize_policy(policy)
+            if mask_actions:
+                legal_moves = get_legal_moves(info)
+                policy = action_mask(
+                    policy, legal_moves, mask_value=0, device=self.device
+                )
+                policy = clip_low_prob_actions(policy, self.config.clip_low_prob)
+                policy = normalize_policies(policy)
             distribution = torch.distributions.Categorical(probs=policy)
         else:
             mean, std = self.model.actor(inputs=state_input)
             distribution = torch.distributions.Normal(mean, std)
         return distribution, value
 
-    def select_actions(self, predictions):
+    def select_actions(self, predictions, *args, **kwargs):
         distribution = predictions[0]
         selected_action = distribution.sample()
 
         return selected_action
 
-    def actor_learn(self, inputs, actions, log_probabilities, advantages):
+    def actor_learn(
+        self,
+        inputs,
+        actions,
+        log_probabilities,
+        advantages,
+        info: dict = None,
+        mask_actions: bool = True,
+    ):
+        assert info is not None if mask_actions else True, "Need info to mask actions"
         # print("Training Actor")
         inputs = inputs.to(self.device)
         actions = actions.to(self.device)
@@ -121,6 +156,10 @@ class PPOAgent(BaseAgent):
 
         if self.discrete_action_space:
             probabilities = self.model.actor(inputs)
+            if mask_actions:
+                legal_moves = get_legal_moves(info)
+                probabilities = action_mask(probabilities, legal_moves, mask_value=0)
+                probabilities = normalize_policies(probabilities)
             distribution = torch.distributions.Categorical(probabilities)
         else:
             mean, std = self.model.actor(inputs)
@@ -199,6 +238,7 @@ class PPOAgent(BaseAgent):
         log_probabilities = torch.from_numpy(samples["log_probabilities"])
         advantages = torch.from_numpy(samples["advantages"])
         returns = torch.from_numpy(samples["returns"])
+        infos = torch.from_numpy(samples["infos"])
         inputs = self.preprocess(observations)
 
         indices = torch.randperm(len(observations))
@@ -227,11 +267,13 @@ class PPOAgent(BaseAgent):
                 batch_actions = actions[batch_indices]
                 batch_log_probabilities = log_probabilities[batch_indices]
                 batch_advantages = advantages[batch_indices]
+                batch_info = infos[batch_indices]
                 kl_divergence = self.actor_learn(
                     batch_observations,
                     batch_actions,
                     batch_log_probabilities,
                     batch_advantages,
+                    batch_info,
                 )
                 self.stats["actor_loss"].append(kl_divergence)
             if kl_divergence > 1.5 * self.config.target_kl:
@@ -284,7 +326,7 @@ class PPOAgent(BaseAgent):
                 num_episodes = 0
                 score = 0
                 for timestep in range(self.config.steps_per_epoch):
-                    predictions = self.predict(state)
+                    predictions = self.predict(state, info)
                     action = self.select_actions(predictions).item()
 
                     next_state, reward, terminated, truncated, next_info = (
@@ -320,7 +362,10 @@ class PPOAgent(BaseAgent):
             self.learn()
 
             # self.old_actor.set_weights(self.actor.get_weights())
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
+            if (
+                training_step % self.checkpoint_interval == 0
+                and training_step > self.start_training_step
+            ):
                 self.save_checkpoint(
                     training_step,
                     training_step * self.config.steps_per_epoch,

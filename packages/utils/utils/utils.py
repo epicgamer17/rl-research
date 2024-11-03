@@ -39,12 +39,18 @@ def normalize_policies(policies: torch.float32):
     return policies
 
 
-def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
+def action_mask(
+    actions: Tensor, legal_moves, mask_value: float = 0, device="cpu"
+) -> Tensor:
     """
     Mask actions that are not legal moves
     actions: Tensor, probabilities of actions or q-values
     """
-    assert isinstance(legal_moves, list), "Legal moves should be a list"
+    assert isinstance(
+        legal_moves, list
+    ), "Legal moves should be a list got {} of type {}".format(
+        legal_moves, type(legal_moves)
+    )
 
     # add a dimension if the legal moves are not a list of lists
     # if len(legal_moves) != actions.shape[0]:
@@ -53,18 +59,34 @@ def action_mask(actions: Tensor, legal_moves, mask_value: float = 0) -> Tensor:
         len(legal_moves) == actions.shape[0]
     ), "Legal moves should be the same length as the batch size"
 
-    mask = torch.zeros_like(actions, dtype=torch.bool)
+    mask = torch.zeros_like(actions, dtype=torch.bool).to(device)
     for i, legal in enumerate(legal_moves):
         mask[i, legal] = True
     # print(mask)
     # print(actions)
     # actions[mask == 0] = mask_value
-    actions = torch.where(mask, actions, torch.tensor(mask_value))
+    actions = torch.where(mask, actions, torch.tensor(mask_value).to(device)).to(device)
     # print(mask)
     return actions
 
 
+def clip_low_prob_actions(actions: Tensor, low_prob: float = 0.01) -> Tensor:
+    """
+    Clip actions with probability lower than low_prob to 0
+    actions: Tensor, probabilities of actions
+    """
+    # print("Actions in low prob func", actions)
+    if low_prob == 0:
+        return actions
+    mask = actions < low_prob
+    # print("Mask", mask)
+    actions = torch.where(mask, 0.0, actions)
+    # print("Actions after clipping", actions)
+    return actions
+
+
 def get_legal_moves(info: dict | list[dict]):
+    # print(info)
     if isinstance(info, dict):
         return [info["legal_moves"] if "legal_moves" in info else None]
     else:
@@ -100,39 +122,37 @@ def make_stack(item: Tensor) -> Tensor:
     return item.view(1, *item.shape)
 
 
-def update_per_beta(per_beta: float, per_beta_final: float, per_beta_steps: int):
+def update_per_beta(
+    per_beta: float, per_beta_final: float, per_beta_steps: int, initial_per_beta: int
+):
     # could also use an initial per_beta instead of current (multiply below equation by current step)
     if per_beta < per_beta_final:
         clamp_func = min
     else:
         clamp_func = max
     per_beta = clamp_func(
-        per_beta_final, per_beta + (per_beta_final - per_beta) / (per_beta_steps)
+        per_beta_final,
+        per_beta + (per_beta_final - initial_per_beta) / (per_beta_steps),
     )
 
     return per_beta
 
 
 def update_linear_schedule(
-    value: float,
     final_value: float,
     total_steps: int,
-    initial_value: float = None,
-    current_step: int = None,
+    initial_value: float,
+    current_step: int,
 ):
     # learning_rate = initial_value
-    if initial_value < final_value or value < final_value:
+    if initial_value < final_value:
         clamp_func = min
     else:
         clamp_func = max
-    if initial_value is not None and current_step is not None:
-        value = clamp_func(
-            final_value,
-            initial_value
-            + (final_value - initial_value) * (current_step / total_steps),
-        )
-    else:
-        value = clamp_func(final_value, value + (final_value - value) / total_steps)
+    value = clamp_func(
+        final_value,
+        initial_value + ((final_value - initial_value) * (current_step / total_steps)),
+    )
     return value
 
 
@@ -158,6 +178,7 @@ def default_plot_func(
 def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col: int):
     if len(values) == 0:
         return
+    print(values)
     scores = [value["score"] for value in values]
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, scores)
@@ -292,6 +313,7 @@ def plot_exploitability(
     # print(rolling_averages)
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, rolling_averages)
+    axs[row][col].plot(x, exploitability)
 
     has_target_model_updates = "target_model_updated" in values[0]
     has_model_updates = "model_updated" in values[0]
@@ -595,15 +617,22 @@ def prepare_activations(activation: str):
 
 
 def epsilon_greedy_policy(
-    q_values: list[float], epsilon: float, range=None, wrapper=np.argmax
+    q_values: list[float], info: dict, epsilon: float, wrapper=np.argmax
 ):
     if np.random.rand() < epsilon:
-        if range is not None:
-            return np.random.randint(range)
+        # print("selecting a random move")
+        if "legal_moves" in info:
+            # print("using legal moves")
+            return random.choice(info["legal_moves"])
         else:
-            return np.random.randint(len(q_values))
+            q_values = q_values.reshape(-1)
+            return random.choice(range(len(q_values)))
     else:
-        return wrapper(q_values)
+        # try:
+        # print("using provided wrapper to select action")
+        return wrapper(q_values, info)
+    # except:
+    #     return wrapper(q_values)
 
 
 def add_dirichlet_noise(
@@ -617,9 +646,7 @@ def add_dirichlet_noise(
     return policy
 
 
-def augment_board(
-    self, game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False
-):
+def augment_game(game, flip_y: bool = False, flip_x: bool = False, rot90: bool = False):
     # augmented_games[0] = rotate 90
     # augmented_games[1] = rotate 180
     # augmented_games[2] = rotate 270
@@ -696,15 +723,48 @@ def augment_board(
     return augemented_games
 
 
-def calculate_observation_buffer_shape(max_size, observation_dimensions):
-    raise DeprecationWarning(
-        "This function is deprecated simply use (max_size,) + observation_dimensions"
-    )
-    # observation_buffer_shape = []
-    # observation_buffer_shape += [max_size]
-    # observation_buffer_shape += list(observation_dimensions)
-    observation_buffer_shape = (max_size,) + observation_dimensions
-    return list(observation_buffer_shape)
+def augment_board(
+    board, policy, flip_y: bool = False, flip_x: bool = False, rot90: bool = False
+):
+    if (rot90 and flip_y) or (rot90 and flip_x):
+        augemented_boards = [copy.deepcopy(board) for _ in range(7)]
+        augmented_policies = [copy.deepcopy(policy) for _ in range(7)]
+        augemented_boards[0] = np.rot90(board)
+        augmented_policies[0] = np.rot90(policy)
+        augemented_boards[1] = np.rot90(np.rot90(board))
+        augmented_policies[1] = np.rot90(np.rot90(policy))
+        augemented_boards[2] = np.rot90(np.rot90(np.rot90(board)))
+        augmented_policies[2] = np.rot90(np.rot90(np.rot90(policy)))
+        augemented_boards[3] = np.flipud(board)
+        augmented_policies[3] = np.flipud(policy)
+        augemented_boards[4] = np.flipud(np.rot90(board))
+        augmented_policies[4] = np.flipud(np.rot90(policy))
+        augemented_boards[5] = np.flipud(np.rot90(np.rot90(board)))
+        augmented_policies[5] = np.flipud(np.rot90(np.rot90(policy)))
+        augemented_boards[6] = np.rot90(np.flipud(board))
+        augmented_policies[6] = np.rot90(np.flipud(policy))
+    elif rot90 and not flip_y and not flip_x:
+        augemented_boards = [copy.deepcopy(board) for _ in range(3)]
+        augmented_policies = [copy.deepcopy(policy) for _ in range(3)]
+        augemented_boards[0] = np.rot90(board)
+        augmented_policies[0] = np.rot90(policy)
+        augemented_boards[1] = np.rot90(np.rot90(board))
+        augmented_policies[1] = np.rot90(np.rot90(policy))
+        augemented_boards[2] = np.rot90(np.rot90(np.rot90(board)))
+        augmented_policies[2] = np.rot90(np.rot90(np.rot90(policy)))
+    elif flip_y and not rot90 and not flip_x:
+        augemented_boards = [copy.deepcopy(board)]
+        augmented_policies = [copy.deepcopy(policy)]
+        augemented_boards[0] = np.flipud(board)
+        augmented_policies[0] = np.flipud(policy)
+    elif flip_x and not rot90 and not flip_y:
+        augemented_boards = [copy.deepcopy(board)]
+        augmented_policies = [copy.deepcopy(policy)]
+        augemented_boards[0] = np.fliplr(board)
+        augmented_policies[0] = np.fliplr(policy)
+    augemented_boards.append(board)
+    augmented_policies.append(policy)
+    return augemented_boards, augmented_policies
 
 
 def sample_by_random_indices(
@@ -759,12 +819,6 @@ def discounted_cumulative_sums(x, discount):
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
-def nash_convergence(env, average_policies, best_response_policies, num_episodes):
-    # for every player (average policy) play against the corresponding best policies
-    # sum the exploitability of each player and then divide by the number of players
-    pass
-
-
 def to_lists(l: list[Iterable]) -> list[Tuple]:
     """Convert a list of iterables to a zip of tuples
 
@@ -786,8 +840,11 @@ _epsilon = 1e-7
 
 
 def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    # print(predicted)
     predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
+    # print(predicted)
     predicted = torch.clamp(predicted, _epsilon, 1.0 - _epsilon)
+    # print(predicted)
     log_prob = torch.log(predicted)
     return -torch.sum(log_prob * target, axis=axis)
 
@@ -834,10 +891,15 @@ class HuberLoss:
 
 
 def mse(predicted: torch.Tensor, target: torch.Tensor):
+    # print(predicted)
+    # print(target)
     return (predicted - target) ** 2
 
 
 class MSELoss:
+    def __init__(self):
+        pass
+
     def __call__(self, predicted, target):
         return mse(predicted, target)
 

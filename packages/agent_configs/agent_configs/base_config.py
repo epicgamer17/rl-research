@@ -93,11 +93,13 @@ class Config(ConfigBase):
         )
 
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
+        self.momentum = self.parse_field("momentum", 0.9)
         self.learning_rate: float = self.parse_field("learning_rate", 0.001)
         self.clipnorm: int = self.parse_field("clipnorm", 0)
         self.optimizer: torch.optim.Optimizer = self.parse_field(
             "optimizer", torch.optim.Adam
         )
+        self.weight_decay: float = self.parse_field("weight_decay", 0.0)
         self.loss_function: Loss = self.parse_field("loss_function", required=True)
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations

@@ -168,6 +168,14 @@ class DenseStack(nn.Module):
             layer.reset_noise()
         return
 
+    def remove_noise(self) -> None:
+        assert self.noisy
+
+        for layer in self.dense_layers:
+            layer.remove_noise()
+        return
+
+
     def extra_repr(self) -> str:
         return f"in_features={self.initial_width}, out_width={self.output_width}, noisy={self.noisy}"
 

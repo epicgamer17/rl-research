@@ -2,7 +2,7 @@ from .base_config import ConfigBase
 from torch.optim import Optimizer, Adam
 
 
-class PPOActorConfig(ConfigBase):
+class CriticConfig(ConfigBase):
     def __init__(self, config_dict):
         super().__init__(config_dict)
         self.adam_epsilon = self.parse_field("adam_epsilon", 1e-7)

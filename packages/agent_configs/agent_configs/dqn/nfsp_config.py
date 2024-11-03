@@ -8,7 +8,7 @@ class NFSPDQNConfig(Config):
     def __init__(self, config_dict, game_config):
         # Config type should be a DQN Type
         super(NFSPDQNConfig, self).__init__(config_dict, game_config)
-        self.num_players = self.parse_field("num_players", required=True)
+        print("NFSPDQNConfig")
         self.rl_configs = [
             RainbowConfig(config_dict, game_config) for _ in range(self.num_players)
         ]
@@ -20,7 +20,9 @@ class NFSPDQNConfig(Config):
 
         self.replay_interval = self.parse_field("replay_interval", 16)
 
-        self.anticipatory_param = self.parse_field("anticipatory_param", 0.5)
+        self.anticipatory_param = self.parse_field("anticipatory_param", 0.1)
+
+        # if self.anticipatory_param == 1.0 and self.game.is_deterministic:
 
         self.shared_networks_and_buffers = self.parse_field(
             "shared_networks_and_buffers", False

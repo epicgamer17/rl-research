@@ -2,6 +2,8 @@ import numpy as np
 
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
 
+from utils import augment_board
+
 
 class NFSPReservoirBuffer(BaseReplayBuffer):
     def __init__(
@@ -22,7 +24,13 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             compressed_observations=compressed_observations,
         )
 
-    def store(self, observation, info: dict, target_policy: list[int], id=None):
+    def store(
+        self,
+        observation,
+        info: dict,
+        target_policy: list[int],
+        id=None,
+    ):
         """
         Store a transition in the replay buffer.
         :param observation: the current observation
@@ -45,42 +53,54 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
     def sample(self):
         # http://erikerlandson.github.io/blog/2015/11/20/very-fast-reservoir-sampling/
         assert len(self) >= self.batch_size
-        observation_reservoir = self.observation_buffer[: self.batch_size]
-        info_reservoir = self.info_buffer[: self.batch_size]
-        target_policy_reservoir = self.target_policy_buffer[: self.batch_size]
-        threshold = self.batch_size * 4
-        index = self.batch_size
-        while (index < len(self)) and (index <= threshold):
-            i = np.random.randint(0, index)
-            if i < self.batch_size:
-                observation_reservoir[i] = self.observation_buffer[index]
-                info_reservoir[i] = self.info_buffer[index]
-                target_policy_reservoir[i] = self.target_policy_buffer[index]
-            index += 1
-
-        while index < len(self):
-            p = float(self.batch_size) / index
-            u = np.random.rand()
-            g = np.floor(np.log(u) / np.log(1 - p))
-            index = index + int(g)
-            if index < len(self):
-                i = np.random.randint(0, self.batch_size - 1)
-                observation_reservoir[i] = self.observation_buffer[index]
-                info_reservoir[i] = self.info_buffer[index]
-                target_policy_reservoir[i] = self.target_policy_buffer[index]
-            index += 1
-
+        indices = np.random.choice(len(self), self.batch_size, replace=False)
         return dict(
-            observations=observation_reservoir,
-            infos=info_reservoir,
-            targets=target_policy_reservoir,
+            observations=self.observation_buffer[indices],
+            infos=self.info_buffer[indices],
+            targets=self.target_policy_buffer[indices],
         )
+
+        # observation_reservoir = self.observation_buffer[: self.batch_size]
+        # info_reservoir = self.info_buffer[: self.batch_size]
+        # target_policy_reservoir = self.target_policy_buffer[: self.batch_size]
+        # threshold = self.batch_size * 4
+        # index = self.batch_size
+        # indices = []
+        # while (index < len(self)) and (index <= threshold):
+        #     i = np.random.randint(0, index)
+        #     if i < self.batch_size:
+        #         observation_reservoir[i] = self.observation_buffer[index]
+        #         info_reservoir[i] = self.info_buffer[index]
+        #         target_policy_reservoir[i] = self.target_policy_buffer[index]
+        #         indices.append(index)
+        #     index += 1
+
+        # while index < len(self):
+        #     p = float(self.batch_size) / index
+        #     u = np.random.rand()
+        #     g = np.floor(np.log(u) / np.log(1 - p))
+        #     index = index + int(g)
+        #     if index < len(self):
+        #         i = np.random.randint(0, self.batch_size - 1)
+        #         observation_reservoir[i] = self.observation_buffer[index]
+        #         info_reservoir[i] = self.info_buffer[index]
+        #         target_policy_reservoir[i] = self.target_policy_buffer[index]
+        #         indices.append(index)
+        #     index += 1
+        # print(indices)
+        # return dict(
+        #     observations=observation_reservoir,
+        #     infos=info_reservoir,
+        #     targets=target_policy_reservoir,
+        # )
 
     def clear(self):
         if self.compressed_observations:
             self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
         else:
             observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+            print(observation_buffer_shape)
+            print(self.observation_dtype)
             self.observation_buffer = np.zeros(
                 observation_buffer_shape, dtype=self.observation_dtype
             )

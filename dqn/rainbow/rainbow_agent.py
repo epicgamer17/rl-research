@@ -49,6 +49,7 @@ class RainbowAgent(BaseAgent):
                 else torch.device("cpu")
             )
         ),
+        num_players: int = 1,
     ):
         super(RainbowAgent, self).__init__(env, config, name, device=device)
         self.model = RainbowNetwork(
@@ -75,12 +76,15 @@ class RainbowAgent(BaseAgent):
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
                 eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
             )
         elif self.config.optimizer == SGD:
             print("Warning: SGD does not use adam_epsilon param")
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
+                momentum=self.config.momentum,
+                weight_decay=self.config.weight_decay,
             )
 
         self.replay_buffer = PrioritizedNStepReplayBuffer(
@@ -97,6 +101,7 @@ class RainbowAgent(BaseAgent):
             compressed_observations=(
                 self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
             ),
+            num_players=num_players,
         )
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
@@ -124,11 +129,10 @@ class RainbowAgent(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
-    def predict(self, states) -> torch.Tensor:
+    def predict(self, states, *args, **kwargs) -> torch.Tensor:
         # could change type later
         state_input = self.preprocess(states)
         q_distribution: torch.Tensor = self.model(state_input)
-        masked_q_distribution = q_distribution
         return q_distribution
 
     def predict_target(self, states) -> torch.Tensor:
@@ -149,10 +153,19 @@ class RainbowAgent(BaseAgent):
             q_values = distribution
         if mask_actions:
             legal_moves = get_legal_moves(info)
-            q_values = action_mask(q_values, legal_moves, mask_value=-float("inf"))
+            q_values = action_mask(
+                q_values, legal_moves, mask_value=-float("inf"), device=self.device
+            )
         # print("Q Values", q_values)
+        # q_values with argmax ties
+        # selected_actions = torch.stack(
+        #     [
+        #         torch.tensor(np.random.choice(np.where(x.cpu() == x.cpu().max())[0]))
+        #         for x in q_values
+        #     ]
+        # )
+        # print(selected_actions)
         selected_actions = q_values.argmax(1, keepdim=False)
-
         return selected_actions
 
     def learn(self) -> np.ndarray:
@@ -171,11 +184,15 @@ class RainbowAgent(BaseAgent):
         )
         # print("actions", actions)
 
-        # print(observations[0])
+        # print("Observations", observations)
         # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
         online_predictions = self.predict(observations)[
             range(self.config.minibatch_size), actions
         ]
+        # for param in self.model.parameters():
+        #     print(param)
+        # print(self.predict(observations))
+        # print(online_predictions)
         # (B, atom_size)
         if self.config.atom_size > 1:
             assert isinstance(
@@ -187,6 +204,7 @@ class RainbowAgent(BaseAgent):
             )
             target_predictions = self.compute_target_distributions(samples)
         else:
+            # print("using default dqn loss")
             assert isinstance(self.config.loss_function, HuberLoss) or isinstance(
                 self.config.loss_function, MSELoss
             ), "Only HuberLoss or MSELoss are supported for atom_size = 1, recieved {}".format(
@@ -194,14 +212,29 @@ class RainbowAgent(BaseAgent):
             )
             next_observations, rewards, dones = (
                 torch.from_numpy(samples["next_observations"]).to(self.device),
-                torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
-                torch.from_numpy(samples["dones"]).to(self.device).view(-1, 1),
+                torch.from_numpy(samples["rewards"]).to(self.device),
+                torch.from_numpy(samples["dones"]).to(self.device),
             )
-            target_predictions = self.predict_target(next_observations)
-            target_predictions = target_predictions.max(1, keepdim=True)[0]
+            next_infos = samples["next_infos"]
+            target_predictions = self.predict_target(next_observations)  # next q values
+            # print("Next q values", target_predictions)
+            # print("Current q values", online_predictions)
+            # print(self.predict(next_observations))
+            next_actions = self.select_actions(
+                self.predict(next_observations),  # current q values
+                info=next_infos,
+                mask_actions=self.config.game.has_legal_moves,
+            )
+            # print("Next actions", next_actions)
+            target_predictions = target_predictions[
+                range(self.config.minibatch_size), next_actions
+            ]  # this might not work
+            # print(target_predictions)
             target_predictions = (
                 rewards + self.config.discount_factor * (~dones) * target_predictions
-            ).view(-1)
+            )
+            # print(target_predictions)
+
         # print("predicted", online_distributions)
         # print("target", target_distributions)
 
@@ -210,6 +243,7 @@ class RainbowAgent(BaseAgent):
         elementwise_loss = self.config.loss_function(
             online_predictions, target_predictions
         )
+        # print("Loss", elementwise_loss.mean())
         assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
             elementwise_loss
         )
@@ -242,10 +276,8 @@ class RainbowAgent(BaseAgent):
         # print("computing target distributions")
         with torch.no_grad():
             discount_factor = self.config.discount_factor**self.config.n_step
-            delta_z = (
-                (self.config.v_max - self.config.v_min) / (self.config.atom_size - 1)
-                if self.config.atom_size > 1
-                else (self.config.v_max - self.config.v_min)
+            delta_z = (self.config.v_max - self.config.v_min) / (
+                self.config.atom_size - 1
             )
             next_observations, rewards, dones = (
                 samples["next_observations"],
@@ -259,6 +291,7 @@ class RainbowAgent(BaseAgent):
             next_actions = self.select_actions(
                 online_distributions,
                 info=samples["next_infos"],
+                mask_actions=self.config.game.has_legal_moves,
             )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[
@@ -287,10 +320,23 @@ class RainbowAgent(BaseAgent):
             u[(l < (self.config.atom_size - 1)) * (l == u)] += 1
             # print("fixed l", l)
             # print("fixed u", u)
+            # dones = dones.squeeze()
+            # masked_probs = torch.ones_like(probabilities) / self.config.atom_size
+            # masked_probs[~dones] = probabilities[~dones]
 
             m = torch.zeros_like(probabilities)
             m.scatter_add_(dim=1, index=l, src=probabilities * ((u.float()) - b))
             m.scatter_add_(dim=1, index=u, src=probabilities * ((b - l.float())))
+            # print("old_m", (m * self.support).sum(-1))
+
+            # projected_distribution = torch.zeros_like(probabilities)
+            # projected_distribution.scatter_add_(
+            #     dim=1, index=l, src=masked_probs * (u.float() - b)
+            # )
+            # projected_distribution.scatter_add_(
+            #     dim=1, index=u, src=masked_probs * (b - l.float())
+            # )
+            # print("m", (projected_distribution * self.support).sum(-1))
             return m
 
     def fill_replay_buffer(self):
@@ -323,12 +369,12 @@ class RainbowAgent(BaseAgent):
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
-    def update_eg_epsilon(self, training_step: int = None):
+    def update_eg_epsilon(self, training_step: int):
         if self.config.eg_epsilon_decay_type == "linear":
+            # print("decaying eg epsilon linearly")
             self.eg_epsilon = update_linear_schedule(
-                self.eg_epsilon,
                 self.config.eg_epsilon_final,
-                self.training_steps,
+                self.config.eg_epsilon_final_step,
                 self.config.eg_epsilon,
                 training_step,
             )
@@ -358,18 +404,22 @@ class RainbowAgent(BaseAgent):
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     values = self.predict(state)
+                    # print(values)
                     action = epsilon_greedy_policy(
                         values,
+                        info,
                         self.eg_epsilon,
-                        wrapper=lambda values: self.select_actions(values, info).item(),
-                        range=self.num_actions,
-                    ).item()
-                    self.update_eg_epsilon()
+                        wrapper=lambda values, info: self.select_actions(
+                            values, info
+                        ).item(),
+                    )
+                    # print("Action", action)
+                    # print("Epislon Greedy Epsilon", self.eg_epsilon)
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )
                     done = terminated or truncated
-                    # print(state)
+                    # print("State", state)
                     self.replay_buffer.store(
                         state, info, action, reward, next_state, next_info, done
                     )
@@ -381,6 +431,7 @@ class RainbowAgent(BaseAgent):
                             self.replay_buffer.beta,
                             self.config.per_beta_final,
                             self.training_steps,
+                            self.config.per_beta,
                         )
                     )
 
@@ -394,14 +445,11 @@ class RainbowAgent(BaseAgent):
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
 
-                if training_step % self.config.transfer_interval == 0:
-                    target_model_updated = (True, True)
-                    # stats["test_score"].append(
-                    #     {"target_model_weight_update": training_step}
-                    # )
-                    self.update_target_model()
-
+            self.update_eg_epsilon(training_step + 1)
+            # print("replay buffer size", len(self.replay_buffer))
             for minibatch in range(self.config.num_minibatches):
+                if len(self.replay_buffer) < self.config.min_replay_buffer_size:
+                    break
                 losses = self.learn()
                 # print(losses)
                 loss_mean = losses.mean()
@@ -411,8 +459,19 @@ class RainbowAgent(BaseAgent):
                 )
                 target_model_updated = (target_model_updated[0], False)
 
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
+            if training_step % self.config.transfer_interval == 0:
+                target_model_updated = (True, True)
+                # stats["test_score"].append(
+                #     {"target_model_weight_update": training_step}
+                # )
+                self.update_target_model()
+
+            if (
+                training_step % self.checkpoint_interval == 0
+                and training_step > self.start_training_step
+            ):
                 # print(self.stats["score"])
+                # print(len(self.replay_buffer))
                 self.save_checkpoint(
                     training_step,
                     training_step * self.config.replay_interval,
