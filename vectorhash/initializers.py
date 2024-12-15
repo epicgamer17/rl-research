@@ -6,7 +6,7 @@ class Initializer:
         self.grid_size = grid_size
         self.device = device
 
-    def __call__(self, shape):
+    def __call__(self, shape) -> torch.Tensor:
         return self._initialize(shape)
 
     def _initialize(self, shape):

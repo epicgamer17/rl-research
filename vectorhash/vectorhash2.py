@@ -1,11 +1,18 @@
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from healers import DefaultHealer
 
-from initializers import Initializer, RandomInitializer, BlobInitializer
+from initializers import Initializer, RandomInitializer
 from vectorhash_functions import difference_of_guassians
 
+torch.manual_seed(0)
+import random
+
+random.seed(0)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # all hyperaparameters are from the paper unless otherwise stated
 
 ### using 64x64 grid for now for faster computation (128x128 in the paper)
@@ -36,7 +43,8 @@ alpha = 0
 # multiplicatively determine how strongly velocity inputs drive the pattern and thus
 # control the speed of the flow for a fixed rat speed"
 
-# alpha = 0.10305
+l = 1
+alpha = 0.10305
 
 
 ### hyperparameters for non-periodic boundary conditions (irrelevant for now)
@@ -61,6 +69,7 @@ class GridCells:
         initializer: Initializer = None,
         name="grid cells",
         debug=False,
+        healer=None,
     ):
         self.name = name
         self.device = device
@@ -86,42 +95,21 @@ class GridCells:
                     grid_size=self.grid_size, device="cuda", mean=1, std=0.5
                 )
 
-            self.grid = initializer((grid_size, grid_size)).to(device)
-            self.directions_grid = self._generate_directions_grid()
-            self.W = self._calc_W0()
+            if healer is None:
+                healer = DefaultHealer()
 
-            self.grid_history = [self.grid]
-            self.times = [0]
+            self.grid = initializer((grid_size, grid_size)).to(device)
+            self.W = self._calc_W0()
+            self.A = self._A(self.positions)
 
             if self.debug:
-                print("directions", self.directions_grid)
                 print("w", self.W)
                 print("grid", self.grid)
-                self.plot_directions()
-                self.plot_weights()
+            self.plot_weights()
 
-    def _generate_directions_grid(self):
-        if self.debug:
-            print("generate directions")
-
-        subgrid = torch.tensor(
-            [[[-1, 0], [1, 0]], [[0, -1], [0, 1]]],
-            device=self.device,
-            dtype=torch.float32,
-        )
-        g = torch.tile(subgrid, (self.grid_size // 2, self.grid_size // 2, 1))
-
-        # idea: what happens if we shuffle the directions by each 2x2 subgrid?
-        # for i in range(0, self.grid_size, 2):
-        #     for j in range(0, self.grid_size, 2):
-        #         d1, d2, d3, d4 = g[i, j], g[i, j + 1], g[i + 1, j], g[i + 1, j + 1]
-
-        #         directions = torch.stack([d1, d2, d3, d4])
-        #         directions = directions[torch.randperm(4)]
-
-        #         g[i, j], g[i, j + 1], g[i + 1, j], g[i + 1, j + 1] = directions
-
-        return g
+            self.grid_history = [self.grid.cpu().numpy()]
+            self.times = [0]
+            healer(self)
 
     def plot_directions(self):
         # label each vector directions with 'N', 'S', 'E', 'W'
@@ -157,6 +145,14 @@ class GridCells:
 
         # equally spaced grid of positions [-n/2, -n/2) x [n/2, n/2)
         self.positions = torch.stack([X, Y], dim=-1)
+        directions_grid = torch.tile(
+            torch.tensor(
+                [[[0, 1], [0, -1]], [[1, 0], [-1, 0]]],
+                device=self.device,
+                dtype=torch.float32,
+            ),
+            (self.grid_size // 2, self.grid_size // 2, 1),
+        )
 
         # torus topology
 
@@ -168,7 +164,9 @@ class GridCells:
             )
             % self.grid_size
             - self.grid_size // 2
-        ) - self.length * self.directions_grid.unsqueeze(2).unsqueeze(2)
+            - self.length * directions_grid
+            + self.grid_size // 2
+        ) % self.grid_size - self.grid_size // 2
 
         X = difference_of_guassians(
             torch.linalg.vector_norm(diffs, dim=-1), self.a, self.sigma1, self.sigma2
@@ -176,36 +174,46 @@ class GridCells:
 
         return X
 
+    def _calc_b(self, v):
+        dotted = (
+            torch.tensor(
+                [[-1, 0], [1, 0], [0, -1], [0, 1]],
+                device=self.device,
+                dtype=torch.float32,
+            )
+            @ v
+        )
+        subgrid = dotted.reshape(2, 2)
+        tiled = torch.tile(subgrid, (self.grid_size // 2, self.grid_size // 2))
+        return tiled
+
     def step(self, v=None):
         if v is None:
             v = torch.tensor([0, 0], device=self.device, dtype=torch.float32)
         else:
             v = v.to(self.device).to(torch.float32)
 
-        B = self.A(self.positions) * (
-            1 + self.alpha * torch.einsum("ijk,k->ij", self.directions_grid, v)
-        )
-        if self.debug:
-            print("B", B)
+        if (self.alpha * torch.norm(v)) > 1:
+            print("warning: alpha * |v| > 1 will cause instability.", f"v={v}")
 
         Wx = torch.einsum("ijkl,kl->ij", self.W, self.grid)
+        B = self.A * (1 + self.alpha * self._calc_b(v))
 
         if self.debug:
+            print("B", B)
             print("Wx", Wx)
 
         z = Wx + B
+        if self.debug:
+            print("Wx+B", z)
         z = torch.relu(z)
 
-        if self.debug:
-            print("Z", z)
-
-        z -= self.grid
-        z *= self.dt / self.tau
+        z = (z - self.grid) * self.dt / self.tau
         self.grid += z
-        self.grid_history.append(self.grid)
+        self.grid_history.append(self.grid.cpu().numpy())
         self.times.append(self.times[-1] + self.dt)
 
-    def A(self, x):
+    def _A(self, x):
         return torch.where(
             torch.linalg.vector_norm(x, dim=2) < self.grid_size - self.delta_r,
             1,
@@ -236,85 +244,53 @@ class GridCells:
         plt.savefig("weights.png")
         plt.close(fig)
 
-    def animate(self):
-        # animate self.grid_history
+    def animate(self, fps=None, speed=1):
+        if fps is None:
+            fps = 1000 * speed / self.dt
 
-        fig = plt.figure()
+        if fps > 1000 * speed / self.dt:
+            print(
+                "fps should be less than 1000 * speed / dt (or else the same state will be rendered multiple times)"
+            )
+
+        fig = plt.figure(figsize=(8, 9))
 
         artists = []
 
-        for i in range(len(self.grid_history)):
-            im = plt.imshow(self.grid_history[i].cpu().numpy(), cmap="hot")
-            text = plt.text(0, 0, f"time: {self.times[i]} ms")
+        im = plt.imshow(self.grid_history[0], cmap="hot")
+        text = plt.text(0, -0.5, f"time: {self.times[0]} ms")
+        artists.append([im, text])
+
+        for i in range(1, len(self.grid_history), int(1000 * speed // (fps * grid.dt))):
+            im = plt.imshow(self.grid_history[i], cmap="hot", animated=True)
+            text = plt.text(0, -0.5, f"time: {self.times[i]} ms")
             artists.append([im, text])
 
         ani = animation.ArtistAnimation(
-            fig, artists, interval=10, blit=True, repeat_delay=1000
+            fig,
+            artists,
+            interval=1000 * speed / fps,
+            blit=True,
+            repeat_delay=1000,
         )
 
         return ani
 
 
-# flow both the periodic and
-# aperiodic network states with unidirectional velocity inputs,
-# corresponding to a velocity of 0.8 m/s, in three different directions
-# (0,pi/5,pi/2-pi/5) for 250 ms each to heal any strain and defects in
-# the formed pattern.
+# animation 1: flow for 250 ms in each direction (default described in paper), l=0, alpha=0
+grid = GridCells(grid_size, device, length=0, alpha=0)
+anim = grid.animate(fps=30, speed=0.1)
+anim.save("anim1.gif")
+plt.close()
 
+# animation 2: flow for 250 ms in each direction, then flow for 1000 east at 1 m/s, l=1, alpha=0.10305
+grid = GridCells(grid_size, device, length=1, alpha=0.10305)
 
-import math
-
-directions = [
-    torch.tensor([0.8, 0], device=device, dtype=torch.float32),
-    torch.tensor(
-        [0.8 * math.cos(torch.pi / 5), 0.8 * math.sin(torch.pi / 5)],
-        device=device,
-        dtype=torch.float32,
-    ),
-    torch.tensor(
-        [
-            0.8 * math.cos(torch.pi / 2 - math.pi / 5),
-            0.8 * math.sin(torch.pi / 2 - math.pi / 5),
-        ],
-        device=device,
-        dtype=torch.float32,
-    ),
-]
-
-
-# "Initial conditions"
-def flow(grid: GridCells):
-    # time in ms to flow each direction
-    time = 250
-    steps = int(time // dt)
-
-    for direction in directions:
-        for i in range(steps):
-            grid.step(direction)
-            print(i)
-
-
-# experiment 1: no flowing, just 1000 steps
-grid = GridCells(grid_size, device)
-for i in range(1000):
-    grid.step()
+for i in range(5000):
+    grid.step(torch.tensor([0.1, 0.1], device=device, dtype=torch.float32))
     print(i)
-anim = grid.animate()
-anim.save("experiment1.mp4")
+
+anim = grid.animate(fps=30)
+anim.save("anim2.gif")
 plt.close()
 
-# experiment 2: flow for 250 ms in each direction
-grid = GridCells(grid_size, device)
-flow(grid)
-anim = grid.animate()
-anim.save("experiment2.mp4")
-plt.close()
-
-# experiment 3: try different initializer
-grid = GridCells(grid_size, device, initializer=BlobInitializer(grid_size, device))
-for i in range(1000):
-    grid.step()
-    print(i)
-anim = grid.animate()
-anim.save("experiment3.mp4")
-plt.close()
