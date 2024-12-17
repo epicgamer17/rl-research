@@ -19,7 +19,7 @@ class Healer:
 # corresponding to a velocity of 0.8 m/s, in three different directions
 # (0,pi/5,pi/2-pi/5) for 250 ms each to heal any strain and defects in
 # the formed pattern.
-class DefaultHealer(Healer):
+class BurakHealer(Healer):
     def __init__(self, heal_directions=None, device=None):
         if heal_directions is None:
             self.heal_directions = [
@@ -48,4 +48,3 @@ class DefaultHealer(Healer):
         for direction in self.heal_directions:
             for i in range(steps):
                 grid.step(direction)
-                print(i)

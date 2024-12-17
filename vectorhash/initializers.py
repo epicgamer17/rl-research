@@ -2,8 +2,7 @@ import torch
 
 
 class Initializer:
-    def __init__(self, grid_size, device):
-        self.grid_size = grid_size
+    def __init__(self, device=None):
         self.device = device
 
     def __call__(self, shape) -> torch.Tensor:
@@ -50,11 +49,11 @@ class RandomInitializer(Initializer):
     Initializes the grid with random values
     """
 
-    def __init__(self, grid_size, device, mean=1, std=0.5):
-        super().__init__(grid_size, device)
+    def __init__(self, mean=1, std=0.5, device=None):
+        super().__init__(device)
 
         self.mean = mean
         self.std = std
 
     def _initialize(self, shape):
-        return torch.normal(self.mean, self.std, shape)
+        return torch.normal(self.mean, self.std, shape, device=self.device)
