@@ -85,6 +85,7 @@ class ContinousAttractorNetwork:
         self.track_history = track_history
         if self.track_history:
             self.grid_history = [self.grid.cpu().numpy()]
+            self.step_size_history = [0]
             self.time_history = [0]
             self.v_history = [0]
         healer(self)

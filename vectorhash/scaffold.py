@@ -3,9 +3,9 @@ import torch
 torch.random.manual_seed(0)
 from can import ContinousAttractorNetwork
 from matplotlib import pyplot as plt
-from healers import Healer, BurakHealer
+from healers import BurakHealer
 import math
-from vectorhash_functions import circular_mean, softmax_2d, sort_polygon_vertices
+from vectorhash_functions import circular_mean, sort_polygon_vertices
 
 
 def make_can(lambda_net, **kwargs):
@@ -58,9 +58,11 @@ class GridScaffold:
                 ],
             ),
         )
+
         self.cans = [make_can(lambda_net=l, **can_args) for l in lambdas]
         self.boundary_points = self._find_boundaries()
-        print("boundary points:", self.boundary_points)
+        self.inverses = self._find_inverses(self.boundary_points)
+        self.parallelogram_masks = self._find_parallelogram_mask()
         self.g = self._g()
         self.h = torch.zeros(N_h, device=device)
 
@@ -90,6 +92,7 @@ class GridScaffold:
             / self.N_h
         )
 
+    @torch.no_grad()
     def _find_clusters(self, i):
         # start at (grid_size // 2, grid_size // 2)
         # do a dfs to find sets of points that are connected
@@ -159,6 +162,7 @@ class GridScaffold:
         print("centers:", centers)
         return centers, visited_order, clusters
 
+    @torch.no_grad()
     def _find_boundaries(self):
         # for each can:
         # - find the 3 closest centers of mass to the center of the grid
@@ -192,11 +196,55 @@ class GridScaffold:
 
             print("boundary points:", points)
         return boundary_points
-    
-    def _g(self):
-        # compute grid coding state from boundaries
-        pass
 
+    def _find_inverses(self, boundary_points: list[torch.Tensor]):
+        inverses = []
+        for set in boundary_points:
+            # TODO: generalize to more dimensions
+            A = torch.vstack([set[1] - set[0], set[3] - set[0]])
+            inverses.append(A.inverse())
+
+        return inverses
+
+    def _find_parallelogram_mask(self) -> list[torch.Tensor]:
+        parallelogram_masks = []
+        for i, can in enumerate(self.cans):
+            A = self.inverses[i]
+            points_in_pgram = torch.all(
+                (can.positions.float() @ A >= 0) & (can.positions.float() @ A < 1), dim=-1
+            )
+            parallelogram_masks.append(points_in_pgram)
+        return parallelogram_masks
+
+    @torch.no_grad()
+    def _g(self):
+        g = torch.zeros(self.N_g, device=self.device)
+        c = torch.tensor([self.grid_size // 2, self.grid_size // 2], device=self.device)
+        pos = 0
+        for i, can in enumerate(self.cans):
+            # get most activated cell inside parallelogram relative to the (grid_size // 2, grid_size // 2) vertex of the parallelogram
+            mask = self.parallelogram_masks[i]
+            masked = can.grid * mask
+            max_index = torch.nonzero(masked == torch.max(masked))
+            if max_index.shape[0] > 1:
+                print("warning: multiple maxes found. picking the first one.")
+                max_index = max_index[0]
+            max_index = max_index.flatten() - c
+            print("max_index:", max_index)
+            transformed = (
+                self.inverses[i] @ max_index.float()
+            ) % 1  # should be in [0, 1]
+            print("transformed:", transformed)
+            lambda_scaled = torch.floor(transformed * self.lambdas[i]).int()
+            onehot = torch.zeros(self.lambdas[i] ** 2, device=self.device)
+            onehot[lambda_scaled[0] * self.lambdas[i] + lambda_scaled[1]] = 1
+            g[pos : pos + self.lambdas[i] ** 2] = onehot
+            pos += self.lambdas[i] ** 2
+
+        self.g = g
+        return g
+
+    @torch.no_grad()
     def stabalize(self):
         # let CANs stabilize
         pass
@@ -272,8 +320,19 @@ def visualize_clusters(g: GridScaffold, i=0):
     # ani.save("visited_order.mp4")
 
 
-g = GridScaffold([3, 5, 7], 100, 0.9, device="cuda")
-graph_scaffold(g)
+def visualize_parallelogram_points(g: GridScaffold, i=0):
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4), dpi=900)
+    a = ax.imshow(g.cans[i].grid.T.cpu().numpy(), cmap="hot")
+    points = g.parallelogram_masks[i]
+    ax.imshow(points.T.cpu().numpy(), cmap="hot")
+    fig.colorbar(a)
+    fig.savefig(f"parallelogram_points_{i}.png")
+
+
+g = GridScaffold([3, 5], 100, 0.9, device="cuda")
+# graph_scaffold(g)
 visualize_clusters(g, 0)
 visualize_clusters(g, 1)
-visualize_clusters(g, 2)
+visualize_parallelogram_points(g, 0)
+visualize_parallelogram_points(g, 1)
+print("g:", g.g)
