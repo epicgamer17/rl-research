@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from initializers import Initializer, RandomInitializer
 from healers import Healer, BurakHealer
@@ -212,7 +213,7 @@ def animate_can(can: ContinousAttractorNetwork, fps=None, speed=1, filename=None
     artists.append([im, text])
     for i in range(1, len(can.grid_history), history_step):
         im = plt.imshow(can.grid_history[i], cmap="hot", animated=True)
-        s = f"time: {can.time_history[i]} ms | v: {can.v_history[i]}"
+        s = f"time: {can.time_history[i]} ms | v: {can.v_history[i]} | norm: {np.linalg.norm(can.grid_history[i] - can.grid_history[i-1])}"
         text = plt.text(0, -0.5, s, animated=True)
         artists.append([im, text])
     ani = animation.ArtistAnimation(

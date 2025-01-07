@@ -19,7 +19,7 @@ def make_can(lambda_net, **kwargs):
 
 class GridScaffold:
     @torch.no_grad()
-    def __init__(self, lambdas, N_h, sparsity, device=None):
+    def __init__(self, lambdas, N_h, sparsity, device=None, stab_eps=8e-5):
         self.grid_size = 64
         self.lambdas = lambdas
         self.device = device
@@ -59,7 +59,10 @@ class GridScaffold:
             ),
         )
 
+        self.stab_eps = stab_eps
+
         self.cans = [make_can(lambda_net=l, **can_args) for l in lambdas]
+        self.stabalize()
         self.boundary_points = self._find_boundaries()
         self.inverses = self._find_inverses(self.boundary_points)
         self.parallelogram_masks = self._find_parallelogram_mask()
@@ -246,8 +249,14 @@ class GridScaffold:
 
     @torch.no_grad()
     def stabalize(self):
-        # let CANs stabilize
-        pass
+        for j, can in enumerate(self.cans):
+            i = 0
+            diff = can.grid.clone() - can.step()
+            while torch.norm(diff) > self.stab_eps:
+                diff = can.grid.clone() - can.step()
+                if i % 20 == 0:
+                    print(f"[can {j}] stabalizing: step {i}, diff: {torch.norm(diff)}")
+                i += 1
 
 
 def graph_scaffold(g: GridScaffold):

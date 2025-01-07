@@ -1,6 +1,7 @@
 import torch
 import math
 from tqdm import tqdm
+from healers import BurakHealer
 
 torch.manual_seed(0)
 from can import ContinousAttractorNetwork, plot_can_weights, animate_can
@@ -61,6 +62,7 @@ def test_larger_lambda():
     plot_can_weights(can, filename="weights_larger_lambda.png")
     animate_can(can, speed=1, fps=30, filename="can_larger_lambda.gif")
 
+
 def test_larger_lambda_flowing():
     lambda_net = 20
     beta = 3 / (lambda_net**2)
@@ -84,6 +86,7 @@ def test_larger_lambda_flowing():
         can.step(torch.tensor([-1.0, 0.0]).to(device))
     animate_can(can, speed=1, fps=30, filename="can_larger_lambda_flowing.gif")
 
+
 def test_larger_lambda_circular():
     lambda_net = 20
     beta = 3 / (lambda_net**2)
@@ -106,9 +109,44 @@ def test_larger_lambda_circular():
 
     animate_can(can, speed=1, fps=30, filename="can_larger_lambda_circular.gif")
 
-test_static_small()
-test_flowing()
-test_circular()
-test_larger_lambda()
-test_larger_lambda_flowing()
-test_larger_lambda_circular()
+
+def test_stabalization():
+    can = ContinousAttractorNetwork(
+        grid_size=64,
+        device=device,
+        track_history=True,
+        length=1,
+        alpha=0.10305,
+        healer=BurakHealer(
+            device=device,
+            time=500,
+            heal_directions=[
+                torch.tensor([0.8, 0], device=device, dtype=torch.float32),
+                torch.tensor(
+                    [0.8 * math.cos(torch.pi / 5), 0.8 * math.sin(torch.pi / 5)],
+                    device=device,
+                    dtype=torch.float32,
+                ),
+                torch.tensor(
+                    [
+                        0.8 * math.cos(torch.pi / 2 - math.pi / 5),
+                        0.8 * math.sin(torch.pi / 2 - math.pi / 5),
+                    ],
+                    device=device,
+                    dtype=torch.float32,
+                ),
+                torch.tensor([0, 0], device=device, dtype=torch.float32),
+            ],
+        ),
+    )
+
+    animate_can(can, speed=1, fps=120, filename="can_stabalization.gif")
+
+
+# test_static_small()
+# test_flowing()
+# test_circular()
+# test_larger_lambda()
+# test_larger_lambda_flowing()
+# test_larger_lambda_circular()
+test_stabalization()
