@@ -4,7 +4,6 @@ import copy
 import math
 from operator import itemgetter
 import os
-from cv2 import exp
 import matplotlib
 
 matplotlib.use("Agg")

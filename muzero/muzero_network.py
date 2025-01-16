@@ -1,478 +1,639 @@
-import tensorflow as tf
-import numpy as np
+from typing import Callable, Tuple
+from agent_configs.alphazero_config import AlphaZeroConfig
+from torch import nn, Tensor
+from utils.utils import to_lists
 
-from modules.residual import Residual
-from utils import prepare_kernel_initializers
-
-
-class Representation(tf.keras.Model):
-    def __init__(self, config, input_shape):
-        super(Representation, self).__init__()
-        self.config = config
-        kernel_initializers = []
-        for i in range(1 + config["num_representation_res_blocks"] + 1):
-            if config["kernel_initializer"] == "glorot_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.glorot_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "glorot_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.glorot_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "he_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.he_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "he_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.he_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "variance_baseline":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "variance_0.1":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.1, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_0.3":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.3, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_0.8":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.8, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_3":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=3, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_5":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=5, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_10":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=10, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "lecun_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.lecun_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "lecun_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.lecun_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "orthogonal":
-                kernel_initializers.append(
-                    tf.keras.initializers.orthogonal(seed=np.random.seed())
-                )
-        self.inputs = tf.keras.layers.Conv2D(
-            config["num_prediction_filters"],
-            kernel_size=config["kernel_size"],
-            strides=1,
-            padding="same",
-            input_shape=input_shape,
-            kernel_initializer=kernel_initializers.pop(),
-            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            data_format="channels_last",
-        )
-        self.input_batch_norm = tf.keras.layers.BatchNormalization(
-            beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
-        )
-
-        self.residuals = []
-        for residual in range(config["num_representation_res_blocks"]):
-            self.residuals.append(
-                Residual(
-                    config["representation_output_conv_filters"],
-                    kernel_size=3,
-                    kernel_initializer=kernel_initializers.pop(),
-                    regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                )
-            )
-
-        self.output_conv = tf.keras.layers.Conv2D(
-            config["representation_conv_filters"],
-            kernel_size=3,
-            strides=1,
-            padding="same",
-            kernel_initializer=kernel_initializers.pop(),
-            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            data_format="channels_last",
-        )
-
-        self.flatten = tf.keras.layers.Flatten()
-        self.relu = tf.keras.layers.Activation("relu")
-
-    def call(self, inputs):
-        x = self.inputs(inputs)
-        x = self.input_batch_norm(x)
-        x = self.relu(x)
-        for residual in self.residuals:
-            x = residual(x)
-        x = self.output_conv(x)
-        x = self.relu(x)
-        x = self.flatten(x)
-        return x
+from modules.conv import Conv2dStack
+from modules.dense import DenseStack, build_dense
+from modules.residual import ResidualStack
+import torch
 
 
-class Dynamics(tf.keras.Model):
-    def __init__(self, config, input_shape):
-        super(Dynamics, self).__init__()
-        self.config = config
-        kernel_initializers = []
-        for i in range(1 + config["num_dynamics_res_blocks"] + 1):
-            if config["kernel_initializer"] == "glorot_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.glorot_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "glorot_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.glorot_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "he_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.he_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "he_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.he_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "variance_baseline":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "variance_0.1":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.1, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_0.3":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.3, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_0.8":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.8, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_3":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=3, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_5":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=5, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_10":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=10, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "lecun_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.lecun_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "lecun_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.lecun_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "orthogonal":
-                kernel_initializers.append(
-                    tf.keras.initializers.orthogonal(seed=np.random.seed())
-                )
+class Representation(nn.Module):
+    def __init__(
+        self,
+        config: AlphaZeroConfig,
+        output_size: int,
+        input_shape: Tuple[int],
+    ):
+        assert (
+            config.game.is_discrete
+        ), "AlphaZero only works for discrete action space games (board games)"
 
-        self.inputs = tf.keras.layers.Conv2D(
-            config["num_prediction_filters"],
-            kernel_size=config["kernel_size"],
-            strides=1,
-            padding="same",
-            input_shape=input_shape,
-            kernel_initializer=kernel_initializers.pop(),
-            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            data_format="channels_last",
-        )
-        self.input_batch_norm = tf.keras.layers.BatchNormalization(
-            beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
-        )
-
-        self.residuals = []
-        for residual in range(config["num_dynamics_res_blocks"]):
-            self.residuals.append(
-                Residual(
-                    config["dynamics_output_conv_filters"],
-                    kernel_size=3,
-                    kernel_initializer=kernel_initializers.pop(),
-                    regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                )
-            )
-        self.output_conv = tf.keras.layers.Conv2D(
-            config["dynamics_conv_filters"],
-            kernel_size=3,
-            strides=1,
-            padding="same",
-            kernel_initializer=kernel_initializers.pop(),
-            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            data_format="channels_last",
-        )
-        self.flatten = tf.keras.layers.Flatten()
-        self.relu = tf.keras.layers.Activation("relu")
-
-    def call(self, inputs):
-        x = self.inputs(inputs)
-        x = self.input_batch_norm(x)
-        x = self.relu(x)
-        for residual in self.residuals:
-            x = residual(x)
-        x = self.output_conv(x)
-        x = self.relu(x)
-        x = self.flatten(x)
-        return x
-
-
-class Prediction(tf.keras.Model):
-    def __init__(self, config, input_shape, output_shape, kernel_initializer):
-        super(Prediction, self).__init__()
         self.config = config
 
-        kernel_initializers = []
-        for i in range(
-            1
-            + config["num_prediction_res_blocks"]
-            + config["critic_conv_layers"]
-            + config["critic_dense_layers"]
-            + config["actor_conv_layers"]
-            + config["actor_dense_layers"]
-            + 2
-        ):
-            if config["kernel_initializer"] == "glorot_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.glorot_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "glorot_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.glorot_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "he_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.he_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "he_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.he_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "variance_baseline":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "variance_0.1":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.1, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_0.3":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.3, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_0.8":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=0.8, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_3":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=3, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_5":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=5, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "variance_10":
-                kernel_initializers.append(
-                    tf.keras.initializers.VarianceScaling(
-                        scale=10, seed=np.random.seed()
-                    )
-                )
-            elif config["kernel_initializer"] == "lecun_uniform":
-                kernel_initializers.append(
-                    tf.keras.initializers.lecun_uniform(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "lecun_normal":
-                kernel_initializers.append(
-                    tf.keras.initializers.lecun_normal(seed=np.random.seed())
-                )
-            elif config["kernel_initializer"] == "orthogonal":
-                kernel_initializers.append(
-                    tf.keras.initializers.orthogonal(seed=np.random.seed())
-                )
+        super(Network, self).__init__()
 
-        self.inputs = tf.keras.layers.Conv2D(
-            config["num_prediction_filters"],
-            kernel_size=config["kernel_size"],
-            strides=1,
-            padding="same",
+        self.has_residual_layers = len(config.representation_residual_layers) > 0
+        self.has_conv_layers = len(config.representation_conv_layers) > 0
+        self.has_dense_layers = len(config.representation_dense_layer_widths) > 0
+        assert (
+            self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
+        ), "At least one of the layers should be present."
+
+        self.output_size = output_size
+
+        current_shape = input_shape
+        B = current_shape[0]
+
+        # INPUTS = CONV + BATCHNORM + maybe RELU? into residual etc
+
+        if self.has_residual_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(
+                config.representation_residual_layers
+            )
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.residual_layers = ResidualStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.residual_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_conv_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.representation_conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.representation_dense_layer_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        # will this work with dense layers??
+        assert (
+            len(input_shape) == 4
+        ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+        filters, kernel_sizes, strides = to_lists(
+            config.representation_output_conv_filters
+        )
+
+        # (B, C_in, H, W) -> (B, C_out H, W)
+        self.output_conv = Conv2dStack(
             input_shape=input_shape,
-            kernel_initializer=kernel_initializer,
-            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            data_format="channels_last",
-        )
-        self.input_batch_norm = tf.keras.layers.BatchNormalization(
-            beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
-        )
-        self.residuals = [
-            Residual(
-                config["num_prediction_filters"],
-                kernel_size=config["kernel_size"],
-                kernel_initializer=kernel_initializers.pop(),
-                regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            )
-            for _ in range(config["num_prediction_res_blocks"])
-        ]
-        self.critic_conv_layers = []
-        for critic_conv_layer in range(config["critic_conv_layers"]):
-            self.critic_conv_layers.append(
-                tf.keras.layers.Conv2D(
-                    config["critic_conv_filters"],
-                    kernel_size=3,
-                    strides=1,
-                    padding="same",
-                    kernel_initializer=kernel_initializers.pop(),
-                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    data_format="channels_last",
-                )
-            )
-            self.critic_conv_layers.append(
-                tf.keras.layers.BatchNormalization(
-                    beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
-                )
-            )
-        self.critic_dense_layers = []
-        for critic_dense_layer in range(config["critic_dense_layers"]):
-            self.critic_dense_layers.append(
-                tf.keras.layers.Dense(
-                    config["critic_dense_size"],
-                    activation="relu",
-                    kernel_initializer=kernel_initializers.pop(),
-                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                )
-            )
-        self.critic = tf.keras.layers.Dense(
-            1,
-            activation="tanh",
-            kernel_initializer=kernel_initializers.pop(),
-            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-            name="critic",
+            filters=filters,
+            kernel_sizes=kernel_sizes,  # 3
+            strides=strides,  # 1
+            activation=self.config.activation,
+            noisy_sigma=config.noisy_sigma,
+            padding="same",  # might have to fix with the utils padding
         )
 
-        self.actor_conv_layers = []
-        for actor_conv_layer in range(config["actor_conv_layers"]):
-            self.actor_conv_layers.append(
-                tf.keras.layers.Conv2D(
-                    config["actor_conv_filters"],
-                    kernel_size=1,
-                    strides=1,
-                    padding="same",
-                    kernel_initializer=kernel_initializers.pop(),
-                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    data_format="channels_last",
-                )
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_residual_layers:
+            self.residual_layers.initialize(initializer)
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+        self.output_conv.initialize(initializer)
+
+    def forward(self, inputs: Tensor):
+        if self.has_conv_layers:
+            assert inputs.dim() == 4
+
+        # (B, *)
+        S = inputs
+        # INPUT CONV LAYERS???
+        # input batch norm
+        # relu?
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_residual_layers:
+            S = self.residual_layers(S)
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_conv_layers:
+            S = self.conv_layers(S)
+
+        # (B, *) -> (B, dense_features_in)
+
+        # (B, dense_features_in) -> (B, dense_features_out)
+        if self.has_dense_layers:
+            S = S.flatten(1, -1)
+            S = self.dense_layers(S)
+
+        return self.output_conv.relu().flatten()
+
+
+class Dynamics(nn.Module):
+    def __init__(
+        self,
+        config: AlphaZeroConfig,
+        output_size: int,
+        input_shape: Tuple[int],
+    ):
+        assert (
+            config.game.is_discrete
+        ), "AlphaZero only works for discrete action space games (board games)"
+
+        self.config = config
+
+        super(Network, self).__init__()
+
+        self.has_residual_layers = len(config.dynamics_residual_layers) > 0
+        self.has_conv_layers = len(config.dynamics_conv_layers) > 0
+        self.has_dense_layers = len(config.dynamics_dense_layer_widths) > 0
+        assert (
+            self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
+        ), "At least one of the layers should be present."
+
+        self.output_size = output_size
+
+        current_shape = input_shape
+        B = current_shape[0]
+
+        # INPUTS = CONV + BATCHNORM + maybe RELU? into residual etc
+
+        if self.has_residual_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.dynamics_residual_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.residual_layers = ResidualStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
             )
-            self.actor_conv_layers.append(
-                tf.keras.layers.BatchNormalization(
-                    beta_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    gamma_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                    axis=1,  # AXIS SHOULD BE CHANNEL AXIS I THINK SO CHANGE THIS WHEN BOARD HISTORY IS USED
-                )
+            current_shape = (
+                B,
+                self.residual_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
             )
 
-        self.actor_dense_layers = []
-        for actor_dense_layer in range(config["actor_dense_layers"]):
-            self.actor_dense_layers.append(
-                tf.keras.layers.Dense(
-                    config["actor_dense_size"],
-                    activation="relu",
-                    kernel_initializer=kernel_initializers.pop(),
-                    kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
-                )
+        if self.has_conv_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.dynamics_conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
             )
-        self.actor = tf.keras.layers.Dense(
-            output_shape,
-            name="actor",
-            kernel_initializer=kernel_initializers.pop(),
-            kernel_regularizer=tf.keras.regularizers.L2(config["weight_decay"]),
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.dynamics_dense_layer_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        # will this work with dense layers??
+        assert (
+            len(input_shape) == 4
+        ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+        filters, kernel_sizes, strides = to_lists(config.dynamics_conv_filters)
+
+        # (B, C_in, H, W) -> (B, C_out H, W)
+        self.output_conv = Conv2dStack(
+            input_shape=input_shape,
+            filters=filters,
+            kernel_sizes=kernel_sizes,  # 3
+            strides=strides,  # 1
+            activation=self.config.activation,
+            noisy_sigma=config.noisy_sigma,
+            padding="same",  # might have to fix with the utils padding
         )
 
-        self.flatten = tf.keras.layers.Flatten()
-        self.relu = tf.keras.layers.Activation("relu")
-        self.softmax = tf.keras.layers.Activation("softmax")
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_residual_layers:
+            self.residual_layers.initialize(initializer)
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+        self.output_conv.initialize(initializer)
 
-    def call(self, inputs):
-        x = self.inputs(inputs)
-        x = self.input_batch_norm(x)
-        x = self.relu(x)
-        for residual in self.residuals:
-            x = residual(x)
-        critic_x = x
-        for layer in self.critic_conv_layers:
-            critic_x = layer(critic_x)
-            critic_x = self.relu(critic_x)
-        critic_x = self.flatten(critic_x)
-        for layer in self.critic_dense_layers:
-            critic_x = layer(critic_x)
-        value = self.critic(critic_x)
-        actor_x = x
-        for layer in self.actor_conv_layers:
-            actor_x = layer(actor_x)
-            actor_x = self.relu(actor_x)
-        actor_x = self.flatten(actor_x)
-        for layer in self.actor_dense_layers:
-            actor_x = layer(actor_x)
-        policy = self.actor(actor_x)
-        # print(policy)
-        policy = self.softmax(policy)
+    def forward(self, inputs: Tensor):
+        if self.has_conv_layers:
+            assert inputs.dim() == 4
 
-        return value, policy
+        # (B, *)
+        S = inputs
+        # INPUT CONV LAYERS???
+        # input batch norm
+        # relu?
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_residual_layers:
+            S = self.residual_layers(S)
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_conv_layers:
+            S = self.conv_layers(S)
+
+        # (B, *) -> (B, dense_features_in)
+
+        # (B, dense_features_in) -> (B, dense_features_out)
+        if self.has_dense_layers:
+            S = S.flatten(1, -1)
+            S = self.dense_layers(S)
+
+        return self.output_conv.relu().flatten()
 
 
-class Network(tf.keras.Model):
+class Prediction(nn.Module):
+    def __init__(
+        self,
+        config: AlphaZeroConfig,
+        output_size: int,
+        input_shape: Tuple[int],
+    ):
+        assert (
+            config.game.is_discrete
+        ), "AlphaZero only works for discrete action space games (board games)"
+
+        self.config = config
+
+        super(Network, self).__init__()
+
+        self.has_residual_layers = len(config.residual_layers) > 0
+        self.has_conv_layers = len(config.conv_layers) > 0
+        self.has_dense_layers = len(config.dense_layer_widths) > 0
+        assert (
+            self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
+        ), "At least one of the layers should be present."
+
+        self.output_size = output_size
+
+        current_shape = input_shape
+        B = current_shape[0]
+
+        # INPUTS = CONV + BATCHNORM + maybe RELU?
+
+        if self.has_residual_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.residual_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.residual_layers = ResidualStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.residual_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_conv_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.dense_layer_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        self.critic = CriticNetwork(config, current_shape)
+        self.actor = ActorNetwork(config, current_shape, output_size)
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_residual_layers:
+            self.residual_layers.initialize(initializer)
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+
+        self.actor.initialize(initializer)
+        self.critic.initialize(initializer)
+
+    def forward(self, inputs: Tensor):
+        if self.has_conv_layers:
+            assert inputs.dim() == 4
+
+        # (B, *)
+        S = inputs
+        # INPUT CONV LAYERS???
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_residual_layers:
+            S = self.residual_layers(S)
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_conv_layers:
+            S = self.conv_layers(S)
+
+        # (B, *) -> (B, dense_features_in)
+
+        # (B, dense_features_in) -> (B, dense_features_out)
+        if self.has_dense_layers:
+            S = S.flatten(1, -1)
+            S = self.dense_layers(S)
+
+        return self.critic(S), self.actor(S)
+
+
+class CriticNetwork(nn.Module):
+    def __init__(
+        self, config: AlphaZeroConfig, input_shape: Tuple[int], *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.config = config
+        self.has_conv_layers = len(config.critic_conv_layers) > 0
+        self.has_dense_layers = len(config.critic_dense_layer_widths) > 0
+
+        current_shape = input_shape
+        B = current_shape[0]
+        if self.has_conv_layers:
+            # WITH BATCHNORM FOR EVERY CONV LAYER
+            assert len(input_shape) == 4
+            filters, kernel_sizes, strides = to_lists(config.critic_conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.critic_dense_layer_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        if len(current_shape) == 4:
+            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+        else:
+            assert len(current_shape) == 2
+            initial_width = current_shape[1]
+
+        self.value = build_dense(
+            in_features=initial_width,
+            out_features=1,
+            sigma=config.noisy_sigma,
+        )
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+        self.value.initialize(initializer)  # OUTPUT LAYER
+
+    def forward(self, inputs: Tensor):
+        if self.has_conv_layers:
+            assert (
+                inputs.dim() == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(inputs.shape)
+
+        x = inputs
+        if self.has_conv_layers:
+            x = self.conv_layers(x)
+        if self.has_dense_layers:
+            x = x.flatten(1, -1)  # should this be batch, -1?
+            x = self.dense_layers(x)
+        value = self.value(x)
+        return value.tanh()
+
+    def reset_noise(self):
+        if self.has_conv_layers:
+            self.conv_layers.reset_noise()
+        if self.has_dense_layers:
+            self.dense_layers.reset_noise()
+        self.value.reset_noise()
+
+
+class ActorNetwork(nn.Module):
+    def __init__(
+        self,
+        config: AlphaZeroConfig,
+        input_shape: Tuple[int],
+        output_size: int,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.config = config
+        self.has_conv_layers = len(config.actor_conv_layers) > 0
+        self.has_dense_layers = len(config.actor_dense_layer_widths) > 0
+
+        current_shape = input_shape
+        B = current_shape[0]
+        if self.has_conv_layers:
+            # WITH BATCHNORM FOR EVERY CONV LAYER
+            assert len(input_shape) == 4
+            filters, kernel_sizes, strides = to_lists(config.actor_conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert (
+                    len(current_shape) == 2
+                ), "Input shape should be (B, width), got {}".format(current_shape)
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.actor_dense_layer_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        if len(current_shape) == 4:
+            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+        else:
+            assert len(current_shape) == 2
+            initial_width = current_shape[1]
+
+        self.actions = build_dense(
+            in_features=initial_width,
+            out_features=output_size,
+            sigma=self.config.noisy_sigma,
+        )
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+        self.actions.initialize(
+            initializer
+        )  # OUTPUT LAYER TO IMPLIMENT INTIALIZING WITH CONSTANT OF 0.01
+
+    def forward(self, inputs: Tensor):
+        if self.has_conv_layers:
+            assert (
+                inputs.dim() == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(inputs.shape)
+
+        x = inputs
+        if self.has_conv_layers:
+            x = self.conv_layers(x)
+        if self.has_dense_layers:
+            x = x.flatten(1, -1)  # should this be batch, -1?
+            x = self.dense_layers(x)
+        actions = self.actions(x)
+        return actions.softmax(dim=-1)
+
+    def reset_noise(self):
+        if self.has_conv_layers:
+            self.conv_layers.reset_noise()
+        if self.has_dense_layers:
+            self.dense_layers.reset_noise()
+        self.actions.reset_noise()
+
+
+class Network(nn.Module):
     def __init__(self, config, input_shape, output_shape):
         super(Network, self).__init__()
         self.config = config
@@ -488,8 +649,8 @@ class Network(tf.keras.Model):
         return value, policy, hidden_state
 
     def recurrent_inference(self, hidden_state, action):
-        dynamics = self.dynamics(tf.concat([hidden_state, action], axis=1))
-        reward, hidden_state = tf.split(
+        dynamics = self.dynamics(torch.concat([hidden_state, action], axis=1))
+        reward, hidden_state = torch.split(
             dynamics, [1, self.config["representation_size"]], axis=1
         )
         value, policy = self.prediction(hidden_state)
