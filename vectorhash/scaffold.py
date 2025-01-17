@@ -19,11 +19,12 @@ def make_can(lambda_net, **kwargs):
 
 class GridScaffold:
     @torch.no_grad()
-    def __init__(self, lambdas, N_h, sparsity, device=None, stab_eps=8e-5):
+    def __init__(self, lambdas, N_h, sparsity, input_size, device=None, stab_eps=8e-5):
         self.grid_size = 64
         self.lambdas = lambdas
         self.device = device
         self.sparsity = sparsity
+        self.input_size = input_size
 
         self.N_h = N_h
         self.N_g = 0
@@ -32,11 +33,14 @@ class GridScaffold:
         for l in lambdas:
             self.N_g += l**2
             self.N_patts *= l**2
+        k = 2 * len(lambdas)
 
         self.G = self._G()  # (N_g, N_patts)
-        self.W_hg = self._W_hg()  # (N_h, N_g)
+        self.W_hg = self._W_hg(mean=0.8 / k, std=1 / (k ** (1 / 2)))  # (N_h, N_g)
         self.H = self.W_hg @ self.G  # (N_h, N_patts)
         self.W_gh = self._W_gh()  # (N_g, N_h)
+        self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
+        self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
 
         can_args = dict(
             length=1,
@@ -82,8 +86,10 @@ class GridScaffold:
         return G
 
     @torch.no_grad()
-    def _W_hg(self):
-        W_hg = torch.randn(self.N_h, self.N_g, device=self.device)
+    def _W_hg(self, mean=0, std=1):
+        W_hg = (
+            torch.Tensor(self.N_h, self.N_g).normal_(mean=mean, std=std).to(self.device)
+        )
         W_hg = (torch.rand_like(W_hg) < self.sparsity).float() * W_hg
         return W_hg
 
@@ -200,6 +206,7 @@ class GridScaffold:
             print("boundary points:", points)
         return boundary_points
 
+    @torch.no_grad()
     def _find_inverses(self, boundary_points: list[torch.Tensor]):
         inverses = []
         for set in boundary_points:
@@ -209,6 +216,7 @@ class GridScaffold:
 
         return inverses
 
+    @torch.no_grad()
     def _find_parallelogram_mask(self) -> list[torch.Tensor]:
         parallelogram_masks = []
         for i, can in enumerate(self.cans):
@@ -257,6 +265,97 @@ class GridScaffold:
                 if i % 20 == 0:
                     print(f"[can {j}] stabalizing: step {i}, diff: {torch.norm(diff)}")
                 i += 1
+
+    @torch.no_grad()
+    def calculate_update(self, input: torch.Tensor, output: torch.Tensor):
+        # input: (N)
+        # output: (M)
+        # M: (M x N)
+        ret = (torch.einsum("i,j->ji", input, output)) / (torch.linalg.norm(input) ** 2)
+        print(torch.linalg.norm(ret))
+        return ret
+
+    @torch.no_grad()
+    def store_memory(self, s: torch.Tensor, num_iterations=1):
+        """
+        Stores sensory input s into the memory model by learning weights.
+
+        :param s: Sensory input vector. - (input_size)
+        :param num_iterations: Number of iterations for updating the weights.
+        :return: None
+        """
+        # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
+        for _ in range(num_iterations):
+            h = self.W_hg @ self.g
+
+            self.W_gh += self.calculate_update(input=h, output=self.g)
+            self.W_sh += self.calculate_update(input=h, output=s)
+            self.W_hs += self.calculate_update(input=s, output=h)
+
+    @torch.no_grad()
+    def learn_path(self, observations: torch.Tensor, velocities: torch.Tensor):
+        # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L74
+        assert observations.shape[0] == velocities.shape[0]
+        for i in range(observations.shape[0]):
+            print("obs step:", i)
+            s = observations[i]
+            v = velocities[i]
+
+            for can in self.cans:
+                can.step(v)
+
+            print("stabalizing")
+            self.stabalize()
+
+            print("storing memory")
+            self.store_memory(s)
+
+    @torch.no_grad()
+    def learn_path_temporal(self, observations: torch.Tensor):
+        # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L86
+        for i in range(observations.shape[0]):
+            if i % 10 == 0:
+                print(f"learning path temporal: step {i} of {observations.shape[0]}")
+            s = observations[i]
+            self.store_memory(s, 1)
+
+    @torch.no_grad()
+    def recall(self, noisy_observations: torch.Tensor):
+        # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L96
+        # noisy_observations: (N, input_size)
+        H = noisy_observations @ self.W_hs.T
+        G = H @ self.W_gh.T
+        denoised_G = self._denoise(G)
+        denoised_H = denoised_G @ self.W_hg.T
+        denoised_S = denoised_H @ self.W_sh.T
+
+        return denoised_S
+
+    @torch.no_grad()
+    def temporal_recall(self, noisy_observations: torch.Tensor):
+        # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L113
+        denoised_H = noisy_observations @ self.W_hs.T
+        denoised_S = denoised_H @ self.W_sh.T
+
+        return denoised_S
+
+    @torch.no_grad()
+    def _denoise(self, G: torch.Tensor):
+        if G.ndim == 1:
+            G = G.unsqueeze(0)
+
+        denoised_G = torch.zeros_like(G)
+        for i in range(G.shape[0]):
+            # select the most active pattern
+            pos = 0
+            for j, l in enumerate(self.lambdas):
+                max_index = torch.argmax(G[i, pos : pos + l**2])
+                onehot = torch.zeros(l**2, device=self.device)
+                onehot[max_index] = 1
+                denoised_G[i, pos : pos + l**2] = onehot
+                pos += l**2
+
+        return denoised_G
 
 
 def graph_scaffold(g: GridScaffold):
@@ -338,10 +437,11 @@ def visualize_parallelogram_points(g: GridScaffold, i=0):
     fig.savefig(f"parallelogram_points_{i}.png")
 
 
-g = GridScaffold([3, 5], 100, 0.9, device="cuda")
+# g = GridScaffold([3, 5], 100, 0.9, device="cuda")
 # graph_scaffold(g)
-visualize_clusters(g, 0)
-visualize_clusters(g, 1)
-visualize_parallelogram_points(g, 0)
-visualize_parallelogram_points(g, 1)
-print("g:", g.g)
+# visualize_clusters(g, 0)
+# visualize_clusters(g, 1)
+# visualize_parallelogram_points(g, 0)
+# visualize_parallelogram_points(g, 1)
+# print("g:", g.g)
+
