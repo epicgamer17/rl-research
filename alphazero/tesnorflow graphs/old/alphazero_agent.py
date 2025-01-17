@@ -240,6 +240,7 @@ class AlphaZeroAgent:
             # parent.score += puct_score
 
     def train(self):
+        super().train()
         self.is_test = False
         stat_score = (
             []

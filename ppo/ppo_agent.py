@@ -41,8 +41,9 @@ class PPOAgent(BaseAgent):
             else torch.device("cpu")
             # )
         ),
+        from_checkpoint=False,
     ):
-        super(PPOAgent, self).__init__(env, config, name, device=device)
+        super(PPOAgent, self).__init__(env, config, name, device=device, from_checkpoint=from_checkpoint)
         self.model = Network(
             config=config,
             output_size=self.num_actions,
@@ -112,6 +113,15 @@ class PPOAgent(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
             "actor_loss": self.config.target_kl,
         }
+    
+    def checkpoint_optimizer_state(self, checkpoint):
+        checkpoint["actor_optimizer"] = self.actor_optimizer.state_dict()
+        checkpoint["critic_optimizer"] = self.critic_optimizer.state_dict()
+        return checkpoint
+
+    def load_optimizer_state(self, checkpoint):
+        self.actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
+        self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
 
     def predict(self, state, info: dict = None, mask_actions: bool = True):
         assert info is not None if mask_actions else True, "Need info to mask actions"
@@ -200,9 +210,7 @@ class PPOAgent(BaseAgent):
 
         self.actor_optimizer.step()
         with torch.no_grad():
-            kl_divergence = torch.mean(
-                log_probabilities - distribution.log_prob(actions)
-            )
+            kl_divergence = torch.mean(log_probabilities - distribution.log_prob(actions))
             kl_divergence = torch.sum(kl_divergence)
             print("Open AI Spinning Up KL Divergence", kl_divergence)
             approx_kl = ((probability_ratios - 1) - log_ratios).mean()
@@ -316,21 +324,23 @@ class PPOAgent(BaseAgent):
                 # stat_loss.append(critic_loss)
 
     def train(self):
-        training_time = time()
+        super().train()
 
+        start_time = time() - self.training_time
         state, info = self.env.reset()
-        self.training_steps += self.start_training_step
-        for training_step in range(self.start_training_step, self.training_steps):
+
+        while self.training_step < self.config.training_steps:
             with torch.no_grad():
-                print("Training Step: ", training_step)
+                if self.training_step % self.config.print_interval == 0:
+                    self.print_training_progress()
                 num_episodes = 0
                 score = 0
                 for timestep in range(self.config.steps_per_epoch):
                     predictions = self.predict(state, info)
                     action = self.select_actions(predictions).item()
 
-                    next_state, reward, terminated, truncated, next_info = (
-                        self.env.step(action)
+                    next_state, reward, terminated, truncated, next_info = self.env.step(
+                        action
                     )
 
                     distribution, value = predictions
@@ -348,9 +358,7 @@ class PPOAgent(BaseAgent):
 
                     if done or timestep == self.config.steps_per_epoch - 1:
                         last_value = (
-                            0
-                            if done
-                            else self.model.critic(self.preprocess(next_state))
+                            0 if done else self.model.critic(self.preprocess(next_state))
                         )
                         self.replay_buffer.finish_trajectory(last_value)
                         num_episodes += 1
@@ -362,19 +370,13 @@ class PPOAgent(BaseAgent):
             self.learn()
 
             # self.old_actor.set_weights(self.actor.get_weights())
-            if (
-                training_step % self.checkpoint_interval == 0
-                and training_step > self.start_training_step
-            ):
-                self.save_checkpoint(
-                    training_step,
-                    training_step * self.config.steps_per_epoch,
-                    time() - training_time,
-                )
+            if self.training_step % self.checkpoint_interval == 0:
+                self.training_time = time() - start_time
+                self.total_environment_steps += self.config.steps_per_epoch
+                self.save_checkpoint()
+            self.training_step += 1
 
-        self.save_checkpoint(
-            training_step,
-            training_step * self.config.steps_per_epoch,
-            time() - training_time,
-        )
+        self.training_time = time() - start_time
+        self.total_environment_steps = self.config.training_steps * self.config.steps_per_epoch
+        self.save_checkpoint()
         self.env.close()

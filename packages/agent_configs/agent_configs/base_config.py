@@ -122,6 +122,7 @@ class Config(ConfigBase):
         self.training_iterations: int = self.parse_field(
             "training_iterations", 1, wrapper=int
         )
+        self.print_interval: int = self.parse_field("print_interval", 100, wrapper=int)
 
     def _verify_game(self):
         raise NotImplementedError

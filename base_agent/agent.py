@@ -5,11 +5,12 @@ import numpy as np
 import torch
 import gymnasium as gym
 import copy
-import dill
 from agent_configs import Config
 import pickle
+from torch.optim import Optimizer
+from torch.nn import Module
 
-from utils import make_stack, normalize_images, get_legal_moves, plot_graphs
+from utils import make_stack, plot_graphs
 
 # Every model should have:
 # 1. A network
@@ -37,38 +38,27 @@ class BaseAgent:
                 else torch.device("cpu")
             )
         ),
+        from_checkpoint=False,
     ):
+        if from_checkpoint:
+            self.from_checkpoint = True
+
+        self.model: Module = None
+        self.optimizer: Optimizer = None
         self.model_name = name
         self.config = config
         self.device = device
 
-        self.env = env
-        # self.test_env = copy.deepcopy(env)
-        if hasattr(self.env, "render_mode") and self.env.render_mode == "rgb_array":
-            # assert (
-            #     self.env.render_mode == "rgb_array"
-            # ), "Video recording for test_env requires render_mode to be 'rgb_array'"
-            self.test_env = gym.wrappers.RecordVideo(
-                copy.deepcopy(env),
-                ".",
-                name_prefix="{}".format(self.model_name),
-            )
-        else:
-            print(
-                "Warning: test_env will not record videos as render_mode is not 'rgb_array'"
-            )
-            self.test_env = copy.deepcopy(env)
+        self.training_time = 0
+        self.training_step = 0
+        self.total_environment_steps = 0
+        self.training_steps = self.config.training_steps
+        self.checkpoint_interval = max(self.training_steps // 30, 1)
+        self.checkpoint_trials = 5
 
-        if isinstance(env.observation_space, gym.spaces.Box):
-            self.observation_dimensions = env.observation_space.shape
-        elif isinstance(env.observation_space, gym.spaces.Discrete):
-            self.observation_dimensions = (1,)
-        elif isinstance(env.observation_space, gym.spaces.Tuple):
-            self.observation_dimensions = (
-                len(env.observation_space.spaces),
-            )  # for tuple of discretes
-        else:
-            raise ValueError("Observation space not supported")
+        self.env = env
+        self.test_env = self.make_test_env(env)
+        self.observation_dimensions = self.determine_observation_dimensions(env)
 
         print("observation_dimensions: ", self.observation_dimensions)
         if isinstance(env.action_space, gym.spaces.Discrete):
@@ -80,13 +70,38 @@ class BaseAgent:
 
         print("num_actions: ", self.num_actions)
 
-        self.start_training_step = 0
-        self.training_steps = self.config.training_steps
-        self.checkpoint_interval = max(self.training_steps // 30, 1)
-        self.checkpoint_trials = 5
+    def make_test_env(self, env: gym.Env):
+        # self.test_env = copy.deepcopy(env)
+        if hasattr(env, "render_mode") and env.render_mode == "rgb_array":
+            # assert (
+            #     self.env.render_mode == "rgb_array"
+            # ), "Video recording for test_env requires render_mode to be 'rgb_array'"
+            return gym.wrappers.RecordVideo(
+                copy.deepcopy(env),
+                ".",
+                name_prefix="{}".format(self.model_name),
+            )
+        else:
+            print(
+                "Warning: test_env will not record videos as render_mode is not 'rgb_array'"
+            )
+            return copy.deepcopy(env)
+
+    def determine_observation_dimensions(self, env: gym.Env):
+        if isinstance(env.observation_space, gym.spaces.Box):
+            return env.observation_space.shape
+        elif isinstance(env.observation_space, gym.spaces.Discrete):
+            return (1,)
+        elif isinstance(env.observation_space, gym.spaces.Tuple):
+            return (len(env.observation_space.spaces),)  # for tuple of discretes
+        else:
+            raise ValueError("Observation space not supported")
 
     def train(self):
-        raise NotImplementedError
+        if self.training_steps != 0:
+            self.print_resume_training()
+
+        pass
 
     def preprocess(self, states) -> torch.Tensor:
         """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
@@ -156,116 +171,125 @@ class BaseAgent:
         # raise NotImplementedError, "Every agent should have a learn method. (Previously experience_replay)"
         pass
 
-    def load(self, dir, training_step):
-        """load the model from a directory and training step. The name of the directory will be the name of the model, and should contain the following files:
-        - episode_{training_step}_optimizer.dill
-        - config.yaml
-        """
+    def load_optimizer_state(self, checkpoint):
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
 
-        # dir = Path("model_weights", self.model_name)
-        name = ""
-        optimizer_path = Path(dir, f"episode_{training_step}_optimizer.dill"), "wb"
-        config_path = Path(dir, f"episode_{training_step}_optimizer.dill"), "wb"
-        weights_path = str(Path(dir, f"episode_{training_step}.keras"))
+    def load_replay_buffers(self, checkpoint):
+        self.replay_buffer = checkpoint["replay_buffer"]
 
-        self.config = self.config.__class__.load(config_path)
-        with open(optimizer_path, "rb") as f:
-            self.config.optimizer = dill.load(f)
+    def load_model_weights(self, checkpoint):
+        self.model.load_state_dict(checkpoint["model"])
+    
+    def checkpoint_base(self, checkpoint):
+        checkpoint["training_time"] = self.training_time
+        checkpoint["training_step"] = self.training_step
+        checkpoint["total_environment_steps"] = self.total_environment_steps
+        return checkpoint
+    
+    def checkpoint_environment(self, checkpoint):
+        checkpoint["enviroment"] = self.env
+        return checkpoint
+    
+    def checkpoint_optimizer_state(self, checkpoint):
+        checkpoint["optimizer"] = self.optimizer.state_dict()
+        return checkpoint
+    
+    def checkpoint_replay_buffers(self, checkpoint):
+        checkpoint["replay_buffer"] = self.replay_buffer
+        return checkpoint
+    
+    def checkpoint_model_weights(self, checkpoint):
+        checkpoint["model"] = self.model.state_dict()
+        return checkpoint
+    
+    def checkpoint_extra(self, checkpoint) -> dict:
+        return checkpoint
 
-        self.mode.load(weights_path)
+    @classmethod
+    def load(cls, *args, **kwargs):
+        cls.loaded_from_checkpoint = True
+        return cls.load_from_checkpoint(*args, **kwargs)
 
-        self.on_load()
-
-    def load_replay_buffers(self, dir):
-        with open(
-            Path(
-                dir,
-                f"replay_buffers/{self.model_name}_replay_buffer.pkl",
-            ),
-            "rb",
-        ) as f:
-            print(f)
-            self.replay_buffer = pickle.load(f)
-
-    def load_model_weights(self, weights_path: str):
-        print("Warning using default load model weights")
-        state_dict = torch.load(weights_path)
-        self.model.load_state_dict(state_dict)
-
-    def load_from_checkpoint(self, dir: str, training_step):
+    def load_from_checkpoint(agent_class, config_class, dir: str, training_step):
+        # load the config and checkpoint
         training_step_dir = Path(dir, f"step_{training_step}")
-        # load the model weights
+        weights_dir = Path(training_step_dir, "model_weights")
         weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
-        self.load_model_weights(weights_path)
+        config = config_class.load(Path(dir, "configs/config.yaml"))
+        checkpoint = torch.load(weights_path)
+        env = checkpoint["enviroment"]
+        model_name = checkpoint["model_name"]
 
-        # load the config
-        self.config = self.config.__class__.load(Path(dir, "configs/config.yaml"))
+        # construct the agent
+        agent = agent_class(env, config, model_name, from_checkpoint=True)
 
-        # load optimizer (pickle doesn't work but dill does)
-        with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "rb") as f:
-            self.optimizer = dill.load(f)
+        # load the model state (weights, optimizer, replay buffer, training time, training step, total environment steps)
+        os.makedirs(weights_dir, exist_ok=True)
 
-        # load replay buffer
-        self.load_replay_buffers(training_step_dir)
+        agent.training_time = checkpoint["training_time"]
+        agent.training_step = checkpoint["training_step"]
+        agent.total_environment_steps = checkpoint["total_environment_steps"]
+
+        agent.load_model_weights(checkpoint)
+        agent.load_optimizer_state(checkpoint)
+        agent.load_replay_buffers(checkpoint)
 
         # load the graph stats and targets
         with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "rb") as f:
-            self.stats = pickle.load(f)
+            agent.stats = pickle.load(f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "rb") as f:
-            self.targets = pickle.load(f)
-
-        self.start_training_step = training_step
-
-    def save_replay_buffers(self, dir):
-        with open(
-            Path(
-                dir,
-                f"replay_buffers/{self.model_name}_replay_buffer.pkl",
-            ),
-            "wb",
-        ) as f:
-            pickle.dump(self.replay_buffer, f)
+            agent.targets = pickle.load(f)
+        
+        return agent
 
     def save_checkpoint(
         self,
-        training_step,
-        frames_seen,
-        time_taken,
+        frames_seen=None,
+        training_step=None,
+        time_taken=None,
     ):
-        # test model
+        if not frames_seen is None:
+            print(
+                "warning: frames_seen option is deprecated, update self.total_environment_steps instead"
+            )
+
+        if not time_taken is None:
+            print(
+                "warning: time_taken option is deprecated, update self.training_time instead"
+            )
+
+        if not training_step is None:
+            print(
+                "warning: training_step option is deprecated, update self.training_step instead"
+            )
 
         dir = Path("checkpoints", self.model_name)
-        training_step_dir = Path(dir, f"step_{training_step}")
+        training_step_dir = Path(dir, f"step_{self.training_step}")
         os.makedirs(dir, exist_ok=True)
-        os.makedirs(Path(dir, "graphs"), exist_ok=True)
-        os.makedirs(Path(dir, "configs"), exist_ok=True)
+
+        # save the model state
         if self.config.save_intermediate_weights:
             weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
             os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "graphs_stats"), exist_ok=True)
-            if self.env.render_mode == "rgb_array":
-                os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
+            checkpoint = self.make_checkpoint_dict(checkpoint)
+            torch.save(checkpoint, weights_path)
 
-            # save the model weights
-            torch.save(self.model.state_dict(), weights_path)
-
-            # save optimizer (pickle doesn't work but dill does)
-            with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "wb") as f:
-                dill.dump(self.optimizer, f)
-
-            # save replay buffer
-            self.save_replay_buffers(training_step_dir)
+        if self.env.render_mode == "rgb_array":
+            os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
         # save config
+        os.makedirs(Path(dir, "configs"), exist_ok=True)
         self.config.dump(f"{dir}/configs/config.yaml")
 
-        test_score = self.test(self.checkpoint_trials, training_step, training_step_dir)
+        # test model
+        test_score = self.test(
+            self.checkpoint_trials, self.training_step, training_step_dir
+        )
         self.stats["test_score"].append(test_score)
         # save the graph stats and targets
-        stats_path = Path(training_step_dir, f"graphs_stats", exist_ok=True)
-        os.makedirs(stats_path, exist_ok=True)
+        os.makedirs(
+            Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
+        )
         with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
             pickle.dump(self.stats, f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
@@ -277,15 +301,26 @@ class BaseAgent:
         # plot the graphs (and save the graph)
         print(self.stats)
         print(self.targets)
+
+        os.makedirs(Path(dir, "graphs"), exist_ok=True)
         plot_graphs(
             self.stats,
             self.targets,
-            training_step,
-            frames_seen,
-            time_taken,
+            self.training_step if training_step is None else training_step,
+            self.total_environment_steps if frames_seen is None else frames_seen,
+            self.training_time if time_taken is None else time_taken,
             self.model_name,
             f"{dir}/graphs",
         )
+    
+    def make_checkpoint_dict(self):
+        checkpoint = self.checkpoint_base({})
+        checkpoint = self.checkpoint_environment(checkpoint)
+        checkpoint = self.checkpoint_optimizer_state(checkpoint)
+        checkpoint = self.checkpoint_replay_buffers(checkpoint)
+        checkpoint = self.checkpoint_model_weights(checkpoint)
+        checkpoint = self.checkpoint_extra(checkpoint)
+        return checkpoint
 
     def test(self, num_trials, step, dir="./checkpoints") -> None:
         if num_trials == 0:
@@ -316,8 +351,8 @@ class BaseAgent:
                     action = self.select_actions(
                         prediction, info, self.config.game.has_legal_moves
                     ).item()
-                    next_state, reward, terminated, truncated, info = (
-                        self.test_env.step(action)
+                    next_state, reward, terminated, truncated, info = self.test_env.step(
+                        action
                     )
                     # self.test_env.render()
                     done = terminated or truncated
@@ -338,3 +373,14 @@ class BaseAgent:
                 "max_score": max_score,
                 "min_score": min_score,
             }
+
+    def print_training_progress(self):
+        print(f"Training step: {self.training_step + 1}/{self.training_steps}")
+
+    def print_resume_training(self):
+        print(
+            f"Resuming training at step {self.training_step + 1} / {self.training_steps}"
+        )
+
+    def print_stats(self):
+        print(f"")

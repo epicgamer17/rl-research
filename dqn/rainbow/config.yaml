@@ -1,0 +1,34 @@
+config_dict:
+  adam_epsilon: 0.0003125
+  advatage_hidden_layers_widths: []
+  atom_size: 51
+  clipnorm: 0.0
+  dense_layers_widths:
+  - 512
+  - 512
+  discount_factor: 0.99
+  kernel_initializer: orthogonal
+  learning_rate: 0.001
+  loss_function: 0 #!!python/object:utils.utils.KLDivergenceLoss
+  axis: -1
+  from_logits: false
+  min_replay_buffer_size: 500
+  minibatch_size: 128
+  n_step: 3
+  per_alpha: 0.5
+  per_beta: 0.5
+  per_epsilon: 1.0e-06
+  replay_buffer_size: 50000
+  replay_interval: 2
+  training_steps: 30000
+  transfer_interval: 100
+  value_hidden_layers_widths: []
+game: !!python/object:game_configs.classiccontrol_config.ClassicControlConfig
+  has_legal_moves: false
+  is_deterministic: true
+  is_discrete: true
+  is_image: false
+  max_score: 500
+  min_score: -500
+  multi_agent: false
+  perfect_information: true

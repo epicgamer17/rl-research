@@ -55,8 +55,9 @@ class MuZeroAgent(AlphaZeroAgent):
         return next_state, reward, terminated, truncated, info
 
     def train(self):
-        training_time = time()
-        total_environment_steps = 0
+        super().train()
+
+        start_time = time() - self.training_time
         stats = {
             "score": [],
             "policy_loss": [],
@@ -80,7 +81,7 @@ class MuZeroAgent(AlphaZeroAgent):
             print("Training Step ", training_step + 1)
             for training_game in range(self.games_per_generation):
                 score, num_steps = self.play_game()
-                total_environment_steps += num_steps
+                self.total_environment_steps += num_steps
                 stats["score"].append(score)
 
             # STAT TRACKING
@@ -96,22 +97,10 @@ class MuZeroAgent(AlphaZeroAgent):
 
             # CHECKPOINTING
             if training_step % self.checkpoint_interval == 0 and training_step > 0:
-                self.save_checkpoint(
-                    stats,
-                    targets,
-                    5,
-                    training_step,
-                    total_environment_steps,
-                    time() - training_time,
-                )
-        self.save_checkpoint(
-            stats,
-            targets,
-            5,
-            training_step,
-            total_environment_steps,
-            time() - training_time,
-        )
+                self.training_time = time() - start_time
+                self.save_checkpoint()
+        self.training_time = time() - start_time
+        self.save_checkpoint()
         # save model to shared storage @Ezra
 
     def monte_carlo_tree_search(self, env, state, legal_moves, action_history):
@@ -143,10 +132,8 @@ class MuZeroAgent(AlphaZeroAgent):
 
             # Turn of the leaf node
             parent = search_path[-2]
-            reward, hidden_state, value, policy = (
-                self.predict_single_recurrent_inference(
-                    parent.hidden_state, history[-1]
-                )
+            reward, hidden_state, value, policy = self.predict_single_recurrent_inference(
+                parent.hidden_state, history[-1]
             )
 
             node.expand(to_play, self.num_actions, policy, hidden_state, reward)
@@ -158,15 +145,11 @@ class MuZeroAgent(AlphaZeroAgent):
 
                 value = node.reward + self.config.discount_factor * value
 
-        visit_counts = [
-            (child.visits, action) for action, child in root.children.items()
-        ]
+        visit_counts = [(child.visits, action) for action, child in root.children.items()]
         return root.value(), visit_counts
 
     def experience_replay(self):
-        samples = self.replay_buffer.sample(
-            self.config.unroll_steps, self.config.n_step
-        )
+        samples = self.replay_buffer.sample(self.config.unroll_steps, self.config.n_step)
         observations = samples["observations"]
         target_policies = samples["policy"]
         target_values = samples["values"]
@@ -194,9 +177,7 @@ class MuZeroAgent(AlphaZeroAgent):
                     rewards = [0]  # maybe this is from initial inference
                     for action in actions[item]:
                         reward, hidden_state, value, policy = (
-                            self.predict_single_recurrent_inference(
-                                hidden_state, action
-                            )
+                            self.predict_single_recurrent_inference(hidden_state, action)
                         )
                         gradient_scales.append(1.0 / len(actions[item]))
                         values.append(value)

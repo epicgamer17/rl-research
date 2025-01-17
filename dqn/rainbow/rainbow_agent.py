@@ -1,7 +1,4 @@
-import gc
-from math import e
 from time import time
-from pkg_resources import get_distribution
 import torch
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.sgd import SGD
@@ -49,7 +46,7 @@ class RainbowAgent(BaseAgent):
                 else torch.device("cpu")
             )
         ),
-        num_players: int = 1,
+        from_checkpoint=False,
     ):
         super(RainbowAgent, self).__init__(env, config, name, device=device)
         self.model = RainbowNetwork(
@@ -101,7 +98,7 @@ class RainbowAgent(BaseAgent):
             compressed_observations=(
                 self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
             ),
-            num_players=num_players,
+            num_players=self.config.game.num_players,
         )
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
@@ -128,6 +125,15 @@ class RainbowAgent(BaseAgent):
             "score": self.env.spec.reward_threshold,
             "test_score": self.env.spec.reward_threshold,
         }
+    
+    def checkpoint_model_weights(self, checkpoint):
+        checkpoint = super().checkpoint_model_weights(checkpoint)
+        checkpoint["target_model"] = self.target_model.state_dict()
+
+    def load_model_weights(self, checkpoint):
+        self.model.load_state_dict(checkpoint["model"])
+        self.target_model.load_state_dict(checkpoint["target_model"])
+        self.target_model.eval()
 
     def predict(self, states, *args, **kwargs) -> torch.Tensor:
         # could change type later
@@ -141,9 +147,7 @@ class RainbowAgent(BaseAgent):
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(
-        self, distribution, info: dict = None, mask_actions: bool = True
-    ):
+    def select_actions(self, distribution, info: dict = None, mask_actions: bool = True):
         assert info is not None if mask_actions else True, "Need info to mask actions"
         # print(info)
         if self.config.atom_size > 1:
@@ -195,9 +199,7 @@ class RainbowAgent(BaseAgent):
         # print(online_predictions)
         # (B, atom_size)
         if self.config.atom_size > 1:
-            assert isinstance(
-                self.config.loss_function, KLDivergenceLoss
-            ) or isinstance(
+            assert isinstance(self.config.loss_function, KLDivergenceLoss) or isinstance(
                 self.config.loss_function, CategoricalCrossentropyLoss
             ), "Only KLDivergenceLoss and CategoricalCrossentropyLoss are supported for atom_size > 1, recieved {}".format(
                 self.config.loss_function
@@ -340,10 +342,15 @@ class RainbowAgent(BaseAgent):
             return m
 
     def fill_replay_buffer(self):
+        print("replay buffer size:", self.replay_buffer.size)
         with torch.no_grad():
             state, info = self.env.reset()
-            for i in range(self.config.min_replay_buffer_size + self.config.n_step - 1):
-                print("filling replay buffer", i)
+            target_size = self.config.min_replay_buffer_size
+            while self.replay_buffer.size < target_size:
+                if (self.replay_buffer.size % (target_size // 100)) == 0:
+                    print(
+                        f"filling replay buffer: {self.replay_buffer.size} / ({target_size})"
+                    )
                 # dist = self.predict(state)
                 # action = self.select_actions(dist).item()
                 action = self.env.action_space.sample()
@@ -369,7 +376,7 @@ class RainbowAgent(BaseAgent):
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
-    def update_eg_epsilon(self, training_step: int):
+    def update_eg_epsilon(self, training_step):
         if self.config.eg_epsilon_decay_type == "linear":
             # print("decaying eg epsilon linearly")
             self.eg_epsilon = update_linear_schedule(
@@ -385,22 +392,22 @@ class RainbowAgent(BaseAgent):
             )
         else:
             raise ValueError(
-                "Invalid epsilon decay type: {}".format(
-                    self.config.eg_epsilon_decay_type
-                )
+                "Invalid epsilon decay type: {}".format(self.config.eg_epsilon_decay_type)
             )
 
     def train(self):
-        start_time = time()
+        super().train()
+        start_time = time() - self.training_time
         score = 0
         target_model_updated = (False, False)  # (score, loss)
-
         self.fill_replay_buffer()
+
         state, info = self.env.reset()
 
-        # self.training_steps += self.start_training_step
-        for training_step in range(self.start_training_step, self.training_steps):
-            print("training step", training_step)
+        while self.training_step < self.config.training_steps:
+            if self.training_step % self.config.print_interval == 0:
+                self.print_training_progress()
+
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     values = self.predict(state)
@@ -415,8 +422,8 @@ class RainbowAgent(BaseAgent):
                     )
                     # print("Action", action)
                     # print("Epislon Greedy Epsilon", self.eg_epsilon)
-                    next_state, reward, terminated, truncated, next_info = (
-                        self.env.step(action)
+                    next_state, reward, terminated, truncated, next_info = self.env.step(
+                        action
                     )
                     done = terminated or truncated
                     # print("State", state)
@@ -445,7 +452,7 @@ class RainbowAgent(BaseAgent):
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
 
-            self.update_eg_epsilon(training_step + 1)
+            self.update_eg_epsilon(self.training_step + 1)
             # print("replay buffer size", len(self.replay_buffer))
             for minibatch in range(self.config.num_minibatches):
                 if len(self.replay_buffer) < self.config.min_replay_buffer_size:
@@ -459,34 +466,23 @@ class RainbowAgent(BaseAgent):
                 )
                 target_model_updated = (target_model_updated[0], False)
 
-            if training_step % self.config.transfer_interval == 0:
+            if self.training_step % self.config.transfer_interval == 0:
                 target_model_updated = (True, True)
                 # stats["test_score"].append(
                 #     {"target_model_weight_update": training_step}
                 # )
                 self.update_target_model()
 
-            if (
-                training_step % self.checkpoint_interval == 0
-                and training_step > self.start_training_step
-            ):
+            if self.training_step % self.checkpoint_interval == 0:
                 # print(self.stats["score"])
                 # print(len(self.replay_buffer))
-                self.save_checkpoint(
-                    training_step,
-                    training_step * self.config.replay_interval,
-                    time() - start_time,
-                )
+                self.training_time = time() - start_time
+                self.total_environment_steps = self.training_step * self.config.replay_interval
+                self.save_checkpoint()
             # gc.collect()
+            self.training_step += 1
 
-        self.save_checkpoint(
-            training_step,
-            training_step * self.config.replay_interval,
-            time() - start_time,
-        )
+        self.training_time = time() - start_time
+        self.total_environment_steps = self.training_step * self.config.replay_interval
+        self.save_checkpoint()
         self.env.close()
-
-    def load_model_weights(self, weights_path: str):
-        state_dict = torch.load(weights_path)
-        self.model.load_state_dict(state_dict)
-        self.target_model.load_state_dict(self.model.state_dict())

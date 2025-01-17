@@ -9,8 +9,9 @@ from utils.utils import (
     normalize_policies,
     current_timestamp,
 )
-import sys 
+import sys
 from time import time
+
 sys.path.append("../")
 
 from replay_buffers.a2c_replay_buffer import A2CReplayBuffer
@@ -39,8 +40,9 @@ class A2CAgent(BaseAgent):
                 else torch.device("cpu")
             )
         ),
+        from_checkpoint=False,
     ):
-        super(A2CAgent, self).__init__(env, config, name, device=device)
+        super(A2CAgent, self).__init__(env, config, name, device=device, from_checkpoint=from_checkpoint)
         self.model = A2CNetwork(
             config=config,
             output_size=self.num_actions,
@@ -101,10 +103,10 @@ class A2CAgent(BaseAgent):
         #     num_players=num_players,
         # )
         self.replay_buffer = A2CReplayBuffer(
-            observation_dimensions= self.observation_dimensions,
-            observation_dtype= self.env.observation_space.dtype,
-            max_size= self.config.replay_buffer_size,
-            gamma= self.config.discount_factor,
+            observation_dimensions=self.observation_dimensions,
+            observation_dtype=self.env.observation_space.dtype,
+            max_size=self.config.replay_buffer_size,
+            gamma=self.config.discount_factor,
         )
 
         self.stats = {
@@ -117,6 +119,15 @@ class A2CAgent(BaseAgent):
             "score": self.env.spec.reward_threshold,
             "test_score": self.env.spec.reward_threshold,
         }
+    
+    def checkpoint_optimizer_state(self, checkpoint):
+        checkpoint["actor_optimizer"] = self.actor_optimizer.state_dict()
+        checkpoint["critic_optimizer"] = self.critic_optimizer.state_dict()
+        return checkpoint
+    
+    def load_optimizer_state(self, checkpoint):
+        self.actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
+        self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
 
     def select_actions(self, prediction, info=None, actionmasking={}):
         policy, distribution, value = prediction
@@ -132,13 +143,13 @@ class A2CAgent(BaseAgent):
         if self.discrete_action_space:
             # NEED TO FIX NETWORK
             policy = self.model.actor(inputs=state_input)[0]
-            
+
             if mask_actions:
                 legal_moves = get_legal_moves(info)
                 policy = action_mask(
                     policy, legal_moves, mask_value=0, device=self.device
                 )
-                
+
                 policy = clip_low_prob_actions(policy, self.config.clip_low_prob)
                 policy = normalize_policies(policy)
 
@@ -149,23 +160,23 @@ class A2CAgent(BaseAgent):
         return policy, distribution, value
 
     def print_graph(self, grad_fn, level=0):
-            if grad_fn is not None:
-                print(f"{' ' * level * 2} {grad_fn}")
-                for next_fn, _ in grad_fn.next_functions:
-                    self.print_graph(next_fn, level + 1)
+        if grad_fn is not None:
+            print(f"{' ' * level * 2} {grad_fn}")
+            for next_fn, _ in grad_fn.next_functions:
+                self.print_graph(next_fn, level + 1)
 
     def learn(self):
         # add training iterations?
         samples = self.replay_buffer.sample()
-        log_probabilities = (samples["log_probabilities"])
+        log_probabilities = samples["log_probabilities"]
         values = samples["values"]
         advantages = torch.from_numpy(samples["advantages"])
         returns = torch.from_numpy(samples["returns"])
         distributions = samples["distributions"]
-        
+
         advantages = advantages.to(self.device)
 
-        self.actor_learn(advantages, log_probabilities,distributions)
+        self.actor_learn(advantages, log_probabilities, distributions)
         self.critic_learn(returns, values)
 
     def actor_learn(self, advantages, log_probabilities, distributions):
@@ -193,7 +204,7 @@ class A2CAgent(BaseAgent):
 
         critic_loss = 0.0
         for i in range(len(values)):
-            critic_loss += (self.config.critic_coefficient * (returns[i] - values[i]) ** 2)
+            critic_loss += self.config.critic_coefficient * (returns[i] - values[i]) ** 2
         critic_loss = critic_loss / len(values)
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -204,54 +215,55 @@ class A2CAgent(BaseAgent):
         return critic_loss.detach()
 
     def train(self):
-        training_time = time()
+        super().train()
+        start_time = time() - self.training_time
+        if self.training_step == 0:
+            self.print_resume_training()
         # Training loop
-        for training_step in range(self.config.training_steps):
-                score = 0
-                print(training_step)
-                # get new init state
-                state, info = self.env.reset()
-                done = False
-                # reset time step counter, done flag, epsiode list, state
-                while not done:
-                    # since monte carlo sort of alg need to finish the episode before learning
-                    prediction = self.predict(state, info)
-                    # represents predictions from actor and critic
-                    action = self.select_actions(prediction, info)
-                    action = action.item()
-                    policy, distribution, value = prediction
-                    log_probability = torch.log(policy[action])
-                    # take action
-                    next_state, reward, terminated, truncated, next_info = self.env.step(
-                        action
-                    )
-                    # NEED TO ADD A REPLAY BUFFER
-                    self.replay_buffer.store(value=value, log_probability=log_probability, reward=reward, distribution=distribution)
-                    done = terminated or truncated
-                    state = next_state
-                    info = next_info
-                    score = score+reward
+        while self.training_time < self.config.max_training_time:
+            if self.training_step % self.config.print_interval == 0:
+                self.print_training_progress()
+            score = 0
+            # get new init state
+            state, info = self.env.reset()
+            done = False
+            # reset time step counter, done flag, epsiode list, state
+            while not done:
+                # since monte carlo sort of alg need to finish the episode before learning
+                prediction = self.predict(state, info)
+                # represents predictions from actor and critic
+                action = self.select_actions(prediction, info)
+                action = action.item()
+                policy, distribution, value = prediction
+                log_probability = torch.log(policy[action])
+                # take action
+                next_state, reward, terminated, truncated, next_info = self.env.step(
+                    action
+                )
+                # NEED TO ADD A REPLAY BUFFER
+                self.replay_buffer.store(
+                    value=value,
+                    log_probability=log_probability,
+                    reward=reward,
+                    distribution=distribution,
+                )
+                done = terminated or truncated
+                state = next_state
+                info = next_info
+                score = score + reward
 
-                self.replay_buffer.compute_advantage_and_returns()
-                score = {"score": score}
-                self.stats["score"].append(score)
-                self.learn()
-                self.replay_buffer.clear()
-                if (
-                    training_step % self.checkpoint_interval == 0
-                    and training_step > self.start_training_step
-                ):
-                    self.save_checkpoint(
-                        training_step,
-                        training_step * self.config.steps_per_epoch,
-                        time() - training_time,
-                    )
-                
+            self.replay_buffer.compute_advantage_and_returns()
+            score = {"score": score}
+            self.stats["score"].append(score)
+            self.learn()
+            self.replay_buffer.clear()
+            if self.training_step % self.checkpoint_interval == 0:
+                self.training_time = time() - start_time
+                self.total_environment_steps += self.config.steps_per_epoch
+            self.training_step += 1
 
-        self.save_checkpoint(
-            training_step,
-            training_step * self.config.steps_per_epoch,
-            time() - training_time,
-        )
+        self.training_time = time() - start_time
+        self.total_environment_steps = self.training_step * self.config.steps_per_epoch
+        self.save_checkpoint()
 
-            # NEED TO ADD CHECKPOINTING AND STAT TRACKING AND GRAPHING
+        # NEED TO ADD CHECKPOINTING AND STAT TRACKING AND GRAPHING

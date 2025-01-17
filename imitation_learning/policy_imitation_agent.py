@@ -25,8 +25,9 @@ class PolicyImitationAgent(BaseAgent):
                 else torch.device("cpu")
             )
         ),
+        from_checkpoint=False,
     ):
-        super().__init__(env, config, name, device)
+        super().__init__(env, config, name, device, from_checkpoint=from_checkpoint)
 
         self.replay_buffer = NFSPReservoirBuffer(
             observation_dimensions=self.observation_dimensions,

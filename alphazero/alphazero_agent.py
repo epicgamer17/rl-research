@@ -44,8 +44,9 @@ class AlphaZeroAgent(BaseAgent):
             else torch.device("cpu")
             # )
         ),
+        from_checkpoint=False,
     ):
-        super(AlphaZeroAgent, self).__init__(env, config, name, device=device)
+        super(AlphaZeroAgent, self).__init__(env, config, name, device=device, from_checkpoint=from_checkpoint)
 
         # Add learning rate scheduler
 
@@ -93,17 +94,20 @@ class AlphaZeroAgent(BaseAgent):
             "loss": 0,
             "test_score": self.env.spec.reward_threshold,
         }
-
+    
     def train(self):
-        training_time = time()
-        total_environment_steps = 0
+        super().train()
+        start_time = self.training_time - time()
+        if self.training_step == 0:
+            self.print_resume_training()
 
-        for training_step in range(self.training_steps):
-            print("Training Step ", training_step + 1)
+        while self.training_step < self.config.training_steps:
+            if self.training_step % self.config.print_interval == 0:
+                self.print_training_progress()
             for training_game in range(self.config.games_per_generation):
                 print("Training Game ", training_game + 1)
                 score, num_steps = self.play_game()
-                total_environment_steps += num_steps
+                self.total_environment_steps += num_steps
                 self.stats["score"].append({"score": score})  # score for player one
 
             # STAT TRACKING
@@ -116,18 +120,13 @@ class AlphaZeroAgent(BaseAgent):
                 print("Losses", value_loss, policy_loss, loss)
 
             # CHECKPOINTING
-            if training_step % self.checkpoint_interval == 0 and training_step > 0:
-                self.save_checkpoint(
-                    training_step,
-                    total_environment_steps,
-                    time() - training_time,
-                )
+            if self.training_step % self.checkpoint_interval == 0 and self.training_step > 0:
+                self.training_time = time() - start_time
+                self.save_checkpoint()
+            self.training_step += 1
 
-        self.save_checkpoint(
-            training_step,
-            total_environment_steps,
-            time() - training_time,
-        )
+        self.training_time = time() - start_time
+        self.save_checkpoint()
         # save model to shared storage @Ezra
 
     def monte_carlo_tree_search(self, env, state, info):
