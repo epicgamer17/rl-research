@@ -1,4 +1,5 @@
 import torch
+from functools import reduce
 
 
 def difference_of_guassians(v: torch.Tensor, alpha: float, sigma1: float, sigma2: float):
@@ -66,3 +67,46 @@ def sort_polygon_vertices(vertices: torch.Tensor):
     angles = torch.atan2(vertices[:, 1] - center[1], vertices[:, 0] - center[0])
     sorted_indices = torch.argsort(angles)
     return vertices[sorted_indices]
+
+def chinese_remainder_theorem(modules, remainders):
+    """
+    Finds the solution to the system of congruence equations with forms x = r1 (modulo m1) for all modules and remainders
+
+    :param modules: Array of modules m1 -- mn
+    :param remainders: Array of remainders r1--rn
+
+    :return: integer gives solution x
+    """
+    c =[]
+    b= []
+    p = reduce((lambda x, y: x * y), modules)
+    for i in range(len(modules)):
+        c.append(p/modules[i])
+    for i in range(len(c)):
+        b.append(modulo_inverse(modules[i], c[i]))
+    
+    sum = 0
+    for i in range(len(modules)):
+        sum = sum + (remainders[i] * b[i] * c[i])
+    return (sum % p)
+
+def modulo_inverse(modulo, number):
+    """
+    Finds the solution to the equation ax = 1 (mod m) where a, m are known
+
+    :param modulo: integer
+    :param number: integer
+
+    :return: integer
+    """
+
+    target = number % modulo
+    i = 1
+    if target == 1:
+        return 1
+    else:
+        while ((target*i) % modulo) != 1:
+            i = i+1
+    return i
+
+print(chinese_remainder_theorem([3,5,7], [1,2,3]))
