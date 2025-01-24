@@ -2,7 +2,9 @@ import torch
 from functools import reduce
 
 
-def difference_of_guassians(v: torch.Tensor, alpha: float, sigma1: float, sigma2: float):
+def difference_of_guassians(
+    v: torch.Tensor, alpha: float, sigma1: float, sigma2: float
+):
     """
     Computes the difference of two guassians with different standard deviations
 
@@ -27,7 +29,7 @@ def circular_mean(points: torch.Tensor, grid_size: int):
     """
 
     # rescale points to [-pi, pi) to be viewed as angles
-    rescaled = (points * 2 * torch.pi / grid_size) - torch.pi # (N x d)
+    rescaled = (points * 2 * torch.pi / grid_size) - torch.pi  # (N x d)
 
     # transform to complex numbers
     Im = torch.sin(rescaled)  # (N x d)
@@ -43,6 +45,7 @@ def circular_mean(points: torch.Tensor, grid_size: int):
     # rescale to [0, grid_size)
     return Arg * grid_size / (2 * torch.pi)
 
+
 def softmax_2d(x: torch.Tensor):
     """
     Computes the softmax of a 2d tensor
@@ -54,6 +57,7 @@ def softmax_2d(x: torch.Tensor):
     x = x - torch.max(x)
     exp = torch.exp(x)
     return exp / torch.sum(exp)
+
 
 def sort_polygon_vertices(vertices: torch.Tensor):
     """
@@ -109,4 +113,6 @@ def modulo_inverse(modulo, number):
             i = i+1
     return i
 
-print(chinese_remainder_theorem([3,5,7], [1,2,3]))
+
+if __name__ == "__main__":
+    print(chinese_remainder_theorem([3,5,7], [1,2,3]))
