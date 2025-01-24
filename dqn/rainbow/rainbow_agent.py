@@ -129,6 +129,7 @@ class RainbowAgent(BaseAgent):
     def checkpoint_model_weights(self, checkpoint):
         checkpoint = super().checkpoint_model_weights(checkpoint)
         checkpoint["target_model"] = self.target_model.state_dict()
+        return checkpoint
 
     def load_model_weights(self, checkpoint):
         self.model.load_state_dict(checkpoint["model"])

@@ -1,57 +1,38 @@
 import gymnasium as gym
-from gymnasium.wrappers import AtariPreprocessing, FrameStack
+import sys
+import random
+from collections import defaultdict
+import copy
+import math
+from operator import itemgetter
+import os
+import matplotlib
+
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
+
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+import scipy
+import pickle
+
+from typing import Iterable, Tuple
+from datetime import datetime
+
+import torch
+from torch import nn, Tensor
 
 import numpy as np
 import numpy.typing as npt
 
-import math
-from math import e
-
-from time import time
-
-from pkg_resources import get_distribution
-
-import sys
-import os
-
-import random
-
-from collections import defaultdict
-from collections import deque
-
-import operator
-from operator import itemgetter
-
-import matplotlib
-from matplotlib import pyplot as plt
-
-matplotlib.use("Agg")
-
-import scipy
-
-import pickle
-from datetime import datetime
 import itertools
 from hyperopt import space_eval
+
 import pandas as pd
 
-from typing import Callable, Tuple, Iterable
 
-
-import torch
-from torch import nn, Tensor, functional
-from torch.nn.utils import clip_grad_norm_
-from torch.optim.sgd import SGD
-from torch.optim.adam import Adam
-
-from collections import deque
-
-import yaml
-
-import gc
-from pathlib import Path
-import copy
-import dill
+# from ....replay_buffers.base_replay_buffer import Game
+# from replay_buffers.segment_tree import SumSegmentTree
 
 
 def normalize_policies(policies: torch.float32):
@@ -189,9 +170,7 @@ def update_inverse_sqrt_schedule(
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    axs[row][col].set_title(
-        "{} | rolling average: {}".format(key, np.mean(values[-5:]))
-    )
+    axs[row][col].set_title("{} | rolling average: {}".format(key, np.mean(values[-5:])))
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
@@ -699,9 +678,7 @@ def augment_game(game, flip_y: bool = False, flip_x: bool = False, rot90: bool =
             augemented_games[5].observation_history[i] = np.flipud(
                 np.rot90(np.rot90(board))
             )
-            augemented_games[5].policy_history[i] = np.flipud(
-                np.rot90(np.rot90(policy))
-            )
+            augemented_games[5].policy_history[i] = np.flipud(np.rot90(np.rot90(policy)))
             augemented_games[6].observation_history[i] = np.rot90(np.flipud(board))
             augemented_games[6].policy_history[i] = np.rot90(np.flipud(policy))
     elif rot90 and not flip_y and not flip_x:
@@ -899,9 +876,7 @@ class KLDivergenceLoss:
 
 def huber(predicted: torch.Tensor, target: torch.Tensor, axis=-1, delta: float = 1.0):
     diff = torch.abs(predicted - target)
-    return torch.where(
-        diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)
-    ).view(-1)
+    return torch.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)).view(-1)
 
 
 class HuberLoss:
@@ -926,6 +901,8 @@ class MSELoss:
     def __call__(self, predicted, target):
         return mse(predicted, target)
 
+
+from typing import Callable
 
 Loss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
@@ -1225,6 +1202,10 @@ def tointlists(list):
     return ret
 
 
+import time
+from collections import deque
+
+
 class StoppingCriteria:
     def __init__(self):
         pass
@@ -1235,10 +1216,10 @@ class StoppingCriteria:
 
 class TimeStoppingCriteria(StoppingCriteria):
     def __init__(self, max_runtime_sec=60 * 10):
-        self.stop_time = time() + max_runtime_sec
+        self.stop_time = time.time() + max_runtime_sec
 
     def should_stop(self, details: dict) -> bool:
-        return time() > self.stop_time
+        return time.time() > self.stop_time
 
 
 class TrainingStepStoppingCritiera(StoppingCriteria):
@@ -1299,47 +1280,30 @@ class ApexLearnerStoppingCriteria(StoppingCriteria):
         tc.add_score(score)
 
 
-class GameConfig:
-    def __init__(
-        self,
-        max_score,
-        min_score,
-        is_discrete,
-        is_image,
-        is_deterministic,
-        has_legal_moves,
-        perfect_information,
-        multi_agent,
-        num_players,
-    ):
-        self.max_score = max_score
-        self.min_score = min_score
-        self.is_discrete = is_discrete  # can just check the action space type instead of setting manually if the env is passed in (ALSO COULD DO THIS IN THE BASE GAME CONFIG)
-        # self.num_actions = num_actions
-        # self.observation_space = observation_space
-        self.is_image = is_image
-        self.is_deterministic = is_deterministic
-        # self.num_players = num_players (might not need this idk) <- it would likely be for muzero but could also be for rainbow and stuff when they play multiplayer games (like connect 4)
-        self.has_legal_moves = has_legal_moves
-        self.perfect_information = perfect_information
-        self.multi_agent = multi_agent
-        self.num_players = num_players
+import gc
+import os
+from pathlib import Path
+import numpy as np
+import torch
+import gymnasium as gym
+import copy
+import pickle
+from torch.optim import Optimizer
+from torch.nn import Module
 
-    def __eq__(self, o: object) -> bool:
-        if not isinstance(o, GameConfig):
-            return False
+from utils import make_stack, plot_graphs
 
-        return (
-            self.max_score == o.max_score
-            and self.min_score == o.min_score
-            and self.is_discrete == o.is_discrete
-            and self.is_image == o.is_image
-            and self.is_deterministic == o.is_deterministic
-            and self.has_legal_moves == o.has_legal_moves
-            and self.perfect_information == o.perfect_information
-            and self.multi_agent == o.multi_agent
-            and self.num_players == o.num_players
-        )
+# Every model should have:
+# 1. A network
+# 2. An optimizer
+# 3. A loss function
+# 4. A training method
+#       this method should have training iterations, minibatches, and training steps
+# 6. A select_action method
+# 7. A predict method
+
+import torch
+import yaml
 
 
 class ConfigBase:
@@ -1391,6 +1355,64 @@ class ConfigBase:
             yaml.dump(to_dump, f, yaml.Dumper)
 
 
+class GameConfig:
+    def __init__(
+        self,
+        max_score,
+        min_score,
+        is_discrete,
+        is_image,
+        is_deterministic,
+        has_legal_moves,
+        perfect_information,
+        multi_agent,
+        num_players,
+    ):
+        self.max_score = max_score
+        self.min_score = min_score
+        self.is_discrete = is_discrete  # can just check the action space type instead of setting manually if the env is passed in (ALSO COULD DO THIS IN THE BASE GAME CONFIG)
+        # self.num_actions = num_actions
+        # self.observation_space = observation_space
+        self.is_image = is_image
+        self.is_deterministic = is_deterministic
+        # self.num_players = num_players (might not need this idk) <- it would likely be for muzero but could also be for rainbow and stuff when they play multiplayer games (like connect 4)
+        self.has_legal_moves = has_legal_moves
+        self.perfect_information = perfect_information
+        self.multi_agent = multi_agent
+        self.num_players = num_players
+
+    def __eq__(self, o: object) -> bool:
+        if not isinstance(o, GameConfig):
+            return False
+
+        return (
+            self.max_score == o.max_score
+            and self.min_score == o.min_score
+            and self.is_discrete == o.is_discrete
+            and self.is_image == o.is_image
+            and self.is_deterministic == o.is_deterministic
+            and self.has_legal_moves == o.has_legal_moves
+            and self.perfect_information == o.perfect_information
+            and self.multi_agent == o.multi_agent
+            and self.num_players == o.num_players
+        )
+
+
+class AtariConfig(GameConfig):
+    def __init__(self):
+        super(AtariConfig, self).__init__(
+            max_score=10,  # FROM CATEGORICAL DQN PAPER
+            min_score=-10,
+            is_discrete=True,
+            is_image=True,
+            is_deterministic=False,  # if no frameskip, then deterministic
+            has_legal_moves=False,
+            perfect_information=True,  # although it is not deterministic, it is so close to it that it is considered perfect information
+            multi_agent=False,
+            num_players=1,
+        )
+
+
 class Config(ConfigBase):
     @classmethod
     def load(cls, filepath: str):
@@ -1421,9 +1443,7 @@ class Config(ConfigBase):
         )
 
         # ADD LEARNING RATE SCHEDULES
-        self.training_steps: int = self.parse_field(
-            "training_steps", 10000, wrapper=int
-        )
+        self.training_steps: int = self.parse_field("training_steps", 10000, wrapper=int)
 
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
         self.momentum = self.parse_field("momentum", 0.9)
@@ -1455,29 +1475,10 @@ class Config(ConfigBase):
         self.training_iterations: int = self.parse_field(
             "training_iterations", 1, wrapper=int
         )
+        self.print_interval: int = self.parse_field("print_interval", 100, wrapper=int)
 
     def _verify_game(self):
         raise NotImplementedError
-
-
-def kernel_initializer_wrapper(x):
-    if x is None:
-        return x
-    elif isinstance(x, str):
-        return prepare_kernel_initializers(x)
-    else:
-        assert callable(x)
-        return x
-
-
-# Every model should have:
-# 1. A network
-# 2. An optimizer
-# 3. A loss function
-# 4. A training method
-#       this method should have training iterations, minibatches, and training steps
-# 6. A select_action method
-# 7. A predict method
 
 
 class BaseAgent:
@@ -1496,38 +1497,27 @@ class BaseAgent:
                 else torch.device("cpu")
             )
         ),
+        from_checkpoint=False,
     ):
+        if from_checkpoint:
+            self.from_checkpoint = True
+
+        self.model: Module = None
+        self.optimizer: Optimizer = None
         self.model_name = name
         self.config = config
         self.device = device
 
-        self.env = env
-        # self.test_env = copy.deepcopy(env)
-        if hasattr(self.env, "render_mode") and self.env.render_mode == "rgb_array":
-            # assert (
-            #     self.env.render_mode == "rgb_array"
-            # ), "Video recording for test_env requires render_mode to be 'rgb_array'"
-            self.test_env = gym.wrappers.RecordVideo(
-                copy.deepcopy(env),
-                ".",
-                name_prefix="{}".format(self.model_name),
-            )
-        else:
-            print(
-                "Warning: test_env will not record videos as render_mode is not 'rgb_array'"
-            )
-            self.test_env = copy.deepcopy(env)
+        self.training_time = 0
+        self.training_step = 0
+        self.total_environment_steps = 0
+        self.training_steps = self.config.training_steps
+        self.checkpoint_interval = max(self.training_steps // 30, 1)
+        self.checkpoint_trials = 5
 
-        if isinstance(env.observation_space, gym.spaces.Box):
-            self.observation_dimensions = env.observation_space.shape
-        elif isinstance(env.observation_space, gym.spaces.Discrete):
-            self.observation_dimensions = (1,)
-        elif isinstance(env.observation_space, gym.spaces.Tuple):
-            self.observation_dimensions = (
-                len(env.observation_space.spaces),
-            )  # for tuple of discretes
-        else:
-            raise ValueError("Observation space not supported")
+        self.env = env
+        self.test_env = self.make_test_env(env)
+        self.observation_dimensions = self.determine_observation_dimensions(env)
 
         print("observation_dimensions: ", self.observation_dimensions)
         if isinstance(env.action_space, gym.spaces.Discrete):
@@ -1539,13 +1529,38 @@ class BaseAgent:
 
         print("num_actions: ", self.num_actions)
 
-        self.start_training_step = 0
-        self.training_steps = self.config.training_steps
-        self.checkpoint_interval = max(self.training_steps // 30, 1)
-        self.checkpoint_trials = 5
+    def make_test_env(self, env: gym.Env):
+        # self.test_env = copy.deepcopy(env)
+        if hasattr(env, "render_mode") and env.render_mode == "rgb_array":
+            # assert (
+            #     self.env.render_mode == "rgb_array"
+            # ), "Video recording for test_env requires render_mode to be 'rgb_array'"
+            return gym.wrappers.RecordVideo(
+                copy.deepcopy(env),
+                ".",
+                name_prefix="{}".format(self.model_name),
+            )
+        else:
+            print(
+                "Warning: test_env will not record videos as render_mode is not 'rgb_array'"
+            )
+            return copy.deepcopy(env)
+
+    def determine_observation_dimensions(self, env: gym.Env):
+        if isinstance(env.observation_space, gym.spaces.Box):
+            return env.observation_space.shape
+        elif isinstance(env.observation_space, gym.spaces.Discrete):
+            return (1,)
+        elif isinstance(env.observation_space, gym.spaces.Tuple):
+            return (len(env.observation_space.spaces),)  # for tuple of discretes
+        else:
+            raise ValueError("Observation space not supported")
 
     def train(self):
-        raise NotImplementedError
+        if self.training_steps != 0:
+            self.print_resume_training()
+
+        pass
 
     def preprocess(self, states) -> torch.Tensor:
         """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
@@ -1615,116 +1630,125 @@ class BaseAgent:
         # raise NotImplementedError, "Every agent should have a learn method. (Previously experience_replay)"
         pass
 
-    def load(self, dir, training_step):
-        """load the model from a directory and training step. The name of the directory will be the name of the model, and should contain the following files:
-        - episode_{training_step}_optimizer.dill
-        - config.yaml
-        """
+    def load_optimizer_state(self, checkpoint):
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
 
-        # dir = Path("model_weights", self.model_name)
-        name = ""
-        optimizer_path = Path(dir, f"episode_{training_step}_optimizer.dill"), "wb"
-        config_path = Path(dir, f"episode_{training_step}_optimizer.dill"), "wb"
-        weights_path = str(Path(dir, f"episode_{training_step}.keras"))
+    def load_replay_buffers(self, checkpoint):
+        self.replay_buffer = checkpoint["replay_buffer"]
 
-        self.config = self.config.__class__.load(config_path)
-        with open(optimizer_path, "rb") as f:
-            self.config.optimizer = dill.load(f)
+    def load_model_weights(self, checkpoint):
+        self.model.load_state_dict(checkpoint["model"])
 
-        self.mode.load(weights_path)
+    def checkpoint_base(self, checkpoint):
+        checkpoint["training_time"] = self.training_time
+        checkpoint["training_step"] = self.training_step
+        checkpoint["total_environment_steps"] = self.total_environment_steps
+        return checkpoint
 
-        self.on_load()
+    def checkpoint_environment(self, checkpoint):
+        checkpoint["enviroment"] = self.env
+        return checkpoint
 
-    def load_replay_buffers(self, dir):
-        with open(
-            Path(
-                dir,
-                f"replay_buffers/{self.model_name}_replay_buffer.pkl",
-            ),
-            "rb",
-        ) as f:
-            print(f)
-            self.replay_buffer = pickle.load(f)
+    def checkpoint_optimizer_state(self, checkpoint):
+        checkpoint["optimizer"] = self.optimizer.state_dict()
+        return checkpoint
 
-    def load_model_weights(self, weights_path: str):
-        print("Warning using default load model weights")
-        state_dict = torch.load(weights_path)
-        self.model.load_state_dict(state_dict)
+    def checkpoint_replay_buffers(self, checkpoint):
+        checkpoint["replay_buffer"] = self.replay_buffer
+        return checkpoint
 
-    def load_from_checkpoint(self, dir: str, training_step):
+    def checkpoint_model_weights(self, checkpoint):
+        checkpoint["model"] = self.model.state_dict()
+        return checkpoint
+
+    def checkpoint_extra(self, checkpoint) -> dict:
+        return checkpoint
+
+    @classmethod
+    def load(cls, *args, **kwargs):
+        cls.loaded_from_checkpoint = True
+        return cls.load_from_checkpoint(*args, **kwargs)
+
+    def load_from_checkpoint(agent_class, config_class, dir: str, training_step):
+        # load the config and checkpoint
         training_step_dir = Path(dir, f"step_{training_step}")
-        # load the model weights
+        weights_dir = Path(training_step_dir, "model_weights")
         weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
-        self.load_model_weights(weights_path)
+        config = config_class.load(Path(dir, "configs/config.yaml"))
+        checkpoint = torch.load(weights_path)
+        env = checkpoint["enviroment"]
+        model_name = checkpoint["model_name"]
 
-        # load the config
-        self.config = self.config.__class__.load(Path(dir, "configs/config.yaml"))
+        # construct the agent
+        agent = agent_class(env, config, model_name, from_checkpoint=True)
 
-        # load optimizer (pickle doesn't work but dill does)
-        with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "rb") as f:
-            self.optimizer = dill.load(f)
+        # load the model state (weights, optimizer, replay buffer, training time, training step, total environment steps)
+        os.makedirs(weights_dir, exist_ok=True)
 
-        # load replay buffer
-        self.load_replay_buffers(training_step_dir)
+        agent.training_time = checkpoint["training_time"]
+        agent.training_step = checkpoint["training_step"]
+        agent.total_environment_steps = checkpoint["total_environment_steps"]
+
+        agent.load_model_weights(checkpoint)
+        agent.load_optimizer_state(checkpoint)
+        agent.load_replay_buffers(checkpoint)
 
         # load the graph stats and targets
         with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "rb") as f:
-            self.stats = pickle.load(f)
+            agent.stats = pickle.load(f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "rb") as f:
-            self.targets = pickle.load(f)
+            agent.targets = pickle.load(f)
 
-        self.start_training_step = training_step
-
-    def save_replay_buffers(self, dir):
-        with open(
-            Path(
-                dir,
-                f"replay_buffers/{self.model_name}_replay_buffer.pkl",
-            ),
-            "wb",
-        ) as f:
-            pickle.dump(self.replay_buffer, f)
+        return agent
 
     def save_checkpoint(
         self,
-        training_step,
-        frames_seen,
-        time_taken,
+        frames_seen=None,
+        training_step=None,
+        time_taken=None,
     ):
-        # test model
+        if not frames_seen is None:
+            print(
+                "warning: frames_seen option is deprecated, update self.total_environment_steps instead"
+            )
+
+        if not time_taken is None:
+            print(
+                "warning: time_taken option is deprecated, update self.training_time instead"
+            )
+
+        if not training_step is None:
+            print(
+                "warning: training_step option is deprecated, update self.training_step instead"
+            )
 
         dir = Path("checkpoints", self.model_name)
-        training_step_dir = Path(dir, f"step_{training_step}")
+        training_step_dir = Path(dir, f"step_{self.training_step}")
         os.makedirs(dir, exist_ok=True)
-        os.makedirs(Path(dir, "graphs"), exist_ok=True)
-        os.makedirs(Path(dir, "configs"), exist_ok=True)
+
+        # save the model state
         if self.config.save_intermediate_weights:
             weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
             os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "optimizers"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "replay_buffers"), exist_ok=True)
-            os.makedirs(Path(training_step_dir, "graphs_stats"), exist_ok=True)
-            if self.env.render_mode == "rgb_array":
-                os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
+            checkpoint = self.make_checkpoint_dict(checkpoint)
+            torch.save(checkpoint, weights_path)
 
-            # save the model weights
-            torch.save(self.model.state_dict(), weights_path)
-
-            # save optimizer (pickle doesn't work but dill does)
-            with open(Path(training_step_dir, f"optimizers/optimizer.dill"), "wb") as f:
-                dill.dump(self.optimizer, f)
-
-            # save replay buffer
-            self.save_replay_buffers(training_step_dir)
+        if self.env.render_mode == "rgb_array":
+            os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
 
         # save config
+        os.makedirs(Path(dir, "configs"), exist_ok=True)
         self.config.dump(f"{dir}/configs/config.yaml")
 
-        test_score = self.test(self.checkpoint_trials, training_step, training_step_dir)
+        # test model
+        test_score = self.test(
+            self.checkpoint_trials, self.training_step, training_step_dir
+        )
         self.stats["test_score"].append(test_score)
         # save the graph stats and targets
-        stats_path = Path(training_step_dir, f"graphs_stats", exist_ok=True)
-        os.makedirs(stats_path, exist_ok=True)
+        os.makedirs(
+            Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
+        )
         with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
             pickle.dump(self.stats, f)
         with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
@@ -1736,15 +1760,26 @@ class BaseAgent:
         # plot the graphs (and save the graph)
         print(self.stats)
         print(self.targets)
+
+        os.makedirs(Path(dir, "graphs"), exist_ok=True)
         plot_graphs(
             self.stats,
             self.targets,
-            training_step,
-            frames_seen,
-            time_taken,
+            self.training_step if training_step is None else training_step,
+            self.total_environment_steps if frames_seen is None else frames_seen,
+            self.training_time if time_taken is None else time_taken,
             self.model_name,
             f"{dir}/graphs",
         )
+
+    def make_checkpoint_dict(self):
+        checkpoint = self.checkpoint_base({})
+        checkpoint = self.checkpoint_environment(checkpoint)
+        checkpoint = self.checkpoint_optimizer_state(checkpoint)
+        checkpoint = self.checkpoint_replay_buffers(checkpoint)
+        checkpoint = self.checkpoint_model_weights(checkpoint)
+        checkpoint = self.checkpoint_extra(checkpoint)
+        return checkpoint
 
     def test(self, num_trials, step, dir="./checkpoints") -> None:
         if num_trials == 0:
@@ -1775,8 +1810,8 @@ class BaseAgent:
                     action = self.select_actions(
                         prediction, info, self.config.game.has_legal_moves
                     ).item()
-                    next_state, reward, terminated, truncated, info = (
-                        self.test_env.step(action)
+                    next_state, reward, terminated, truncated, info = self.test_env.step(
+                        action
                     )
                     # self.test_env.render()
                     done = terminated or truncated
@@ -1798,20 +1833,489 @@ class BaseAgent:
                 "min_score": min_score,
             }
 
+    def print_training_progress(self):
+        print(f"Training step: {self.training_step + 1}/{self.training_steps}")
 
-class AtariConfig(GameConfig):
-    def __init__(self):
-        super(AtariConfig, self).__init__(
-            max_score=10,  # FROM CATEGORICAL DQN PAPER
-            min_score=-10,
-            is_discrete=True,
-            is_image=True,
-            is_deterministic=False,  # if no frameskip, then deterministic
-            has_legal_moves=False,
-            perfect_information=True,  # although it is not deterministic, it is so close to it that it is considered perfect information
-            multi_agent=False,
-            num_players=1,
+    def print_resume_training(self):
+        print(
+            f"Resuming training at step {self.training_step + 1} / {self.training_steps}"
         )
+
+    def print_stats(self):
+        print(f"")
+
+
+def unpack(x: int | Tuple):
+    if isinstance(x, Tuple):
+        assert len(x) == 2
+        return x
+    else:
+        try:
+            x = int(x)
+            return x, x
+        except Exception as e:
+            print(f"error converting {x} to int: ", e)
+
+
+class Conv2dStack(nn.Module):
+    @staticmethod
+    def calculate_same_padding(i, k, s) -> Tuple[None | Tuple[int], None | str | Tuple]:
+        """Calculate pytorch inputs for same padding
+        Args:
+            i (int, int) or int: (h, w) or (w, w)
+            k (int, int) or int: (k_h, k_w) or (k, k)
+            s (int, int) or int: (s_h, s_w) or (s, s)
+        Returns:
+            Tuple[manual_pad_padding, torch_conv2d_padding_input]: Either the manual padding that must be applied (first element of tuple) or the input to the torch padding argument of the Conv2d layer
+        """
+
+        if s == 1:
+            return None, "same"
+        h, w = unpack(i)
+        k_h, k_w = unpack(k)
+        s_h, s_w = unpack(s)
+        p_h = calculate_padding(h, k_h, s_h)
+        p_w = calculate_padding(w, k_w, s_w)
+        if p_h[0] == p_h[1] and p_w[0] == p_w[1]:
+            return None, (p_h[0], p_w[0])
+        else:
+            # not torch compatiable, manually pad with torch.nn.functional.pad
+            return (*p_w, *p_h), None
+
+    def __init__(
+        self,
+        input_shape: tuple[int],
+        filters: list[int],
+        kernel_sizes: list[int | Tuple[int, int]],
+        strides: list[int | Tuple[int, int]],
+        activation: nn.Module = nn.ReLU(),
+        noisy_sigma: float = 0,
+    ):
+        """A sequence of convolution layers with the activation function applied after each layer.
+        Always applies the minimum zero-padding that ensures the output shape is equal to the input shape.
+        Input shape in "BCHW" form, i.e. (batch_size, input_channels, height, width)
+        """
+        super(Conv2dStack, self).__init__()
+        self.conv_layers = nn.ModuleList()
+
+        self.activation = activation
+
+        # [B, C_in, H, W]
+        assert len(input_shape) == 4
+        assert len(filters) == len(kernel_sizes) == len(strides)
+        assert len(filters) > 0
+
+        self.noisy = noisy_sigma != 0
+        if self.noisy:
+            print("warning: Noisy convolutions not implemented yet")
+            # raise NotImplementedError("")
+
+        current_input_channels = input_shape[1]
+        for i in range(len(filters)):
+
+            h, w = input_shape[2], input_shape[3]
+            manual_padding, torch_padding = self.calculate_same_padding(
+                (h, w), kernel_sizes[i], strides[i]
+            )
+
+            if not torch_padding is None:
+                layer = nn.Conv2d(
+                    in_channels=current_input_channels,
+                    out_channels=filters[i],
+                    kernel_size=kernel_sizes[i],
+                    stride=strides[i],
+                    padding=torch_padding,
+                )
+            else:
+                layer = nn.Sequential(
+                    nn.ZeroPad2d(manual_padding),
+                    nn.Conv2d(
+                        in_channels=current_input_channels,
+                        out_channels=filters[i],
+                        kernel_size=kernel_sizes[i],
+                        stride=strides[i],
+                    ),
+                )
+
+            self.conv_layers.append(layer)
+            current_input_channels = filters[i]
+
+        self._output_len = current_input_channels
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        def initialize_if_conv(m: nn.Module):
+            if isinstance(m, nn.Conv2d):
+                initializer(m.weight)
+
+        self.apply(initialize_if_conv)
+
+    def forward(self, inputs):
+        x = inputs
+        for layer in self.conv_layers:
+            x = self.activation(layer(x))
+        return x
+
+    def reset_noise(self):
+        assert self.noisy
+
+        # noisy not implemented
+
+        # for layer in self.conv_layers:
+        #     # layer.reset_noise()
+        # return
+
+    def remove_noise(self):
+        assert self.noisy
+
+        # noisy not implemented
+
+        # for layer in self.conv_layers:
+        #     # layer.reset_noise()
+        # return
+
+    @property
+    def output_channels(self):
+        return self._output_len
+
+
+from torch import nn, Tensor, functional
+
+
+class Dense(nn.Module):
+    def __init__(
+        self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs
+    ):
+        super(Dense, self).__init__(*args, **kwargs)
+        self.layer = nn.Linear(
+            in_features=in_features, out_features=out_features, bias=bias
+        )
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        initializer(self.layer.weight)
+
+    def forward(self, inputs: Tensor) -> Tensor:
+        return self.layer(inputs)
+
+    def extra_repr(self) -> str:
+        return self.layer.extra_repr()
+
+
+class NoisyDense(nn.Module):
+    """See https://arxiv.org/pdf/1706.10295."""
+
+    @staticmethod
+    def f(x: Tensor):
+        return x.sgn() * (x.abs().sqrt())
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        initial_sigma: float = 0.5,
+        use_factorized: bool = True,
+    ):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.initial_sigma = initial_sigma
+        self.use_factorized = use_factorized
+        self.use_bias = bias
+
+        self.mu_w = nn.Parameter(torch.empty(out_features, in_features))
+        self.sigma_w = nn.Parameter(torch.empty(out_features, in_features))
+        self.eps_w = self.register_buffer("eps_w", torch.empty(out_features, in_features))
+        if self.use_bias:
+            self.mu_b = nn.Parameter(torch.empty(out_features))
+            self.sigma_b = nn.Parameter(torch.empty(out_features))
+            self.eps_b = self.register_buffer("eps_b", torch.empty(out_features))
+        else:
+            self.register_parameter("mu_b", None)
+            self.register_parameter("sigma_b", None)
+            self.eps_b = self.register_buffer("eps_b", None)
+
+        self.reset_parameters()
+        self.reset_noise()
+
+    def reset_noise(self) -> None:
+        if self.use_factorized:
+            eps_i = torch.randn(1, self.in_features).to(self.mu_w.device)
+            eps_j = torch.randn(self.out_features, 1).to(self.mu_w.device)
+            self.eps_w = self.f(eps_j) @ self.f(eps_i)
+            self.eps_b = self.f(eps_j).reshape(self.out_features)
+        else:
+            self.eps_w = self.f(torch.randn(self.mu_w.shape)).to(self.mu_w.device)
+            if self.use_bias:
+                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(
+                    self.mu_w.device
+                )
+
+    def remove_noise(self) -> None:
+        self.eps_w = torch.zeros_like(self.mu_w).to(self.mu_w.device)
+        if self.use_bias:
+            self.eps_b = torch.zeros_like(self.mu_b).to(self.mu_w.device)
+
+    def reset_parameters(self) -> None:
+        p = self.in_features
+        if self.use_factorized:
+            mu_init = 1.0 / (p**0.5)
+            sigma_init = self.initial_sigma / (p**0.5)
+        else:
+            mu_init = (3.0 / p) ** 0.5
+            sigma_init = 0.017
+
+        nn.init.constant_(self.sigma_w, sigma_init)
+        nn.init.uniform_(self.mu_w, -mu_init, mu_init)
+        if self.use_bias:
+            nn.init.constant_(self.sigma_b, sigma_init)
+            nn.init.uniform_(self.mu_b, -mu_init, mu_init)
+
+    @property
+    def weight(self):
+        return self.mu_w + self.sigma_w * self.eps_w
+
+    @property
+    def bias(self):
+        if self.use_bias:
+            return self.mu_b + self.sigma_b * self.eps_b
+        else:
+            return None
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        pass
+
+    def forward(self, input: Tensor) -> Tensor:
+        return functional.F.linear(input, self.weight, self.bias)
+
+    def extra_repr(self) -> str:
+        return f"in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, initial_sigma={self.initial_sigma}, use_factorized={self.use_factorized}"
+
+
+def build_dense(in_features: int, out_features: int, sigma: float = 0):
+    if sigma == 0:
+        return Dense(in_features, out_features)
+    else:
+        return NoisyDense(in_features, out_features)
+
+
+class DenseStack(nn.Module):
+    def __init__(
+        self,
+        initial_width: int,
+        widths: list[int],
+        activation: nn.Module = nn.ReLU(),
+        noisy_sigma: float = 0,
+    ):
+        super(DenseStack, self).__init__()
+        self.dense_layers: nn.ModuleList = nn.ModuleList()
+        self.activation = activation
+
+        assert len(widths) > 0
+        self.noisy = noisy_sigma != 0
+
+        current_input_width = initial_width
+        for i in range(len(widths)):
+            layer = build_dense(
+                in_features=current_input_width,
+                out_features=widths[i],
+                sigma=noisy_sigma,
+            )
+            self.dense_layers.append(layer)
+            current_input_width = widths[i]
+
+        self.initial_width = initial_width
+        self._output_len = current_input_width
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        for layer in self.dense_layers:
+            layer.initialize(initializer)
+
+    def forward(self, inputs: Tensor) -> Tensor:
+        x = inputs
+        for layer in self.dense_layers:
+            x = self.activation(layer(x))
+        return x
+
+    def reset_noise(self) -> None:
+        assert self.noisy
+
+        for layer in self.dense_layers:
+            layer.reset_noise()
+        return
+
+    def remove_noise(self) -> None:
+        assert self.noisy
+
+        for layer in self.dense_layers:
+            layer.remove_noise()
+        return
+
+    def extra_repr(self) -> str:
+        return f"in_features={self.initial_width}, out_width={self.output_width}, noisy={self.noisy}"
+
+    @property
+    def output_width(self):
+        return self._output_len
+
+
+class ResidualStack(nn.Module):
+    def __init__(
+        self,
+        input_shape: tuple[int],
+        filters: list[int],
+        kernel_sizes: list[int | Tuple[int, int]],
+        strides: list[int | Tuple[int, int]],
+        activation: nn.Module = nn.ReLU(),
+        noisy_sigma: float = 0,
+    ):
+        """A sequence of residual layers with the activation function applied after each layer.
+        Always applies the minimum zero-padding that ensures the output shape is equal to the input shape.
+        Input shape in "BCHW" form, i.e. (batch_size, input_channels, height, width)
+        """
+        super(ResidualStack, self).__init__()
+        self.residual_layers = nn.ModuleList()
+
+        self.activation = activation
+
+        # [B, C_in, H, W]
+        assert (
+            len(input_shape) == 4
+            and len(filters) == len(kernel_sizes) == len(strides)
+            and len(filters) > 0
+        )
+
+        self.noisy = noisy_sigma != 0
+        if self.noisy:
+            print("warning: Noisy convolutions not implemented yet")
+            # raise NotImplementedError("")
+
+        current_input_channels = input_shape[1]
+
+        for i in range(len(filters)):
+            print(current_input_channels)
+            layer = Residual(
+                in_channels=current_input_channels,
+                out_channels=filters[i],
+                kernel_size=kernel_sizes[i],
+                stride=strides[i],
+            )
+            self.residual_layers.append(layer)
+            current_input_channels = filters[i]
+
+        self._output_len = current_input_channels
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        def initialize_if_conv(m: nn.Module):
+            if isinstance(m, nn.Conv2d):
+                initializer(m.weight)
+
+        self.apply(initialize_if_conv)
+
+    def forward(self, inputs):
+        x = inputs
+        for layer in self.residual_layers:
+            x = self.activation(layer(x))
+        return x
+
+    def reset_noise(self):
+        assert self.noisy
+
+        # noisy not implemented
+
+        # for layer in self.conv_layers:
+        #     # layer.reset_noise()
+        # return
+
+    def remove_noise(self):
+        assert self.noisy
+
+        # noisy not implemented
+
+        # for layer in self.conv_layers:
+        #     # layer.reset_noise()
+        # return
+
+    @property
+    def output_channels(self):
+        return self._output_len
+
+
+class Residual(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride,
+    ):
+        super(Residual, self).__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding="same",
+        )
+
+        # REGULARIZATION?
+        self.bn1 = nn.BatchNorm2d(
+            num_features=out_channels,
+        )
+
+        self.conv2 = nn.Conv2d(
+            in_channels=out_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding="same",
+        )
+
+        # REGULARIZATION?
+        self.bn2 = nn.BatchNorm2d(
+            num_features=out_channels,
+        )
+
+        self.relu = nn.ReLU()
+        self.downsample = None
+        if in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    kernel_size=kernel_size,
+                    padding="same",
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        def initialize_if_conv(m: nn.Module):
+            if isinstance(m, nn.Conv2d):
+                initializer(m.weight)
+
+        self.apply(initialize_if_conv)
+
+    def forward(self, inputs):
+        residual = self.downsample(inputs) if self.downsample else inputs
+
+        x = self.conv1(inputs)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x + residual)
+        return x
+
+
+def kernel_initializer_wrapper(x):
+    if x is None:
+        return x
+    elif isinstance(x, str):
+        return prepare_kernel_initializers(x)
+    else:
+        assert callable(x)
+        return x
 
 
 class RainbowConfig(Config):
@@ -1881,8 +2385,268 @@ class RainbowConfig(Config):
         assert self.game.is_discrete, "Rainbow only supports discrete action spaces"
 
 
-# -*- coding: utf-8 -*-
-"""Segment tree for Prioritized Replay Buffer."""
+class RainbowNetwork(nn.Module):
+    def __init__(
+        self,
+        config: RainbowConfig,
+        output_size: int,
+        input_shape: Tuple[int],
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.config = config
+        self.has_residual_layers = len(config.residual_layers) > 0
+        self.has_conv_layers = len(config.conv_layers) > 0
+        self.has_dense_layers = len(config.dense_layer_widths) > 0
+        assert (
+            self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
+        ), "At least one of the layers should be present."
+
+        self.has_value_hidden_layers = len(config.value_hidden_layer_widths) > 0
+        self.has_advantage_hidden_layers = len(config.advantage_hidden_layer_widths) > 0
+        if not self.config.dueling:
+            assert not (
+                self.has_value_hidden_layers or self.has_advantage_hidden_layers
+            ), "Value or Advantage hidden layers are only used in dueling networks"
+
+        self.output_size = output_size
+
+        current_shape = input_shape
+        B = current_shape[0]
+
+        if self.has_residual_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.residual_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.residual_layers = ResidualStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.residual_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_conv_layers:
+            assert (
+                len(input_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+            filters, kernel_sizes, strides = to_lists(config.conv_layers)
+
+            # (B, C_in, H, W) -> (B, C_out H, W)
+            self.conv_layers = Conv2dStack(
+                input_shape=input_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            # (B, width_in) -> (B, width_out)
+            self.dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.dense_layer_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+            current_shape = (
+                B,
+                self.dense_layers.output_width,
+            )
+
+        if len(current_shape) == 4:
+            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+        else:
+            assert (
+                len(current_shape) == 2
+            ), "Input shape should be (B, width), got {}".format(current_shape)
+            initial_width = current_shape[1]
+
+        if self.config.dueling:
+            if self.has_value_hidden_layers:
+                # (B, width_in) -> (B, value_in_features) -> (B, atom_size)
+                self.value_hidden_layers = DenseStack(
+                    initial_width=initial_width,
+                    widths=self.config.value_hidden_layer_widths,
+                    activation=self.config.activation,
+                    noisy_sigma=self.config.noisy_sigma,
+                )
+                value_in_features = self.value_hidden_layers.output_width
+            else:
+                value_in_features = initial_width
+            # (B, value_in_features) -> (B, atom_size)
+            self.value_layer = build_dense(
+                in_features=value_in_features,
+                out_features=config.atom_size,
+                sigma=config.noisy_sigma,
+            )
+
+            if self.has_advantage_hidden_layers:
+                # (B, width_in) -> (B, advantage_in_features)
+                self.advantage_hidden_layers = DenseStack(
+                    initial_width=initial_width,
+                    widths=self.config.advantage_hidden_layer_widths,
+                    activation=self.config.activation,
+                    noisy_sigma=self.config.noisy_sigma,
+                )
+                advantage_in_features = self.advantage_hidden_layers.output_width
+            else:
+                advantage_in_features = initial_width
+            # (B, advantage_in_features) -> (B, output_size * atom_size)
+            self.advantage_layer = build_dense(
+                in_features=advantage_in_features,
+                out_features=output_size * config.atom_size,
+                sigma=self.config.noisy_sigma,
+            )
+        else:
+            self.distribution_layer = build_dense(
+                in_features=initial_width,
+                out_features=self.output_size * self.config.atom_size,
+                sigma=self.config.noisy_sigma,
+            )
+
+    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+        if self.has_residual_layers:
+            self.residual_layers.initialize(initializer)
+        if self.has_conv_layers:
+            self.conv_layers.initialize(initializer)
+        if self.has_dense_layers:
+            self.dense_layers.initialize(initializer)
+        if self.has_value_hidden_layers:
+            self.value_hidden_layers.initialize(initializer)
+        if self.has_advantage_hidden_layers:
+            self.advantage_hidden_layers.initialize(initializer)
+        if self.config.dueling:
+            self.value_layer.initialize(initializer)
+            self.advantage_layer.initialize(initializer)
+
+    def forward(self, inputs: Tensor) -> Tensor:
+        if self.has_conv_layers:
+            assert inputs.dim() == 4
+
+        # (B, *)
+        S = inputs
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_residual_layers:
+            S = self.residual_layers(S)
+
+        # (B, C_in, H, W) -> (B, C_out, H, W)
+        if self.has_conv_layers:
+            S = self.conv_layers(S)
+
+        # (B, *) -> (B, dense_features_in)
+        S = S.flatten(1, -1)
+
+        # (B, dense_features_in) -> (B, dense_features_out)
+        if self.has_dense_layers:
+            S = self.dense_layers(S)
+
+        if self.config.dueling:
+            # (B, value_hidden_in) -> (B, value_hidden_out)
+            if self.has_value_hidden_layers:
+                v = self.value_hidden_layers(S)
+            else:
+                v = S
+
+            # (B, value_hidden_in || dense_features_out) -> (B, atom_size) -> (B, 1, atom_size)
+            v: Tensor = self.value_layer(v).view(-1, 1, self.config.atom_size)
+
+            # (B, adv_hidden_in) -> (B, adv_hidden_out)
+            if self.has_advantage_hidden_layers:
+                A = self.advantage_hidden_layers(S)
+            else:
+                A = S
+
+            # (B, adv_hidden_out || dense_features_out) -> (B, output_size * atom_size) -> (B, output_size, atom_size)
+            A: Tensor = self.advantage_layer(A).view(
+                -1, self.output_size, self.config.atom_size
+            )
+
+            # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
+            a_mean = A.mean(1, keepdim=True)
+
+            # (B, 1, atom_size) +
+            # (B, output_size, atom_size) +
+            # (B, 1, atom_size)
+            # is valid broadcasting operation
+            Q = v + A - a_mean
+
+            # -[softmax(2)]-> turns the atom dimension into a valid p.d.f.
+            # ONLY CLIP FOR CATEGORICAL CROSS ENTROPY LOSS TO PREVENT NAN
+            # MIGHT BE ABLE TO REMOVE CLIPPING ENTIRELY SINCE I DONT THINK THE TENSORFLOW LOSSES CAN RETURN NaN
+            # q.clip(1e-3, 1)
+        else:
+            # (B, dense_features_out) -> (B, output_size, atom_size)
+            Q = self.distribution_layer(S).view(
+                -1, self.output_size, self.config.atom_size
+            )
+
+        if self.config.atom_size == 1:
+            return Q.squeeze(-1)
+        else:
+            return Q.softmax(dim=-1)
+
+    def reset_noise(self):
+        if self.config.noisy_sigma != 0:
+            if self.has_residual_layers:
+                self.residual_layers.reset_noise()
+            if self.has_conv_layers:
+                self.conv_layers.reset_noise()
+            if self.has_dense_layers:
+                self.dense_layers.reset_noise()
+            if self.has_value_hidden_layers:
+                self.value_hidden_layers.reset_noise()
+            if self.has_advantage_hidden_layers:
+                self.advantage_hidden_layers.reset_noise()
+            if self.config.dueling:
+                self.value_layer.reset_noise()
+                self.advantage_layer.reset_noise()
+
+    def remove_noise(self):
+        if self.config.noisy_sigma != 0:
+            if self.has_residual_layers:
+                self.residual_layers.remove_noise()
+            if self.has_conv_layers:
+                self.conv_layers.remove_noise()
+            if self.has_dense_layers:
+                self.dense_layers.remove_noise()
+            if self.has_value_hidden_layers:
+                self.value_hidden_layers.remove_noise()
+            if self.has_advantage_hidden_layers:
+                self.advantage_hidden_layers.remove_noise()
+            if self.config.dueling:
+                self.value_layer.remove_noise()
+                self.advantage_layer.remove_noise()
+
+
+from time import time
+import numpy as np
+import operator
+from typing import Callable
 
 
 class SegmentTree:
@@ -2368,9 +3132,9 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         self.advantage_buffer[path_slice] = discounted_cumulative_sums(
             deltas, self.gamma * self.gae_lambda
         )
-        self.return_buffer[path_slice] = discounted_cumulative_sums(
-            rewards, self.gamma
-        )[:-1]
+        self.return_buffer[path_slice] = discounted_cumulative_sums(rewards, self.gamma)[
+            :-1
+        ]
         # print(discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda))
         # print(discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)[:-1])
         # print(self.advantage_buffer)
@@ -2451,9 +3215,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
 
     def clear(self):
         super().clear()
-        self.n_step_buffers = [
-            deque(maxlen=self.n_step) for q in range(self.num_players)
-        ]
+        self.n_step_buffers = [deque(maxlen=self.n_step) for q in range(self.num_players)]
 
     def _get_n_step_info(self, player: int = 0):
         reward, next_observation, next_info, done = self.n_step_buffers[player][-1][-4:]
@@ -2613,9 +3375,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             assert priorities.shape == ids.shape == indices.shape
 
             for index, id, priority in zip(indices, ids, priorities):
-                assert (
-                    priority > 0
-                ), "Negative priority: {} \n All priorities {}".format(
+                assert priority > 0, "Negative priority: {} \n All priorities {}".format(
                     priority, priorities
                 )
                 assert 0 <= index < len(self)
@@ -2777,726 +3537,6 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
             self.tree.update(index + self.tree.capacity - 1, priority**self.alpha)
 
 
-def unpack(x: int | Tuple):
-    if isinstance(x, Tuple):
-        assert len(x) == 2
-        return x
-    else:
-        try:
-            x = int(x)
-            return x, x
-        except Exception as e:
-            print(f"error converting {x} to int: ", e)
-
-
-class Conv2dStack(nn.Module):
-    @staticmethod
-    def calculate_same_padding(i, k, s) -> Tuple[None | Tuple[int], None | str | Tuple]:
-        """Calculate pytorch inputs for same padding
-        Args:
-            i (int, int) or int: (h, w) or (w, w)
-            k (int, int) or int: (k_h, k_w) or (k, k)
-            s (int, int) or int: (s_h, s_w) or (s, s)
-        Returns:
-            Tuple[manual_pad_padding, torch_conv2d_padding_input]: Either the manual padding that must be applied (first element of tuple) or the input to the torch padding argument of the Conv2d layer
-        """
-
-        if s == 1:
-            return None, "same"
-        h, w = unpack(i)
-        k_h, k_w = unpack(k)
-        s_h, s_w = unpack(s)
-        p_h = calculate_padding(h, k_h, s_h)
-        p_w = calculate_padding(w, k_w, s_w)
-        if p_h[0] == p_h[1] and p_w[0] == p_w[1]:
-            return None, (p_h[0], p_w[0])
-        else:
-            # not torch compatiable, manually pad with torch.nn.functional.pad
-            return (*p_w, *p_h), None
-
-    def __init__(
-        self,
-        input_shape: tuple[int],
-        filters: list[int],
-        kernel_sizes: list[int | Tuple[int, int]],
-        strides: list[int | Tuple[int, int]],
-        activation: nn.Module = nn.ReLU(),
-        noisy_sigma: float = 0,
-    ):
-        """A sequence of convolution layers with the activation function applied after each layer.
-        Always applies the minimum zero-padding that ensures the output shape is equal to the input shape.
-        Input shape in "BCHW" form, i.e. (batch_size, input_channels, height, width)
-        """
-        super(Conv2dStack, self).__init__()
-        self.conv_layers = nn.ModuleList()
-
-        self.activation = activation
-
-        # [B, C_in, H, W]
-        assert len(input_shape) == 4
-        assert len(filters) == len(kernel_sizes) == len(strides)
-        assert len(filters) > 0
-
-        self.noisy = noisy_sigma != 0
-        if self.noisy:
-            print("warning: Noisy convolutions not implemented yet")
-            # raise NotImplementedError("")
-
-        current_input_channels = input_shape[1]
-        for i in range(len(filters)):
-
-            h, w = input_shape[2], input_shape[3]
-            manual_padding, torch_padding = self.calculate_same_padding(
-                (h, w), kernel_sizes[i], strides[i]
-            )
-
-            if not torch_padding is None:
-                layer = nn.Conv2d(
-                    in_channels=current_input_channels,
-                    out_channels=filters[i],
-                    kernel_size=kernel_sizes[i],
-                    stride=strides[i],
-                    padding=torch_padding,
-                )
-            else:
-                layer = nn.Sequential(
-                    nn.ZeroPad2d(manual_padding),
-                    nn.Conv2d(
-                        in_channels=current_input_channels,
-                        out_channels=filters[i],
-                        kernel_size=kernel_sizes[i],
-                        stride=strides[i],
-                    ),
-                )
-
-            self.conv_layers.append(layer)
-            current_input_channels = filters[i]
-
-        self._output_len = current_input_channels
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        def initialize_if_conv(m: nn.Module):
-            if isinstance(m, nn.Conv2d):
-                initializer(m.weight)
-
-        self.apply(initialize_if_conv)
-
-    def forward(self, inputs):
-        x = inputs
-        for layer in self.conv_layers:
-            x = self.activation(layer(x))
-        return x
-
-    def reset_noise(self):
-        assert self.noisy
-
-        # noisy not implemented
-
-        # for layer in self.conv_layers:
-        #     # layer.reset_noise()
-        # return
-
-    def remove_noise(self):
-        assert self.noisy
-
-        # noisy not implemented
-
-        # for layer in self.conv_layers:
-        #     # layer.reset_noise()
-        # return
-
-    @property
-    def output_channels(self):
-        return self._output_len
-
-
-class Dense(nn.Module):
-    def __init__(
-        self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs
-    ):
-        super(Dense, self).__init__(*args, **kwargs)
-        self.layer = nn.Linear(
-            in_features=in_features, out_features=out_features, bias=bias
-        )
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        initializer(self.layer.weight)
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        return self.layer(inputs)
-
-    def extra_repr(self) -> str:
-        return self.layer.extra_repr()
-
-
-class NoisyDense(nn.Module):
-    """See https://arxiv.org/pdf/1706.10295."""
-
-    @staticmethod
-    def f(x: Tensor):
-        return x.sgn() * (x.abs().sqrt())
-
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        bias: bool = True,
-        initial_sigma: float = 0.5,
-        use_factorized: bool = True,
-    ):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.initial_sigma = initial_sigma
-        self.use_factorized = use_factorized
-        self.use_bias = bias
-
-        self.mu_w = nn.Parameter(torch.empty(out_features, in_features))
-        self.sigma_w = nn.Parameter(torch.empty(out_features, in_features))
-        self.eps_w = self.register_buffer(
-            "eps_w", torch.empty(out_features, in_features)
-        )
-        if self.use_bias:
-            self.mu_b = nn.Parameter(torch.empty(out_features))
-            self.sigma_b = nn.Parameter(torch.empty(out_features))
-            self.eps_b = self.register_buffer("eps_b", torch.empty(out_features))
-        else:
-            self.register_parameter("mu_b", None)
-            self.register_parameter("sigma_b", None)
-            self.eps_b = self.register_buffer("eps_b", None)
-
-        self.reset_parameters()
-        self.reset_noise()
-
-    def reset_noise(self) -> None:
-        if self.use_factorized:
-            eps_i = torch.randn(1, self.in_features).to(self.mu_w.device)
-            eps_j = torch.randn(self.out_features, 1).to(self.mu_w.device)
-            self.eps_w = self.f(eps_j) @ self.f(eps_i)
-            self.eps_b = self.f(eps_j).reshape(self.out_features)
-        else:
-            self.eps_w = self.f(torch.randn(self.mu_w.shape)).to(self.mu_w.device)
-            if self.use_bias:
-                self.eps_b = self.f(torch.randn(size=self.mu_b.shape)).to(
-                    self.mu_w.device
-                )
-
-    def remove_noise(self) -> None:
-        self.eps_w = torch.zeros_like(self.mu_w).to(self.mu_w.device)
-        if self.use_bias:
-            self.eps_b = torch.zeros_like(self.mu_b).to(self.mu_w.device)
-
-    def reset_parameters(self) -> None:
-        p = self.in_features
-        if self.use_factorized:
-            mu_init = 1.0 / (p**0.5)
-            sigma_init = self.initial_sigma / (p**0.5)
-        else:
-            mu_init = (3.0 / p) ** 0.5
-            sigma_init = 0.017
-
-        nn.init.constant_(self.sigma_w, sigma_init)
-        nn.init.uniform_(self.mu_w, -mu_init, mu_init)
-        if self.use_bias:
-            nn.init.constant_(self.sigma_b, sigma_init)
-            nn.init.uniform_(self.mu_b, -mu_init, mu_init)
-
-    @property
-    def weight(self):
-        return self.mu_w + self.sigma_w * self.eps_w
-
-    @property
-    def bias(self):
-        if self.use_bias:
-            return self.mu_b + self.sigma_b * self.eps_b
-        else:
-            return None
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        pass
-
-    def forward(self, input: Tensor) -> Tensor:
-        return functional.F.linear(input, self.weight, self.bias)
-
-    def extra_repr(self) -> str:
-        return f"in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, initial_sigma={self.initial_sigma}, use_factorized={self.use_factorized}"
-
-
-def build_dense(in_features: int, out_features: int, sigma: float = 0):
-    if sigma == 0:
-        return Dense(in_features, out_features)
-    else:
-        return NoisyDense(in_features, out_features)
-
-
-class DenseStack(nn.Module):
-    def __init__(
-        self,
-        initial_width: int,
-        widths: list[int],
-        activation: nn.Module = nn.ReLU(),
-        noisy_sigma: float = 0,
-    ):
-        super(DenseStack, self).__init__()
-        self.dense_layers: nn.ModuleList = nn.ModuleList()
-        self.activation = activation
-
-        assert len(widths) > 0
-        self.noisy = noisy_sigma != 0
-
-        current_input_width = initial_width
-        for i in range(len(widths)):
-            layer = build_dense(
-                in_features=current_input_width,
-                out_features=widths[i],
-                sigma=noisy_sigma,
-            )
-            self.dense_layers.append(layer)
-            current_input_width = widths[i]
-
-        self.initial_width = initial_width
-        self._output_len = current_input_width
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        for layer in self.dense_layers:
-            layer.initialize(initializer)
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        x = inputs
-        for layer in self.dense_layers:
-            x = self.activation(layer(x))
-        return x
-
-    def reset_noise(self) -> None:
-        assert self.noisy
-
-        for layer in self.dense_layers:
-            layer.reset_noise()
-        return
-
-    def remove_noise(self) -> None:
-        assert self.noisy
-
-        for layer in self.dense_layers:
-            layer.remove_noise()
-        return
-
-    def extra_repr(self) -> str:
-        return f"in_features={self.initial_width}, out_width={self.output_width}, noisy={self.noisy}"
-
-    @property
-    def output_width(self):
-        return self._output_len
-
-
-class ResidualStack(nn.Module):
-    def __init__(
-        self,
-        input_shape: tuple[int],
-        filters: list[int],
-        kernel_sizes: list[int | Tuple[int, int]],
-        strides: list[int | Tuple[int, int]],
-        activation: nn.Module = nn.ReLU(),
-        noisy_sigma: float = 0,
-    ):
-        """A sequence of residual layers with the activation function applied after each layer.
-        Always applies the minimum zero-padding that ensures the output shape is equal to the input shape.
-        Input shape in "BCHW" form, i.e. (batch_size, input_channels, height, width)
-        """
-        super(ResidualStack, self).__init__()
-        self.residual_layers = nn.ModuleList()
-
-        self.activation = activation
-
-        # [B, C_in, H, W]
-        assert (
-            len(input_shape) == 4
-            and len(filters) == len(kernel_sizes) == len(strides)
-            and len(filters) > 0
-        )
-
-        self.noisy = noisy_sigma != 0
-        if self.noisy:
-            print("warning: Noisy convolutions not implemented yet")
-            # raise NotImplementedError("")
-
-        current_input_channels = input_shape[1]
-
-        for i in range(len(filters)):
-            print(current_input_channels)
-            layer = Residual(
-                in_channels=current_input_channels,
-                out_channels=filters[i],
-                kernel_size=kernel_sizes[i],
-                stride=strides[i],
-            )
-            self.residual_layers.append(layer)
-            current_input_channels = filters[i]
-
-        self._output_len = current_input_channels
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        def initialize_if_conv(m: nn.Module):
-            if isinstance(m, nn.Conv2d):
-                initializer(m.weight)
-
-        self.apply(initialize_if_conv)
-
-    def forward(self, inputs):
-        x = inputs
-        for layer in self.residual_layers:
-            x = self.activation(layer(x))
-        return x
-
-    def reset_noise(self):
-        assert self.noisy
-
-        # noisy not implemented
-
-        # for layer in self.conv_layers:
-        #     # layer.reset_noise()
-        # return
-
-    def remove_noise(self):
-        assert self.noisy
-
-        # noisy not implemented
-
-        # for layer in self.conv_layers:
-        #     # layer.reset_noise()
-        # return
-
-    @property
-    def output_channels(self):
-        return self._output_len
-
-
-class Residual(nn.Module):
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride,
-    ):
-        super(Residual, self).__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding="same",
-        )
-
-        # REGULARIZATION?
-        self.bn1 = nn.BatchNorm2d(
-            num_features=out_channels,
-        )
-
-        self.conv2 = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding="same",
-        )
-
-        # REGULARIZATION?
-        self.bn2 = nn.BatchNorm2d(
-            num_features=out_channels,
-        )
-
-        self.relu = nn.ReLU()
-        self.downsample = None
-        if in_channels != out_channels:
-            self.downsample = nn.Sequential(
-                nn.Conv2d(
-                    in_channels=in_channels,
-                    out_channels=out_channels,
-                    kernel_size=kernel_size,
-                    padding="same",
-                    bias=False,
-                ),
-                nn.BatchNorm2d(out_channels),
-            )
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        def initialize_if_conv(m: nn.Module):
-            if isinstance(m, nn.Conv2d):
-                initializer(m.weight)
-
-        self.apply(initialize_if_conv)
-
-    def forward(self, inputs):
-        residual = self.downsample(inputs) if self.downsample else inputs
-
-        x = self.conv1(inputs)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x + residual)
-        return x
-
-
-class RainbowNetwork(nn.Module):
-    def __init__(
-        self,
-        config: RainbowConfig,
-        output_size: int,
-        input_shape: Tuple[int],
-        *args,
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.config = config
-        self.has_residual_layers = len(config.residual_layers) > 0
-        self.has_conv_layers = len(config.conv_layers) > 0
-        self.has_dense_layers = len(config.dense_layer_widths) > 0
-        assert (
-            self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
-        ), "At least one of the layers should be present."
-
-        self.has_value_hidden_layers = len(config.value_hidden_layer_widths) > 0
-        self.has_advantage_hidden_layers = len(config.advantage_hidden_layer_widths) > 0
-        if not self.config.dueling:
-            assert not (
-                self.has_value_hidden_layers or self.has_advantage_hidden_layers
-            ), "Value or Advantage hidden layers are only used in dueling networks"
-
-        self.output_size = output_size
-
-        current_shape = input_shape
-        B = current_shape[0]
-
-        if self.has_residual_layers:
-            assert (
-                len(input_shape) == 4
-            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
-            filters, kernel_sizes, strides = to_lists(config.residual_layers)
-
-            # (B, C_in, H, W) -> (B, C_out H, W)
-            self.residual_layers = ResidualStack(
-                input_shape=input_shape,
-                filters=filters,
-                kernel_sizes=kernel_sizes,
-                strides=strides,
-                activation=self.config.activation,
-                noisy_sigma=config.noisy_sigma,
-            )
-            current_shape = (
-                B,
-                self.residual_layers.output_channels,
-                current_shape[2],
-                current_shape[3],
-            )
-
-        if self.has_conv_layers:
-            assert (
-                len(input_shape) == 4
-            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
-            filters, kernel_sizes, strides = to_lists(config.conv_layers)
-
-            # (B, C_in, H, W) -> (B, C_out H, W)
-            self.conv_layers = Conv2dStack(
-                input_shape=input_shape,
-                filters=filters,
-                kernel_sizes=kernel_sizes,
-                strides=strides,
-                activation=self.config.activation,
-                noisy_sigma=config.noisy_sigma,
-            )
-            current_shape = (
-                B,
-                self.conv_layers.output_channels,
-                current_shape[2],
-                current_shape[3],
-            )
-
-        if self.has_dense_layers:
-            if len(current_shape) == 4:
-                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
-            else:
-                assert len(current_shape) == 2
-                initial_width = current_shape[1]
-
-            # (B, width_in) -> (B, width_out)
-            self.dense_layers = DenseStack(
-                initial_width=initial_width,
-                widths=self.config.dense_layer_widths,
-                activation=self.config.activation,
-                noisy_sigma=self.config.noisy_sigma,
-            )
-            current_shape = (
-                B,
-                self.dense_layers.output_width,
-            )
-
-        if len(current_shape) == 4:
-            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
-        else:
-            assert (
-                len(current_shape) == 2
-            ), "Input shape should be (B, width), got {}".format(current_shape)
-            initial_width = current_shape[1]
-
-        if self.config.dueling:
-            if self.has_value_hidden_layers:
-                # (B, width_in) -> (B, value_in_features) -> (B, atom_size)
-                self.value_hidden_layers = DenseStack(
-                    initial_width=initial_width,
-                    widths=self.config.value_hidden_layer_widths,
-                    activation=self.config.activation,
-                    noisy_sigma=self.config.noisy_sigma,
-                )
-                value_in_features = self.value_hidden_layers.output_width
-            else:
-                value_in_features = initial_width
-            # (B, value_in_features) -> (B, atom_size)
-            self.value_layer = build_dense(
-                in_features=value_in_features,
-                out_features=config.atom_size,
-                sigma=config.noisy_sigma,
-            )
-
-            if self.has_advantage_hidden_layers:
-                # (B, width_in) -> (B, advantage_in_features)
-                self.advantage_hidden_layers = DenseStack(
-                    initial_width=initial_width,
-                    widths=self.config.advantage_hidden_layer_widths,
-                    activation=self.config.activation,
-                    noisy_sigma=self.config.noisy_sigma,
-                )
-                advantage_in_features = self.advantage_hidden_layers.output_width
-            else:
-                advantage_in_features = initial_width
-            # (B, advantage_in_features) -> (B, output_size * atom_size)
-            self.advantage_layer = build_dense(
-                in_features=advantage_in_features,
-                out_features=output_size * config.atom_size,
-                sigma=self.config.noisy_sigma,
-            )
-        else:
-            self.distribution_layer = build_dense(
-                in_features=initial_width,
-                out_features=self.output_size * self.config.atom_size,
-                sigma=self.config.noisy_sigma,
-            )
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        if self.has_residual_layers:
-            self.residual_layers.initialize(initializer)
-        if self.has_conv_layers:
-            self.conv_layers.initialize(initializer)
-        if self.has_dense_layers:
-            self.dense_layers.initialize(initializer)
-        if self.has_value_hidden_layers:
-            self.value_hidden_layers.initialize(initializer)
-        if self.has_advantage_hidden_layers:
-            self.advantage_hidden_layers.initialize(initializer)
-        if self.config.dueling:
-            self.value_layer.initialize(initializer)
-            self.advantage_layer.initialize(initializer)
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        if self.has_conv_layers:
-            assert inputs.dim() == 4
-
-        # (B, *)
-        S = inputs
-        # (B, C_in, H, W) -> (B, C_out, H, W)
-        if self.has_residual_layers:
-            S = self.residual_layers(S)
-
-        # (B, C_in, H, W) -> (B, C_out, H, W)
-        if self.has_conv_layers:
-            S = self.conv_layers(S)
-
-        # (B, *) -> (B, dense_features_in)
-        S = S.flatten(1, -1)
-
-        # (B, dense_features_in) -> (B, dense_features_out)
-        if self.has_dense_layers:
-            S = self.dense_layers(S)
-
-        if self.config.dueling:
-            # (B, value_hidden_in) -> (B, value_hidden_out)
-            if self.has_value_hidden_layers:
-                v = self.value_hidden_layers(S)
-            else:
-                v = S
-
-            # (B, value_hidden_in || dense_features_out) -> (B, atom_size) -> (B, 1, atom_size)
-            v: Tensor = self.value_layer(v).view(-1, 1, self.config.atom_size)
-
-            # (B, adv_hidden_in) -> (B, adv_hidden_out)
-            if self.has_advantage_hidden_layers:
-                A = self.advantage_hidden_layers(S)
-            else:
-                A = S
-
-            # (B, adv_hidden_out || dense_features_out) -> (B, output_size * atom_size) -> (B, output_size, atom_size)
-            A: Tensor = self.advantage_layer(A).view(
-                -1, self.output_size, self.config.atom_size
-            )
-
-            # (B, output_size, atom_size) -[mean(1)]-> (B, 1, atom_size)
-            a_mean = A.mean(1, keepdim=True)
-
-            # (B, 1, atom_size) +
-            # (B, output_size, atom_size) +
-            # (B, 1, atom_size)
-            # is valid broadcasting operation
-            Q = v + A - a_mean
-
-            # -[softmax(2)]-> turns the atom dimension into a valid p.d.f.
-            # ONLY CLIP FOR CATEGORICAL CROSS ENTROPY LOSS TO PREVENT NAN
-            # MIGHT BE ABLE TO REMOVE CLIPPING ENTIRELY SINCE I DONT THINK THE TENSORFLOW LOSSES CAN RETURN NaN
-            # q.clip(1e-3, 1)
-        else:
-            # (B, dense_features_out) -> (B, output_size, atom_size)
-            Q = self.distribution_layer(S).view(
-                -1, self.output_size, self.config.atom_size
-            )
-
-        if self.config.atom_size == 1:
-            return Q.squeeze(-1)
-        else:
-            return Q.softmax(dim=-1)
-
-    def reset_noise(self):
-        if self.config.noisy_sigma != 0:
-            if self.has_residual_layers:
-                self.residual_layers.reset_noise()
-            if self.has_conv_layers:
-                self.conv_layers.reset_noise()
-            if self.has_dense_layers:
-                self.dense_layers.reset_noise()
-            if self.has_value_hidden_layers:
-                self.value_hidden_layers.reset_noise()
-            if self.has_advantage_hidden_layers:
-                self.advantage_hidden_layers.reset_noise()
-            if self.config.dueling:
-                self.value_layer.reset_noise()
-                self.advantage_layer.reset_noise()
-
-    def remove_noise(self):
-        if self.config.noisy_sigma != 0:
-            if self.has_residual_layers:
-                self.residual_layers.remove_noise()
-            if self.has_conv_layers:
-                self.conv_layers.remove_noise()
-            if self.has_dense_layers:
-                self.dense_layers.remove_noise()
-            if self.has_value_hidden_layers:
-                self.value_hidden_layers.remove_noise()
-            if self.has_advantage_hidden_layers:
-                self.advantage_hidden_layers.remove_noise()
-            if self.config.dueling:
-                self.value_layer.remove_noise()
-                self.advantage_layer.remove_noise()
-
-
 class RainbowAgent(BaseAgent):
     def __init__(
         self,
@@ -3513,7 +3553,7 @@ class RainbowAgent(BaseAgent):
                 else torch.device("cpu")
             )
         ),
-        num_players: int = 1,
+        from_checkpoint=False,
     ):
         super(RainbowAgent, self).__init__(env, config, name, device=device)
         self.model = RainbowNetwork(
@@ -3565,7 +3605,7 @@ class RainbowAgent(BaseAgent):
             compressed_observations=(
                 self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
             ),
-            num_players=num_players,
+            num_players=self.config.game.num_players,
         )
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
@@ -3593,6 +3633,15 @@ class RainbowAgent(BaseAgent):
             "test_score": self.env.spec.reward_threshold,
         }
 
+    def checkpoint_model_weights(self, checkpoint):
+        checkpoint = super().checkpoint_model_weights(checkpoint)
+        checkpoint["target_model"] = self.target_model.state_dict()
+
+    def load_model_weights(self, checkpoint):
+        self.model.load_state_dict(checkpoint["model"])
+        self.target_model.load_state_dict(checkpoint["target_model"])
+        self.target_model.eval()
+
     def predict(self, states, *args, **kwargs) -> torch.Tensor:
         # could change type later
         state_input = self.preprocess(states)
@@ -3605,9 +3654,7 @@ class RainbowAgent(BaseAgent):
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(
-        self, distribution, info: dict = None, mask_actions: bool = True
-    ):
+    def select_actions(self, distribution, info: dict = None, mask_actions: bool = True):
         assert info is not None if mask_actions else True, "Need info to mask actions"
         # print(info)
         if self.config.atom_size > 1:
@@ -3659,9 +3706,7 @@ class RainbowAgent(BaseAgent):
         # print(online_predictions)
         # (B, atom_size)
         if self.config.atom_size > 1:
-            assert isinstance(
-                self.config.loss_function, KLDivergenceLoss
-            ) or isinstance(
+            assert isinstance(self.config.loss_function, KLDivergenceLoss) or isinstance(
                 self.config.loss_function, CategoricalCrossentropyLoss
             ), "Only KLDivergenceLoss and CategoricalCrossentropyLoss are supported for atom_size > 1, recieved {}".format(
                 self.config.loss_function
@@ -3804,10 +3849,15 @@ class RainbowAgent(BaseAgent):
             return m
 
     def fill_replay_buffer(self):
+        print("replay buffer size:", self.replay_buffer.size)
         with torch.no_grad():
             state, info = self.env.reset()
-            for i in range(self.config.min_replay_buffer_size + self.config.n_step - 1):
-                print("filling replay buffer", i)
+            target_size = self.config.min_replay_buffer_size
+            while self.replay_buffer.size < target_size:
+                if (self.replay_buffer.size % (target_size // 100)) == 0:
+                    print(
+                        f"filling replay buffer: {self.replay_buffer.size} / ({target_size})"
+                    )
                 # dist = self.predict(state)
                 # action = self.select_actions(dist).item()
                 action = self.env.action_space.sample()
@@ -3833,7 +3883,7 @@ class RainbowAgent(BaseAgent):
         else:
             self.target_model.load_state_dict(self.model.state_dict())
 
-    def update_eg_epsilon(self, training_step: int):
+    def update_eg_epsilon(self, training_step):
         if self.config.eg_epsilon_decay_type == "linear":
             # print("decaying eg epsilon linearly")
             self.eg_epsilon = update_linear_schedule(
@@ -3849,22 +3899,22 @@ class RainbowAgent(BaseAgent):
             )
         else:
             raise ValueError(
-                "Invalid epsilon decay type: {}".format(
-                    self.config.eg_epsilon_decay_type
-                )
+                "Invalid epsilon decay type: {}".format(self.config.eg_epsilon_decay_type)
             )
 
     def train(self):
-        start_time = time()
+        super().train()
+        start_time = time() - self.training_time
         score = 0
         target_model_updated = (False, False)  # (score, loss)
-
         self.fill_replay_buffer()
+
         state, info = self.env.reset()
 
-        # self.training_steps += self.start_training_step
-        for training_step in range(self.start_training_step, self.training_steps):
-            print("training step", training_step)
+        while self.training_step < self.config.training_steps:
+            if self.training_step % self.config.print_interval == 0:
+                self.print_training_progress()
+
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     values = self.predict(state)
@@ -3879,8 +3929,8 @@ class RainbowAgent(BaseAgent):
                     )
                     # print("Action", action)
                     # print("Epislon Greedy Epsilon", self.eg_epsilon)
-                    next_state, reward, terminated, truncated, next_info = (
-                        self.env.step(action)
+                    next_state, reward, terminated, truncated, next_info = self.env.step(
+                        action
                     )
                     done = terminated or truncated
                     # print("State", state)
@@ -3909,7 +3959,7 @@ class RainbowAgent(BaseAgent):
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
 
-            self.update_eg_epsilon(training_step + 1)
+            self.update_eg_epsilon(self.training_step + 1)
             # print("replay buffer size", len(self.replay_buffer))
             for minibatch in range(self.config.num_minibatches):
                 if len(self.replay_buffer) < self.config.min_replay_buffer_size:
@@ -3923,38 +3973,32 @@ class RainbowAgent(BaseAgent):
                 )
                 target_model_updated = (target_model_updated[0], False)
 
-            if training_step % self.config.transfer_interval == 0:
+            if self.training_step % self.config.transfer_interval == 0:
                 target_model_updated = (True, True)
                 # stats["test_score"].append(
                 #     {"target_model_weight_update": training_step}
                 # )
                 self.update_target_model()
 
-            if (
-                training_step % self.checkpoint_interval == 0
-                and training_step > self.start_training_step
-            ):
+            if self.training_step % self.checkpoint_interval == 0:
                 # print(self.stats["score"])
                 # print(len(self.replay_buffer))
-                self.save_checkpoint(
-                    training_step,
-                    training_step * self.config.replay_interval,
-                    time() - start_time,
+                self.training_time = time() - start_time
+                self.total_environment_steps = (
+                    self.training_step * self.config.replay_interval
                 )
+                self.save_checkpoint()
             # gc.collect()
+            self.training_step += 1
 
-        self.save_checkpoint(
-            training_step,
-            training_step * self.config.replay_interval,
-            time() - start_time,
-        )
+        self.training_time = time() - start_time
+        self.total_environment_steps = self.training_step * self.config.replay_interval
+        self.save_checkpoint()
         self.env.close()
 
-    def load_model_weights(self, weights_path: str):
-        state_dict = torch.load(weights_path)
-        self.model.load_state_dict(state_dict)
-        self.target_model.load_state_dict(self.model.state_dict())
 
+from gymnasium.wrappers import AtariPreprocessing, FrameStack
+import numpy as np
 
 config_dict = {
     "conv_layers": [
@@ -3967,13 +4011,13 @@ config_dict = {
     "advatage_hidden_layers_widths": [],  #
     "adam_epsilon": 1.5e-4,
     "learning_rate": 0.00025 / 4,
-    "training_steps": 500000,  # 50000000 Agent saw 200,000,000 frames
+    "training_steps": 50000000,  # Agent saw 200,000,000 frames
     "per_epsilon": 1e-6,  #
     "per_alpha": 0.5,
     "per_beta": 0.4,
     "minibatch_size": 32,
-    "replay_buffer_size": 750000,  # 1000000
-    "min_replay_buffer_size": 80000,
+    "replay_buffer_size": 1000000,
+    "min_replay_buffer_size": 80000,  # 80000
     "transfer_interval": 32000,
     "n_step": 3,
     "kernel_initializer": "orthogonal",  #
@@ -3983,6 +4027,8 @@ config_dict = {
     "atom_size": 51,
     "replay_interval": 4,
 }
+
+
 game_config = AtariConfig()
 config = RainbowConfig(config_dict, game_config)
 
@@ -4001,10 +4047,8 @@ class ClipReward(gym.RewardWrapper):
 env = gym.make(
     "MsPacmanNoFrameskip-v4", render_mode="rgb_array", max_episode_steps=108000
 )
-env = AtariPreprocessing(
-    env
-)  # terminal_on_life_loss=True we will need to change the resetting to check if lives is 0 instead of just checking if done
-env = FrameStack(env, 4)
+env = AtariPreprocessing(env, terminal_on_life_loss=True)
+env = FrameStack(env, 4, lz4_compress=True)
 agent = RainbowAgent(env, config, name="Rainbow_Atari_MsPacmanNoFrameskip-v4")
-agent.checkpoint_interval = 100
+agent.checkpoint_interval = 1000
 agent.train()
