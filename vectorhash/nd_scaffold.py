@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
+from vectorhash_functions import int_repr_onehot
 
 
 class GridModule:
@@ -63,11 +64,9 @@ class GridModule:
         return (torch.einsum(einsum_str, *pdfs).flatten() / self.T).softmax(dim=0)
 
     def shift(self, v):
-        print("before shift:", self.onehot())
         self.state = torch.roll(
-            self.state, (1, 0, 0), dims=tuple(i for i in range(len(self.shape)))
+            self.state, (1, 0, 1), dims=tuple(i for i in range(len(self.shape)))
         )
-        print("after shift:", self.onehot())
 
 
 class GridScaffold:
@@ -266,7 +265,6 @@ class GridScaffold:
         """
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
         for _ in range(num_iterations):
-            print("storing memory in:", self.g)
             h = torch.relu(self.W_hg @ self.g - self.relu_theta)
 
             self.W_gh += self.calculate_update(input=h, output=self.g)
@@ -321,11 +319,11 @@ class GridScaffold:
         H_ = self.hippocampal_from_grid(G_)
         S_ = self.sensory_from_hippocampal(H_)
 
-        print("H:", H)
-        print("G:", G)
-        print("G_:", G_)
-        print("G_[0]:", G_[0])
-        print("denoised_H:", H_)
+        # print("H:", H)
+        # print("G:", G)
+        # print("G_:", G_)
+        # print("G_[0]:", G_[0])
+        # print("denoised_H:", H_)
 
         return S_
 
