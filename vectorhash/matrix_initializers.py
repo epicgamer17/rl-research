@@ -15,10 +15,8 @@ class SparseMatrixBySparsityInitializer(SparseMatrixInitializer):
         self.sparsity = sparsity
 
     def __call__(self, shape):
-        return (
-            torch.normal(0, 1, shape, device=self.device)
-            * (torch.rand(shape, device=self.device) < self.sparsity).float()
-        )
+        mask = (torch.rand(shape, device=self.device) < self.sparsity).float()
+        return torch.normal(0, 1, shape, device=self.device) * mask
 
 
 class SparseMatrixByScalingInitializer(SparseMatrixInitializer):
