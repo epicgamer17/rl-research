@@ -11,11 +11,16 @@ class SparseMatrixInitializer:
 
 class SparseMatrixBySparsityInitializer(SparseMatrixInitializer):
     def __init__(self, sparsity, device=None):
+        """
+
+        :param sparsity: float, sparsity of the matrix. sparsity = 1 means all zeros, sparsity = 0 means no zeros
+
+        """
         super().__init__(device=device)
         self.sparsity = sparsity
 
     def __call__(self, shape):
-        mask = (torch.rand(shape, device=self.device) < self.sparsity).float()
+        mask = (torch.rand(shape, device=self.device) < 1-self.sparsity).float()
         return torch.normal(0, 1, shape, device=self.device) * mask
 
 
