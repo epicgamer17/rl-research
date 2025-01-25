@@ -4,12 +4,14 @@ from matrix_initializers import SparseMatrixBySparsityInitializer
 
 
 class GridModule:
-    def __init__(self, shape: tuple[int], device=None) -> None:
+    def __init__(self, shape: tuple[int], device=None, T=1) -> None:
         self.shape = shape
         # self.state = torch.rand(shape, device=device)
         self.state = torch.zeros(shape, device=device)
         self.state[0, 0, 0] = 1
         self.l = torch.prod(torch.tensor(shape)).item()
+        self.T = T
+        self.device = device
 
     def denoise_onehot(self, onehot: torch.Tensor):
         if onehot.ndim == 1:
@@ -31,23 +33,25 @@ class GridModule:
         if state.ndim == len(self.shape):
             state = state.unsqueeze(0)
 
-        dims = [i for i in range(1, len(self.shape)+1)]  # 1, 2, ..., n
+        dims = [i for i in range(1, len(self.shape) + 1)]  # 1, 2, ..., n
         maxes = torch.amax(state, dim=dims, keepdim=True)
         state = torch.where(
             state == maxes, torch.ones_like(state), torch.zeros_like(state)
         )
         scaled = state / torch.sum(state, dim=dims, keepdim=True)
+        assert torch.allclose(
+            torch.sum(scaled, dim=dims), torch.ones(state.shape[0], device=state.device)
+        )
         return scaled
 
     def denoise_self(self):
-        self.state = self.denoise(self.state)
+        self.state = self.denoise(self.state).squeeze(0)
 
     def onehot(self):
         pdfs = list()
         dims = range(len(self.shape))
         for i in range(len(self.shape)):
-            s = torch.sum(self.state, dim=[j for j in dims if j != i])
-            pdf = torch.nn.functional.softmax(s)
+            pdf = torch.sum(self.state, dim=[j for j in dims if j != i])
             pdfs.append(pdf)
 
         einsum_indices = [
@@ -56,10 +60,14 @@ class GridModule:
         einsum_str = (
             ",".join(einsum_indices) + "->" + "".join(einsum_indices)
         )  # a,b,c, ...->abc...
-        return torch.einsum(einsum_str, *pdfs).flatten()
+        return (torch.einsum(einsum_str, *pdfs).flatten() / self.T).softmax(dim=0)
 
     def shift(self, v):
-        self.state = torch.roll(self.state, (1,1,0), dims=tuple(i for i in range(len(self.shape))))
+        print("before shift:", self.onehot())
+        self.state = torch.roll(
+            self.state, (1, 0, 0), dims=tuple(i for i in range(len(self.shape)))
+        )
+        print("after shift:", self.onehot())
 
 
 class GridScaffold:
@@ -72,6 +80,7 @@ class GridScaffold:
         sparse_matrix_initializer=None,
         relu_theta=0.5,
         from_checkpoint=False,
+        T=1,
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
@@ -81,7 +90,7 @@ class GridScaffold:
         if from_checkpoint:
             return
 
-        self.modules = [GridModule(shape, device=device) for shape in shapes]
+        self.modules = [GridModule(shape, device=device, T=T) for shape in shapes]
         self.N_g = sum([module.l for module in self.modules])
         self.N_patts = np.prod([module.l for module in self.modules]).item()
         self.N_h = N_h
@@ -241,7 +250,9 @@ class GridScaffold:
         # input: (N)
         # output: (M)
         # M: (M x N)
-        ret = (torch.einsum("i,j->ji", input, output)) / (torch.linalg.norm(input) ** 2 + 1e-8)
+        ret = (torch.einsum("i,j->ji", input, output)) / (
+            torch.linalg.norm(input) ** 2 + 1e-8
+        )
         return ret
 
     @torch.no_grad()
@@ -255,9 +266,7 @@ class GridScaffold:
         """
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
         for _ in range(num_iterations):
-            print("g:", self.g)
-            print("h:", s)
-
+            print("storing memory in:", self.g)
             h = torch.relu(self.W_hg @ self.g - self.relu_theta)
 
             self.W_gh += self.calculate_update(input=h, output=self.g)
@@ -268,6 +277,7 @@ class GridScaffold:
     def shift(self, velocity):
         for module in self.modules:
             module.shift(velocity)
+        self.g = self._g()
 
     @torch.no_grad()
     def denoise(self, G):
@@ -278,14 +288,16 @@ class GridScaffold:
         Output shape: `(B, N_g)`
 
         Args:
-            G (_type_): Batch of grid coding states to denoise.
+            G: Batch of grid coding states to denoise.
         """
         if G.ndim == 1:
             G = G.unsqueeze(0)
 
-        for i, module in enumerate(self.modules):
-            G[:, i : i + module.l] = module.denoise_onehot(G[:, i : i + module.l])
-        
+        pos = 0
+        for module in self.modules:
+            G[:, pos : pos + module.l] = module.denoise_onehot(G[:, pos : pos + module.l])
+            pos += module.l
+
         return G
 
     @torch.no_grad()
@@ -311,6 +323,8 @@ class GridScaffold:
 
         print("H:", H)
         print("G:", G)
+        print("G_:", G_)
+        print("G_[0]:", G_[0])
         print("denoised_H:", H_)
 
         return S_
