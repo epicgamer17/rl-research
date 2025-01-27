@@ -395,3 +395,41 @@ class GridScaffold:
 
     def plot_cans(self):
         pass
+
+    def spacefillingcurve(modules):
+        velocities = []
+        addcurves(n, modules)
+        return velocities
+        
+    def addcurves(n, mods):
+        m = len(mods[1])
+        if n!=1:
+            ## gets the product of the modules for that dimension
+            a = 1
+            for modules in mods:
+                a = a * modules[n]
+            for i in (a-1):
+                ## in spot so add curve(n-1, mods)
+                addcurves(n-1, mods)
+                ## add a vector of dimesnion n, all 0 but a 1 in the nth dimension
+                b = torch.zeros(m)
+                b[n] = 1
+                velocities.append(b)
+            ## now add one last vector like a[n] + a[n+1]
+            a = torch.zeros(m)
+            a[n] = 1
+            a[n+1] = 1
+            velocities.append(a)
+        else:
+            a=1
+            for modules in mods:
+                a = a * modules[n]
+            for i in (a-1):
+                b = torch.zeros(m)
+                b[1] = 1
+                velocities.append(b)
+            a = torch.zeros(m)
+            a[n] = 1
+            a[n+1] = 1
+            velocities.append(a)
+            
