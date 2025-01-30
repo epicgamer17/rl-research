@@ -84,7 +84,7 @@ class GridModule:
         )  # a,b,c, ...->abc...
         return (torch.einsum(einsum_str, *pdfs).flatten() / self.T).softmax(dim=0)
 
-    def shift(self, v):
+    def shift(self, v: torch.Tensor):
         """Shifts the state of the grid module by a given velocity.
 
         Input shape: `(len(shape))`
@@ -92,8 +92,11 @@ class GridModule:
         Args:
             v: The velocity by which to shift the grid state.
         """
+        v_ = v.int()
         self.state = torch.roll(
-            self.state, (1, 0, 1), dims=tuple(i for i in range(len(self.shape)))
+            self.state,
+            tuple([v_[i].item() for i in range(len(v_))]),
+            dims=tuple(i for i in range(len(self.shape))),
         )
 
 
@@ -339,10 +342,19 @@ class GridScaffold:
 
     @torch.no_grad()
     def learn_path(self, observations, velocities):
-        """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations.
-        """
+        """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
+
+        from collections import defaultdict
+        # i =0
+        seen = defaultdict(lambda : defaultdict(int)) # debugging
         for obs, vel in zip(observations, velocities):
             self.learn(obs, vel)
+            indexes = torch.isclose(self.g, self.g.max()).nonzero().flatten()
+            if seen[indexes[0].item()][indexes[1].item()] > 0:
+                print("Seen", indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
+            seen[indexes[0].item()][indexes[1].item()] += 1
+            # if i % 100 == 0:
+            #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
 
     @torch.no_grad()
     def learn(self, observation, velocity):
@@ -395,41 +407,3 @@ class GridScaffold:
 
     def plot_cans(self):
         pass
-
-    def spacefillingcurve(modules):
-        velocities = []
-        addcurves(n, modules)
-        return velocities
-        
-    def addcurves(n, mods):
-        m = len(mods[1])
-        if n!=1:
-            ## gets the product of the modules for that dimension
-            a = 1
-            for modules in mods:
-                a = a * modules[n]
-            for i in (a-1):
-                ## in spot so add curve(n-1, mods)
-                addcurves(n-1, mods)
-                ## add a vector of dimesnion n, all 0 but a 1 in the nth dimension
-                b = torch.zeros(m)
-                b[n] = 1
-                velocities.append(b)
-            ## now add one last vector like a[n] + a[n+1]
-            a = torch.zeros(m)
-            a[n] = 1
-            a[n+1] = 1
-            velocities.append(a)
-        else:
-            a=1
-            for modules in mods:
-                a = a * modules[n]
-            for i in (a-1):
-                b = torch.zeros(m)
-                b[1] = 1
-                velocities.append(b)
-            a = torch.zeros(m)
-            a[n] = 1
-            a[n+1] = 1
-            velocities.append(a)
-            

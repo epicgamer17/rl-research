@@ -116,3 +116,47 @@ def modulo_inverse(modulo, number):
 
 if __name__ == "__main__":
     print(chinese_remainder_theorem([3,5,7], [1,2,3]))
+
+def spacefillingcurve(modules):
+    number_of_module_dims = len(modules[0])
+    assert all(len(module) == number_of_module_dims for module in modules)
+
+    return addcurves(number_of_module_dims - 1, modules, [])
+
+
+def addcurves(dim, modules, velocities):
+    dims = len(modules[0])
+
+    if dim == 0:
+        a = 1
+        for module in modules:
+            a = a * module[dim]
+        for i in range(a - 1):
+            b = torch.zeros(dims)
+            b[1] = 1
+            velocities.append(b)
+        b = torch.zeros(dims)
+        b[dim] = 1
+        b[dim + 1] = 1
+        velocities.append(b)
+        return velocities
+
+    a = 1
+    for module in modules:
+        a = a * module[dim]
+    for i in range(a-1):
+        ## in spot so add curve(n-1, mods)
+        addcurves(dim - 1, modules, velocities)
+        ## add a vector of dimesnion n, all 0 but a 1 in the nth dimension
+    ## now add one last vector like a[n] + a[n+1]
+    b = torch.zeros(dims)
+    # open the torch array and set the nth and n+1th dimension to 1
+    b[dim] = 1
+    if dim != (dims - 1):
+        b[dim + 1] = 1
+    velocities.append(b)
+    
+    return velocities
+
+modules = [(2,3), (3,4)]
+v = spacefillingcurve(modules)
