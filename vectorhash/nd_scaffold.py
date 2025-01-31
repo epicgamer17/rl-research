@@ -22,7 +22,7 @@ class GridModule:
         self.T = T
         self.device = device
 
-    def denoise_onehot(self, onehot: torch.Tensor):
+    def denoise_onehot(self, onehot: torch.Tensor) -> torch.Tensor:
         """Denoise a batch of one-hot encoded states.
 
         Input shape: `(B, l)` where l is the product of the shape of the grid.
@@ -38,7 +38,7 @@ class GridModule:
         state = onehot.view((onehot.shape[0], *self.shape))
         return self.denoise(state).flatten(1)
 
-    def denoise(self, state: torch.Tensor):
+    def denoise(self, state: torch.Tensor) -> torch.Tensor:
         """Denoise a batch of grid states. This finds the maximum value in the grid and sets it to 1, and all other values to 0.
         If there are multiple maximum values, they are all set to 1 / number of maximum values.
 
@@ -65,7 +65,7 @@ class GridModule:
         """Denoises this grid module's state"""
         self.state = self.denoise(self.state).squeeze(0)
 
-    def onehot(self):
+    def onehot(self) -> torch.Tensor:
         """Returns the one-hot encoding of the state of this grid module.
 
         Output shape: `(l)` where `l` is the product of the shape of the grid (i.e. a 3x3x4 grid has l=36).
@@ -148,6 +148,12 @@ class GridScaffold:
         """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
 
         self.W_gh = self._W_gh()  # (N_g, N_h)
+        assert torch.all(
+            self.G
+            == self.denoise(
+                self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
+            )
+        ), "G -> H -> G should preserve G"
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
         self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
 
@@ -155,7 +161,7 @@ class GridScaffold:
         self.g = self._g()
 
     @torch.no_grad()
-    def _G(self):
+    def _G(self) -> torch.Tensor:
         """Calculates the matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
         G = torch.zeros((self.N_patts, self.N_g), device=self.device)
         height = 0
@@ -167,7 +173,7 @@ class GridScaffold:
 
         return G
 
-    def _g(self):
+    def _g(self) -> torch.Tensor:
         """Calculates the current grid coding state tensor. Shape: `(N_g)`"""
         vecs = list()
         for module in self.modules:
@@ -219,7 +225,7 @@ class GridScaffold:
         return scaffold
 
     @torch.no_grad()
-    def _W_gh(self):
+    def _W_gh(self) -> torch.Tensor:
         """Calculates the matrix of weights to go from the hippocampal layer to the grid layer heteroassociatively. Shape: `(N_g, N_h)`"""
         return (
             torch.einsum("bi,bj->bij", self.G, self.H).sum(dim=0, keepdim=False)
@@ -227,7 +233,7 @@ class GridScaffold:
         )
 
     @torch.no_grad()
-    def hippocampal_from_grid(self, G: torch.Tensor):
+    def hippocampal_from_grid(self, G: torch.Tensor) -> torch.Tensor:
         """
         Input shape `(B, N_g)`
 
@@ -241,7 +247,7 @@ class GridScaffold:
         return torch.relu(G @ self.W_hg.T - self.relu_theta)
 
     @torch.no_grad()
-    def grid_from_hippocampal(self, H: torch.Tensor):
+    def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
         """
         Input shape `(B, N_h)`
 
@@ -256,7 +262,7 @@ class GridScaffold:
         return H @ self.W_gh.T
 
     @torch.no_grad()
-    def sensory_from_hippocampal(self, H: torch.Tensor):
+    def sensory_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
         """
         Input shape `(B, N_h)`
 
@@ -271,7 +277,7 @@ class GridScaffold:
         return H @ self.W_sh.T
 
     @torch.no_grad()
-    def hippocampal_from_sensory(self, S: torch.Tensor):
+    def hippocampal_from_sensory(self, S: torch.Tensor) -> torch.Tensor:
         """
         Input shape: `(B, input_size)`
 
@@ -287,12 +293,12 @@ class GridScaffold:
         return torch.relu(S @ self.W_hs.T)
 
     @torch.no_grad()
-    def calculate_update(self, input: torch.Tensor, output: torch.Tensor):
+    def calculate_update(self, input: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
         # input: (N)
         # output: (M)
         # M: (M x N)
-        ret = (torch.einsum("i,j->ji", input, output)) / (
-            torch.linalg.norm(input) ** 2 + 1e-8
+        ret = (torch.einsum("j,i->ji", output, input)) / (
+            torch.linalg.norm(input + 1e-10) ** 2
         )
         return ret
 
@@ -320,7 +326,7 @@ class GridScaffold:
         self.g = self._g()
 
     @torch.no_grad()
-    def denoise(self, G):
+    def denoise(self, G) -> torch.Tensor:
         """Denoise a batch of grid coding states.
 
         Input shape: `(B, N_g)`
@@ -335,7 +341,11 @@ class GridScaffold:
 
         pos = 0
         for module in self.modules:
-            G[:, pos : pos + module.l] = module.denoise_onehot(G[:, pos : pos + module.l])
+            x = G[:, pos : pos + module.l]
+            x_denoised = module.denoise_onehot(x)
+            # print(x)
+            # print(x_denoised)
+            G[:, pos : pos + module.l] = x_denoised
             pos += module.l
 
         return G
@@ -345,16 +355,25 @@ class GridScaffold:
         """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
 
         from collections import defaultdict
-        # i =0
-        seen = defaultdict(lambda : defaultdict(int)) # debugging
+
+        i = 0
+        seen = defaultdict(lambda: defaultdict(int))  # debugging
         for obs, vel in zip(observations, velocities):
             self.learn(obs, vel)
+
+            ################ testing
             indexes = torch.isclose(self.g, self.g.max()).nonzero().flatten()
             if seen[indexes[0].item()][indexes[1].item()] > 0:
-                print("Seen", indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
+                print(
+                    "Seen", indexes, "count:", seen[indexes[0].item()][indexes[1].item()]
+                )
             seen[indexes[0].item()][indexes[1].item()] += 1
+            not_equal = self.G != self.denoise(self.grid_from_hippocampal(self.hippocampal_from_grid(self.G)))
+            assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
             # if i % 100 == 0:
             #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
+            i += 1
+            ################ testing
 
     @torch.no_grad()
     def learn(self, observation, velocity):
@@ -367,7 +386,7 @@ class GridScaffold:
         self.shift(velocity)
 
     @torch.no_grad()
-    def recall(self, observations):
+    def recall(self, observations) -> torch.Tensor:
         """Recall a (batch of) sensory input(s) from the scaffold.
 
         Input shape: `(B, input_size)` where `B` is the batch size.
@@ -387,15 +406,26 @@ class GridScaffold:
         H_ = self.hippocampal_from_grid(G_)
         S_ = self.sensory_from_hippocampal(H_)
 
+        H_nonzero = torch.sum(H != 0, 1).float()
+        print("avg nonzero H:", torch.mean(H_nonzero).item())
+        print("Std nonzero H", torch.std(H_nonzero).item())
+        H__nonzero = torch.sum(H_ != 0, 1).float()
+        print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
+        print("Std nonzero H_denoised", torch.std(H__nonzero).item())
+
         # print("H:", H)
+        print("H_indexes:", H.nonzero())
         # print("G:", G)
+        print("G_indexes", G.nonzero())
         # print("G_:", G_)
+        print("G__indexes:", G_.nonzero())
         # print("G_[0]:", G_[0])
-        # print("denoised_H:", H_)
+        print("H__indexes:", H_.nonzero())
+        print("denoised_H:", H_)
 
         return S_
 
-    def temporal_recall(self, noisy_observations: torch.Tensor):
+    def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L113
         H_ = self.hippocampal_from_sensory(noisy_observations)
         S_ = self.sensory_from_hippocampal(H_)

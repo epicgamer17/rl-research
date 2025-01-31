@@ -1,15 +1,28 @@
+import os
+import pathlib
 import matplotlib.pyplot as plt
 from nd_scaffold import GridScaffold
 
 
-def graph_scaffold(g: GridScaffold):
+def graph_scaffold(g: GridScaffold, dir=None):
+    if dir is not None:
+        os.makedirs(dir, exist_ok=True)
+        base_path = dir
+    else:
+        base_path = '.'
+    
+    g_path = pathlib.Path(base_path, "G.png")
+    h_path = pathlib.Path(base_path, "H.png")
+    W_hg_path = pathlib.Path(base_path, "W_hg.png")
+    W_gh_path = pathlib.Path(base_path, "W_gh.png")
     # G
     fig, ax = plt.subplots(1, 1, figsize=(12, 4), dpi=600)
     ax.imshow(g.G.cpu().numpy(), cmap="gray", aspect="auto")
     ax.set_title("G")
     ax.set_ylabel("N_patts")
     ax.set_xlabel("N_g")
-    fig.savefig("G.png")
+    ax.set_aspect('equal', adjustable='box')
+    fig.savefig(g_path)
     # H
     fig, ax = plt.subplots(1, 1, figsize=(12, 4), dpi=600)
     a = ax.imshow(g.H.cpu().numpy(), cmap="gray", aspect="auto")
@@ -17,9 +30,9 @@ def graph_scaffold(g: GridScaffold):
     ax.set_xlabel("N_h")
     ax.set_title("H")
     fig.colorbar(a)
-    fig.savefig("H.png")
+    fig.savefig(h_path)
     # W_hg
-    fig, ax = plt.subplots(1, 2, figsize=(4, 4), dpi=200)
+    fig, ax = plt.subplots(1, 2, figsize=(4, 4), dpi=400)
     a = ax[0].imshow(g.W_hg.cpu().numpy(), cmap="hot")
     ax[0].set_title("W_hg")
     ax[0].set_xlabel("N_h")
@@ -30,15 +43,15 @@ def graph_scaffold(g: GridScaffold):
     ax[1].set_title("W_hg == 0")
     ax[1].set_xlabel("N_h")
     ax[1].set_ylabel("N_g")
-    fig.savefig("W_hg.png")
+    fig.savefig(W_hg_path)
     # W_gh
-    fig, ax = plt.subplots(1, 1, figsize=(4, 4), dpi=200)
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4), dpi=400)
     ax.set_title("W_gh")
     a = ax.imshow(g.W_gh.cpu().numpy(), cmap="hot")
     ax.set_xlabel("N_g")
     ax.set_ylabel("N_h")
-    fig.colorbar(a)
-    fig.savefig("W_gh.png")
+    fig.colorbar(a, orientation="horizontal")
+    fig.savefig(W_gh_path)
 
 
 if __name__ == "__main__":
