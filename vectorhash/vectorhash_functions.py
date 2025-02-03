@@ -6,7 +6,6 @@ import scipy
 
 def calculate_big_theta(num_modules, percent_sparse):
     var = num_modules * percent_sparse
-    # mean of distribution should then be -big_theta
     return math.sqrt(var) * scipy.stats.norm.ppf(1 - percent_sparse)
 
 
