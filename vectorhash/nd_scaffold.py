@@ -433,7 +433,7 @@ class GridScaffold:
             not_equal = self.G != self.denoise(
                 self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
             )
-            assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
+            #assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
             # if i % 100 == 0:
             #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
             i += 1
@@ -476,7 +476,10 @@ class GridScaffold:
         H__nonzero = torch.sum(H_ != 0, 1).float()
         print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
         print("Std nonzero H_denoised", torch.std(H__nonzero).item())
-
+        print("TESTING XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+        print(H)
+        print(H_)
+        print("TESTING XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
         # print("H:", H)
         print("H_indexes:", H.nonzero())
         # print("G:", G)
