@@ -20,8 +20,8 @@ def inject_activity(pose_cells, v, theta, omega, k_x=1, k_y=1, k_theta=1):
                 # )
                 # not keeping old beliefs
                 new_pose_cells[g_x][g_y][g_theta] = calculate_velocity_shift(
-                    pose_cells, g_x, g_y, g_theta, -v, theta, omega, k_x, k_y, k_theta
-                )  # -v for same functionality as ezra had implimented
+                    pose_cells, g_x, g_y, g_theta, -v, theta, -omega, k_x, k_y, k_theta
+                )  # -v for same functionality as ezra had implimented, and - omega same reason
 
     return new_pose_cells
 
@@ -67,7 +67,7 @@ def calculate_deltas(
 ):  # velocity is really a speed, theta a global direction
     delta_x = math.floor(velocity * math.cos(theta) * k_x)
     delta_y = math.floor(velocity * math.sin(theta) * k_y)
-    delta_theta = k_theta * omega
+    delta_theta = math.floor(k_theta * omega)
 
     return delta_x, delta_y, delta_theta
 
