@@ -477,6 +477,7 @@ class GridScaffold:
         print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
         print("Std nonzero H_denoised", torch.std(H__nonzero).item())
         print("TESTING XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+        print(self.W_hg)
         print(H)
         print(H_)
         print("TESTING XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
