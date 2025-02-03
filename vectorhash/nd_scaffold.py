@@ -1,3 +1,4 @@
+import math
 import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
@@ -93,7 +94,7 @@ class GridModule:
 
         Args:
             v: The velocity by which to shift the grid state.
-            (speed, direction, angular velocity)
+            (x, y, angular velocity)
         """
         v_ = v.int()
         # self.state = torch.roll(
@@ -101,10 +102,10 @@ class GridModule:
         #     tuple([v_[i].item() for i in range(len(v_))]),
         #     dims=tuple(i for i in range(len(self.shape))),
         # )
-        assert len(v_) == 3  # speed, direction, angular velocity
-        self.state = inject_activity(
-            self.state, v_[0].item(), v_[1].item(), v_[2].item()
-        )
+        assert len(v_) == 3  # x, y, angular velocity
+        speed = (v_[0].item() ** 2 + v_[1].item() ** 2) ** 0.5
+        theta = math.atan2(v_[1].item(), v_[0].item())
+        self.state = inject_activity(self.state, speed, theta, v_[2].item())
 
 
 class GridScaffold:
