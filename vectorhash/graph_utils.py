@@ -139,14 +139,16 @@ def graphing_recall(array):
     
     input :
     array is an array with n entries, one for each combination of Nh, ratio active/not
-    first entry is Nh, second is ratio active/not, third is mnist scores, fourth is cifar scores, fifth is the x values
+    first entry is Nh, second is ratio active/not, third is mnist scores fourth is the x values
     """
+    # make input of the x values to be log scales so that we can see the differences better and the inputs are percentages
     fig, ax = plt.subplots(1, 1, dpi=200, figsize=(5, 5))
     for i in range(len(array)):
-        plt.plot(array[i][4], array[i][2], label = "mnist")
-        plt.plot(array[i][4], array[i][3], label = "cifar")
+        
+        plt.plot(array[i][3], array[i][2], label="CIFAR")
         plt.xlabel("% of max patterns used")
         plt.ylabel("cosine similarity")
         plt.title("Nh = " + str(array[i][0]) + " ratio active/not = " + str(array[i][1]))
         plt.legend()
+        ax.set_xscale('log')
         plt.show()
