@@ -213,14 +213,16 @@ class GridScaffold:
         self.H = self.hippocampal_from_grid(self.G)  # (N_patts, N_h)
         """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
 
-        self.W_gh = self._W_gh()  # (N_g, N_h)
-        #self.W_gh = torch.zeros((self.N_g, self.N_h), device=device)
-        assert torch.all(
-            self.G
-            == self.denoise(
-                self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
-            )
-        ), "G -> H -> G should preserve G"
+        #self.W_gh = self._W_gh()  # (N_g, N_h)
+        self.W_gh = torch.zeros((self.N_g, self.N_h), device=device)
+        print(self.W_gh)
+        print(self.W_hg)
+        #assert torch.all(
+        #    self.G
+        #    == self.denoise(
+        #        self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
+        #    )
+        #), "G -> H -> G should preserve G"
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
         self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
 

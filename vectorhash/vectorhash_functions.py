@@ -4,10 +4,27 @@ from scipy.stats import norm
 import math
 import scipy
 
+def solve_mean(p, var=1):
+    """
+    Solve for the mean (mu) of a normal distribution such that P(N(mu, var) > x) = p.
 
-def calculate_big_theta(num_modules, percent_sparse):
-    var = num_modules * percent_sparse
-    return math.sqrt(var) * scipy.stats.norm.ppf(1 - percent_sparse)
+    Parameters:
+    x (float): The threshold value.
+    p (float): The probability P(N(mu, var) > x).
+    var (float, optional): The variance of the normal distribution (default is 1).
+
+    Returns:
+    float: The mean (mu) that satisfies the equation.
+    """
+    sigma = math.sqrt(var)  # Convert variance to standard deviation
+    z = norm.ppf(1 - p)  # Inverse CDF
+    mu = 0 - sigma * z
+    return mu
+
+
+def calculate_big_theta(num_modules, targetp, sparsity):
+    var = num_modules * sparsity
+    return math.sqrt(var) * scipy.stats.norm.ppf(targetp)
 
 
 def difference_of_guassians(
@@ -159,9 +176,7 @@ def addcurves(dim, modules, velocities):
         ## in spot so add curve(n-1, mods)
         addcurves(dim - 1, modules, velocities)
         ## add a vector of dimesnion n, all 0 but a 1 in the nth dimension
-    ## now add one last vector like a[n] + a[n+1]
     b = torch.zeros(dims)
-    # open the torch array and set the nth and n+1th dimension to 1
     b[dim] = 1
     if dim != (dims - 1):
         b[dim + 1] = 1
