@@ -111,6 +111,8 @@ class GridScaffold:
         relu_theta=0.5,
         from_checkpoint=False,
         T=1,
+        use_pseudo_inverse=False,
+        initialize_W_gh_zero=False
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
@@ -141,26 +143,34 @@ class GridScaffold:
                 sparsity=0.1, device=device
             )
 
+
         self.W_hg = sparse_matrix_initializer((self.N_h, self.N_g))
-        
         """The matrix of weights to go from the grid layer to the hippocampal layer. Shape: `(N_h, N_g)`"""
-        self.H = self.hippocampal_from_grid(self.G)  # (N_patts, N_h)
-        """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
- 
-        self.W_gh = self._W_gh()  # (N_g, N_h)
+
+        if initialize_W_gh_zero:
+            self.W_gh = torch.zeros((self.N_h, self.N_g), device=device)
+            """The matrix of weights to go from the grid layer to the hippocampal layer. Shape: `(N_h, N_g)`"""
+        else:
+            self.H = self.hippocampal_from_grid(self.G)  # (N_patts, N_h)
+            """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
+            self.W_gh = self._W_gh()  # (N_g, N_h)
         assert torch.all(
             self.G
             == self.denoise(
                 self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
             )
         ), "G -> H -> G should preserve G"
-        self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
-        self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
 
         """The current grid coding state tensor. Shape: `(N_g)`"""
         self.g = self._g()
         ### testing S such that Whs = H @ S^-1
-        self.S = torch.zeros((self.N_patts, self.input_size), device=device)
+
+        self.use_pseudo_inverse = use_pseudo_inverse
+        if use_pseudo_inverse:
+            self.S = torch.zeros((self.N_patts, self.input_size), device=device)
+        else:
+            self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
+            self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
 
     @torch.no_grad()
     def _G(self) -> torch.Tensor:
@@ -301,13 +311,16 @@ class GridScaffold:
         # M: (M x N)
         # Eg : Wgh = 1/Nh * sum_i (G_i * H_iT) (outer product)
         ret = (torch.einsum("j,i->ji", output, input)) / (
-            #self.N_h
-            torch.linalg.norm(input + 1e-10) ** 2
+            # self.N_h
+            torch.linalg.norm(input + 1e-10)
+            ** 2
         )
         return ret
-    
+
     @torch.no_grad()
-    def calculate_update_Whs(self, input: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
+    def calculate_update_Whs(
+        self, input: torch.Tensor, output: torch.Tensor
+    ) -> torch.Tensor:
         # input: (N)
         # output: (M)
         # M: (M x N)
@@ -317,7 +330,9 @@ class GridScaffold:
         return ret.T
 
     @torch.no_grad()
-    def calculate_update_Wsh(self, input: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
+    def calculate_update_Wsh(
+        self, input: torch.Tensor, output: torch.Tensor
+    ) -> torch.Tensor:
         # input: (N)
         # output: (M)
         # M: (M x N)
@@ -331,20 +346,22 @@ class GridScaffold:
         """Stores a memory in the scaffold.
         Input shape: `(input_size)`
         """
-        # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
-        # replaces first empyty row in S with s
-        if self.S[0].sum() == 0:
-            self.S[0] = s
-        else:
-            self.S[self.S.nonzero()[-1][0] + 1] = s
-        h = torch.relu(self.W_hg @ self.g - self.relu_theta)
 
-        #self.W_gh += self.calculate_update(input=h, output=self.g)
-        #self.W_sh += self.calculate_update(input=h, output=s)
-        #self.W_hs += self.calculate_update(input=s, output=h)
-        self.W_gh += self.calculate_update(input=h, output=self.g)
-        self.W_sh = self.calculate_update_Wsh(input=h, output=s)
-        self.W_hs = self.calculate_update_Whs(input=s, output=h)
+        h = torch.relu(self.W_hg @ self.g - self.relu_theta)
+        if self.use_pseudo_inverse:
+            # replaces first empyty row in S with s, vectorhash style
+            if self.S[0].sum() == 0:
+                self.S[0] = s
+            else:
+                self.S[self.S.nonzero()[-1][0] + 1] = s
+            self.W_gh += self.calculate_update(input=h, output=self.g)
+            self.W_sh = self.calculate_update_Wsh(input=h, output=s)
+            self.W_hs = self.calculate_update_Whs(input=s, output=h)
+        else:
+            # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
+            self.W_gh += self.calculate_update(input=h, output=self.g)
+            self.W_sh += self.calculate_update(input=h, output=s)
+            self.W_hs += self.calculate_update(input=s, output=h)
 
     @torch.no_grad()
     def shift(self, velocity):
@@ -400,8 +417,12 @@ class GridScaffold:
                     "Seen", indexes, "count:", seen[indexes[0].item()][indexes[1].item()]
                 )
             seen[indexes[0].item()][indexes[1].item()] += 1
-            not_equal = self.G != self.denoise(self.grid_from_hippocampal(self.hippocampal_from_grid(self.G)))
-            #assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
+            not_equal = self.G != self.denoise(
+                self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
+            )
+            # assert torch.all(
+            #     not_equal == 0
+            # ), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
             # if i % 100 == 0:
             #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
             i += 1
