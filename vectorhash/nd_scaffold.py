@@ -1,10 +1,12 @@
+import math
 import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
+from ratslam_velocity_shift import inject_activity
 
 
 class GridModule:
-    def __init__(self, shape: tuple[int], device=None, T=1) -> None:
+    def __init__(self, shape: tuple[int], device=None, T=1, ratshift=True) -> None:
         """Initializes a grid module with a given shape and a temperature.
 
         Args:
@@ -14,7 +16,7 @@ class GridModule:
         self.shape = shape
         # self.state = torch.rand(shape, device=device)
         self.state = torch.zeros(shape, device=device)
-
+        self.ratshift = ratshift
         i = tuple(0 for _ in range(len(shape)))
         self.state[i] = 1
         self.l = torch.prod(torch.tensor(shape)).item()
@@ -91,13 +93,21 @@ class GridModule:
 
         Args:
             v: The velocity by which to shift the grid state.
+            (x, y, angular velocity)
         """
         v_ = v.int()
-        self.state = torch.roll(
+        if self.ratshift:
+            assert len(v) == 3  # x, y, angular velocity
+            speed = (v[0].item() ** 2 + v[1].item() ** 2) ** 0.5
+            theta = math.atan2(v[1].item(), v[0].item())
+            self.state = inject_activity(self.state, speed, theta, v[2].item())
+        else:
+            self.state = torch.roll(
             self.state,
             tuple([v_[i].item() for i in range(len(v_))]),
             dims=tuple(i for i in range(len(self.shape))),
-        )
+            )
+        
 
 
 class GridScaffold:
@@ -112,17 +122,24 @@ class GridScaffold:
         from_checkpoint=False,
         T=1,
         use_pseudo_inverse=False,
-        initialize_W_gh_zero=False
+        continualupdate = False,
+        ratshift = False,
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
 
+        # FOR TESTING, CONTINUAL UPDATE TURNS ON UPDATE EVERY STEP
+        # FOR TESTING, RATSHIFT TURNS ON RATSHIFT INSTEAD OF ROLL 
+        self.continualupdate = continualupdate
+        self.ratshift = ratshift
+
+
         if from_checkpoint:
             return
 
-        self.modules = [GridModule(shape, device=device, T=T) for shape in shapes]
+        self.modules = [GridModule(shape, device=device, T=T, ratshift=ratshift) for shape in shapes]
         """The list of grid modules in the scaffold."""
         self.N_g = sum([module.l for module in self.modules])
         self.N_patts = np.prod([module.l for module in self.modules]).item()
@@ -145,15 +162,12 @@ class GridScaffold:
 
 
         self.W_hg = sparse_matrix_initializer((self.N_h, self.N_g))
-        """The matrix of weights to go from the grid layer to the hippocampal layer. Shape: `(N_h, N_g)`"""
 
-        if initialize_W_gh_zero:
-            self.W_gh = torch.zeros((self.N_h, self.N_g), device=device)
-            """The matrix of weights to go from the grid layer to the hippocampal layer. Shape: `(N_h, N_g)`"""
-        else:
-            self.H = self.hippocampal_from_grid(self.G)  # (N_patts, N_h)
-            """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
-            self.W_gh = self._W_gh()  # (N_g, N_h)
+        """The matrix of weights to go from the grid layer to the hippocampal layer. Shape: `(N_h, N_g)`"""
+        self.H = self.hippocampal_from_grid(self.G)  # (N_patts, N_h)
+        """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
+
+        self.W_gh = self._W_gh()  # (N_g, N_h)
         assert torch.all(
             self.G
             == self.denoise(
@@ -305,7 +319,9 @@ class GridScaffold:
         return torch.relu(S @ self.W_hs.T)
 
     @torch.no_grad()
-    def calculate_update(self, input: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
+    def calculate_update(
+        self, input: torch.Tensor, output: torch.Tensor
+    ) -> torch.Tensor:
         # input: (N)
         # output: (M)
         # M: (M x N)
@@ -348,20 +364,14 @@ class GridScaffold:
         """
 
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
-        if self.use_pseudo_inverse:
-            # replaces first empyty row in S with s, vectorhash style
-            if self.S[0].sum() == 0:
-                self.S[0] = s
-            else:
-                self.S[self.S.nonzero()[-1][0] + 1] = s
-            self.W_gh += self.calculate_update(input=h, output=self.g)
-            self.W_sh = self.calculate_update_Wsh(input=h, output=s)
-            self.W_hs = self.calculate_update_Whs(input=s, output=h)
-        else:
-            # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
+        if self.continualupdate:
             self.W_gh += self.calculate_update(input=h, output=self.g)
             self.W_sh += self.calculate_update(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
+        else:
+            self.W_gh += self.calculate_update(input=h, output=self.g)
+            self.W_sh = self.calculate_update_Wsh(input=h, output=s)
+            self.W_hs = self.calculate_update_Whs(input=s, output=h)
 
     @torch.no_grad()
     def shift(self, velocity):
@@ -414,15 +424,16 @@ class GridScaffold:
             indexes = torch.isclose(self.g, self.g.max()).nonzero().flatten()
             if seen[indexes[0].item()][indexes[1].item()] > 0:
                 print(
-                    "Seen", indexes, "count:", seen[indexes[0].item()][indexes[1].item()]
+                    "Seen",
+                    indexes,
+                    "count:",
+                    seen[indexes[0].item()][indexes[1].item()],
                 )
             seen[indexes[0].item()][indexes[1].item()] += 1
             not_equal = self.G != self.denoise(
                 self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
             )
-            # assert torch.all(
-            #     not_equal == 0
-            # ), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
+            #assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
             # if i % 100 == 0:
             #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
             i += 1

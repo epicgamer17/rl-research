@@ -1,6 +1,13 @@
 import torch
 from functools import reduce
 from scipy.stats import norm
+import math
+import scipy
+
+
+def calculate_big_theta(num_modules, percent_sparse):
+    var = num_modules * percent_sparse
+    return math.sqrt(var) * scipy.stats.norm.ppf(1 - percent_sparse)
 
 
 def difference_of_guassians(
@@ -73,6 +80,7 @@ def sort_polygon_vertices(vertices: torch.Tensor):
     sorted_indices = torch.argsort(angles)
     return vertices[sorted_indices]
 
+
 def chinese_remainder_theorem(modules, remainders):
     """
     Finds the solution to the system of congruence equations with forms x = r1 (modulo m1) for all modules and remainders
@@ -82,18 +90,19 @@ def chinese_remainder_theorem(modules, remainders):
 
     :return: integer gives solution x
     """
-    c =[]
-    b= []
+    c = []
+    b = []
     p = reduce((lambda x, y: x * y), modules)
     for i in range(len(modules)):
-        c.append(p/modules[i])
+        c.append(p / modules[i])
     for i in range(len(c)):
         b.append(modulo_inverse(modules[i], c[i]))
-    
+
     sum = 0
     for i in range(len(modules)):
         sum = sum + (remainders[i] * b[i] * c[i])
-    return (sum % p)
+    return sum % p
+
 
 def modulo_inverse(modulo, number):
     """
@@ -110,13 +119,14 @@ def modulo_inverse(modulo, number):
     if target == 1:
         return 1
     else:
-        while ((target*i) % modulo) != 1:
-            i = i+1
+        while ((target * i) % modulo) != 1:
+            i = i + 1
     return i
 
 
 if __name__ == "__main__":
-    print(chinese_remainder_theorem([3,5,7], [1,2,3]))
+    print(chinese_remainder_theorem([3, 5, 7], [1, 2, 3]))
+
 
 def spacefillingcurve(modules):
     number_of_module_dims = len(modules[0])
@@ -145,7 +155,7 @@ def addcurves(dim, modules, velocities):
     a = 1
     for module in modules:
         a = a * module[dim]
-    for i in range(a-1):
+    for i in range(a - 1):
         ## in spot so add curve(n-1, mods)
         addcurves(dim - 1, modules, velocities)
         ## add a vector of dimesnion n, all 0 but a 1 in the nth dimension
@@ -156,7 +166,7 @@ def addcurves(dim, modules, velocities):
     if dim != (dims - 1):
         b[dim + 1] = 1
     velocities.append(b)
-    
+
     return velocities
 
 def calculate_relu_theta(sparsity, modules, target_prob):
