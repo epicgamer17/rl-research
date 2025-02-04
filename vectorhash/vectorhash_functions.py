@@ -6,8 +6,9 @@ import scipy
 
 
 def calculate_big_theta(num_modules, percent_sparse):
-    var = num_modules * percent_sparse
-    return math.sqrt(var) * scipy.stats.norm.ppf(1 - percent_sparse)
+
+    var = num_modules * (1 - percent_sparse)
+    return math.sqrt(var) * scipy.stats.norm.ppf(percent_sparse)
 
 
 def difference_of_guassians(
@@ -169,6 +170,7 @@ def addcurves(dim, modules, velocities):
 
     return velocities
 
+
 def calculate_relu_theta(sparsity, modules, target_prob):
     """Calculate RELU threshold
 
@@ -177,10 +179,9 @@ def calculate_relu_theta(sparsity, modules, target_prob):
         modules (_type_): total number of modules
         target_prob (float): target probability that h_i is nonzero
     """
-    s = (1-sparsity) * modules
-    sqrt_s = s ** 0.5
+    s = (1 - sparsity) * modules
+    sqrt_s = s**0.5
 
     # calculate \theta such that P_X(0 < x < \theta) = target_prob
     # where X ~ N(0, s)
-    return norm.ppf(loc=0, scale=sqrt_s, q=target_prob+0.5)
-
+    return norm.ppf(loc=0, scale=sqrt_s, q=target_prob + 0.5)
