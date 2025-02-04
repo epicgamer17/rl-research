@@ -487,22 +487,22 @@ class GridScaffold:
         # print("H__indexes:", H_.nonzero())
         # print("denoised_H:", H_)
 
-        info = {
-            "avg_nonzero_H": torch.mean(H_nonzero).item(),
-            "std_nonzero_H": torch.std(H_nonzero).item(),
-            "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
-            "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
-            "H_indexes": H.nonzero(),
-            "G_indexes": G.nonzero(),
-            "G_denoised_indexes": G_.nonzero(),
-            "H_denoised_indexes": H_.nonzero(),
-            "H": H,
-            "G": G,
-            "G_denoised": G_,
-            "H_denoised": H_,
-        }
+        # info = {
+        #     "avg_nonzero_H": torch.mean(H_nonzero).item(),
+        #     "std_nonzero_H": torch.std(H_nonzero).item(),
+        #     "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
+        #     "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
+        #     "H_indexes": H.nonzero(),
+        #     "G_indexes": G.nonzero(),
+        #     "G_denoised_indexes": G_.nonzero(),
+        #     "H_denoised_indexes": H_.nonzero(),
+        #     "H": H,
+        #     "G": G,
+        #     "G_denoised": G_,
+        #     "H_denoised": H_,
+        # }
 
-        return S_, info
+        return S_#, info
 
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
