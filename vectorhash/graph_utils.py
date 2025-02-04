@@ -127,3 +127,26 @@ def plot_recall_info(info):
     ax[1][1].set_xlabel("N_patts")
     ax[1][1].set_ylabel("N_h")
     ax[1][1].title.set_text("H_denoised, first 50, zero locations")
+
+def graphing_recall(array):
+    """
+    graphs recall based off Nh
+    two curves per graph one for mnist one for cifar
+    metric y is cosine similarity
+    x is % of max patterns used
+    then those graphs for each combination of Nh, ratio active/not
+
+    
+    input :
+    array is an array with n entries, one for each combination of Nh, ratio active/not
+    first entry is Nh, second is ratio active/not, third is mnist scores, fourth is cifar scores, fifth is the x values
+    """
+    fig, ax = plt.subplots(1, 1, dpi=200, figsize=(5, 5))
+    for i in range(len(array)):
+        plt.plot(array[i][4], array[i][2], label = "mnist")
+        plt.plot(array[i][4], array[i][3], label = "cifar")
+        plt.xlabel("% of max patterns used")
+        plt.ylabel("cosine similarity")
+        plt.title("Nh = " + str(array[i][0]) + " ratio active/not = " + str(array[i][1]))
+        plt.legend()
+        plt.show()
