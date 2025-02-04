@@ -5,49 +5,56 @@ from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
 import matplotlib.pyplot as plt
 
+
 def plot_recall_info(info):
     fig, ax = plt.subplots(1, 2, dpi=200, figsize=(4, 5))
 
-    ax[0].imshow(info["G"].cpu().numpy(), cmap="gray")
+    ax[0].imshow(info["G"].cpu().numpy(), cmap="gray", aspect="auto")
     ax[0].set_xlabel("N_g")
     ax[0].set_ylabel("N_patts")
     ax[0].title.set_text("G")
 
-    ax[1].imshow(info["G_denoised"].cpu().numpy(), cmap="gray")
+    ax[1].imshow(info["G_denoised"].cpu().numpy(), cmap="gray", aspect="auto")
     ax[1].set_xlabel("N_g")
     ax[1].set_ylabel("N_patts")
     ax[1].title.set_text("G_denoised")
 
-    fig, ax = plt.subplots(2, 1, dpi=400, figsize=(5,3))
+    fig, ax = plt.subplots(2, 1, dpi=400, figsize=(5, 3))
 
-    ax[0].imshow(info["H"].cpu().numpy(), cmap="gray")
+    ax[0].imshow(info["H"].cpu().numpy(), cmap="gray", aspect="auto")
     ax[0].set_xlabel("N_h")
     ax[0].set_ylabel("N_patts")
     ax[0].title.set_text("H")
 
-    ax[1].imshow(info["H_denoised"].cpu().numpy(), cmap="gray")
+    ax[1].imshow(info["H_denoised"].cpu().numpy(), cmap="gray", aspect="auto")
     ax[1].set_xlabel("N_h")
     ax[1].set_ylabel("N_patts")
     ax[1].title.set_text("H_denoised")
 
     fig, ax = plt.subplots(2, 2, dpi=400, figsize=(5, 8))
 
-    ax[0][0].imshow(info["H"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[0][0].imshow(info["H"][:50, :50].cpu().numpy(), cmap="gray", aspect="auto")
     ax[0][0].set_xlabel("N_patts")
     ax[0][0].set_ylabel("N_h")
     ax[0][0].title.set_text("H, first 50")
 
-    ax[1][0].imshow(info["H_denoised"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[1][0].imshow(
+        info["H_denoised"][:50, :50].cpu().numpy(), cmap="gray", aspect="auto"
+    )
     ax[1][0].set_xlabel("N_patts")
     ax[1][0].set_ylabel("N_h")
     ax[1][0].title.set_text("H_denoised, first 50")
 
-    ax[0][1].imshow(info["H"][:50,:50].cpu().numpy() == 0, cmap="gray")
+    ax[0][1].imshow(info["H"][:50, :50].cpu().numpy() == 0, cmap="gray", aspect="auto")
     ax[0][1].set_xlabel("N_patts")
     ax[0][1].set_ylabel("N_h")
     ax[0][1].title.set_text("H, first 50, zero locations")
 
-    ax[1][1].imshow(1 - (info["H_denoised"][:50,:50].cpu().numpy() == 0), cmap="gray")
+    ax[1][1].imshow(
+        1 - (info["H_denoised"][:50, :50].cpu().numpy() == 0),
+        cmap="gray",
+        aspect="auto",
+    )
     ax[1][1].set_xlabel("N_patts")
     ax[1][1].set_ylabel("N_h")
     ax[1][1].title.set_text("H_denoised, first 50, zero locations")
@@ -82,6 +89,7 @@ class GridModule:
 
         Output shape: `(B, l)`
         """
+        # assert sum(onehot.sum(dim=1) == 1) == onehot.shape[0], "Not one-hot encoded"
         if onehot.ndim == 1:
             onehot = onehot.unsqueeze(0)
 
@@ -90,7 +98,7 @@ class GridModule:
 
     def denoise(self, state: torch.Tensor) -> torch.Tensor:
         """Denoise a batch of grid states. This finds the maximum value in the grid and sets it to 1, and all other values to 0.
-        If there are multiple maximum values, they are all set to 1 / number of maximum values.
+        If there are multiple maximum values, pick a random. (not all set to 1 / number of maximum values)
 
         Input shape: `(B, *shape)` where `shape` is the shape of the grid.
 
@@ -102,14 +110,28 @@ class GridModule:
         """
         if state.ndim == len(self.shape):
             state = state.unsqueeze(0)
-
         dims = [i for i in range(1, len(self.shape) + 1)]  # 1, 2, ..., n
         maxes = torch.amax(state, dim=dims, keepdim=True)
+
         state = torch.where(
             state == maxes, torch.ones_like(state), torch.zeros_like(state)
         )
         scaled = state / torch.sum(state, dim=dims, keepdim=True)
         return scaled
+
+        # Check if there are any non-zero elements in the module
+        # if len(torch.nonzero(state)) > 0:
+        #     max_value = np.max(state)  # Find the maximum value in the module
+        #     print(max_value)
+        #     # Create a binary array where positions with the max value are 1, others are 0
+        #     max_positions = np.where(state == max_value)[0]
+        #     random_position = np.random.choice(max_positions)
+        #     denoised_module = np.zeros_like(state)
+        #     denoised_module[random_position] = 1
+        # else:
+        #     # If the module is all zeros, create an array of the same shape with all zeros
+        #     denoised_module = np.zeros_like(state)
+        # return torch.tensor(denoised_module, device=self.device)
 
     def denoise_self(self):
         """Denoises this grid module's state"""
@@ -151,11 +173,10 @@ class GridModule:
             self.state = inject_activity(self.state, speed, theta, v[2].item())
         else:
             self.state = torch.roll(
-            self.state,
-            tuple([v_[i].item() for i in range(len(v_))]),
-            dims=tuple(i for i in range(len(self.shape))),
+                self.state,
+                tuple([v_[i].item() for i in range(len(v_))]),
+                dims=tuple(i for i in range(len(self.shape))),
             )
-        
 
 
 class GridScaffold:
@@ -169,8 +190,9 @@ class GridScaffold:
         relu_theta=0.5,
         from_checkpoint=False,
         T=1,
-        continualupdate = False,
-        ratshift = False,
+        continualupdate=False,
+        ratshift=False,
+        initialize_W_gh_with_zeroes=True,
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
@@ -178,16 +200,19 @@ class GridScaffold:
         self.relu_theta = relu_theta
 
         # FOR TESTING, CONTINUAL UPDATE TURNS ON UPDATE EVERY STEP
-        # FOR TESTING, RATSHIFT TURNS ON RATSHIFT INSTEAD OF ROLL 
+        # FOR TESTING, RATSHIFT TURNS ON RATSHIFT INSTEAD OF ROLL
         self.continualupdate = continualupdate
         self.ratshift = ratshift
-
 
         if from_checkpoint:
             return
 
-        self.modules = [GridModule(shape, device=device, T=T, ratshift=ratshift) for shape in shapes]
+        self.modules = [
+            GridModule(shape, device=device, T=T, ratshift=ratshift) for shape in shapes
+        ]
         """The list of grid modules in the scaffold."""
+        # for module in self.modules:
+        #     print(module.l)
         self.N_g = sum([module.l for module in self.modules])
         self.N_patts = np.prod([module.l for module in self.modules]).item()
         self.N_h = N_h
@@ -213,16 +238,18 @@ class GridScaffold:
         self.H = self.hippocampal_from_grid(self.G)  # (N_patts, N_h)
         """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
 
-        #self.W_gh = self._W_gh()  # (N_g, N_h)
-        self.W_gh = torch.zeros((self.N_g, self.N_h), device=device)
-        print(self.W_gh)
-        print(self.W_hg)
-        #assert torch.all(
+        if initialize_W_gh_with_zeroes:
+            self.W_gh = torch.zeros((self.N_g, self.N_h), device=device)
+        else:
+            self.W_gh = self._W_gh()  # (N_g, N_h)
+        # print(self.W_gh)
+        # print(self.W_hg)
+        # assert torch.all(
         #    self.G
         #    == self.denoise(
         #        self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
         #    )
-        #), "G -> H -> G should preserve G"
+        # ), "G -> H -> G should preserve G"
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
         self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
 
@@ -416,11 +443,11 @@ class GridScaffold:
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
 
         if self.continualupdate:
-            #self.W_gh += self.calculate_update(input=h, output=self.g)
+            self.W_gh += self.calculate_update(input=h, output=self.g)
             self.W_sh += self.calculate_update(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
         else:
-            #self.W_gh += self.calculate_update(input=h, output=self.g)
+            # self.W_gh += self.calculate_update(input=h, output=self.g)
             self.W_sh = self.calculate_update_Wsh(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
 
@@ -451,7 +478,11 @@ class GridScaffold:
 
         pos = 0
         for module in self.modules:
+            # for i in range(len(G)):
+            #     print(G[i])
             x = G[:, pos : pos + module.l]
+            # for i in range(len(x)):
+            #     print(x[i])
             x_denoised = module.denoise_onehot(x)
             # print(x)
             # print(x_denoised)
@@ -481,10 +512,14 @@ class GridScaffold:
                     seen[indexes[0].item()][indexes[1].item()],
                 )
             seen[indexes[0].item()][indexes[1].item()] += 1
-            not_equal = self.G != self.denoise(
-                self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
-            )
-            #assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
+            # for i in range(len(self.G)):
+            #     print(self.G[i])
+            # not_equal = self.G != self.denoise(
+            #     self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
+            # )
+            # assert torch.all(
+            #     not_equal == 0
+            # ), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
             # if i % 100 == 0:
             #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
             i += 1
@@ -517,16 +552,21 @@ class GridScaffold:
         # noisy_observations: (N, input_size)
         H = self.hippocampal_from_sensory(observations)
         G = self.grid_from_hippocampal(H)
+        print("G not denoised")
+        # for g in G:
+        #     print(g)
         G_ = self.denoise(G)
         H_ = self.hippocampal_from_grid(G_)
         S_ = self.sensory_from_hippocampal(H_)
-        # print("Denoised grid state", G_[0])
         H_nonzero = torch.sum(H != 0, 1).float()
         print("avg nonzero H:", torch.mean(H_nonzero).item())
-        print("Std nonzero H", torch.std(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
         print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
-        print("Std nonzero H_denoised", torch.std(H__nonzero).item())
+
+        used_gs = set()
+        for g in G:
+            used_gs.add(tuple(g.tolist()))
+        print("Unique Gs:", len(used_gs))
 
         # print("H:", H)
         # print("H_indexes:", H.nonzero())
@@ -538,21 +578,21 @@ class GridScaffold:
         # print("H__indexes:", H_.nonzero())
         # print("denoised_H:", H_)
 
-        info = {
-            "avg_nonzero_H": torch.mean(H_nonzero).item(),
-            "std_nonzero_H": torch.std(H_nonzero).item(),
-            "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
-            "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
-            "H_indexes": H.nonzero(),
-            "G_indexes": G.nonzero(),
-            "G_denoised_indexes": G_.nonzero(),
-            "H_denoised_indexes": H_.nonzero(),
-            "H": H,
-            "G": G,
-            "G_denoised": G_,
-            "H_denoised": H_,
-        }
-        plot_recall_info(info)
+        # info = {
+        #     "avg_nonzero_H": torch.mean(H_nonzero).item(),
+        #     "std_nonzero_H": torch.std(H_nonzero).item(),
+        #     "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
+        #     "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
+        #     "H_indexes": H.nonzero(),
+        #     "G_indexes": G.nonzero(),
+        #     "G_denoised_indexes": G_.nonzero(),
+        #     "H_denoised_indexes": H_.nonzero(),
+        #     "H": H,
+        #     "G": G,
+        #     "G_denoised": G_,
+        #     "H_denoised": H_,
+        # }
+        # plot_recall_info(info)
         return S_
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
