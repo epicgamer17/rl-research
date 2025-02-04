@@ -502,8 +502,7 @@ class GridScaffold:
         #     "H_denoised": H_,
         # }
 
-        return S_#, info
-
+        return S_
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L113
