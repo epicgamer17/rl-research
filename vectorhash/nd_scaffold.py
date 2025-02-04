@@ -497,33 +497,11 @@ class GridScaffold:
 
         from collections import defaultdict
 
-        i = 0
-        seen = defaultdict(lambda: defaultdict(int))  # debugging
+        seen_gs = set()
         for obs, vel in zip(observations, velocities):
+            seen_gs.add(tuple(self.g.tolist()))
             self.learn(obs, vel)
-
-            ################ testing
-            indexes = torch.isclose(self.g, self.g.max()).nonzero().flatten()
-            if seen[indexes[0].item()][indexes[1].item()] > 0:
-                print(
-                    "Seen",
-                    indexes,
-                    "count:",
-                    seen[indexes[0].item()][indexes[1].item()],
-                )
-            seen[indexes[0].item()][indexes[1].item()] += 1
-            # for i in range(len(self.G)):
-            #     print(self.G[i])
-            # not_equal = self.G != self.denoise(
-            #     self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
-            # )
-            # assert torch.all(
-            #     not_equal == 0
-            # ), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
-            # if i % 100 == 0:
-            #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
-            i += 1
-            ################ testing
+        print("Unique Gs seen while learning:", len(seen_gs))
 
     @torch.no_grad()
     def learn(self, observation, velocity):
@@ -563,10 +541,14 @@ class GridScaffold:
         H__nonzero = torch.sum(H_ != 0, 1).float()
         print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
 
+        # G = list of multi hot vectors
+        # g = a multi hot vector (M one hot vectors)
         used_gs = set()
+        # print(G)
         for g in G:
+            # print(g)
             used_gs.add(tuple(g.tolist()))
-        print("Unique Gs:", len(used_gs))
+        print("Unique Gs seen while recalling:", len(used_gs))
 
         # print("H:", H)
         # print("H_indexes:", H.nonzero())
