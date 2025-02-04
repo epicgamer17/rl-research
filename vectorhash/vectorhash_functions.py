@@ -1,6 +1,13 @@
 import torch
 from functools import reduce
 from scipy.stats import norm
+import math
+import scipy
+
+
+def calculate_big_theta(num_modules, percent_sparse):
+    var = num_modules * percent_sparse
+    return math.sqrt(var) * scipy.stats.norm.ppf(1 - percent_sparse)
 
 
 def difference_of_guassians(
