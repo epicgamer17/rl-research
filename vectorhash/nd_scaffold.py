@@ -474,6 +474,7 @@ class GridScaffold:
         # print("avg nonzero H:", torch.mean(H_nonzero).item())
         # print("Std nonzero H", torch.std(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
+<<<<<<< HEAD
         # print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
         # print("Std nonzero H_denoised", torch.std(H__nonzero).item())
 
@@ -503,6 +504,23 @@ class GridScaffold:
         }
 
         return S_, info
+=======
+        print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
+        print("Std nonzero H_denoised", torch.std(H__nonzero).item())
+        print("TESTING XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+        print(H)
+        print(H_)
+        print("TESTING XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+        # print("H:", H)
+        print("H_indexes:", H.nonzero())
+        # print("G:", G)
+        print("G_indexes", G.nonzero())
+        # print("G_:", G_)
+        print("G__indexes:", G_.nonzero())
+        # print("G_[0]:", G_[0])
+        print("H__indexes:", H_.nonzero())
+        print("denoised_H:", H_)
+>>>>>>> parent of f36efe56 (Calculating big theta as asked however debugging needed check H)
 
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:

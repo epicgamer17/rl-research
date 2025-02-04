@@ -20,7 +20,7 @@ class SparseMatrixBySparsityInitializer(SparseMatrixInitializer):
         self.sparsity = sparsity
 
     def __call__(self, shape):
-        mask = (torch.rand(shape, device=self.device) < self.sparsity).float()
+        mask = (torch.rand(shape, device=self.device) < 1-self.sparsity).float()
         return torch.normal(0, 1, shape, device=self.device) * mask
 
 
