@@ -3,6 +3,54 @@ import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
+import matplotlib.pyplot as plt
+
+def plot_recall_info(info):
+    fig, ax = plt.subplots(1, 2, dpi=200, figsize=(4, 5))
+
+    ax[0].imshow(info["G"].cpu().numpy(), cmap="gray")
+    ax[0].set_xlabel("N_g")
+    ax[0].set_ylabel("N_patts")
+    ax[0].title.set_text("G")
+
+    ax[1].imshow(info["G_denoised"].cpu().numpy(), cmap="gray")
+    ax[1].set_xlabel("N_g")
+    ax[1].set_ylabel("N_patts")
+    ax[1].title.set_text("G_denoised")
+
+    fig, ax = plt.subplots(2, 1, dpi=400, figsize=(5,3))
+
+    ax[0].imshow(info["H"].cpu().numpy(), cmap="gray")
+    ax[0].set_xlabel("N_h")
+    ax[0].set_ylabel("N_patts")
+    ax[0].title.set_text("H")
+
+    ax[1].imshow(info["H_denoised"].cpu().numpy(), cmap="gray")
+    ax[1].set_xlabel("N_h")
+    ax[1].set_ylabel("N_patts")
+    ax[1].title.set_text("H_denoised")
+
+    fig, ax = plt.subplots(2, 2, dpi=400, figsize=(5, 8))
+
+    ax[0][0].imshow(info["H"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[0][0].set_xlabel("N_patts")
+    ax[0][0].set_ylabel("N_h")
+    ax[0][0].title.set_text("H, first 50")
+
+    ax[1][0].imshow(info["H_denoised"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[1][0].set_xlabel("N_patts")
+    ax[1][0].set_ylabel("N_h")
+    ax[1][0].title.set_text("H_denoised, first 50")
+
+    ax[0][1].imshow(info["H"][:50,:50].cpu().numpy() == 0, cmap="gray")
+    ax[0][1].set_xlabel("N_patts")
+    ax[0][1].set_ylabel("N_h")
+    ax[0][1].title.set_text("H, first 50, zero locations")
+
+    ax[1][1].imshow(1 - (info["H_denoised"][:50,:50].cpu().numpy() == 0), cmap="gray")
+    ax[1][1].set_xlabel("N_patts")
+    ax[1][1].set_ylabel("N_h")
+    ax[1][1].title.set_text("H_denoised, first 50, zero locations")
 
 
 class GridModule:
@@ -166,6 +214,7 @@ class GridScaffold:
         """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
 
         self.W_gh = self._W_gh()  # (N_g, N_h)
+        #self.W_gh = torch.zeros((self.N_g, self.N_h), device=device)
         assert torch.all(
             self.G
             == self.denoise(
@@ -365,11 +414,11 @@ class GridScaffold:
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
 
         if self.continualupdate:
-            self.W_gh += self.calculate_update(input=h, output=self.g)
+            #self.W_gh += self.calculate_update(input=h, output=self.g)
             self.W_sh += self.calculate_update(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
         else:
-            self.W_gh += self.calculate_update(input=h, output=self.g)
+            #self.W_gh += self.calculate_update(input=h, output=self.g)
             self.W_sh = self.calculate_update_Wsh(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
 
@@ -471,11 +520,11 @@ class GridScaffold:
         S_ = self.sensory_from_hippocampal(H_)
         # print("Denoised grid state", G_[0])
         H_nonzero = torch.sum(H != 0, 1).float()
-        # print("avg nonzero H:", torch.mean(H_nonzero).item())
-        # print("Std nonzero H", torch.std(H_nonzero).item())
+        print("avg nonzero H:", torch.mean(H_nonzero).item())
+        print("Std nonzero H", torch.std(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
-        # print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
-        # print("Std nonzero H_denoised", torch.std(H__nonzero).item())
+        print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
+        print("Std nonzero H_denoised", torch.std(H__nonzero).item())
 
         # print("H:", H)
         # print("H_indexes:", H.nonzero())
@@ -487,21 +536,21 @@ class GridScaffold:
         # print("H__indexes:", H_.nonzero())
         # print("denoised_H:", H_)
 
-        # info = {
-        #     "avg_nonzero_H": torch.mean(H_nonzero).item(),
-        #     "std_nonzero_H": torch.std(H_nonzero).item(),
-        #     "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
-        #     "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
-        #     "H_indexes": H.nonzero(),
-        #     "G_indexes": G.nonzero(),
-        #     "G_denoised_indexes": G_.nonzero(),
-        #     "H_denoised_indexes": H_.nonzero(),
-        #     "H": H,
-        #     "G": G,
-        #     "G_denoised": G_,
-        #     "H_denoised": H_,
-        # }
-
+        info = {
+            "avg_nonzero_H": torch.mean(H_nonzero).item(),
+            "std_nonzero_H": torch.std(H_nonzero).item(),
+            "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
+            "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
+            "H_indexes": H.nonzero(),
+            "G_indexes": G.nonzero(),
+            "G_denoised_indexes": G_.nonzero(),
+            "H_denoised_indexes": H_.nonzero(),
+            "H": H,
+            "G": G,
+            "G_denoised": G_,
+            "H_denoised": H_,
+        }
+        plot_recall_info(info)
         return S_
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
