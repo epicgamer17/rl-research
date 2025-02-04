@@ -437,25 +437,41 @@ class GridScaffold:
         G_ = self.denoise(G)
         H_ = self.hippocampal_from_grid(G_)
         S_ = self.sensory_from_hippocampal(H_)
-        print("Denoised grid state",G_[0])
+        # print("Denoised grid state", G_[0])
         H_nonzero = torch.sum(H != 0, 1).float()
-        print("avg nonzero H:", torch.mean(H_nonzero).item())
-        print("Std nonzero H", torch.std(H_nonzero).item())
+        # print("avg nonzero H:", torch.mean(H_nonzero).item())
+        # print("Std nonzero H", torch.std(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
-        print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
-        print("Std nonzero H_denoised", torch.std(H__nonzero).item())
+        # print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
+        # print("Std nonzero H_denoised", torch.std(H__nonzero).item())
 
         # print("H:", H)
-        print("H_indexes:", H.nonzero())
+        # print("H_indexes:", H.nonzero())
         # print("G:", G)
-        print("G_indexes", G.nonzero())
+        # print("G_indexes", G.nonzero())
         # print("G_:", G_)
-        print("G__indexes:", G_.nonzero())
+        # print("G__indexes:", G_.nonzero())
         # print("G_[0]:", G_[0])
-        print("H__indexes:", H_.nonzero())
-        print("denoised_H:", H_)
+        # print("H__indexes:", H_.nonzero())
+        # print("denoised_H:", H_)
 
-        return S_
+        info = {
+            "avg_nonzero_H": torch.mean(H_nonzero).item(),
+            "std_nonzero_H": torch.std(H_nonzero).item(),
+            "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
+            "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
+            "H_indexes": H.nonzero(),
+            "G_indexes": G.nonzero(),
+            "G_denoised_indexes": G_.nonzero(),
+            "H_denoised_indexes": H_.nonzero(),
+            "H": H,
+            "G": G,
+            "G_denoised": G_,
+            "H_denoised": H_,
+        }
+
+        return S_, info
+
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L113
