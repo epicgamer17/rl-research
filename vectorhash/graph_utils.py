@@ -80,3 +80,50 @@ def print_imgs_side_by_side(*imgs, out="mnist.png", captions=None, title=None):
     plt.savefig(out)
     plt.close(fig)
 
+
+def plot_recall_info(info):
+    fig, ax = plt.subplots(1, 2, dpi=200, figsize=(4, 5))
+
+    ax[0].imshow(info["G"].cpu().numpy(), cmap="gray")
+    ax[0].set_xlabel("N_g")
+    ax[0].set_ylabel("N_patts")
+    ax[0].title.set_text("G")
+
+    ax[1].imshow(info["G_denoised"].cpu().numpy(), cmap="gray")
+    ax[1].set_xlabel("N_g")
+    ax[1].set_ylabel("N_patts")
+    ax[1].title.set_text("G_denoised")
+
+    fig, ax = plt.subplots(2, 1, dpi=400, figsize=(5,3))
+
+    ax[0].imshow(info["H"].cpu().numpy(), cmap="gray")
+    ax[0].set_xlabel("N_h")
+    ax[0].set_ylabel("N_patts")
+    ax[0].title.set_text("H")
+
+    ax[1].imshow(info["H_denoised"].cpu().numpy(), cmap="gray")
+    ax[1].set_xlabel("N_h")
+    ax[1].set_ylabel("N_patts")
+    ax[1].title.set_text("H_denoised")
+
+    fig, ax = plt.subplots(2, 2, dpi=400, figsize=(5, 8))
+
+    ax[0][0].imshow(info["H"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[0][0].set_xlabel("N_patts")
+    ax[0][0].set_ylabel("N_h")
+    ax[0][0].title.set_text("H, first 50")
+
+    ax[1][0].imshow(info["H_denoised"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[1][0].set_xlabel("N_patts")
+    ax[1][0].set_ylabel("N_h")
+    ax[1][0].title.set_text("H_denoised, first 50")
+
+    ax[0][1].imshow(info["H"][:50,:50].cpu().numpy() == 0, cmap="gray")
+    ax[0][1].set_xlabel("N_patts")
+    ax[0][1].set_ylabel("N_h")
+    ax[0][1].title.set_text("H, first 50, zero locations")
+
+    ax[1][1].imshow(1 - (info["H_denoised"][:50,:50].cpu().numpy() == 0), cmap="gray")
+    ax[1][1].set_xlabel("N_patts")
+    ax[1][1].set_ylabel("N_h")
+    ax[1][1].title.set_text("H_denoised, first 50, zero locations")
