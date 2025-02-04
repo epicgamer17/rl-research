@@ -121,7 +121,6 @@ class GridScaffold:
         relu_theta=0.5,
         from_checkpoint=False,
         T=1,
-        use_pseudo_inverse=False,
         continualupdate = False,
         ratshift = False,
     ) -> None:
@@ -160,7 +159,6 @@ class GridScaffold:
                 sparsity=0.1, device=device
             )
 
-
         self.W_hg = sparse_matrix_initializer((self.N_h, self.N_g))
 
         """The matrix of weights to go from the grid layer to the hippocampal layer. Shape: `(N_h, N_g)`"""
@@ -174,17 +172,13 @@ class GridScaffold:
                 self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
             )
         ), "G -> H -> G should preserve G"
+        self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
+        self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
 
         """The current grid coding state tensor. Shape: `(N_g)`"""
         self.g = self._g()
         ### testing S such that Whs = H @ S^-1
-
-        self.use_pseudo_inverse = use_pseudo_inverse
-        if use_pseudo_inverse:
-            self.S = torch.zeros((self.N_patts, self.input_size), device=device)
-        else:
-            self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
-            self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
+        self.S = torch.zeros((self.N_patts, self.input_size), device=device)
 
     @torch.no_grad()
     def _G(self) -> torch.Tensor:
@@ -362,8 +356,14 @@ class GridScaffold:
         """Stores a memory in the scaffold.
         Input shape: `(input_size)`
         """
-
+        # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
+        # replaces first empyty row in S with s
+        if self.S[0].sum() == 0:
+            self.S[0] = s
+        else:
+            self.S[self.S.nonzero()[-1][0] + 1] = s
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
+
         if self.continualupdate:
             self.W_gh += self.calculate_update(input=h, output=self.g)
             self.W_sh += self.calculate_update(input=h, output=s)
@@ -433,7 +433,7 @@ class GridScaffold:
             not_equal = self.G != self.denoise(
                 self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
             )
-            #assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
+            assert torch.all(not_equal == 0), f"step {i}, {len((not_equal.nonzero()))}/{len(self.G)} lost stable states, {(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().mean()}/{self.N_h} (σ={(self.hippocampal_from_grid(self.G) != 0).sum(dim=1).float().std()}) avg hippocampal cells active. States lost: {not_equal.nonzero()}"
             # if i % 100 == 0:
             #     print(indexes, "count:", seen[indexes[0].item()][indexes[1].item()])
             i += 1
@@ -469,41 +469,25 @@ class GridScaffold:
         G_ = self.denoise(G)
         H_ = self.hippocampal_from_grid(G_)
         S_ = self.sensory_from_hippocampal(H_)
-        # print("Denoised grid state", G_[0])
+        print("Denoised grid state", G_[0])
         H_nonzero = torch.sum(H != 0, 1).float()
-        # print("avg nonzero H:", torch.mean(H_nonzero).item())
-        # print("Std nonzero H", torch.std(H_nonzero).item())
+        print("avg nonzero H:", torch.mean(H_nonzero).item())
+        print("Std nonzero H", torch.std(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
-        # print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
-        # print("Std nonzero H_denoised", torch.std(H__nonzero).item())
+        print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
+        print("Std nonzero H_denoised", torch.std(H__nonzero).item())
 
         # print("H:", H)
-        # print("H_indexes:", H.nonzero())
+        print("H_indexes:", H.nonzero())
         # print("G:", G)
-        # print("G_indexes", G.nonzero())
+        print("G_indexes", G.nonzero())
         # print("G_:", G_)
-        # print("G__indexes:", G_.nonzero())
+        print("G__indexes:", G_.nonzero())
         # print("G_[0]:", G_[0])
-        # print("H__indexes:", H_.nonzero())
-        # print("denoised_H:", H_)
+        print("H__indexes:", H_.nonzero())
+        print("denoised_H:", H_)
 
-        info = {
-            "avg_nonzero_H": torch.mean(H_nonzero).item(),
-            "std_nonzero_H": torch.std(H_nonzero).item(),
-            "avg_nonzero_H_denoised": torch.mean(H__nonzero).item(),
-            "std_nonzero_H_denoised": torch.std(H__nonzero).item(),
-            "H_indexes": H.nonzero(),
-            "G_indexes": G.nonzero(),
-            "G_denoised_indexes": G_.nonzero(),
-            "H_denoised_indexes": H_.nonzero(),
-            "H": H,
-            "G": G,
-            "G_denoised": G_,
-            "H_denoised": H_,
-        }
-
-        return S_, info
-
+        return S_
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L113
