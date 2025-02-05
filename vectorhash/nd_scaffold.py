@@ -545,6 +545,7 @@ class GridScaffold:
         print("Unique Hs seen while recalling:", len(used_Hs))
 
         G = self.grid_from_hippocampal(H)
+        used_gs = set()
         for g in G:
             # print(g)
             used_gs.add(tuple(g.tolist()))
@@ -567,7 +568,6 @@ class GridScaffold:
 
         # G = list of multi hot vectors
         # g = a multi hot vector (M one hot vectors)
-        used_gs = set()
         # print(G)
 
         # print("H:", H)
