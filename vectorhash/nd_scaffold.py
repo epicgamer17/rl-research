@@ -194,6 +194,7 @@ class GridScaffold:
         ratshift=False,
         initialize_W_gh_with_zeroes=True,
         pseudo_inverse=False,
+        learned_pseudo=True,
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
@@ -256,8 +257,11 @@ class GridScaffold:
         #        self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
         #    )
         # ), "G -> H -> G should preserve G"
+        self.learned_pseudo = learned_pseudo
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
         self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
+        # self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / self.input_size
+        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / self.N_h
 
         """The current grid coding state tensor. Shape: `(N_g)`"""
         self.g = self._g()
@@ -405,9 +409,9 @@ class GridScaffold:
         # M: (M x N)
         # Eg : Wgh = 1/Nh * sum_i (G_i * H_iT) (outer product)
         ret = (torch.einsum("j,i->ji", output, input)) / (
-            # self.N_h
-            torch.linalg.norm(input + 1e-10)
-            ** 2
+            self.N_h
+            # torch.linalg.norm(input + 1e-10)
+            # ** 2
         )
         return ret
 
@@ -422,6 +426,29 @@ class GridScaffold:
         ret = s_plus @ self.H
 
         return ret.T
+
+    def learned_pseudo_inverse(self, input, output):
+        # print("s", input.shape)
+        # print("h", output.shape)
+        b_k_hs = (input.T @ self.inhibition_matrix_hs.T) / (
+            1 + input.T @ self.inhibition_matrix_hs @ input
+        )
+        # print("b_k_hs", b_k_hs.shape)
+        self.inhibition_matrix_hs -= (self.inhibition_matrix_hs @ input) @ b_k_hs
+        print("inhibition matrix", self.inhibition_matrix_hs)
+        # print(self.inhibition_matrix_hs.shape)
+        # print((self.W_hs @ input).shape)
+        # print((output - self.W_hs @ input).shape)
+        # print(((h - self.W_hs @ s) @ b_k_hs.T).shape)
+        # self.W_hs += (h - self.W_hs @ s) @ b_k_hs.T
+        return torch.outer(output - self.W_hs @ input, b_k_hs)
+
+        # b_k_sh = (h.T @ self.inhibition_matrix_sh.T) / (
+        #     1 + h.T @ self.inhibition_matrix_sh @ h
+        # )
+        # self.inhibition_matrix_sh -= (self.inhibition_matrix_sh @ h) @ b_k_sh
+        # self.W_sh += (s - self.W_sh @ h) @ b_k_sh.T
+        # self.W_sh += torch.outer(s - self.W_sh @ h, b_k_sh)
 
     @torch.no_grad()
     def calculate_update_Wsh(
@@ -454,6 +481,12 @@ class GridScaffold:
         if self.pseudo_inverse:
             self.W_sh = self.calculate_update_Wsh(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
+        elif self.learned_pseudo:
+            print("learned pseudo")
+            self.W_hs += self.learned_pseudo_inverse(input=s, output=h)
+            print(self.W_hs)
+            self.W_sh += self.calculate_update(input=h, output=s)
+
         else:
             self.W_sh += self.calculate_update(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
