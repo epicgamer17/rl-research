@@ -545,9 +545,10 @@ class GridScaffold:
         print("Unique Hs seen while recalling:", len(used_Hs))
 
         G = self.grid_from_hippocampal(H)
-        # print("G not denoised")
-        # for g in G:
-        #     print(g)
+        for g in G:
+            # print(g)
+            used_gs.add(tuple(g.tolist()))
+        print("Unique Gs seen while recalling (before denoising):", len(used_gs))
         G_ = self.denoise(G)
         used_G_s = set()
         for g in G_:
@@ -568,10 +569,6 @@ class GridScaffold:
         # g = a multi hot vector (M one hot vectors)
         used_gs = set()
         # print(G)
-        for g in G:
-            # print(g)
-            used_gs.add(tuple(g.tolist()))
-        print("Unique Gs seen while recalling (before denoising):", len(used_gs))
 
         # print("H:", H)
         # print("H_indexes:", H.nonzero())
