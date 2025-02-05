@@ -193,12 +193,18 @@ class GridScaffold:
         continualupdate=False,
         ratshift=False,
         initialize_W_gh_with_zeroes=True,
+        pseudo_inverse=False,
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
 
+        if continualupdate == False:
+            assert (
+                initialize_W_gh_with_zeroes == False
+            ), "initialize_W_gh_with_zeroes must be False if continualupdate is False"
+        self.pseudo_inverse = pseudo_inverse
         # FOR TESTING, CONTINUAL UPDATE TURNS ON UPDATE EVERY STEP
         # FOR TESTING, RATSHIFT TURNS ON RATSHIFT INSTEAD OF ROLL
         self.continualupdate = continualupdate
@@ -444,12 +450,13 @@ class GridScaffold:
 
         if self.continualupdate:
             self.W_gh += self.calculate_update(input=h, output=self.g)
-            self.W_sh += self.calculate_update(input=h, output=s)
-            self.W_hs += self.calculate_update(input=s, output=h)
-        else:
-            # self.W_gh += self.calculate_update(input=h, output=self.g)
+
+        if self.pseudo_inverse:
             self.W_sh = self.calculate_update_Wsh(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
+        else:
+            self.W_sh += self.calculate_update(input=h, output=s)
+            self.W_hs += self.calculate_update(input=s, output=h)
 
     @torch.no_grad()
     def shift(self, velocity):
@@ -498,10 +505,13 @@ class GridScaffold:
         from collections import defaultdict
 
         seen_gs = set()
+        seen_hs = set()
         for obs, vel in zip(observations, velocities):
             seen_gs.add(tuple(self.g.tolist()))
+            seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
             self.learn(obs, vel)
         print("Unique Gs seen while learning:", len(seen_gs))
+        print("Unique Hs seen while learning:", len(seen_hs))
 
     @torch.no_grad()
     def learn(self, observation, velocity):
@@ -529,12 +539,25 @@ class GridScaffold:
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L96
         # noisy_observations: (N, input_size)
         H = self.hippocampal_from_sensory(observations)
+        used_Hs = set()
+        for h in H:
+            used_Hs.add(tuple(h.tolist()))
+        print("Unique Hs seen while recalling:", len(used_Hs))
+
         G = self.grid_from_hippocampal(H)
-        print("G not denoised")
+        # print("G not denoised")
         # for g in G:
         #     print(g)
         G_ = self.denoise(G)
+        used_G_s = set()
+        for g in G_:
+            used_G_s.add(tuple(g.tolist()))
+        print("Unique Gs seen while recalling (after denoising):", len(used_G_s))
         H_ = self.hippocampal_from_grid(G_)
+        used_H_s = set()
+        for h in H_:
+            used_H_s.add(tuple(h.tolist()))
+        print("Unique Hs seen while recalling (after denoising):", len(used_H_s))
         S_ = self.sensory_from_hippocampal(H_)
         H_nonzero = torch.sum(H != 0, 1).float()
         print("avg nonzero H:", torch.mean(H_nonzero).item())
@@ -548,7 +571,7 @@ class GridScaffold:
         for g in G:
             # print(g)
             used_gs.add(tuple(g.tolist()))
-        print("Unique Gs seen while recalling:", len(used_gs))
+        print("Unique Gs seen while recalling (before denoising):", len(used_gs))
 
         # print("H:", H)
         # print("H_indexes:", H.nonzero())
