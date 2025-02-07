@@ -198,9 +198,15 @@ class GridScaffold:
         initialize_W_gh_with_zeroes=True,
         pseudo_inverse=False,
         batch_update=False,
-        use_h_fix = True,
+        use_h_fix=True,
         learned_pseudo=True,
+        calculate_update_scaling_method="norm",
     ) -> None:
+        assert calculate_update_scaling_method in ["norm", "n_h"]
+        self.calculate_update_scaling_method = calculate_update_scaling_method
+
+        if use_h_fix: assert calculate_update_scaling_method == "norm", "use_h_fix only makes sense with norm scaling"
+
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
         self.device = device
@@ -427,11 +433,14 @@ class GridScaffold:
         # output: (M)
         # M: (M x N)
         # Eg : Wgh = 1/Nh * sum_i (G_i * H_iT) (outer product)
-        ret = (torch.einsum("j,i->ji", output, input)) / (
-            self.N_h
-            # torch.linalg.norm(input + 1e-10)
-            # ** 2
-        )
+        if self.calculate_update_scaling_method == "norm":
+            scale = torch.linalg.norm(input) ** 2
+        elif self.calculate_update_scaling_method == "n_h":
+            scale = self.N_h
+        else:
+            raise ValueError("Invalid calculate_update_scaling_method")
+
+        ret = torch.einsum("j,i->ji", output, input) / (scale + 1e-10)
         return ret
 
     @torch.no_grad()
@@ -440,7 +449,6 @@ class GridScaffold:
     ) -> torch.Tensor:
         if self.use_h_fix:
             return self.calculate_update(input=input - self.mean_h, output=output)
-        
         else:
             return self.calculate_update(input=input, output=output)
 
