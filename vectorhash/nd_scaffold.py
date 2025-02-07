@@ -195,6 +195,7 @@ class GridScaffold:
         initialize_W_gh_with_zeroes=True,
         pseudo_inverse=False,
         learned_pseudo=True,
+        epsilon=0.01,
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
@@ -210,7 +211,7 @@ class GridScaffold:
         # FOR TESTING, RATSHIFT TURNS ON RATSHIFT INSTEAD OF ROLL
         self.continualupdate = continualupdate
         self.ratshift = ratshift
-
+        self.epsilon = epsilon
         if from_checkpoint:
             return
 
@@ -259,10 +260,12 @@ class GridScaffold:
         # ), "G -> H -> G should preserve G"
         self.learned_pseudo = learned_pseudo
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
+        #self.W_hs = sparse_matrix_initializer((self.N_h, self.input_size))
+        #self.W_sh = torch.linalg.pinv(self.W_hs)
         self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
-        # self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / self.input_size
-        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / self.N_h
-
+        self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (self.epsilon**2)
+        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (self.epsilon**2)
+        self.updatesh = 0
         """The current grid coding state tensor. Shape: `(N_g)`"""
         self.g = self._g()
         ### testing S such that Whs = H @ S^-1
@@ -339,6 +342,14 @@ class GridScaffold:
             torch.einsum("bi,bj->bij", self.G, self.H).sum(dim=0, keepdim=False)
             / self.N_h
         )
+    
+    @torch.no_grad()
+    def _W_hs(self) -> torch.Tensor:
+        """Calculates the matrix of weights to go from the hippocampal layer to the grid layer heteroassociatively. Shape: `(N_g, N_h)`"""
+        return (
+            torch.einsum("bi,bj->bij", self.S, self.H).sum(dim=0, keepdim=False)
+            / self.N_h
+        )
 
     @torch.no_grad()
     def hippocampal_from_grid(self, G: torch.Tensor) -> torch.Tensor:
@@ -409,9 +420,9 @@ class GridScaffold:
         # M: (M x N)
         # Eg : Wgh = 1/Nh * sum_i (G_i * H_iT) (outer product)
         ret = (torch.einsum("j,i->ji", output, input)) / (
-            self.N_h
-            # torch.linalg.norm(input + 1e-10)
-            # ** 2
+            #self.N_h
+             torch.linalg.norm(input + 1e-10)
+             ** 2
         )
         return ret
 
@@ -427,21 +438,32 @@ class GridScaffold:
 
         return ret.T
 
-    def learned_pseudo_inverse(self, input, output):
+    def learned_pseudo_inversehs(self, input, output):
         # print("s", input.shape)
         # print("h", output.shape)
-        b_k_hs = (input.T @ self.inhibition_matrix_hs.T) / (
+        b_k_hs = (self.inhibition_matrix_hs @ input) / (
             1 + input.T @ self.inhibition_matrix_hs @ input
         )
+        #ERROR VECTOR EK
+        E_k = output - self.W_hs @ input
+        
+        # NORMALIZATION FACTOR 
+
+        E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_hs @ input)
+        L2Enorm = torch.abs(E)
+
+        # GAMMA CALCULATION
+
+        gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
+
         # print("b_k_hs", b_k_hs.shape)
-        self.inhibition_matrix_hs -= (self.inhibition_matrix_hs @ input) @ b_k_hs
-        print("inhibition matrix", self.inhibition_matrix_hs)
+        self.inhibition_matrix_hs = gamma * (self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.input_size, device=self.device))
         # print(self.inhibition_matrix_hs.shape)
         # print((self.W_hs @ input).shape)
         # print((output - self.W_hs @ input).shape)
         # print(((h - self.W_hs @ s) @ b_k_hs.T).shape)
         # self.W_hs += (h - self.W_hs @ s) @ b_k_hs.T
-        return torch.outer(output - self.W_hs @ input, b_k_hs)
+        self.W_hs += torch.outer((output - self.W_hs @ input), b_k_hs.T)
 
         # b_k_sh = (h.T @ self.inhibition_matrix_sh.T) / (
         #     1 + h.T @ self.inhibition_matrix_sh @ h
@@ -449,6 +471,43 @@ class GridScaffold:
         # self.inhibition_matrix_sh -= (self.inhibition_matrix_sh @ h) @ b_k_sh
         # self.W_sh += (s - self.W_sh @ h) @ b_k_sh.T
         # self.W_sh += torch.outer(s - self.W_sh @ h, b_k_sh)
+
+    def learned_pseudo_inversesh(self, input, output):
+        # print("s", input.shape)
+        # print("h", output.shape)
+        b_k_sh = (self.inhibition_matrix_sh @ input) / (
+            1 + input.T @ self.inhibition_matrix_sh @ input
+        )
+        #ERROR VECTOR EK
+        E_k = output - self.W_sh @ input
+        
+        # NORMALIZATION FACTOR 
+
+        E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_sh @ input)
+        L2Enorm = torch.abs(E)
+
+        # GAMMA CALCULATION
+
+        gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
+
+        # print("b_k_hs", b_k_hs.shape)
+        self.inhibition_matrix_sh = gamma * (self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.N_h, device=self.device))
+        # print(self.inhibition_matrix_hs.shape)
+        # print((self.W_hs @ input).shape)
+        # print((output - self.W_hs @ input).shape)
+        # print(((h - self.W_hs @ s) @ b_k_hs.T).shape)
+        # self.W_hs += (h - self.W_hs @ s) @ b_k_hs.T
+
+        self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
+
+        # b_k_sh = (h.T @ self.inhibition_matrix_sh.T) / (
+        #     1 + h.T @ self.inhibition_matrix_sh @ h
+        # )
+        # self.inhibition_matrix_sh -= (self.inhibition_matrix_sh @ h) @ b_k_sh
+        # self.W_sh += (s - self.W_sh @ h) @ b_k_sh.T
+        # self.W_sh += torch.outer(s - self.W_sh @ h, b_k_sh)
+
+
 
     @torch.no_grad()
     def calculate_update_Wsh(
@@ -474,22 +533,24 @@ class GridScaffold:
         else:
             self.S[self.S.nonzero()[-1][0] + 1] = s
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
-
+        print("H", h)
         if self.continualupdate:
             self.W_gh += self.calculate_update(input=h, output=self.g)
-
         if self.pseudo_inverse:
             self.W_sh = self.calculate_update_Wsh(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
         elif self.learned_pseudo:
-            print("learned pseudo")
-            self.W_hs += self.learned_pseudo_inverse(input=s, output=h)
-            print(self.W_hs)
-            self.W_sh += self.calculate_update(input=h, output=s)
-
+            1+1
+            #self.W_sh += self.calculate_update(input=h, output=s)
+            #self.learned_pseudo_inversesh(input=h, output=s)
         else:
-            self.W_sh += self.calculate_update(input=h, output=s)
+            self.learned_pseudo_inversesh(input=h, output=s)
+            #self.W_sh += self.calculate_update(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
+        print("S", s)
+        print("H", h)
+        print("HIPPO FROM S", torch.relu(self.W_hs @ s))
+        print("S FROM HIPPO", self.W_sh @ h)
 
     @torch.no_grad()
     def shift(self, velocity):
@@ -536,7 +597,6 @@ class GridScaffold:
         """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
 
         from collections import defaultdict
-
         seen_gs = set()
         seen_hs = set()
         for obs, vel in zip(observations, velocities):
@@ -593,7 +653,7 @@ class GridScaffold:
         for h in H_:
             used_H_s.add(tuple(h.tolist()))
         print("Unique Hs seen while recalling (after denoising):", len(used_H_s))
-        S_ = self.sensory_from_hippocampal(H_)
+        S_ = (self.sensory_from_hippocampal(H_))
         H_nonzero = torch.sum(H != 0, 1).float()
         print("avg nonzero H:", torch.mean(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
