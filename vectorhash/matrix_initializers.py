@@ -33,3 +33,12 @@ class SparseMatrixByScalingInitializer(SparseMatrixInitializer):
 
     def __call__(self, shape):
         return torch.normal(self.mean, self.std, shape, device=self.device)
+
+class ConstantInitializer(SparseMatrixInitializer):
+    def __init__(self, value: torch.Tensor, device=None):
+        super().__init__(device=device)
+        self.value = value
+
+    def __call__(self, shape):
+        assert shape == self.value.shape, "Shape mismatch between constant and requested shape"
+        return self.value.detach().clone().to(self.device)

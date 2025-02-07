@@ -186,8 +186,8 @@ class GridScaffold:
         shapes: torch.Tensor,
         N_h: int,
         input_size: int,
-        normal_mean: float,
-        normal_std: float,
+        h_normal_mean: float,
+        h_normal_std: float,
         device=None,
         sparse_matrix_initializer=None,
         relu_theta=0.5,
@@ -212,8 +212,8 @@ class GridScaffold:
         self.device = device
         self.relu_theta = relu_theta
 
-        self.normal_mean = normal_mean
-        self.normal_std = normal_std
+        self.h_normal_mean = h_normal_mean
+        self.h_normal_std = h_normal_std
 
         if continualupdate == False:
             assert (
@@ -291,7 +291,7 @@ class GridScaffold:
         #     self.update_count = 0
         #     self.update_interval = 20
 
-        self.mean_h = expectation_of_relu_normal(self.normal_mean, self.normal_std)
+        self.mean_h = expectation_of_relu_normal(self.h_normal_mean, self.h_normal_std)
 
     @torch.no_grad()
     def _G(self) -> torch.Tensor:
@@ -650,13 +650,17 @@ class GridScaffold:
         for h in H_:
             used_H_s.add(tuple(h.tolist()))
         print("Unique Hs seen while recalling (after denoising):", len(used_H_s))
-        if self.use_h_fix:
-            H_ -= self.mean_h
-        S_ = self.sensory_from_hippocampal(H_)
         H_nonzero = torch.sum(H != 0, 1).float()
         print("avg nonzero H:", torch.mean(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
         print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
+
+        if self.use_h_fix:
+            H_ -= self.mean_h
+        S_ = self.sensory_from_hippocampal(H_)
+        # print("H_", H_)
+        # print("H_[0]", H_[0])
+        # print("H_ mean", torch.mean(H_).item())
 
         # G = list of multi hot vectors
         # g = a multi hot vector (M one hot vectors)

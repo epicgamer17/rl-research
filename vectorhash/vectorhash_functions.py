@@ -21,7 +21,7 @@ def solve_mean(p, var=1):
     """
     sigma = math.sqrt(var)  # Convert variance to standard deviation
     z = norm.ppf(1 - p)  # Inverse CDF
-    mu = 0 - sigma * z
+    mu = -sigma * z
     return mu
 
 
