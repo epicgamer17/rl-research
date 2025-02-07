@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
+from vectorhash_functions import expectation_of_relu_normal
 import matplotlib.pyplot as plt
 
 
@@ -185,6 +186,8 @@ class GridScaffold:
         shapes: torch.Tensor,
         N_h: int,
         input_size: int,
+        normal_mean: float,
+        normal_std: float,
         device=None,
         sparse_matrix_initializer=None,
         relu_theta=0.5,
@@ -194,11 +197,16 @@ class GridScaffold:
         ratshift=False,
         initialize_W_gh_with_zeroes=True,
         pseudo_inverse=False,
+        batch_update=False,
+        use_h_fix = True
     ) -> None:
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
+
+        self.normal_mean = normal_mean
+        self.normal_std = normal_std
 
         if continualupdate == False:
             assert (
@@ -263,6 +271,17 @@ class GridScaffold:
         self.g = self._g()
         ### testing S such that Whs = H @ S^-1
         self.S = torch.zeros((self.N_patts, self.input_size), device=device)
+
+        # self.batch_update = batch_update
+        self.use_h_fix = use_h_fix
+
+        # if self.batch_update:
+        #     self.W_sh_update = torch.zeros((self.input_size, self.N_h), device=device)
+        #     self.W_hs_update = torch.zeros((self.N_h, self.input_size), device=device)
+        #     self.update_count = 0
+        #     self.update_interval = 20
+
+        self.mean_h = expectation_of_relu_normal(self.normal_mean, self.normal_std)
 
     @torch.no_grad()
     def _G(self) -> torch.Tensor:
@@ -412,6 +431,16 @@ class GridScaffold:
         return ret
 
     @torch.no_grad()
+    def calculate_update_Wsh_fix(
+        self, input: torch.Tensor, output: torch.Tensor
+    ) -> torch.Tensor:
+        if self.use_h_fix:
+            return self.calculate_update(input=input - self.mean_h, output=output)
+        
+        else:
+            return self.calculate_update(input=input, output=output)
+
+    @torch.no_grad()
     def calculate_update_Whs(
         self, input: torch.Tensor, output: torch.Tensor
     ) -> torch.Tensor:
@@ -440,6 +469,26 @@ class GridScaffold:
         """Stores a memory in the scaffold.
         Input shape: `(input_size)`
         """
+
+        # if self.batch_update:
+        #     h = torch.relu(self.W_hg @ self.g - self.relu_theta)
+        #     self.W_sh_update += self.calculate_update(input=h, output=s)
+        #     self.W_hs_update += self.calculate_update(input=s, output=h)
+        #     self.update_count += 1
+
+        #     if self.update_count == self.update_interval:
+        #         self.W_sh += self.W_sh_update
+        #         self.W_hs += self.W_hs_update
+
+        #         self.W_sh_update = torch.zeros(
+        #             (self.input_size, self.N_h), device=self.device
+        #         )
+        #         self.W_hs_update = torch.zeros(
+        #             (self.N_h, self.input_size), device=self.device
+        #         )
+        #         self.update_count = 0
+        #     return
+
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
         # replaces first empyty row in S with s
         if self.S[0].sum() == 0:
@@ -452,10 +501,10 @@ class GridScaffold:
             self.W_gh += self.calculate_update(input=h, output=self.g)
 
         if self.pseudo_inverse:
-            self.W_sh = self.calculate_update_Wsh(input=h, output=s)
+            self.W_sh = self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
         else:
-            self.W_sh += self.calculate_update(input=h, output=s)
+            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
 
     @torch.no_grad()
@@ -560,6 +609,8 @@ class GridScaffold:
         for h in H_:
             used_H_s.add(tuple(h.tolist()))
         print("Unique Hs seen while recalling (after denoising):", len(used_H_s))
+        if self.use_h_fix:
+            H_ -= self.mean_h
         S_ = self.sensory_from_hippocampal(H_)
         H_nonzero = torch.sum(H != 0, 1).float()
         print("avg nonzero H:", torch.mean(H_nonzero).item())
