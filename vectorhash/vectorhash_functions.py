@@ -2,7 +2,10 @@ import torch
 from functools import reduce
 from scipy.stats import norm
 import math
+import numpy as np
 import scipy
+from scipy.constants import pi
+
 
 def solve_mean(p, var=1):
     """
@@ -18,7 +21,7 @@ def solve_mean(p, var=1):
     """
     sigma = math.sqrt(var)  # Convert variance to standard deviation
     z = norm.ppf(1 - p)  # Inverse CDF
-    mu = 0 - sigma * z
+    mu = -sigma * z
     return mu
 
 
@@ -141,10 +144,6 @@ def modulo_inverse(modulo, number):
     return i
 
 
-if __name__ == "__main__":
-    print(chinese_remainder_theorem([3, 5, 7], [1, 2, 3]))
-
-
 def spacefillingcurve(modules):
     number_of_module_dims = len(modules[0])
     assert all(len(module) == number_of_module_dims for module in modules)
@@ -185,17 +184,38 @@ def addcurves(dim, modules, velocities):
     return velocities
 
 
-def calculate_relu_theta(sparsity, modules, target_prob):
-    """Calculate RELU threshold
-
-    Args:
-        sparsity: sparsity of W_hg, sparsity=0 for no sparsity, sparsity=1 for full sparsity (i.e. all zeros)
-        modules (_type_): total number of modules
-        target_prob (float): target probability that h_i is nonzero
+def expectation_of_relu_normal(mu, std):
     """
-    s = (1 - sparsity) * modules
-    sqrt_s = s**0.5
+    Calculate the expectation of a ReLU applied to a normal distribution with mean mu and standard deviation std.
+    """
 
-    # calculate \theta such that P_X(0 < x < \theta) = target_prob
-    # where X ~ N(0, s)
-    return norm.ppf(loc=0, scale=sqrt_s, q=target_prob + 0.5)
+    mu_over_std = mu / std
+    return mu * norm.cdf(mu_over_std) + std / math.sqrt(2 * pi) * np.exp(-mu_over_std ** 2 / 2)
+
+if __name__ == "__main__":
+    # print(chinese_remainder_theorem([3, 5, 7], [1, 2, 3]))
+    N = 10000
+    std=3
+    means = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    Ns = [10, 100, 1000, 10000, 100000, 1000000, 10000000]
+    results = np.zeros((len(means), len(Ns)))
+    for i, mean in enumerate(means):
+        expected = expectation_of_relu_normal(mean, std)
+        for j, N in enumerate(Ns):
+            x1 = torch.relu(torch.normal(mean, std, (N,))) - expected
+            x2 = torch.relu(torch.normal(mean, std, (N,))) - expected
+            results[i, j] = torch.mean(x1 * x2)
+            print(f"mean={mean}, N={N}, similarity={results}")
+    
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    for i, mean in enumerate(means):
+        ax.plot(Ns, results[i, :], label=f"mean={mean}")
+    ax.set_xscale("log")
+    ax.set_xlabel("N")
+    ax.set_ylabel("similarity")
+    ax.legend()
+
+
+    plt.savefig("sim.png")

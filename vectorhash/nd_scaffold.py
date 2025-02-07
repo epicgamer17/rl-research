@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
+from vectorhash_functions import expectation_of_relu_normal
 import matplotlib.pyplot as plt
 
 
@@ -185,6 +186,8 @@ class GridScaffold:
         shapes: torch.Tensor,
         N_h: int,
         input_size: int,
+        h_normal_mean: float,
+        h_normal_std: float,
         device=None,
         sparse_matrix_initializer=None,
         relu_theta=0.5,
@@ -194,13 +197,24 @@ class GridScaffold:
         ratshift=False,
         initialize_W_gh_with_zeroes=True,
         pseudo_inverse=False,
+        batch_update=False,
+        use_h_fix=True,
         learned_pseudo=True,
         epsilon=0.01,
+        calculate_update_scaling_method="norm",
     ) -> None:
+        assert calculate_update_scaling_method in ["norm", "n_h"]
+        self.calculate_update_scaling_method = calculate_update_scaling_method
+
+        if use_h_fix: assert calculate_update_scaling_method == "norm", "use_h_fix only makes sense with norm scaling"
+
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
+
+        self.h_normal_mean = h_normal_mean
+        self.h_normal_std = h_normal_std
 
         if continualupdate == False:
             assert (
@@ -270,6 +284,17 @@ class GridScaffold:
         self.g = self._g()
         ### testing S such that Whs = H @ S^-1
         self.S = torch.zeros((self.N_patts, self.input_size), device=device)
+
+        # self.batch_update = batch_update
+        self.use_h_fix = use_h_fix
+
+        # if self.batch_update:
+        #     self.W_sh_update = torch.zeros((self.input_size, self.N_h), device=device)
+        #     self.W_hs_update = torch.zeros((self.N_h, self.input_size), device=device)
+        #     self.update_count = 0
+        #     self.update_interval = 20
+
+        self.mean_h = expectation_of_relu_normal(self.h_normal_mean, self.h_normal_std)
 
     @torch.no_grad()
     def _G(self) -> torch.Tensor:
@@ -419,12 +444,24 @@ class GridScaffold:
         # output: (M)
         # M: (M x N)
         # Eg : Wgh = 1/Nh * sum_i (G_i * H_iT) (outer product)
-        ret = (torch.einsum("j,i->ji", output, input)) / (
-            #self.N_h
-             torch.linalg.norm(input + 1e-10)
-             ** 2
-        )
+        if self.calculate_update_scaling_method == "norm":
+            scale = torch.linalg.norm(input) ** 2
+        elif self.calculate_update_scaling_method == "n_h":
+            scale = self.N_h
+        else:
+            raise ValueError("Invalid calculate_update_scaling_method")
+
+        ret = torch.einsum("j,i->ji", output, input) / (scale + 1e-10)
         return ret
+
+    @torch.no_grad()
+    def calculate_update_Wsh_fix(
+        self, input: torch.Tensor, output: torch.Tensor
+    ) -> torch.Tensor:
+        if self.use_h_fix:
+            return self.calculate_update(input=input - self.mean_h, output=output)
+        else:
+            return self.calculate_update(input=input, output=output)
 
     @torch.no_grad()
     def calculate_update_Whs(
@@ -526,6 +563,26 @@ class GridScaffold:
         """Stores a memory in the scaffold.
         Input shape: `(input_size)`
         """
+
+        # if self.batch_update:
+        #     h = torch.relu(self.W_hg @ self.g - self.relu_theta)
+        #     self.W_sh_update += self.calculate_update(input=h, output=s)
+        #     self.W_hs_update += self.calculate_update(input=s, output=h)
+        #     self.update_count += 1
+
+        #     if self.update_count == self.update_interval:
+        #         self.W_sh += self.W_sh_update
+        #         self.W_hs += self.W_hs_update
+
+        #         self.W_sh_update = torch.zeros(
+        #             (self.input_size, self.N_h), device=self.device
+        #         )
+        #         self.W_hs_update = torch.zeros(
+        #             (self.N_h, self.input_size), device=self.device
+        #         )
+        #         self.update_count = 0
+        #     return
+
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
         # replaces first empyty row in S with s
         if self.S[0].sum() == 0:
@@ -537,15 +594,16 @@ class GridScaffold:
         if self.continualupdate:
             self.W_gh += self.calculate_update(input=h, output=self.g)
         if self.pseudo_inverse:
-            self.W_sh = self.calculate_update_Wsh(input=h, output=s)
+            self.W_sh = self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
         elif self.learned_pseudo:
-            1+1
-            #self.W_sh += self.calculate_update(input=h, output=s)
-            #self.learned_pseudo_inversesh(input=h, output=s)
+            print("learned pseudo")
+            self.W_hs += self.learned_pseudo_inverse(input=s, output=h)
+            print(self.W_hs)
+            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
+
         else:
-            self.learned_pseudo_inversesh(input=h, output=s)
-            #self.W_sh += self.calculate_update(input=h, output=s)
+            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
         print("S", s)
         print("H", h)
@@ -653,11 +711,17 @@ class GridScaffold:
         for h in H_:
             used_H_s.add(tuple(h.tolist()))
         print("Unique Hs seen while recalling (after denoising):", len(used_H_s))
-        S_ = (self.sensory_from_hippocampal(H_))
         H_nonzero = torch.sum(H != 0, 1).float()
         print("avg nonzero H:", torch.mean(H_nonzero).item())
         H__nonzero = torch.sum(H_ != 0, 1).float()
         print("avg nonzero H_denoised:", torch.mean(H__nonzero).item())
+
+        if self.use_h_fix:
+            H_ -= self.mean_h
+        S_ = self.sensory_from_hippocampal(H_)
+        # print("H_", H_)
+        # print("H_[0]", H_[0])
+        # print("H_ mean", torch.mean(H_).item())
 
         # G = list of multi hot vectors
         # g = a multi hot vector (M one hot vectors)
