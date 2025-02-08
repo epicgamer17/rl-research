@@ -266,19 +266,22 @@ class GridScaffold:
             self.W_gh = self._W_gh()  # (N_g, N_h)
         # print(self.W_gh)
         # print(self.W_hg)
-        # assert torch.all(
-        #    self.G
-        #    == self.denoise(
-        #        self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
-        #    )
-        # ), "G -> H -> G should preserve G"
+        assert torch.all(
+           self.G
+           == self.denoise(
+               self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
+           )
+        ), "G -> H -> G should preserve G"
         self.learned_pseudo = learned_pseudo
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
         #self.W_hs = sparse_matrix_initializer((self.N_h, self.input_size))
         #self.W_sh = torch.linalg.pinv(self.W_hs)
         self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
-        self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (self.epsilon**2)
-        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (self.epsilon**2)
+        # self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (self.epsilon**2)
+        # self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (self.epsilon**2)
+        self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (self.input_size)
+        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (self.N_h)
+
         self.updatesh = 0
         """The current grid coding state tensor. Shape: `(N_g)`"""
         self.g = self._g()
@@ -482,19 +485,20 @@ class GridScaffold:
             1 + input.T @ self.inhibition_matrix_hs @ input
         )
         #ERROR VECTOR EK
-        E_k = output - self.W_hs @ input
+        # E_k = output - self.W_hs @ input
         
         # NORMALIZATION FACTOR 
 
-        E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_hs @ input)
-        L2Enorm = torch.abs(E)
+        # E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_hs @ input)
+        # L2Enorm = torch.abs(E)
 
         # GAMMA CALCULATION
 
-        gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
+        # gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
 
         # print("b_k_hs", b_k_hs.shape)
-        self.inhibition_matrix_hs = gamma * (self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.input_size, device=self.device))
+        # self.inhibition_matrix_hs = gamma * (self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.input_size, device=self.device))
+        self.inhibition_matrix_hs = self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T
         # print(self.inhibition_matrix_hs.shape)
         # print((self.W_hs @ input).shape)
         # print((output - self.W_hs @ input).shape)
@@ -516,19 +520,20 @@ class GridScaffold:
             1 + input.T @ self.inhibition_matrix_sh @ input
         )
         #ERROR VECTOR EK
-        E_k = output - self.W_sh @ input
+        # E_k = output - self.W_sh @ input
         
         # NORMALIZATION FACTOR 
 
-        E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_sh @ input)
-        L2Enorm = torch.abs(E)
+        # E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_sh @ input)
+        # L2Enorm = torch.abs(E)
 
         # GAMMA CALCULATION
 
-        gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
+        # gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
 
         # print("b_k_hs", b_k_hs.shape)
-        self.inhibition_matrix_sh = gamma * (self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.N_h, device=self.device))
+        # self.inhibition_matrix_sh = gamma * (self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.N_h, device=self.device))
+        self.inhibition_matrix_sh = self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T
         # print(self.inhibition_matrix_hs.shape)
         # print((self.W_hs @ input).shape)
         # print((output - self.W_hs @ input).shape)
