@@ -1,3 +1,4 @@
+from email.mime import image
 import math
 import torch
 import numpy as np
@@ -206,7 +207,10 @@ class GridScaffold:
         assert calculate_update_scaling_method in ["norm", "n_h"]
         self.calculate_update_scaling_method = calculate_update_scaling_method
 
-        if use_h_fix: assert calculate_update_scaling_method == "norm", "use_h_fix only makes sense with norm scaling"
+        if use_h_fix:
+            assert (
+                calculate_update_scaling_method == "norm"
+            ), "use_h_fix only makes sense with norm scaling"
 
         self.shapes = torch.Tensor(shapes)
         self.input_size = input_size
@@ -258,6 +262,22 @@ class GridScaffold:
 
         """The matrix of weights to go from the grid layer to the hippocampal layer. Shape: `(N_h, N_g)`"""
         self.H = self.hippocampal_from_grid(self.G)  # (N_patts, N_h)
+
+        # print("cosine similarity between all pairs of H")
+        # for h1 in range(len(self.H)):
+        #     for h2 in range(len(self.H)):
+        #         # print(self.H[h1])
+        #         # print(self.H[h2])
+        #         print(
+        #             "h{} and h{}: {}".format(
+        #                 h1,
+        #                 h2,
+        #                 torch.nn.functional.cosine_similarity(
+        #                     self.H[h1].reshape(1, -1), self.H[h2].reshape(1, -1)
+        #                 ),
+        #             )
+        #         )
+
         """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
 
         if initialize_W_gh_with_zeroes:
@@ -267,20 +287,24 @@ class GridScaffold:
         # print(self.W_gh)
         # print(self.W_hg)
         assert torch.all(
-           self.G
-           == self.denoise(
-               self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
-           )
+            self.G
+            == self.denoise(
+                self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
+            )
         ), "G -> H -> G should preserve G"
         self.learned_pseudo = learned_pseudo
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
-        #self.W_hs = sparse_matrix_initializer((self.N_h, self.input_size))
-        #self.W_sh = torch.linalg.pinv(self.W_hs)
+        # self.W_hs = sparse_matrix_initializer((self.N_h, self.input_size))
+        # self.W_sh = torch.linalg.pinv(self.W_hs)
         self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
         # self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (self.epsilon**2)
         # self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (self.epsilon**2)
-        self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (self.input_size)
-        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (self.N_h)
+        self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (
+            self.input_size
+        )
+        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (
+            self.N_h
+        )
 
         self.updatesh = 0
         """The current grid coding state tensor. Shape: `(N_g)`"""
@@ -370,7 +394,7 @@ class GridScaffold:
             torch.einsum("bi,bj->bij", self.G, self.H).sum(dim=0, keepdim=False)
             / self.N_h
         )
-    
+
     @torch.no_grad()
     def _W_hs(self) -> torch.Tensor:
         """Calculates the matrix of weights to go from the hippocampal layer to the grid layer heteroassociatively. Shape: `(N_g, N_h)`"""
@@ -484,10 +508,10 @@ class GridScaffold:
         b_k_hs = (self.inhibition_matrix_hs @ input) / (
             1 + input.T @ self.inhibition_matrix_hs @ input
         )
-        #ERROR VECTOR EK
+        # ERROR VECTOR EK
         # E_k = output - self.W_hs @ input
-        
-        # NORMALIZATION FACTOR 
+
+        # NORMALIZATION FACTOR
 
         # E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_hs @ input)
         # L2Enorm = torch.abs(E)
@@ -498,7 +522,9 @@ class GridScaffold:
 
         # print("b_k_hs", b_k_hs.shape)
         # self.inhibition_matrix_hs = gamma * (self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.input_size, device=self.device))
-        self.inhibition_matrix_hs = self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T
+        self.inhibition_matrix_hs = (
+            self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T
+        )
         # print(self.inhibition_matrix_hs.shape)
         # print((self.W_hs @ input).shape)
         # print((output - self.W_hs @ input).shape)
@@ -519,10 +545,10 @@ class GridScaffold:
         b_k_sh = (self.inhibition_matrix_sh @ input) / (
             1 + input.T @ self.inhibition_matrix_sh @ input
         )
-        #ERROR VECTOR EK
+        # ERROR VECTOR EK
         # E_k = output - self.W_sh @ input
-        
-        # NORMALIZATION FACTOR 
+
+        # NORMALIZATION FACTOR
 
         # E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_sh @ input)
         # L2Enorm = torch.abs(E)
@@ -533,7 +559,9 @@ class GridScaffold:
 
         # print("b_k_hs", b_k_hs.shape)
         # self.inhibition_matrix_sh = gamma * (self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.N_h, device=self.device))
-        self.inhibition_matrix_sh = self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T
+        self.inhibition_matrix_sh = (
+            self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T
+        )
         # print(self.inhibition_matrix_hs.shape)
         # print((self.W_hs @ input).shape)
         # print((output - self.W_hs @ input).shape)
@@ -548,8 +576,6 @@ class GridScaffold:
         # self.inhibition_matrix_sh -= (self.inhibition_matrix_sh @ h) @ b_k_sh
         # self.W_sh += (s - self.W_sh @ h) @ b_k_sh.T
         # self.W_sh += torch.outer(s - self.W_sh @ h, b_k_sh)
-
-
 
     @torch.no_grad()
     def calculate_update_Wsh(
@@ -595,25 +621,25 @@ class GridScaffold:
         else:
             self.S[self.S.nonzero()[-1][0] + 1] = s
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
-        print("H", h)
+        # print("H", h)
         if self.continualupdate:
             self.W_gh += self.calculate_update(input=h, output=self.g)
         if self.pseudo_inverse:
             self.W_sh = self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
         elif self.learned_pseudo:
-            print("learned pseudo")
-            self.W_hs += self.learned_pseudo_inverse(input=s, output=h)
-            print(self.W_hs)
+            # print("learned pseudo")
+            self.learned_pseudo_inversehs(input=s, output=h)
+            # print(self.W_hs)
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
 
         else:
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
-        print("S", s)
-        print("H", h)
-        print("HIPPO FROM S", torch.relu(self.W_hs @ s))
-        print("S FROM HIPPO", self.W_sh @ h)
+        # print("S", s)
+        # print("H", h)
+        # print("HIPPO FROM S", torch.relu(self.W_hs @ s))
+        # print("S FROM HIPPO", self.W_sh @ h)
 
     @torch.no_grad()
     def shift(self, velocity):
@@ -660,14 +686,65 @@ class GridScaffold:
         """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
 
         from collections import defaultdict
+
         seen_gs = set()
+        seen_gs_recall = set()
+        seen_g_s_recall = set()
         seen_hs = set()
+        seen_hs_recall = set()
+        first_g = self.g
+        first_obv = observations[0]
+        image_count = 1
         for obs, vel in zip(observations, velocities):
+            print("image", image_count)
+            image_count += 1
             seen_gs.add(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
             self.learn(obs, vel)
+            # testing code
+            self.recall(obs)
+            H = self.hippocampal_from_sensory(obs)
+            G = self.grid_from_hippocampal(H)
+            G_ = self.denoise(G)
+            seen_hs_recall.add(tuple(H))
+            seen_gs_recall.add(tuple(G))
+            seen_g_s_recall.add(tuple(G_))
+            H = self.hippocampal_from_sensory(first_obv)
+            # print(self.H[0])
+            # print("first H is H 0", H == self.H[0])
+            # print("first H is G 0 times W_hg", H == first_g @ self.W_hg.T)
+            print(
+                "first H is G 0 times W_hg",
+                self.H[0]
+                == torch.relu(
+                    torch.floor(first_g) @ self.W_hg.T,
+                ),
+            )
+            print(torch.nn.functional.cosine_similarity(H, self.H[0]))
+            G = self.grid_from_hippocampal(H)
+            G_ = self.denoise(G)
+            # print("G", G)
+            # print("G_", G_)
+            # print("first g", torch.floor(first_g))
+            print("G = G_", G == G_)
+            print("G = first g", G == torch.floor(first_g))
+            print("G_ = first g", G_ == torch.floor(first_g))
         print("Unique Gs seen while learning:", len(seen_gs))
         print("Unique Hs seen while learning:", len(seen_hs))
+        print("Unique Hs seen while recalling:", len(seen_hs_recall))
+        print(
+            "Unique Gs seen while recalling (right after learning):",
+            len(seen_gs_recall),
+        )
+        print(
+            "Unique Gs seen while recalling (right after learning, after denoising):",
+            len(seen_g_s_recall),
+        )
+        seen_g_s = set()
+        for g in seen_gs:
+            # print(self.denoise(torch.tensor(list(g))))
+            seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
+        print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
 
     @torch.no_grad()
     def learn(self, observation, velocity):
@@ -709,6 +786,7 @@ class GridScaffold:
         G_ = self.denoise(G)
         used_G_s = set()
         for g in G_:
+            # print(g)
             used_G_s.add(tuple(g.tolist()))
         print("Unique Gs seen while recalling (after denoising):", len(used_G_s))
         H_ = self.hippocampal_from_grid(G_)
