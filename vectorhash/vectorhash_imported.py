@@ -53,3 +53,114 @@ def explicit_interpolation(hexed_afs, upsample_rate=10, sigma=10):
     hexed_afs_up_smooth=UU/WW
 
     return hexed_afs_up_smooth
+
+
+def gen_gbook_2d(lambdas, Ng, Npos):
+    """
+    Return grid codebook (grid activity vector for each position)
+
+    Inputs:
+        lambdas - list[int], grid periods
+        Ng - int, number of grid cells
+            should equal to sum of period squared
+        Npos - int, number of spatial positions in each axis
+    
+    Outputs:
+        gbook - np.array, size (Ng, Npos, Npos)
+            gbook[:, a, b] = grid vector at position (a, b)
+    """
+    # Ng = np.sum(np.dot(lambdas, lambdas))
+    # Npos = np.prod(lambdas)
+    gbook = np.zeros((Ng, Npos, Npos))
+    for x in range(Npos):
+        for y in range(Npos):
+            index = 0
+            for period in lambdas:
+                phi1, phi2 = x % period, y % period
+                gpattern = np.zeros((period, period))
+                gpattern[phi1, phi2] = 1
+                gpattern = gpattern.flatten()
+                gbook[index:index+len(gpattern), x, y] = gpattern
+                index += len(gpattern)
+    return gbook
+
+
+
+def gen_gbook(lambdas, Ng, Npos):
+    ginds = [0,lambdas[0],lambdas[0]+lambdas[1]]; 
+    gbook=np.zeros((Ng,Npos))
+    for x in range(Npos):
+        phis = np.mod(x,lambdas) 
+        gbook[phis+ginds,x]=1 
+    return gbook
+
+
+# global nearest neighbor
+def nearest_neighbor(gin, gbook):
+    est = np.transpose(gin)@gbook; 
+    a = np.where(est[0,:]==max(est[0,:]))
+    #print("Nearest neighbor: ", a)
+    idx = np.random.choice(a[0])
+    g = gbook[:,idx]; 
+    return g
+
+
+# module wise nearest neighbor
+def module_wise_NN(gin, gbook, lambdas):
+    size = gin.shape
+    g = np.zeros(size)               #size is (Ng, 1)
+    i = 0
+    for j in lambdas:
+        gin_mod = gin[i:i+j]           # module subset of gin
+        gbook_mod = gbook[i:i+j]
+        g_mod = nearest_neighbor(gin_mod, gbook_mod)
+        g[i:i+j, 0] = g_mod
+        i = i+j
+    return g    
+
+
+def capacity(sensory_model, lambdas, Ng, Np_lst, pflip, Niter, Npos, gbook, Npatts_lst, nruns, Ns, sbook, sparsity, noise_level):
+
+    err_gc = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
+    err_pc = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
+    err_sens = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
+    err_senscup = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
+    err_sensl1 = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
+
+    l = 0
+    for Np in Np_lst:
+        print("l =",l)
+        err_pc[l], err_gc[l], err_sens[l], err_senscup[l], err_sensl1[l] = sensory_model(lambdas, Ng, Np, pflip, Niter, Npos, 
+                                                gbook, Npatts_lst, nruns, Ns, sbook, sparsity,noise_level)
+        l = l+1
+
+    return err_pc, err_gc, err_sens, err_senscup, err_sensl1  
+
+
+def train_gcpc(pbook, gbook, Npatts):
+    return (1/Npatts)*np.einsum('ij, klj -> kil', gbook[:,:Npatts], pbook[:,:,:Npatts])  
+    
+
+def pseudotrain_Wsp(sbook, ca1book, Npatts):
+    ca1inv = np.linalg.pinv(ca1book[:, :, :Npatts])
+    return np.einsum('ij, kjl -> kil', sbook[:,:Npatts], ca1inv[:,:Npatts,:]) 
+
+def pseudotrain_Wps(ca1book, sbook, Npatts):
+    sbookinv = np.linalg.pinv(sbook[:, :Npatts])
+    return np.einsum('ij, kli -> klj', sbookinv[:Npatts,:], ca1book[:,:,:Npatts]) 
+    
+def gridCAN_2d(gs,lambdas):
+    #gs.shape == nruns,Ng,Npatts
+    nruns,Ng,Npatts = gs.shape
+    ls = [l**2 for l in lambdas]
+    i=0
+    gout = np.zeros(gs.shape)
+    for j in ls:
+        gmod=gs[:,i:i+j,:]
+        #print(gmod.shape)
+        maxes = gmod.argmax(axis=1)
+        #print(maxes.shape)
+        for ru in range(nruns):
+            gout[ru][maxes[ru]+i,np.arange(Npatts)] = 1
+        i=i+j
+    return gout
