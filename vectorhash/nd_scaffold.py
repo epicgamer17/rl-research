@@ -204,6 +204,7 @@ class GridScaffold:
         epsilon=0.01,
         calculate_update_scaling_method="norm",
         MagicMath=False,
+        sanity_check=True,
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
         self.calculate_update_scaling_method = calculate_update_scaling_method
@@ -213,7 +214,7 @@ class GridScaffold:
                 calculate_update_scaling_method == "norm"
             ), "use_h_fix only makes sense with norm scaling"
 
-        self.shapes = torch.Tensor(shapes)
+        self.shapes = torch.Tensor(shapes).int()
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
@@ -289,12 +290,13 @@ class GridScaffold:
             self.W_gh = self._W_gh()  # (N_g, N_h)
         # print(self.W_gh)
         # print(self.W_hg)
-        assert torch.all(
-            self.G
-            == self.denoise(
-                self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
-            )
-        ), "G -> H -> G should preserve G"
+        if sanity_check:
+            assert torch.all(
+                self.G
+                == self.denoise(
+                    self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
+                )
+            ), "G -> H -> G should preserve G"
         self.learned_pseudo = learned_pseudo
         self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
         # self.W_hs = sparse_matrix_initializer((self.N_h, self.input_size))
@@ -329,15 +331,32 @@ class GridScaffold:
     @torch.no_grad()
     def _G(self) -> torch.Tensor:
         """Calculates the matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
-        G = torch.zeros((self.N_patts, self.N_g), device=self.device)
-        height = 0
-        for module in self.modules:
-            G[:, height : height + module.l] = torch.tile(
-                torch.eye(module.l, device=self.device), (self.N_patts // module.l, 1)
-            )
-            height += module.l
+        # e.x. shapes: (3,3), (4,4), (5,5)
+        dim_vecs = [] 
+        for dim in range(len(self.shapes[0])):
+            l = 1
+            for shape in self.shapes:
+                l *= shape[dim]
+            dim_vecs.append(torch.arange(l, device=self.device))
+            
+        grid_states = torch.cartesian_prod(*dim_vecs).int() 
+        gbook = torch.zeros((self.N_g, *[len(d) for d in dim_vecs]), device=self.device)
+        # e.x. (N_g, 60, 60)
 
-        return G
+        for state in grid_states:
+            i = 0
+            for shape in self.shapes:
+                phis = torch.remainder(state, shape.to(self.device)).int()
+                gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
+                gpattern[*phis] = 1
+                gpattern = gpattern.flatten()
+                gbook[i:i+len(gpattern), *state] = gpattern
+                i += len(gpattern)
+        
+        return gbook.flatten(1).T
+
+
+
 
     def _g(self) -> torch.Tensor:
         """Calculates the current grid coding state tensor. Shape: `(N_g)`"""
