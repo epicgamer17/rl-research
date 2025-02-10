@@ -205,8 +205,10 @@ class GridScaffold:
         calculate_update_scaling_method="norm",
         MagicMath=False,
         sanity_check=True,
+        calculate_g_method="fast",
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
+        assert calculate_g_method in ['hairpin', 'fast', 'spiral']
         self.calculate_update_scaling_method = calculate_update_scaling_method
 
         if use_h_fix:
@@ -253,7 +255,7 @@ class GridScaffold:
         print("N_h     : ", self.N_h)
 
         self.sparse_matrix_initializer = sparse_matrix_initializer
-        self.G = self._G()
+        self.G = self._G(method=calculate_g_method)
 
         """The matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
 
@@ -329,32 +331,43 @@ class GridScaffold:
         self.mean_h = expectation_of_relu_normal(self.h_normal_mean, self.h_normal_std)
 
     @torch.no_grad()
-    def _G(self) -> torch.Tensor:
+    def _G(self, method) -> torch.Tensor:
         """Calculates the matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
-        # e.x. shapes: (3,3), (4,4), (5,5)
-        dim_vecs = [] 
-        for dim in range(len(self.shapes[0])):
-            l = 1
-            for shape in self.shapes:
-                l *= shape[dim]
-            dim_vecs.append(torch.arange(l, device=self.device))
+
+        if method == "hairpin":
+            # e.x. shapes: (3,3), (4,4), (5,5)
+            dim_vecs = [] 
+            for dim in range(len(self.shapes[0])):
+                l = 1
+                for shape in self.shapes:
+                    l *= shape[dim]
+                dim_vecs.append(torch.arange(l, device=self.device))
+                
+            grid_states = torch.cartesian_prod(*dim_vecs).int() 
+            gbook = torch.zeros((self.N_g, *[len(d) for d in dim_vecs]), device=self.device)
+            # e.x. (N_g, 60, 60)
+
+            for state in grid_states:
+                i = 0
+                for shape in self.shapes:
+                    phis = torch.remainder(state, shape.to(self.device)).int()
+                    gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
+                    gpattern[*phis] = 1
+                    gpattern = gpattern.flatten()
+                    gbook[i:i+len(gpattern), *state] = gpattern
+                    i += len(gpattern)
             
-        grid_states = torch.cartesian_prod(*dim_vecs).int() 
-        gbook = torch.zeros((self.N_g, *[len(d) for d in dim_vecs]), device=self.device)
-        # e.x. (N_g, 60, 60)
-
-        for state in grid_states:
+            return gbook.flatten(1).T
+        if method == "fast":
+            gbook = torch.zeros((self.N_patts, self.N_g), device=self.device)
             i = 0
-            for shape in self.shapes:
-                phis = torch.remainder(state, shape.to(self.device)).int()
-                gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
-                gpattern[*phis] = 1
-                gpattern = gpattern.flatten()
-                gbook[i:i+len(gpattern), *state] = gpattern
-                i += len(gpattern)
-        
-        return gbook.flatten(1).T
-
+            for module in self.modules:
+                gbook[:, i:i + module.l] = torch.tile(
+                    torch.eye(module.l, device=self.device),
+                    (self.N_patts // module.l, 1)
+                )
+                i += module.l
+            return gbook
 
 
 
