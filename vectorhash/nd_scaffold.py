@@ -4,9 +4,9 @@ import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
-from vectorhash_functions import expectation_of_relu_normal
+from scipy.stats import norm
+from vectorhash_functions import expectation_of_relu_normal, Rk1MrUpdate
 import matplotlib.pyplot as plt
-
 
 def plot_recall_info(info):
     fig, ax = plt.subplots(1, 2, dpi=200, figsize=(4, 5))
@@ -203,6 +203,7 @@ class GridScaffold:
         learned_pseudo=True,
         epsilon=0.01,
         calculate_update_scaling_method="norm",
+        MagicMath=False,
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
         self.calculate_update_scaling_method = calculate_update_scaling_method
@@ -216,6 +217,8 @@ class GridScaffold:
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
+
+        self.MagicMath = MagicMath
 
         self.h_normal_mean = h_normal_mean
         self.h_normal_std = h_normal_std
@@ -632,7 +635,9 @@ class GridScaffold:
             self.learned_pseudo_inversehs(input=s, output=h)
             # print(self.W_hs)
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
-
+        elif self.MagicMath:
+            self.W_hs = Rk1MrUpdate(self.W_sh, self.W_hs, c=s, d=h, Zero_tol=self.ZeroTol, Case_Print_Flag=0)
+            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
         else:
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
@@ -687,6 +692,8 @@ class GridScaffold:
 
         from collections import defaultdict
 
+        avg_s = torch.tensor([0.0] * self.input_size, device=self.device)
+        avg_h = torch.tensor([0.0] * self.N_h, device=self.device)
         seen_gs = set()
         seen_gs_recall = set()
         seen_g_s_recall = set()
@@ -700,7 +707,11 @@ class GridScaffold:
             image_count += 1
             seen_gs.add(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
+            avg_s = 1/(image_count) * (obs + (image_count - 1) * avg_s)
+            avg_h = 1/(image_count) * (torch.relu(self.W_hg @ self.g - self.relu_theta) + (image_count - 1) * avg_h)
             self.learn(obs, vel)
+            self.learned_pseudo_inversehs(avg_s, avg_h)
+            
             # testing code
             self.recall(obs)
             H = self.hippocampal_from_sensory(obs)
@@ -713,6 +724,7 @@ class GridScaffold:
             # print(self.H[0])
             # print("first H is H 0", H == self.H[0])
             # print("first H is G 0 times W_hg", H == first_g @ self.W_hg.T)
+            print(first_g)
             print(
                 "first H is G 0 times W_hg",
                 self.H[0]

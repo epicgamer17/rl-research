@@ -5,6 +5,7 @@ import math
 import numpy as np
 import scipy
 from scipy.constants import pi
+from torch import abs
 
 
 def solve_mean(p, var=1):
@@ -188,7 +189,8 @@ def expectation_of_relu_normal(mu, std):
     """
     Calculate the expectation of a ReLU applied to a normal distribution with mean mu and standard deviation std.
     """
-
+    print(mu)
+    print(std)
     mu_over_std = mu / std
     return mu * norm.cdf(mu_over_std) + std / math.sqrt(2 * pi) * np.exp(-mu_over_std ** 2 / 2)
 
@@ -219,3 +221,62 @@ if __name__ == "__main__":
 
 
     plt.savefig("sim.png")
+
+def Rk1MrUpdate(A, A_pinv, c, d, Zero_tol, Case_Print_Flag):
+    # size c = [n,1]
+    # size d = [m,1]
+    c = c.reshape(-1,1)
+    d = d.reshape(-1,1)
+    n = c.shape[0]
+    m = d.shape[0]
+    V = A_pinv @ c
+
+    b = 1 + d.T @ V
+    N = A_pinv.T @ d
+    W = (torch.eye(n) - A @ A_pinv) @ c
+    M = (torch.eye(m) - A_pinv @ A) @ d
+    ## squared norm of the two abovesaid vectors
+    w_snorm = torch.norm(W,p=2)**2   
+    m_snorm = torch.norm(M,p=2)**2
+
+    if w_snorm>=Zero_tol and m_snorm>=Zero_tol:
+        if Case_Print_Flag == 1:
+            print('case 1')
+        G = ((-1/w_snorm) * V @ W.T) - ((1/m_snorm) * (M @ N.T)) + ((b/m_snorm/w_snorm) * (M @ W.T))
+
+    elif w_snorm<Zero_tol and m_snorm>=Zero_tol and abs(b)<Zero_tol:
+        if Case_Print_Flag == 1:
+            print('case 2')  
+        v_snorm = torch.norm(V,2)**2     
+        G = (-1/v_snorm) * (V @ V.T) @ A_pinv -(1/m_snorm) * M @ N.T
+    
+    elif w_snorm<Zero_tol and abs(b)>Zero_tol:
+        if Case_Print_Flag == 1:
+            print('case 3')
+        v_snorm = torch.norm(V,2)**2
+        G = ((1/b) * M @ V.T @ A_pinv - (b/(v_snorm * m_snorm + b**2))) @ ((v_snorm / b) * M + V) @ ((m_snorm / b) * A_pinv.T @ V + N).T        
+    
+    elif m_snorm<Zero_tol and w_snorm>=Zero_tol and abs(b)<Zero_tol:
+        if Case_Print_Flag == 1:
+            print('case 4')
+        n_snorm = torch.norm(N,2)**2
+        G = (-1/n_snorm) * A_pinv @ (N @ N.T) -(1/ w_snorm) * V @ W.T
+                                     
+    elif m_snorm<Zero_tol and abs(b)>Zero_tol:
+        if Case_Print_Flag == 1:
+            print('case 5')        
+        n_snorm = torch.norm(N,2)**2 
+        a1 = (1/b) * A_pinv @ N @ W.T
+        a2 = (b/(w_snorm * n_snorm + b**2)) * ((w_snorm/b) * A_pinv @ N + V)
+        a3 = ((n_snorm/b) * W + N).T
+        G = ((1/b) * A_pinv @ N @ W.T) - (((b/(w_snorm * n_snorm + b**2)) * ((w_snorm/b) * A_pinv @ N + V)) @ (((n_snorm/b) * W + N).T))
+
+    elif m_snorm<Zero_tol and w_snorm<Zero_tol and abs(b)<Zero_tol:
+        if Case_Print_Flag == 1:
+            print('case 6')
+        v_snorm = torch.norm(V,2)**2
+        n_snorm = torch.norm(N,2)**2
+        G = (-1/v_snorm) * (V @ V.T) @ A_pinv - (1/n_snorm) * A_pinv @ (N @ N.T) + (((V.T @ A_pinv @ N) / (v_snorm * n_snorm)) @ (V @ N.T))
+
+    A_pinv_New = A_pinv + G
+    return A_pinv_New
