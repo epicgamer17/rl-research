@@ -423,11 +423,18 @@ class GridScaffold:
         return scaffold
 
     @torch.no_grad()
-    def _W_gh(self) -> torch.Tensor:
+    def _W_gh(self, noisy=False, noisy_std=1, Npatts=None) -> torch.Tensor:
         """Calculates the matrix of weights to go from the hippocampal layer to the grid layer heteroassociatively. Shape: `(N_g, N_h)`"""
+        g_train = self.G[:Npatts] if Npatts is not None else self.G
+        h_train = self.H[:Npatts] if Npatts is not None else self.H
+        scale = Npatts if Npatts is not None else self.N_patts
+
+        if noisy:
+            h_train += torch.normal(mean=0, std=noisy_std, size=h_train.shape, device=self.device)
+        
         return (
-            torch.einsum("bi,bj->bij", self.G, self.H).sum(dim=0, keepdim=False)
-            / self.N_h
+            torch.einsum("bi,bj->bij", g_train, h_train).sum(dim=0, keepdim=False)
+            / scale
         )
 
     @torch.no_grad()

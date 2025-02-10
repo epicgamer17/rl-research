@@ -189,8 +189,6 @@ def expectation_of_relu_normal(mu, std):
     """
     Calculate the expectation of a ReLU applied to a normal distribution with mean mu and standard deviation std.
     """
-    print(mu)
-    print(std)
     mu_over_std = mu / std
     return mu * norm.cdf(mu_over_std) + std / math.sqrt(2 * pi) * np.exp(-mu_over_std ** 2 / 2)
 
@@ -280,3 +278,5 @@ def Rk1MrUpdate(A, A_pinv, c, d, Zero_tol, Case_Print_Flag):
 
     A_pinv_New = A_pinv + G
     return A_pinv_New
+
+
