@@ -8,6 +8,7 @@ from scipy.stats import norm
 from vectorhash_functions import expectation_of_relu_normal, Rk1MrUpdate
 import matplotlib.pyplot as plt
 
+
 def plot_recall_info(info):
     fig, ax = plt.subplots(1, 2, dpi=200, figsize=(4, 5))
 
@@ -208,7 +209,7 @@ class GridScaffold:
         calculate_g_method="fast",
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
-        assert calculate_g_method in ['hairpin', 'fast', 'spiral']
+        assert calculate_g_method in ["hairpin", "fast", "spiral"]
         self.calculate_update_scaling_method = calculate_update_scaling_method
 
         if use_h_fix:
@@ -336,15 +337,17 @@ class GridScaffold:
 
         if method == "hairpin":
             # e.x. shapes: (3,3), (4,4), (5,5)
-            dim_vecs = [] 
+            dim_vecs = []
             for dim in range(len(self.shapes[0])):
                 l = 1
                 for shape in self.shapes:
                     l *= shape[dim]
                 dim_vecs.append(torch.arange(l, device=self.device))
-                
-            grid_states = torch.cartesian_prod(*dim_vecs).int() 
-            gbook = torch.zeros((self.N_g, *[len(d) for d in dim_vecs]), device=self.device)
+
+            grid_states = torch.cartesian_prod(*dim_vecs).int()
+            gbook = torch.zeros(
+                (self.N_g, *[len(d) for d in dim_vecs]), device=self.device
+            )
             # e.x. (N_g, 60, 60)
 
             for state in grid_states:
@@ -354,22 +357,20 @@ class GridScaffold:
                     gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
                     gpattern[*phis] = 1
                     gpattern = gpattern.flatten()
-                    gbook[i:i+len(gpattern), *state] = gpattern
+                    gbook[i : i + len(gpattern), *state] = gpattern
                     i += len(gpattern)
-            
+
             return gbook.flatten(1).T
         if method == "fast":
             gbook = torch.zeros((self.N_patts, self.N_g), device=self.device)
             i = 0
             for module in self.modules:
-                gbook[:, i:i + module.l] = torch.tile(
+                gbook[:, i : i + module.l] = torch.tile(
                     torch.eye(module.l, device=self.device),
-                    (self.N_patts // module.l, 1)
+                    (self.N_patts // module.l, 1),
                 )
                 i += module.l
             return gbook
-
-
 
     def _g(self) -> torch.Tensor:
         """Calculates the current grid coding state tensor. Shape: `(N_g)`"""
@@ -430,20 +431,15 @@ class GridScaffold:
         scale = Npatts if Npatts is not None else self.N_patts
 
         if noisy:
-            h_train += torch.normal(mean=0, std=noisy_std, size=h_train.shape, device=self.device)
-        
-        return (
-            torch.einsum("bi,bj->bij", g_train, h_train).sum(dim=0, keepdim=False)
-            / scale
-        )
+            h_train = h_train.clone().detach() + torch.normal(
+                mean=0, std=noisy_std, size=h_train.shape, device=self.device
+            )
+        return torch.einsum("bi,bj->ij", g_train, h_train) / scale
 
     @torch.no_grad()
     def _W_hs(self) -> torch.Tensor:
         """Calculates the matrix of weights to go from the hippocampal layer to the grid layer heteroassociatively. Shape: `(N_g, N_h)`"""
-        return (
-            torch.einsum("bi,bj->bij", self.S, self.H).sum(dim=0, keepdim=False)
-            / self.N_h
-        )
+        return torch.einsum("bi,bj->ij", self.S, self.H) / self.N_h
 
     @torch.no_grad()
     def hippocampal_from_grid(self, G: torch.Tensor) -> torch.Tensor:
@@ -750,7 +746,7 @@ class GridScaffold:
             avg_h = 1/(image_count) * (torch.relu(self.W_hg @ self.g - self.relu_theta) + (image_count - 1) * avg_h)
             self.learn(obs, vel)
             self.learned_pseudo_inversehs(avg_s, avg_h)
-            
+
             # testing code
             self.recall(obs)
             H = self.hippocampal_from_sensory(obs)
