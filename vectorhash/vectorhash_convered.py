@@ -2,8 +2,9 @@ import tqdm
 import torch
 from numpy.random import randn, randint
 from vectorhash_imported import *
-
+from scipy.linalg import norm
 from nd_scaffold import *
+from matrix_initializers import *
 
 
 def corrupt_pcont(pflip, ptrue):
@@ -96,38 +97,43 @@ def capacity_gcpc_vectorized(
     return err_gcpc, num_correct
 
 
-def senstrans_gs_vectorized_patts(lambdas, Ng, Np, pflip, Niter, Npos, gbook, Npatts_lst, nruns, Ns, sbook, sparsity, noise_level):
+def senstrans_gs_vectorized_patts(lambdas, Ng, Np, pflip, Niter, Npos, gbook, Npatts_lst, nruns, Ns, sbook, sparsity, noise_level, grid_scaffold, W_hg_mean, W_hg_std):
     # avg error over Npatts
-    err_pc = -1*np.ones((len(Npatts_lst), nruns))
-    err_sens = -1*np.ones((len(Npatts_lst), nruns))
-    err_senscup = -1*np.ones((len(Npatts_lst), nruns))
-    err_gc = -1*np.ones((len(Npatts_lst), nruns))
-    err_sensl1 = -1*np.ones((len(Npatts_lst), nruns))
+    err_pc = 1*np.ones((len(Npatts_lst), nruns))
+    err_sens = 1*np.ones((len(Npatts_lst), nruns))
+    err_senscup = 1*np.ones((len(Npatts_lst), nruns))
+    err_gc = 1*np.ones((len(Npatts_lst), nruns))
+    err_sensl1 = 1*np.ones((len(Npatts_lst), nruns))
     M = len(lambdas)
 
 
-    Wpg = SparseMatrixBySparsityInitializer(sparsity=0.6, device="cpu")
-    Wpg = Wpg((nruns, Np, Ng))
+    Wpg = SparseMatrixBySparsityInitializer(sparsity=0.6, device="cpu")((Np, Ng))
     thresh=0.5
     #thresh=-5
-    print(Wpg.shape)
-    print(gbook.shape)
-    print('thresh='+str(thresh))
+
     # ein sum for Wpg of shape 1 400 50 and gbook of shape 3600 50 and P should be a 1 400 3600
-    ein = torch.einsum('ijk,mk->ijm', Wpg, gbook)
-    pbook = torch.relu(ein - thresh)
-    print(pbook.shape)
-    Wgp = train_gcpc(pbook, gbook, Npos)
+    pbook = grid_scaffold.H
+    Wgp = grid_scaffold.W_gh
 
     k=0
+  
     # print("Wsp and Wps Hebbian")
     for Npatts in tqdm.tqdm(Npatts_lst):
         #print("k=",k)
-
+        tsbook = torch.from_numpy(sbook[:Npatts])
         # Learning patterns 
-        Wsp = pseudotrain_Wsp(sbook, pbook, Npatts)
+        # make all entries floats
+        tsbook = tsbook.float()
+        print(tsbook.shape)
+        print(pbook[:Npatts].shape)
+        Wps = grid_scaffold.calculate_update_Whs(sbook=tsbook, hbook=pbook[:Npatts])
+        Wsp = grid_scaffold.calculate_update_Wsh(hbook=pbook[:Npatts], sbook=tsbook)
+
+        grid_scaffold.W_hs = Wps
+        grid_scaffold.W_sh = Wsp
         # Wsp = train_sensory(pbook, sbook, Npatts)
-        Wps = pseudotrain_Wps(pbook, sbook, Npatts)
+        # Wps = pseudotrain_Wps(pbook, sbook, Npatts)
+        # Wsp = pseudotrain_Wsp(sbook, pbook, Npatts)
         # Wps = np.einsum('ijk->ikj',Wsp)
 
         # Testing
@@ -156,61 +162,64 @@ def senstrans_gs_vectorized_patts(lambdas, Ng, Np, pflip, Niter, Npos, gbook, Np
         # print(srep.shape)
         # print(sinit.shape)
         
-        
-        err_pc[k],err_gc[k],err_sens[k],_,err_sensl1[k] = dynamics_gs_vectorized_patts(sinit,Niter, sbook, pbook, gbook, Wgp, Wpg,Wsp,Wps,lambdas,sparsity,thresh,Npatts)
+        err_pc[k],err_gc[k],err_sens[k],_,err_sensl1[k] = dynamics_gs_vectorized_patts(sinit,Niter, tsbook, pbook, gbook, Wgp, Wpg, Wsp,Wps,lambdas,sparsity,thresh,Npatts, gs=grid_scaffold)
         # err_pc[k],err_gc[k],err_sens[k],_,err_sensl1[k] = dynamics_gs_vectorized_patts_cts(sinit,Niter, sbook, pbook, gbook, Wgp, Wpg,Wsp,Wps,lambdas,sparsity,thresh,Npatts)
 
         k += 1   
     return err_pc, err_gc, err_sens, err_senscup, err_sensl1  
 
 
-def dynamics_gs_vectorized_patts(sinit,Niter, sbook, pbook, gbook, Wgp, Wpg,Wsp,Wps,lambdas,sparsity,thresh,Npatts):
+def dynamics_gs_vectorized_patts(sinit,Niter, sbook, pbook, gbook, Wgp, Wpg,Wsp,Wps,lambdas,sparsity,thresh,Npatts, gs):
     Ns = sbook.shape[0]
     Np = pbook.shape[1]
     Ng = gbook.shape[0]
-    
     # mean_p_norm = np.mean(np.linalg.norm(pbook[0],axis=0))
     # noise_val=1.
     # print("using p noise")#; mean_p_norm="+str(mean_p_norm))
-    
-    pin = torch.relu(torch.from_numpy(Wps@sinit[:,:,:Npatts]) - thresh)
+    pin = gs.hippocampal_from_sensory(torch.from_numpy(sinit[:,:Npatts]).float())
+
     # pnoise = noise_val*mean_p_norm*np.random.normal(0,1,pin.shape)/np.sqrt(Np)
     
     # pin = pin+pnoise
+    
     p = np.copy(pin)
     for i in range(Niter):
-        gin = Wgp@p
-        g = gridCAN_2d(gin,lambdas)
-        p = torch.relu(Wpg@g, thresh)
-    pout = np.copy(p)
-    gout = np.copy(g)
-    sout = np.sign(Wsp@p)
+        gin = gs.grid_from_hippocampal(torch.from_numpy(p))
+        g = gs.denoise(gin[0, :, :])
+        p = gs.hippocampal_from_grid(g)
+    pout = p
+    gout = g
+    sout = gs.sensory_from_hippocampal(pout)
+    # make all entries <-1 to -1 and >1 to 1
+    sout = torch.clamp(sout, -1, 1)
+
+    strue=sbook
+    ptrue=pbook[:Npatts,:]
+    gtrue=gbook[:Npatts,:]
     
-    strue=sbook[:,:Npatts]
-    ptrue=pbook[:,:,:Npatts]
-    gtrue=gbook[:,:Npatts]
+
+
+    s_l1_err = torch.mean(abs(sout - strue))/2
+
+    s_l2_err = torch.linalg.norm(torch.linalg.norm(sout-strue, dim=1), dim=0)/(Ns)
+    p_l2_err = torch.linalg.norm(torch.linalg.norm(pout-ptrue, dim=1), dim=0)/(Np)
+    g_l2_err = torch.linalg.norm(torch.linalg.norm(sout-strue, dim=1), dim=0)/(Ng)
     
-    s_l1_err = np.average(abs(sout - strue))/2
-    
-    s_l2_err = np.linalg.norm(sout-strue,axis=(1,2))/(Ns)
-    p_l2_err = np.linalg.norm(pout-ptrue,axis=(1,2))/(Np)
-    g_l2_err = np.linalg.norm(sout-strue,axis=(1,2))/(Ng)
-    
-    # print(strue.shape)
+
     # print(sout.shape)
-    struenormed=(strue/np.linalg.norm(strue,axis=0))
-    soutnormed=np.einsum('ijk,ik->ijk',sout,1/np.linalg.norm(sout,axis=1))
-    # soutnormed=(sout/np.linalg.norm(sout,axis=1));
-    dots = np.einsum('ijk,jk->ik',soutnormed,struenormed)
+    struenormed=(strue.T/torch.linalg.norm(strue, dim=1)).T
+    soutnormed=(sout.T*(1/torch.linalg.norm(sout,dim=1))).T
+    # dot product of normalized vectors, batch wise 
+    dots = torch.einsum('ij,ij->i',struenormed,soutnormed)
         
     #scup = cleanup(s, sbook)
-    errpc = p_l2_err
-    errgc = g_l2_err
-    errsens = s_l2_err
-    errsenscup = np.nan*np.zeros_like(errsens)#np.linalg.norm(scup-strue, axis=(1,2))/Ns
+    errpc = torch.abs(p_l2_err)
+    errgc = torch.abs(g_l2_err)
+    errsens = torch.abs( s_l2_err)
+    errsenscup = torch.nan*torch.zeros_like(errsens)#np.linalg.norm(scup-strue, axis=(1,2))/Ns
 
-    errsensl1 = s_l1_err
-    
+    errsensl1 = torch.abs(s_l1_err)
+
     return errpc, errgc, errsens, errsenscup, errsensl1 
 
 
