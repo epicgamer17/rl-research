@@ -119,7 +119,7 @@ def module_wise_NN(gin, gbook, lambdas):
     return g    
 
 
-def capacity(sensory_model, lambdas, Ng, Np_lst, pflip, Niter, Npos, gbook, Npatts_lst, nruns, Ns, sbook, sparsity, noise_level):
+def capacity(sensory_model, lambdas, Ng, Np_lst, pflip, Niter, Npos, gbook, Npatts_lst, nruns, Ns, sbook, sparsity, noise_level, grid_scaffold, W_hg_mean, W_hg_std):
 
     err_gc = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
     err_pc = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
@@ -131,7 +131,7 @@ def capacity(sensory_model, lambdas, Ng, Np_lst, pflip, Niter, Npos, gbook, Npat
     for Np in Np_lst:
         print("l =",l)
         err_pc[l], err_gc[l], err_sens[l], err_senscup[l], err_sensl1[l] = sensory_model(lambdas, Ng, Np, pflip, Niter, Npos, 
-                                                gbook, Npatts_lst, nruns, Ns, sbook, sparsity,noise_level)
+                                                gbook, Npatts_lst, nruns, Ns, sbook, sparsity,noise_level, grid_scaffold, W_hg_mean, W_hg_std)
         l = l+1
 
     return err_pc, err_gc, err_sens, err_senscup, err_sensl1  

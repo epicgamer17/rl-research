@@ -530,15 +530,15 @@ class GridScaffold:
 
     @torch.no_grad()
     def calculate_update_Whs(
-        self, input: torch.Tensor, output: torch.Tensor
+        self, sbook: torch.Tensor, hbook: torch.Tensor
     ) -> torch.Tensor:
         # input: (N)
         # output: (M)
         # M: (M x N)
-        s_plus = torch.linalg.pinv(self.S)
-        ret = s_plus @ self.H
+        s_plus = torch.linalg.pinv(sbook)
+        ret = s_plus @ hbook
 
-        return ret.T
+        return (ret.T)
 
     def learned_pseudo_inversehs(self, input, output):
         # print("s", input.shape)
@@ -617,13 +617,13 @@ class GridScaffold:
 
     @torch.no_grad()
     def calculate_update_Wsh(
-        self, input: torch.Tensor, output: torch.Tensor
+        self, hbook: torch.Tensor, sbook: torch.Tensor
     ) -> torch.Tensor:
         # input: (N)
         # output: (M)
         # M: (M x N)
-        h_plus = torch.linalg.pinv(self.H)
-        ret = h_plus @ self.S
+        h_plus = torch.linalg.pinv(hbook)
+        ret = h_plus @ sbook
 
         return ret.T
 
