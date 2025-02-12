@@ -6,6 +6,7 @@ import numpy as np
 import scipy
 from scipy.constants import pi
 from torch import abs
+from matplotlib import pyplot as plt
 
 
 def solve_mean(p, var=1):
@@ -246,27 +247,24 @@ def Rk1MrUpdate(A, A_pinv, c, d, Zero_tol, Case_Print_Flag):
         if Case_Print_Flag == 1:
             print('case 2')  
         v_snorm = torch.norm(V,2)**2     
-        G = (-1/v_snorm) * (V @ V.T) @ A_pinv -(1/m_snorm) * M @ N.T
+        G = (-1/v_snorm) * (V @ V.T) @ A_pinv + (-(1/m_snorm) * M @ N.T)
     
     elif w_snorm<Zero_tol and abs(b)>Zero_tol:
         if Case_Print_Flag == 1:
             print('case 3')
         v_snorm = torch.norm(V,2)**2
-        G = ((1/b) * M @ V.T @ A_pinv - (b/(v_snorm * m_snorm + b**2))) @ ((v_snorm / b) * M + V) @ ((m_snorm / b) * A_pinv.T @ V + N).T        
+        G = ((1/b) * M @ V.T @ A_pinv - ((b/(v_snorm * m_snorm + b**2))) * ((v_snorm / b) * M + V) @ ((m_snorm / b) * A_pinv.T @ V + N).T)  
     
     elif m_snorm<Zero_tol and w_snorm>=Zero_tol and abs(b)<Zero_tol:
         if Case_Print_Flag == 1:
             print('case 4')
         n_snorm = torch.norm(N,2)**2
-        G = (-1/n_snorm) * A_pinv @ (N @ N.T) -(1/ w_snorm) * V @ W.T
+        G = (-1/n_snorm) * A_pinv @ (N @ N.T) + (-(1/ w_snorm) * V @ W.T)
                                      
     elif m_snorm<Zero_tol and abs(b)>Zero_tol:
         if Case_Print_Flag == 1:
             print('case 5')        
         n_snorm = torch.norm(N,2)**2 
-        a1 = (1/b) * A_pinv @ N @ W.T
-        a2 = (b/(w_snorm * n_snorm + b**2)) * ((w_snorm/b) * A_pinv @ N + V)
-        a3 = ((n_snorm/b) * W + N).T
         G = ((1/b) * A_pinv @ N @ W.T) - (((b/(w_snorm * n_snorm + b**2)) * ((w_snorm/b) * A_pinv @ N + V)) @ (((n_snorm/b) * W + N).T))
 
     elif m_snorm<Zero_tol and w_snorm<Zero_tol and abs(b)<Zero_tol:
@@ -274,9 +272,115 @@ def Rk1MrUpdate(A, A_pinv, c, d, Zero_tol, Case_Print_Flag):
             print('case 6')
         v_snorm = torch.norm(V,2)**2
         n_snorm = torch.norm(N,2)**2
-        G = (-1/v_snorm) * (V @ V.T) @ A_pinv - (1/n_snorm) * A_pinv @ (N @ N.T) + (((V.T @ A_pinv @ N) / (v_snorm * n_snorm)) @ (V @ N.T))
+        G = ((-1/v_snorm) * (V @ V.T) @ A_pinv) - ((1/n_snorm) * A_pinv @ (N @ N.T)) + (((V.T @ A_pinv @ N) / (v_snorm * n_snorm)) @ (V @ N.T))
 
     A_pinv_New = A_pinv + G
     return A_pinv_New
 
 
+def ConvertToXYNew(gin, shape):
+    """
+    Converts a 1D vector to a grid mod shape for x and y
+
+    :param gin: torch.Tensor, 1D vector, shape (n, m)
+    :param shape: tuple, shape of the grid
+
+    :return: torch.Tensor, grid
+    """
+
+    half_prob = torch.sum(gin).item() / 2
+
+    gin = gin.reshape(shape)
+
+
+    # y sum
+    x = []
+    for i in range(shape[1]):
+        x.append(sum(gin[:, i]))
+    # x sum
+    y = []
+    for i in range(shape[0]):
+        y.append(sum(gin[i, :]))
+    y_med = continuous_median_1d(y, half=half_prob)
+    x_med = continuous_median_1d(x, half=half_prob)
+    return x_med, y_med
+
+def continuous_median_1d(prob, half):
+    """
+    Given a 1D probability vector 'prob' (with prob.sum() == 1)
+    that represents a density which is uniform over each interval [i, i+1),
+    compute the continuous median coordinate.
+    
+    For example, if the median falls at x = 2.3, then 0.2 of the probability
+    comes from [0,1), 0.3 from [1,2), and 0.3 (i.e. 0.3 out of the cell's mass)
+    from the interval [2,3), so that the median is 2 + 0.3.
+    """
+    # Compute the cumulative sum of probabilities.
+    cumsum = np.cumsum(prob)
+    # Find the first index i where the cumulative sum >= 0.5.
+    i = np.searchsorted(cumsum, half)
+    # Cumulative probability before cell i.
+    L = cumsum[i - 1] if i > 0 else 0.0
+    # The probability mass in the cell [i, i+1)
+    p_cell = prob[i]
+    # Linear interpolation: fraction of the cell needed to reach 0.5.
+    # (Assumes uniform density in the cell.)
+    fraction = (half - L) / p_cell
+    median_coordinate = i + fraction
+    return median_coordinate
+
+
+def GraphGrid(shape, points):
+    """
+    Given a grid shape and a set of points, return the grid figure with the points
+
+    :param shape: tuple, shape of the grid
+    :param points: list, list of points
+
+    :return: image
+    """
+    if len(points)==2:
+        c = ["red", "blue"]
+        plt.figure(figsize=(10, 10))
+        for i in range(2):
+            for point in points[i]:
+                plt.scatter(point[1], point[0], c=c[i])
+            #print number of points on the grid
+            # have plot start at 0 and finish at shape + 1
+            # show grid lines but only at integer values
+        plt.xticks(np.arange(0, shape[0], 1))
+        plt.yticks(np.arange(0, shape[1], 1))
+        plt.grid()
+        plt.xlim(0, shape[0])
+        plt.ylim(0, shape[1])
+        plt.show()
+    else:
+        plt.figure(figsize=(10, 10))
+        for point in points:
+            plt.scatter(point[1], point[0], c="red")
+        #print number of points on the grid
+        print(len(points))
+        # have plot start at 0 and finish at shape + 1
+        # show grid lines but only at integer values
+        plt.xticks(np.arange(0, shape[0], 1))
+        plt.yticks(np.arange(0, shape[1], 1))
+        plt.grid()
+        plt.xlim(0, shape[0])
+        plt.ylim(0, shape[1])
+        plt.show()
+    
+
+
+def ConvertXtoYOld(gin,shape):
+    """
+    Converts a 1D vector to a grid
+
+    :param gin: torch.Tensor, 1D vector
+
+    :return: torch.Tensor, grid
+    """
+    # return coords of center of cell with max value
+    index = torch.argmax(gin)
+    x = index % shape[1]
+    y = index // shape[1]
+    return x+0.5, y+0.5

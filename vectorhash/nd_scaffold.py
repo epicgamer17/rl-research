@@ -499,7 +499,7 @@ class GridScaffold:
         if S.ndim == 1:
             S = S.unsqueeze(0)
 
-        return torch.relu(S @ self.W_hs.T)
+        return torch.relu(S @ self.W_hs.T - self.relu_theta)
 
     @torch.no_grad()
     def calculate_update(
@@ -536,7 +536,7 @@ class GridScaffold:
         # output: (M)
         # M: (M x N)
         s_plus = torch.linalg.pinv(sbook)
-        ret = s_plus @ hbook
+        ret = torch.einsum('ki,kj->ij', s_plus, hbook)
 
         return (ret.T)
 
@@ -623,9 +623,9 @@ class GridScaffold:
         # output: (M)
         # M: (M x N)
         h_plus = torch.linalg.pinv(hbook)
-        ret = h_plus @ sbook
+        ret = torch.einsum('ik,jk->ij', sbook, h_plus)
 
-        return ret.T
+        return ret
 
     @torch.no_grad()
     def store_memory(self, s: torch.Tensor):
@@ -727,6 +727,8 @@ class GridScaffold:
 
         from collections import defaultdict
 
+        Tstng = []
+
         avg_s = torch.tensor([0.0] * self.input_size, device=self.device)
         avg_h = torch.tensor([0.0] * self.N_h, device=self.device)
         seen_gs = set()
@@ -738,15 +740,23 @@ class GridScaffold:
         first_obv = observations[0]
         image_count = 1
         for obs, vel in zip(observations, velocities):
+            if image_count == 1:
+                Tstng.append(torch.relu(self.W_hg @ self.g - self.relu_theta))
+                Tstng.append(self.g)
+
+
+
             print("image", image_count)
             image_count += 1
             seen_gs.add(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
-            avg_s = 1/(image_count) * (obs + (image_count - 1) * avg_s)
-            avg_h = 1/(image_count) * (torch.relu(self.W_hg @ self.g - self.relu_theta) + (image_count - 1) * avg_h)
+            # avg_s = 1/(image_count) * (obs + (image_count - 1) * avg_s)
+            # avg_h = 1/(image_count) * (torch.relu(self.W_hg @ self.g - self.relu_theta) + (image_count - 1) * avg_h)
             self.learn(obs, vel)
-            self.learned_pseudo_inversehs(avg_s, avg_h)
-
+            # self.learned_pseudo_inversehs(avg_s, avg_h)
+            if image_count % 10 == 1:
+                Tstng.append(self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obv))[0])
+            
             # testing code
             self.recall(obs)
             H = self.hippocampal_from_sensory(obs)
@@ -792,6 +802,7 @@ class GridScaffold:
             # print(self.denoise(torch.tensor(list(g))))
             seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
         print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
+        return Tstng
 
     @torch.no_grad()
     def learn(self, observation, velocity):

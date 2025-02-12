@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 def smooth_tuningcurve(avg_fields, Npos, mult=2, path=False, path_locations=None):
     avg_fields_sq = avg_fields.reshape((Npos,Npos))
@@ -120,7 +121,9 @@ def module_wise_NN(gin, gbook, lambdas):
 
 
 def capacity(sensory_model, lambdas, Ng, Np_lst, pflip, Niter, Npos, gbook, Npatts_lst, nruns, Ns, sbook, sparsity, noise_level, grid_scaffold, W_hg_mean, W_hg_std):
-
+    ga = [[] for _ in range(len(Np_lst))]
+    gd = [[] for _ in range(len(Np_lst))]
+    gt = [[] for _ in range(len(Np_lst))]
     err_gc = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
     err_pc = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
     err_sens = -1*np.ones((len(Np_lst), len(Npatts_lst), nruns))
@@ -130,11 +133,11 @@ def capacity(sensory_model, lambdas, Ng, Np_lst, pflip, Niter, Npos, gbook, Npat
     l = 0
     for Np in Np_lst:
         print("l =",l)
-        err_pc[l], err_gc[l], err_sens[l], err_senscup[l], err_sensl1[l] = sensory_model(lambdas, Ng, Np, pflip, Niter, Npos, 
+        ga[l], gd[l], gt[l], err_pc[l], err_gc[l], err_sens[l], err_senscup[l], err_sensl1[l]  = sensory_model(lambdas, Ng, Np, pflip, Niter, Npos, 
                                                 gbook, Npatts_lst, nruns, Ns, sbook, sparsity,noise_level, grid_scaffold, W_hg_mean, W_hg_std)
         l = l+1
 
-    return err_pc, err_gc, err_sens, err_senscup, err_sensl1  
+    return err_pc, err_gc, err_sens, err_senscup, err_sensl1, ga, gd, gt
 
 
 def train_gcpc(pbook, gbook, Npatts):
@@ -142,13 +145,22 @@ def train_gcpc(pbook, gbook, Npatts):
     
 
 def pseudotrain_Wsp(sbook, ca1book, Npatts):
-    ca1inv = np.linalg.pinv(ca1book[:, :, :Npatts])
-    return np.einsum('ij, kjl -> kil', sbook[:,:Npatts], ca1inv[:,:Npatts,:]) 
+    ca1inv = torch.linalg.pinv(ca1book[:Npatts, :])
+    return sbook[:,:Npatts] @ ca1inv[:,:Npatts].T
+
+def pseudotrain_Wps(ca1book, sbook, Npatts):
+    sbookinv = torch.linalg.pinv(sbook[:, :Npatts])
+    return  ca1book[:Npatts,:].T @ sbookinv[:Npatts,:]
+    
+def pseudotrain_Wsp(sbook, ca1book, Npatts):
+    ca1inv = torch.linalg.pinv(ca1book[:Npatts, :])
+    return np.einsum('ij, kjl -> kil', sbook[:,:Npatts], ca1inv[:,:Npatts]) 
 
 def pseudotrain_Wps(ca1book, sbook, Npatts):
     sbookinv = np.linalg.pinv(sbook[:, :Npatts])
-    return np.einsum('ij, kli -> klj', sbookinv[:Npatts,:], ca1book[:,:,:Npatts]) 
-    
+    return np.einsum('ij, kli -> klj', sbookinv[:Npatts,:], ca1book[:,:Npatts]) 
+
+
 def gridCAN_2d(gs,lambdas):
     #gs.shape == nruns,Ng,Npatts
     nruns,Ng,Npatts = gs.shape
