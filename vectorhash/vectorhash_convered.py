@@ -262,4 +262,95 @@ def dynamics_gs_vectorized_patts(sinit,Niter, sbook, pbook, gbook, Wgp, Wpg,Wsp,
 
     return ga, gd, gt, errpc, errgc, errsens, errsenscup, errsensl1 
 
+def sens_nonlin(x):
+    return torch.sign(x)
 
+#1d action book with different labels for six actions
+def actions(path_locations):
+    abook = torch.zeros(len(path_locations))
+
+    velocity = [(path_locations[idx + 1][0] - path_locations[idx][0], path_locations[idx+1][1] - path_locations[idx][1]) 
+          for idx in range(len(path_locations) - 1)]
+
+    k = 0
+    for i in velocity:
+        if i[0] == -1 and i[1] == 1:
+            abook[k] = 6             # Up-Left
+        elif i[0] == 1 and i[1] == -1:
+            abook[k] = 5             # Down-Right 
+        elif i[0] == 0 and i[1] == 1:
+            abook[k] = 3             # Up      
+        elif i[0] == 0 and i[1] == -1: 
+            abook[k] = 4             # Down
+        elif i[0] == 1 and i[1] == 0: 
+            abook[k] = 1             # Right
+        elif i[0] == -1 and i[1] == 0: 
+            abook[k] = 2             # Left
+        k = k+1  
+        
+    return abook
+
+
+def path_codes(path_locations, pbook, sbook, nruns=1):
+    Npatts = len(path_locations)
+    Ns = sbook.shape[0]
+    Np = pbook.shape[1]
+    path_pbook = torch.zeros((nruns, Np, Npatts))
+    path_sbook = torch.zeros((Ns, Npatts))
+
+    k = 0
+    for i in path_locations:
+        path_pbook[:,:,k] = pbook[:,:,i[0],i[1]]
+        path_sbook[:,k] = sbook[:,i[0],i[1]]
+        k = k+1
+   
+    return path_pbook, path_sbook
+
+def sensorymap(path_sbook, path_pbook):
+    pbookinv = torch.pinverse(path_pbook)
+    Wsp = path_sbook@pbookinv
+    return Wsp
+
+# flattened grid code to 2d coordinates
+def gcode_to_coord(gin, gbook_flattened, Npos):
+    nrun=0
+    idx = nearest_neighbor_idx(gin, gbook_flattened)[nrun]
+    x = idx//Npos
+    y = idx - x*Npos
+    return (int(x),int(y))
+
+def oneDaction_mapping(action):
+    if action == 0:
+        axis = None
+        direction = None
+    if action == 1:       # Right
+        axis = 0
+        direction = 1
+    elif action == 2:    # Left
+        axis = 0
+        direction = -1
+    elif action == 3:    # Up
+        axis = 1
+        direction = 1 
+    elif action == 4:    # Down
+        axis = 1
+        direction = -1   
+    elif action == 5:    # Down-Right
+        axis = [1,0]
+        direction = [-1,1] 
+    elif action == 6:    # Up-Left
+        axis = [1,0]
+        direction = [1,-1]          
+        
+    return axis, direction
+
+# global nearest neighbor
+def nearest_neighbor_idx(gin, gbook):
+    est = torch.einsum('ijk, jl -> ikl', gin, gbook)
+    maxm = torch.amax(est, axis=2)  #(nruns,1)
+    idx_lst = torch.zeros((len(maxm)))
+    for r in range(len(maxm)):
+        a = torch.argwhere(est[r] == maxm[r])
+        idx = torch.from_numpy(np.random.choice(a[:,1]))
+        idx_lst[r] = idx
+    return idx_lst
