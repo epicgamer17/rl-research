@@ -1,4 +1,3 @@
-from email.mime import image
 import math
 import torch
 import numpy as np
@@ -157,7 +156,8 @@ class GridModule:
         einsum_str = (
             ",".join(einsum_indices) + "->" + "".join(einsum_indices)
         )  # a,b,c, ...->abc...
-        return (torch.einsum(einsum_str, *pdfs).flatten() / self.T).softmax(dim=0)
+        r = torch.einsum(einsum_str, *pdfs).flatten()
+        return (r / (self.T * r.sum(dim=0))).softmax(dim=0)
 
     def shift(self, v: torch.Tensor):
         """Shifts the state of the grid module by a given velocity.
@@ -212,6 +212,7 @@ class GridScaffold:
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
         self.calculate_update_scaling_method = calculate_update_scaling_method
 
+        self.T = T
         if use_h_fix:
             assert (
                 calculate_update_scaling_method == "norm"
@@ -536,9 +537,9 @@ class GridScaffold:
         # output: (M)
         # M: (M x N)
         s_plus = torch.linalg.pinv(sbook)
-        ret = torch.einsum('ki,kj->ij', s_plus, hbook)
+        ret = torch.einsum("ki,kj->ij", s_plus, hbook)
 
-        return (ret.T)
+        return ret.T
 
     def learned_pseudo_inversehs(self, input, output):
         # print("s", input.shape)
@@ -691,6 +692,40 @@ class GridScaffold:
             module.shift(velocity)
 
         self.g = self._g()
+
+    def onehot(self, g: torch.Tensor) -> torch.Tensor:
+        """Returns the one-hot encoding of a given grid state.
+
+        Input shape: `(N_g)`
+
+        Args:
+            G: The tensor of grid states.
+
+        Output shape: `(N_g)`
+        """
+        pos = 0
+        for module in self.modules:
+            x = g[pos : pos + module.l]
+            x_onehot = (x / (x.sum() * self.T)).softmax(dim=0)
+            g[pos : pos + module.l] = x_onehot
+            pos += module.l
+
+        return g
+
+    def estimate_position(self, obs: torch.Tensor, as_tuple_list=False) -> torch.Tensor:
+        g = self.grid_from_hippocampal(self.hippocampal_from_sensory(obs))
+        onehotted = self.onehot(g.squeeze())
+
+        if not as_tuple_list:
+            return onehotted
+        
+        pos = 0
+        onehotted_list = []
+        for module in self.modules:
+            onehotted_list.append(onehotted[pos : pos + module.l].reshape(module.shape))
+            pos += module.l
+
+        return onehotted_list
 
     @torch.no_grad()
     def denoise(self, G) -> torch.Tensor:
