@@ -356,9 +356,9 @@ class GridScaffold:
                 for shape in self.shapes:
                     phis = torch.remainder(state, shape.to(self.device)).int()
                     gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
-                    gpattern[*phis] = 1
+                    gpattern[(phis)] = 1
                     gpattern = gpattern.flatten()
-                    gbook[i : i + len(gpattern), *state] = gpattern
+                    gbook[i : i + len(gpattern), tuple(state)] = gpattern
                     i += len(gpattern)
 
             return gbook.flatten(1).T
@@ -624,7 +624,7 @@ class GridScaffold:
         # output: (M)
         # M: (M x N)
         h_plus = torch.linalg.pinv(hbook)
-        ret = torch.einsum('ik,jk->ij', sbook, h_plus)
+        ret = torch.einsum("ik,jk->ij", sbook, h_plus)
 
         return ret
 
@@ -675,8 +675,16 @@ class GridScaffold:
             self.W_hs = Rk1MrUpdate(self.W_sh, self.W_hs, c=s, d=h, Zero_tol=self.ZeroTol, Case_Print_Flag=0)
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
         else:
-            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
             self.W_hs += self.calculate_update(input=s, output=h)
+            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
+
+        assert torch.allclose(
+            self.W_hs @ s, h
+        ), f"Whs should be the pseudo-inverse of Wsh. Got {self.W_hs @ s} and expected {h}"
+
+        assert torch.allclose(
+            self.W_sh @ h, s
+        ), f"Wsh should be the pseudo-inverse of Whs. Got {self.W_sh @ ((h - self.mean_h) if self.use_h_fix else h)} and expected {s}"
         # print("S", s)
         # print("H", h)
         # print("HIPPO FROM S", torch.relu(self.W_hs @ s))
@@ -760,67 +768,34 @@ class GridScaffold:
     def learn_path(self, observations, velocities):
         """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
 
-        from collections import defaultdict
-
-        Tstng = []
-
-        avg_s = torch.tensor([0.0] * self.input_size, device=self.device)
-        avg_h = torch.tensor([0.0] * self.N_h, device=self.device)
         seen_gs = set()
         seen_gs_recall = set()
         seen_g_s_recall = set()
         seen_hs = set()
         seen_hs_recall = set()
         first_g = self.g
-        first_obv = observations[0]
-        image_count = 1
+        first_obs = observations[0]
+        second_obs = observations[1]
+
+        first_image_grid_states = []
+        second_image_grid_states = []
+
+        i = 0
         for obs, vel in zip(observations, velocities):
-            if image_count == 1:
-                Tstng.append(torch.relu(self.W_hg @ self.g - self.relu_theta))
-                Tstng.append(self.g)
-
-
-
-            print("image", image_count)
-            image_count += 1
             seen_gs.add(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
-            # avg_s = 1/(image_count) * (obs + (image_count - 1) * avg_s)
-            # avg_h = 1/(image_count) * (torch.relu(self.W_hg @ self.g - self.relu_theta) + (image_count - 1) * avg_h)
             self.learn(obs, vel)
-            # self.learned_pseudo_inversehs(avg_s, avg_h)
-            if image_count % 10 == 1:
-                Tstng.append(self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obv))[0])
-            
+
             # testing code
-            self.recall(obs)
-            H = self.hippocampal_from_sensory(obs)
-            G = self.grid_from_hippocampal(H)
-            G_ = self.denoise(G)
-            seen_hs_recall.add(tuple(H))
-            seen_gs_recall.add(tuple(G))
-            seen_g_s_recall.add(tuple(G_))
-            H = self.hippocampal_from_sensory(first_obv)
-            # print(self.H[0])
-            # print("first H is H 0", H == self.H[0])
-            # print("first H is G 0 times W_hg", H == first_g @ self.W_hg.T)
-            print(first_g)
-            print(
-                "first H is G 0 times W_hg",
-                self.H[0]
-                == torch.relu(
-                    torch.floor(first_g) @ self.W_hg.T,
-                ),
-            )
-            print(torch.nn.functional.cosine_similarity(H, self.H[0]))
-            G = self.grid_from_hippocampal(H)
-            G_ = self.denoise(G)
-            # print("G", G)
-            # print("G_", G_)
-            # print("first g", torch.floor(first_g))
-            print("G = G_", G == G_)
-            print("G = first g", G == torch.floor(first_g))
-            print("G_ = first g", G_ == torch.floor(first_g))
+            g_ = self.estimate_position(first_obs)
+
+            first_image_grid_states.append(g_.flatten().clone())
+
+            if i > 0:
+                g_ = self.estimate_position(second_obs)
+
+                second_image_grid_states.append(g_.flatten().clone())
+            i += 1
         print("Unique Gs seen while learning:", len(seen_gs))
         print("Unique Hs seen while learning:", len(seen_hs))
         print("Unique Hs seen while recalling:", len(seen_hs_recall))
@@ -837,7 +812,7 @@ class GridScaffold:
             # print(self.denoise(torch.tensor(list(g))))
             seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
         print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
-        return Tstng
+        return first_image_grid_states, second_image_grid_states
 
     @torch.no_grad()
     def learn(self, observation, velocity):
