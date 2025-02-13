@@ -330,7 +330,7 @@ def continuous_median_1d(prob, half):
     return median_coordinate
 
 
-def GraphGrid(shape, points):
+def GraphGrid(shape, points, first_point=None, title=None):
     """
     Given a grid shape and a set of points, return the grid figure with the points
 
@@ -339,35 +339,40 @@ def GraphGrid(shape, points):
 
     :return: image
     """
+    plt.figure(figsize=(10, 10))
+
+    t = np.arange(len(points))
+
     if len(points)==2:
         c = ["red", "blue"]
-        plt.figure(figsize=(10, 10))
         for i in range(2):
-            for point in points[i]:
-                plt.scatter(point[1], point[0], c=c[i])
+            xs = [point[1] for point in points[i]]
+            ys = [point[0] for point in points[i]]
+            plt.scatter(xs, ys, c=t, label=f"after learning {c}", cmap='viridis')
             #print number of points on the grid
             # have plot start at 0 and finish at shape + 1
             # show grid lines but only at integer values
-        plt.xticks(np.arange(0, shape[0], 1))
-        plt.yticks(np.arange(0, shape[1], 1))
-        plt.grid()
-        plt.xlim(0, shape[0])
-        plt.ylim(0, shape[1])
-        plt.show()
     else:
-        plt.figure(figsize=(10, 10))
-        for point in points:
-            plt.scatter(point[1], point[0], c="red")
+        xs = [point[1] for point in points]
+        ys = [point[0] for point in points]
+        plt.scatter(xs, ys, c=t, label="after learning", cmap='viridis')
         #print number of points on the grid
         print(len(points))
         # have plot start at 0 and finish at shape + 1
         # show grid lines but only at integer values
-        plt.xticks(np.arange(0, shape[0], 1))
-        plt.yticks(np.arange(0, shape[1], 1))
-        plt.grid()
-        plt.xlim(0, shape[0])
-        plt.ylim(0, shape[1])
-        plt.show()
+
+    if title:
+        plt.title(title)
+    if first_point is not None:
+        plt.scatter(first_point[1], first_point[0], c="green", label="start", marker="x")
+    plt.colorbar()
+    plt.xticks(np.arange(0, shape[0], 1))
+    plt.yticks(np.arange(0, shape[1], 1))
+    plt.grid()
+    plt.xlim(0, shape[0])
+    plt.ylim(0, shape[1])
+    plt.legend()
+    plt.show()
     
 
 
