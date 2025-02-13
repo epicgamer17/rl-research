@@ -91,6 +91,7 @@ dependencies:
   - ncurses=6.4=h6a678d5_0
   - nest-asyncio=1.6.0=py310h06a4308_0
   - numexpr=2.10.1=py310h3c60e43_0
+  - numpy=2.2.2=py310h5f9d8c6_0
   - numpy-base=2.2.2=py310hb5e798b_0
   - openjpeg=2.5.2=he7f1fd0_0
   - openldap=2.6.4=h42fbc30_0
@@ -241,7 +242,6 @@ dependencies:
       - nltk==3.8.1
       - num2words==0.5.13
       - numba==0.58.1
-      - numpy==1.26.3
       - nvidia-cublas-cu12==12.4.5.8
       - nvidia-cuda-cupti-cu12==12.4.127
       - nvidia-cuda-nvrtc-cu12==12.4.127
