@@ -330,7 +330,7 @@ def continuous_median_1d(prob, half):
     return median_coordinate
 
 
-def GraphGrid(shape, points, first_point=None, title=None):
+def GraphGrid(ax, shape, points, first_point=None, title=None):
     """
     Given a grid shape and a set of points, return the grid figure with the points
 
@@ -339,8 +339,6 @@ def GraphGrid(shape, points, first_point=None, title=None):
 
     :return: image
     """
-    plt.figure(figsize=(10, 10))
-
     t = np.arange(len(points))
 
     if len(points)==2:
@@ -348,32 +346,48 @@ def GraphGrid(shape, points, first_point=None, title=None):
         for i in range(2):
             xs = [point[1] for point in points[i]]
             ys = [point[0] for point in points[i]]
-            plt.scatter(xs, ys, c=t, label=f"after learning {c}", cmap='viridis')
+            sc = ax.scatter(xs, ys, c=t, label=f"after learning {c}", cmap='viridis')
             #print number of points on the grid
             # have plot start at 0 and finish at shape + 1
             # show grid lines but only at integer values
     else:
         xs = [point[1] for point in points]
         ys = [point[0] for point in points]
-        plt.scatter(xs, ys, c=t, label="after learning", cmap='viridis')
+        sc = ax.scatter(xs, ys, c=t, label="after learning", cmap='viridis')
         #print number of points on the grid
         print(len(points))
         # have plot start at 0 and finish at shape + 1
         # show grid lines but only at integer values
 
-    if title:
-        plt.title(title)
+    if title is not None:
+        ax.set_title(title)
     if first_point is not None:
-        plt.scatter(first_point[1], first_point[0], c="green", label="start", marker="x")
-    plt.colorbar()
-    plt.xticks(np.arange(0, shape[0], 1))
-    plt.yticks(np.arange(0, shape[1], 1))
-    plt.grid()
-    plt.xlim(0, shape[0])
-    plt.ylim(0, shape[1])
-    plt.legend()
-    plt.show()
+        ax.plot(first_point[1], first_point[0], c="green", label="start", marker="x", markersize=10)
+    # ax.colorbar()
+    ax.set_xticks(np.arange(0, shape[0], 1))
+    ax.set_yticks(np.arange(0, shape[1], 1))
+    ax.grid()
+    ax.set_xlim(0, shape[0])
+    ax.set_ylim(0, shape[1])
+    ax.legend()
+    return sc
     
+def GraphGrids(points_lists, shapes_lists, first_points, titles, main_title):
+    assert len(points_lists) == len(shapes_lists) == len(first_points) == len(titles)
+    fig, axs = plt.subplots(1, len(points_lists), figsize=(20, 7))
+    for i in range(len(points_lists)):
+        sc = GraphGrid(axs[i], shapes_lists[i], points_lists[i], first_points[i], titles[i])
+    
+    fig.suptitle(main_title)
+
+
+    # add colorbar on bottom going from 0 to len(points)
+
+    # [left, bottom, width, height]
+    cax = fig.add_axes([0.1, 0.05, 0.8, 0.02])
+
+    cbar = fig.colorbar(sc, cax=cax, orientation='horizontal')
+    plt.show()
 
 
 def ConvertXtoYOld(gin,shape):

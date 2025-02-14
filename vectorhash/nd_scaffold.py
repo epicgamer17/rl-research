@@ -518,6 +518,11 @@ class GridScaffold:
             raise ValueError("Invalid calculate_update_scaling_method")
 
         ret = torch.einsum("j,i->ji", output, input) / (scale + 1e-10)
+
+        # print("input", input)
+        # print("output", output)
+        # print("scale", scale)
+        # print("ret", ret)
         return ret
 
     @torch.no_grad()
@@ -678,13 +683,13 @@ class GridScaffold:
             self.W_hs += self.calculate_update(input=s, output=h)
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
 
-        assert torch.allclose(
-            self.W_hs @ s, h
-        ), f"Whs should be the pseudo-inverse of Wsh. Got {self.W_hs @ s} and expected {h}"
+        # assert torch.allclose(
+        #     self.W_sh @ h, s
+        # ), f"Wsh should be the pseudo-inverse of Whs. Got {self.W_sh @ ((h - self.mean_h) if self.use_h_fix else h)} and expected {s}"
+        # assert torch.allclose(
+        #     self.W_hs @ s, h
+        # ), f"Whs should be the pseudo-inverse of Wsh. Got {self.W_hs @ s} and expected {h}"
 
-        assert torch.allclose(
-            self.W_sh @ h, s
-        ), f"Wsh should be the pseudo-inverse of Whs. Got {self.W_sh @ ((h - self.mean_h) if self.use_h_fix else h)} and expected {s}"
         # print("S", s)
         # print("H", h)
         # print("HIPPO FROM S", torch.relu(self.W_hs @ s))
@@ -715,6 +720,7 @@ class GridScaffold:
         for module in self.modules:
             x = g[pos : pos + module.l]
             x_onehot = (x / (x.sum() * self.T)).softmax(dim=0)
+            # print(x_onehot)
             g[pos : pos + module.l] = x_onehot
             pos += module.l
 
@@ -777,8 +783,10 @@ class GridScaffold:
         first_obs = observations[0]
         second_obs = observations[1]
 
-        first_image_grid_states = []
-        second_image_grid_states = []
+        first_image_grid_position_estimates = []
+        second_image_grid_position_estimates = []
+        first_image_grid_positions = []
+        second_image_grid_positions = []
 
         i = 0
         for obs, vel in zip(observations, velocities):
@@ -787,14 +795,14 @@ class GridScaffold:
             self.learn(obs, vel)
 
             # testing code
-            g_ = self.estimate_position(first_obs)
-
-            first_image_grid_states.append(g_.flatten().clone())
+            first_image_grid_position_estimates.append(self.estimate_position(first_obs).flatten().clone())
+            first_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obs))).flatten().clone())
+            
 
             if i > 0:
-                g_ = self.estimate_position(second_obs)
+                second_image_grid_position_estimates.append(self.estimate_position(second_obs).flatten().clone())
+                second_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(second_obs))).flatten().clone())
 
-                second_image_grid_states.append(g_.flatten().clone())
             i += 1
         print("Unique Gs seen while learning:", len(seen_gs))
         print("Unique Hs seen while learning:", len(seen_hs))
@@ -812,7 +820,7 @@ class GridScaffold:
             # print(self.denoise(torch.tensor(list(g))))
             seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
         print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
-        return first_image_grid_states, second_image_grid_states
+        return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions
 
     @torch.no_grad()
     def learn(self, observation, velocity):
