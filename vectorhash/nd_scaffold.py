@@ -1,3 +1,4 @@
+from tqdm import tqdm as tqdm
 import math
 import torch
 import numpy as np
@@ -665,7 +666,6 @@ class GridScaffold:
         else:
             self.S[self.S.nonzero()[-1][0] + 1] = s
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
-        # print("H", h)
         if self.continualupdate:
             self.W_gh += self.calculate_update(input=h, output=self.g)
         if self.pseudo_inverse:
@@ -789,7 +789,7 @@ class GridScaffold:
         second_image_grid_positions = []
 
         i = 0
-        for obs, vel in zip(observations, velocities):
+        for obs, vel in tqdm(zip(observations, velocities)):
             seen_gs.add(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
             self.learn(obs, vel)
