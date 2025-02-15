@@ -77,8 +77,12 @@ def print_imgs_side_by_side(*imgs, out="mnist.png", captions=None, title=None):
 
     if title is not None:
         fig.suptitle(title)
-    plt.savefig(out)
-    plt.close(fig)
+    
+    if out is not None:
+        plt.savefig(out)
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 def plot_recall_info(info):
