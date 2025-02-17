@@ -403,3 +403,15 @@ def ConvertXtoYOld(gin,shape):
     x = index % shape[1]
     y = index // shape[1]
     return x+0.5, y+0.5
+
+def ConvertToXYZ(gin: torch.Tensor, shape):
+    half_prob = torch.sum(gin).item() / 2
+    gin = gin.reshape(shape)
+    [x,y,z] = [torch.sum(gin, dim=i).flatten().cpu().numpy() for i in range(3)]
+
+    print(x.shape, y.shape, z.shape)
+
+    x_med = continuous_median_1d(x, half=half_prob)
+    y_med = continuous_median_1d(y, half=half_prob)
+    z_med = continuous_median_1d(z, half=half_prob)
+    return x_med, y_med, z_med
