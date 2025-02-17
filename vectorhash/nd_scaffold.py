@@ -208,11 +208,15 @@ class GridScaffold:
         MagicMath=False,
         sanity_check=True,
         calculate_g_method="fast",
+        scaling_updates=True,
+        dream_fix=None,
+        ZeroTol=1e-5,
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
         self.calculate_update_scaling_method = calculate_update_scaling_method
-
+        self.scaling_updates = scaling_updates
+        print("UPDATE SCALING BY SCHWARZ ERROR", scaling_updates)
         self.T = T
         if use_h_fix:
             assert (
@@ -223,9 +227,9 @@ class GridScaffold:
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
-
+        self.ZeroTol = ZeroTol
         self.MagicMath = MagicMath
-
+        self.dream_fix = dream_fix
         self.h_normal_mean = h_normal_mean
         self.h_normal_std = h_normal_std
 
@@ -517,7 +521,11 @@ class GridScaffold:
             scale = self.N_h
         else:
             raise ValueError("Invalid calculate_update_scaling_method")
-
+        if self.scaling_updates:
+            if output.shape==torch.Size([self.N_h]):
+                output = output-self.hippocampal_from_sensory(input)[0]
+            if output.shape==torch.Size([self.input_size]):
+                output = output-self.sensory_from_hippocampal(input)[0]
         ret = torch.einsum("j,i->ji", output, input) / (scale + 1e-10)
 
         # print("input", input)
@@ -771,6 +779,25 @@ class GridScaffold:
         return G
 
     @torch.no_grad()
+    def dream(self, seen_gss):
+        i=0
+        print("seen_gs", seen_gss)
+        #reverse the order of seen_gs
+        seen_gs = list(seen_gss)
+        seen_gs.reverse()
+
+        for g in seen_gs:
+            # if i<self.dream_fix:
+            self.g = torch.tensor(list(g))
+            h = torch.relu(self.W_hg @ self.g - self.relu_theta)
+            s = self.W_sh @ h
+            dh = self.W_hs @ s - h
+            if dh.norm() > self.ZeroTol:
+                self.W_hs += self.calculate_update(input=s, output=h)
+            # i+=1
+
+
+    @torch.no_grad()
     def learn_path(self, observations, velocities):
         """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
 
@@ -802,6 +829,10 @@ class GridScaffold:
             if i > 0:
                 second_image_grid_position_estimates.append(self.estimate_position(second_obs).flatten().clone())
                 second_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(second_obs))).flatten().clone())
+            if self.dream_fix != None:
+                if (i+1)%self.dream_fix == 0:
+                    self.dream(seen_gs)
+
 
             i += 1
         print("Unique Gs seen while learning:", len(seen_gs))
@@ -821,6 +852,8 @@ class GridScaffold:
             seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
         print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
         return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions
+
+
 
     @torch.no_grad()
     def learn(self, observation, velocity):
