@@ -501,7 +501,7 @@ class GridScaffold:
         if S.ndim == 1:
             S = S.unsqueeze(0)
 
-        return torch.relu(S @ self.W_hs.T - self.relu_theta)
+        return torch.relu(S @ self.W_hs.T)
 
     @torch.no_grad()
     def calculate_update(
