@@ -812,6 +812,7 @@ class GridScaffold:
     @torch.no_grad()
     def learn_path(self, observations, velocities):
         """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
+        assert len(observations) == len(velocities)
 
         seen_gs = set()
         sgs = []
@@ -831,7 +832,9 @@ class GridScaffold:
         imgs_fixed = []
 
         i = 0
-        for obs, vel in tqdm(zip(observations, velocities)):
+        for i in tqdm(range(len(observations))):
+            obs = observations[i]
+            vel = velocities[i]
             seen_gs.add(tuple(self.g.tolist()))
             sgs.append(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
@@ -840,7 +843,6 @@ class GridScaffold:
             # testing code
             first_image_grid_position_estimates.append(self.estimate_position(first_obs).flatten().clone())
             first_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obs))).flatten().clone())
-            
 
             if i > 0:
                 second_image_grid_position_estimates.append(self.estimate_position(second_obs).flatten().clone())
@@ -851,8 +853,6 @@ class GridScaffold:
                     fixnum = self.dream(sgs, observations[i:])
                     imgs_fixed.append(fixnum)
 
-
-            i += 1
         print("Unique Gs seen while learning:", len(seen_gs))
         print("Unique Hs seen while learning:", len(seen_hs))
         print("Unique Hs seen while recalling:", len(seen_hs_recall))

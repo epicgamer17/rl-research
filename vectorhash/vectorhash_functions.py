@@ -415,3 +415,11 @@ def ConvertToXYZ(gin: torch.Tensor, shape):
     y_med = continuous_median_1d(y, half=half_prob)
     z_med = continuous_median_1d(z, half=half_prob)
     return x_med, y_med, z_med
+
+def calculate_theoretical_capacity(shapes, N_h, input_size):
+    N_g = 0
+    for shape in shapes:
+        l = torch.prod(torch.tensor(shape)).item()
+        N_g += l
+    
+    return N_g * N_h / input_size
