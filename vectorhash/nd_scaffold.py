@@ -211,6 +211,7 @@ class GridScaffold:
         scaling_updates=True,
         dream_fix=None,
         ZeroTol=1e-5,
+        slumber=True,
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
@@ -232,6 +233,7 @@ class GridScaffold:
         self.dream_fix = dream_fix
         self.h_normal_mean = h_normal_mean
         self.h_normal_std = h_normal_std
+        self.slumber = slumber
 
         if continualupdate == False:
             assert (
@@ -556,6 +558,8 @@ class GridScaffold:
         return ret.T
 
     def learned_pseudo_inversehs(self, input, output):
+        if self.scaling_updates:
+            output = output-torch.relu(input @ self.W_hs.T)
         # print("s", input.shape)
         # print("h", output.shape)
         b_k_hs = (self.inhibition_matrix_hs @ input) / (
@@ -593,6 +597,8 @@ class GridScaffold:
         # self.W_sh += torch.outer(s - self.W_sh @ h, b_k_sh)
 
     def learned_pseudo_inversesh(self, input, output):
+        if self.scaling_updates:
+            output = (output - (input @ self.W_sh.T))
         # print("s", input.shape)
         # print("h", output.shape)
         b_k_sh = (self.inhibition_matrix_sh @ input) / (
@@ -779,22 +785,28 @@ class GridScaffold:
         return G
 
     @torch.no_grad()
-    def dream(self, seen_gss):
+    def dream(self, seen_gs, obs):
         i=0
-        print("seen_gs", seen_gss)
         #reverse the order of seen_gs
-        seen_gs = list(seen_gss)
-        seen_gs.reverse()
-
+        changed = 1
+        sweep = 0
+        # while changed != 0:
+        #     changed = 0
         for g in seen_gs:
-            # if i<self.dream_fix:
-            self.g = torch.tensor(list(g))
-            h = torch.relu(self.W_hg @ self.g - self.relu_theta)
-            s = self.W_sh @ h
-            dh = self.W_hs @ s - h
-            if dh.norm() > self.ZeroTol:
-                self.W_hs += self.calculate_update(input=s, output=h)
-            # i+=1
+            if (i<self.dream_fix or self.slumber==True):
+                temp = torch.tensor(list(g))
+                h = torch.relu(self.W_hg @ temp - self.relu_theta)
+                s = self.W_sh @ h
+                dh = self.W_hs @ s - h
+                if dh.norm() > self.ZeroTol:
+                    self.W_hs += self.calculate_update(input=s, output=h)
+                    changed += 1
+                i+=1
+            # print("Changed = ", changed)
+            # print("sweep number = ", sweep)
+            # sweep = sweep+1
+            
+        return changed
 
 
     @torch.no_grad()
@@ -802,6 +814,7 @@ class GridScaffold:
         """Add a path of observations to the memory scaffold. It is assumed that the observations are taken at each time step and the velocities are the velocities directly after the observations."""
 
         seen_gs = set()
+        sgs = []
         seen_gs_recall = set()
         seen_g_s_recall = set()
         seen_hs = set()
@@ -815,9 +828,12 @@ class GridScaffold:
         first_image_grid_positions = []
         second_image_grid_positions = []
 
+        imgs_fixed = []
+
         i = 0
         for obs, vel in tqdm(zip(observations, velocities)):
             seen_gs.add(tuple(self.g.tolist()))
+            sgs.append(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
             self.learn(obs, vel)
 
@@ -831,7 +847,9 @@ class GridScaffold:
                 second_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(second_obs))).flatten().clone())
             if self.dream_fix != None:
                 if (i+1)%self.dream_fix == 0:
-                    self.dream(seen_gs)
+                    # print("image number = ", i+1)
+                    fixnum = self.dream(sgs, observations[i:])
+                    imgs_fixed.append(fixnum)
 
 
             i += 1
@@ -851,7 +869,10 @@ class GridScaffold:
             # print(self.denoise(torch.tensor(list(g))))
             seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
         print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
-        return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions
+        if self.dream_fix != None:
+            return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions, imgs_fixed
+        else :
+            return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions
 
 
 

@@ -156,3 +156,23 @@ def graphing_recall(array):
         plt.legend()
         ax.set_xscale('log')
         plt.show()
+
+def print_imgs_side_by_side_on_top(imgs, out="mnist.png", captions=None, title=None):
+    fig, ax = plt.subplots(len(imgs), 2, figsize=(4 * 2, 4*len(imgs)), dpi=900)
+    for i in range(len(imgs)):
+        ax[i][0].imshow(imgs[i][0], cmap="gray")
+        ax[i][0].axis("off")
+        ax[i][1].imshow(imgs[i][1], cmap="gray")
+        ax[i][1].axis("off")
+        if captions is not None:
+            ax[i][0].set_title(captions[0])
+            ax[i][1].set_title(captions[1])
+
+    if title is not None:
+        fig.suptitle(title)
+    
+    if out is not None:
+        plt.savefig(out)
+        plt.close(fig)
+    else:
+        plt.show()
