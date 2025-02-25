@@ -522,10 +522,10 @@ class GridScaffold:
         else:
             raise ValueError("Invalid calculate_update_scaling_method")
         if self.scaling_updates:
-            if output.shape==torch.Size([self.N_h]):
-                output = output-self.hippocampal_from_sensory(input)[0]
-            if output.shape==torch.Size([self.input_size]):
-                output = output-self.sensory_from_hippocampal(input)[0]
+            if output.shape == torch.Size([self.N_h]):
+                output = output - self.hippocampal_from_sensory(input)[0]
+            if output.shape == torch.Size([self.input_size]):
+                output = output - self.sensory_from_hippocampal(input)[0]
         ret = torch.einsum("j,i->ji", output, input) / (scale + 1e-10)
 
         # print("input", input)
@@ -576,7 +576,8 @@ class GridScaffold:
         # print("b_k_hs", b_k_hs.shape)
         # self.inhibition_matrix_hs = gamma * (self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.input_size, device=self.device))
         self.inhibition_matrix_hs = (
-            self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T
+            self.inhibition_matrix_hs
+            - self.inhibition_matrix_hs @ torch.outer(input, b_k_hs.T)
         )
         # print(self.inhibition_matrix_hs.shape)
         # print((self.W_hs @ input).shape)
@@ -613,7 +614,8 @@ class GridScaffold:
         # print("b_k_hs", b_k_hs.shape)
         # self.inhibition_matrix_sh = gamma * (self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.N_h, device=self.device))
         self.inhibition_matrix_sh = (
-            self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T
+            self.inhibition_matrix_sh
+            - self.inhibition_matrix_sh @ torch.outer(input @ b_k_sh.T)
         )
         # print(self.inhibition_matrix_hs.shape)
         # print((self.W_hs @ input).shape)
@@ -685,7 +687,9 @@ class GridScaffold:
             # print(self.W_hs)
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
         elif self.MagicMath:
-            self.W_hs = Rk1MrUpdate(self.W_sh, self.W_hs, c=s, d=h, Zero_tol=self.ZeroTol, Case_Print_Flag=0)
+            self.W_hs = Rk1MrUpdate(
+                self.W_sh, self.W_hs, c=s, d=h, Zero_tol=self.ZeroTol, Case_Print_Flag=0
+            )
             self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
         else:
             self.W_hs += self.calculate_update(input=s, output=h)
@@ -740,7 +744,7 @@ class GridScaffold:
 
         if not as_tuple_list:
             return onehotted
-        
+
         pos = 0
         onehotted_list = []
         for module in self.modules:
@@ -780,9 +784,9 @@ class GridScaffold:
 
     @torch.no_grad()
     def dream(self, seen_gss):
-        i=0
+        i = 0
         print("seen_gs", seen_gss)
-        #reverse the order of seen_gs
+        # reverse the order of seen_gs
         seen_gs = list(seen_gss)
         seen_gs.reverse()
 
@@ -795,7 +799,6 @@ class GridScaffold:
             if dh.norm() > self.ZeroTol:
                 self.W_hs += self.calculate_update(input=s, output=h)
             # i+=1
-
 
     @torch.no_grad()
     def learn_path(self, observations, velocities):
@@ -824,14 +827,32 @@ class GridScaffold:
             self.learn(obs, vel)
 
             # testing code
-            first_image_grid_position_estimates.append(self.estimate_position(first_obs).flatten().clone())
-            first_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obs))).flatten().clone())
+            first_image_grid_position_estimates.append(
+                self.estimate_position(first_obs).flatten().clone()
+            )
+            first_image_grid_positions.append(
+                self.denoise(
+                    self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obs))
+                )
+                .flatten()
+                .clone()
+            )
 
             if i > 0:
-                second_image_grid_position_estimates.append(self.estimate_position(second_obs).flatten().clone())
-                second_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(second_obs))).flatten().clone())
+                second_image_grid_position_estimates.append(
+                    self.estimate_position(second_obs).flatten().clone()
+                )
+                second_image_grid_positions.append(
+                    self.denoise(
+                        self.grid_from_hippocampal(
+                            self.hippocampal_from_sensory(second_obs)
+                        )
+                    )
+                    .flatten()
+                    .clone()
+                )
             if self.dream_fix != None:
-                if (i+1)%self.dream_fix == 0:
+                if (i + 1) % self.dream_fix == 0:
                     self.dream(seen_gs)
 
         print("Unique Gs seen while learning:", len(seen_gs))
@@ -850,9 +871,12 @@ class GridScaffold:
             # print(self.denoise(torch.tensor(list(g))))
             seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
         print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
-        return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions
-
-
+        return (
+            first_image_grid_position_estimates,
+            second_image_grid_position_estimates,
+            first_image_grid_positions,
+            second_image_grid_positions,
+        )
 
     @torch.no_grad()
     def learn(self, observation, velocity):
