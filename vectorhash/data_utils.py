@@ -47,18 +47,19 @@ def prepare_data(
     num_imgs=5,
     preprocess_sensory=True,
     noise_level="medium",
-    use_fix=False,
+    across_dataset=True,
     device=None,
 ):
     data = dataset.train_data.flatten(1)[:num_imgs].float().to(device)
     if preprocess_sensory:
-        if use_fix:
+        if across_dataset:
+            data = (data - data.mean(dim=0)) / (data.std(dim=0) + 1e-8)
+        else:
             for i in range(len(data)):
                 data[i] = (data[i] - data[i].mean()) / data[i].std()
-        else:
-            data = (data - data.mean(dim=0)) / (data.std(dim=0) + 1e-8)
+
         # noising the data
-        data = data
+        # data = data.float()
     if noise_level == "none":
         return data, data
     elif noise_level == "low":

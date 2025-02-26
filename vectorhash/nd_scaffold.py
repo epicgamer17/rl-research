@@ -309,7 +309,7 @@ class GridScaffold:
             if hidden_size_sh == 0:
                 hidden_size_sh = self.N_h
             else:
-                self.hidden_sh = torch.rand(self.hidden_size, self.N_h) - 0.5
+                self.hidden_sh = torch.rand(hidden_size_sh, self.N_h) - 0.5
             self.W_sh = torch.zeros(self.input_size, hidden_size_sh)
             self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
                 hidden_size_sh
@@ -610,10 +610,12 @@ class GridScaffold:
         b_k_sh = (self.inhibition_matrix_sh @ input) / (
             1 + input.T @ self.inhibition_matrix_sh @ input
         )
+
         self.inhibition_matrix_sh = (
             self.inhibition_matrix_sh
             - self.inhibition_matrix_sh @ torch.outer(input, b_k_sh.T)
         )
+
         self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
 
     @torch.no_grad()
@@ -698,18 +700,33 @@ class GridScaffold:
         # ), f"Whs should be the pseudo-inverse of Wsh. Got {self.W_hs @ s} and expected {h}"
 
         print("info for each h directly after learning it")
-        print(
-            "avg nonzero/greaterzero H from book:", torch.sum(h != 0), torch.sum(h > 0)
-        )
         h_from_s = self.hippocampal_from_sensory(s)
-        print(
-            "avg nonzero/greaterzero H from s:",
-            torch.sum(h_from_s != 0),
-            torch.sum(h_from_s > 0),
-        )
         g_from_h_from_s = self.grid_from_hippocampal(h_from_s)
         g_denoised = self.denoise(g_from_h_from_s)
         h_from_s_denoised = self.hippocampal_from_grid(g_denoised)
+
+        print("h max, min, mean", torch.max(h), torch.min(h), torch.mean(h))
+        print(
+            "h_from_s max, min, mean",
+            torch.max(h_from_s),
+            torch.min(h_from_s),
+            torch.mean(h_from_s),
+        )
+        print(
+            "h_from_s_denoised max, min, mean",
+            torch.max(h_from_s_denoised),
+            torch.min(h_from_s_denoised),
+            torch.mean(h_from_s_denoised),
+        )
+
+        print(
+            "avg nonzero/greaterzero h from book:", torch.sum(h != 0), torch.sum(h > 0)
+        )
+        print(
+            "avg nonzero/greaterzero h from s:",
+            torch.sum(h_from_s != 0),
+            torch.sum(h_from_s > 0),
+        )
         print(
             "avg nonzero/greaterzero h from s denoised:",
             torch.sum(h_from_s_denoised != 0),
