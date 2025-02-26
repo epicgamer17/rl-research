@@ -730,6 +730,30 @@ class GridScaffold:
                 h.reshape(1, -1), h_from_s_denoised.reshape(1, -1)
             ),
         )
+        s_from_h = self.sensory_from_hippocampal(h)
+        s_from_h_from_s = self.sensory_from_hippocampal(h_from_s)
+        s_from_h_from_s_denoised = self.sensory_from_hippocampal(h_from_s_denoised)
+        print(
+            "mse/cosinesimilarity s and s from h from s",
+            torch.nn.functional.mse_loss(s, s_from_h_from_s),
+            torch.nn.functional.cosine_similarity(
+                s.reshape(1, -1), s_from_h_from_s.reshape(1, -1)
+            ),
+        )
+        print(
+            "mse/cosinesimilarity s and s from h from s denoised",
+            torch.nn.functional.mse_loss(s, s_from_h_from_s_denoised),
+            torch.nn.functional.cosine_similarity(
+                s.reshape(1, -1), s_from_h_from_s_denoised.reshape(1, -1)
+            ),
+        )
+        print(
+            "mse/cosinesimilarity s and s from h",
+            torch.nn.functional.mse_loss(s, s_from_h),
+            torch.nn.functional.cosine_similarity(
+                s.reshape(1, -1), s_from_h.reshape(1, -1)
+            ),
+        )
 
         # hidden = torch.sigmoid(self.hidden_sh @ h)
         # print("S FROM HIPPO", self.W_sh @ hidden)
