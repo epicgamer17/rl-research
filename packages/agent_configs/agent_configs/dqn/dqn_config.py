@@ -12,7 +12,7 @@ class DQNConfig(RainbowConfig):
         self.transfer_interval: int = 1
         self.per_alpha: float = 0
         self.per_beta: float = 0
-        self.per_epsilon: float = 0
+        self.per_epsilon: float = 0.001
         self.n_step: int = 1
         self.atom_size: int = 1
 

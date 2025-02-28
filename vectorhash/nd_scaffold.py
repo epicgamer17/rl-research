@@ -196,22 +196,25 @@ class GridScaffold:
         relu_theta=0.5,
         from_checkpoint=False,
         T=1,
-        continualupdate=False,
         ratshift=False,
-        initialize_W_gh_with_zeroes=True,
+        # use true pseudo inverse
         pseudo_inverse=False,
         batch_update=False,
         use_h_fix=True,
-        learned_pseudo=True,
-        epsilon=0.01,
+        # learned pseudo params
+        learned_pseudo="bidirectional",
+        hidden_layer_factor=10,
+        # epsilon=0.01,
+        #
         calculate_update_scaling_method="norm",
-        MagicMath=False,
+        # use second iterative pseudo inverse
+        magic_math=False,
         sanity_check=True,
         calculate_g_method="fast",
         scaling_updates=True,
+        # schwarz dreaming stuff
         dream_fix=None,
-        ZeroTol=1e-5,
-        slumber=True,
+        zero_tol=1e-5,
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
@@ -228,23 +231,16 @@ class GridScaffold:
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
-        self.ZeroTol = ZeroTol
-        self.MagicMath = MagicMath
+        self.zero_tol = zero_tol
+        self.magic_math = magic_math
         self.dream_fix = dream_fix
         self.h_normal_mean = h_normal_mean
         self.h_normal_std = h_normal_std
         self.slumber = slumber
 
-        if continualupdate == False:
-            assert (
-                initialize_W_gh_with_zeroes == False
-            ), "initialize_W_gh_with_zeroes must be False if continualupdate is False"
         self.pseudo_inverse = pseudo_inverse
-        # FOR TESTING, CONTINUAL UPDATE TURNS ON UPDATE EVERY STEP
-        # FOR TESTING, RATSHIFT TURNS ON RATSHIFT INSTEAD OF ROLL
-        self.continualupdate = continualupdate
         self.ratshift = ratshift
-        self.epsilon = epsilon
+        # self.epsilon = epsilon
         if from_checkpoint:
             return
 
@@ -294,11 +290,7 @@ class GridScaffold:
         #         )
 
         """The matrix of all possible hippocampal states induced by `G` and `W_hg`. Shape: `(N_patts, N_h)`"""
-
-        if initialize_W_gh_with_zeroes:
-            self.W_gh = torch.zeros((self.N_g, self.N_h), device=device)
-        else:
-            self.W_gh = self._W_gh()  # (N_g, N_h)
+        self.W_gh = self._W_gh()  # (N_g, N_h)
         # print(self.W_gh)
         # print(self.W_hg)
         if sanity_check:
@@ -308,19 +300,51 @@ class GridScaffold:
                     self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
                 )
             ), "G -> H -> G should preserve G"
+
+        assert learned_pseudo in ["bidirectional", "hs", "none"]
         self.learned_pseudo = learned_pseudo
-        self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
+        self.hidden_layer_factor = hidden_layer_factor
+        if learned_pseudo == "bidirectional":
+            # both directions
+            hidden_size_sh = self.N_h * self.hidden_layer_factor
+            if hidden_size_sh == 0:
+                hidden_size_sh = self.N_h
+            else:
+                self.hidden_sh = torch.rand(hidden_size_sh, self.N_h) - 0.5
+            self.W_sh = torch.zeros(self.input_size, hidden_size_sh)
+            self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
+                hidden_size_sh
+            )
+
+            hidden_size_hs = self.input_size * self.hidden_layer_factor
+            if hidden_size_hs == 0:
+                hidden_size_hs = self.input_size
+            else:
+                self.hidden_hs = torch.rand(hidden_size_hs, self.input_size) - 0.5
+            self.W_hs = torch.zeros(self.N_h, hidden_size_hs)
+            self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                hidden_size_hs
+            )
+        elif learned_pseudo == "hs":
+            # only s to h
+            self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
+            hidden_size_hs = self.input_size * self.hidden_layer_factor
+            if hidden_size_hs == 0:
+                hidden_size_hs = self.input_size
+            else:
+                self.hidden_hs = torch.rand(hidden_size_hs, self.input_size) - 0.5
+            self.W_hs = torch.zeros(self.N_h, hidden_size_hs)
+            self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                hidden_size_hs
+            )
+
+        else:
+            self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
+            self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
         # self.W_hs = sparse_matrix_initializer((self.N_h, self.input_size))
         # self.W_sh = torch.linalg.pinv(self.W_hs)
-        self.W_hs = torch.zeros((self.N_h, self.input_size), device=device)
         # self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (self.epsilon**2)
         # self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (self.epsilon**2)
-        self.inhibition_matrix_sh = torch.eye(self.N_h, device=device) / (
-            self.input_size
-        )
-        self.inhibition_matrix_hs = torch.eye(self.input_size, device=device) / (
-            self.N_h
-        )
 
         self.updatesh = 0
         """The current grid coding state tensor. Shape: `(N_g)`"""
@@ -490,8 +514,14 @@ class GridScaffold:
         """
         if H.ndim == 1:
             H = H.unsqueeze(0)
-
-        return H @ self.W_sh.T
+        if self.learned_pseudo == "bidirectional":
+            if self.hidden_layer_factor != 0:
+                hidden = torch.sigmoid(H @ self.hidden_sh.T)
+                return hidden @ self.W_sh.T
+            else:
+                return H @ self.W_sh.T
+        else:
+            return H @ self.W_sh.T
 
     @torch.no_grad()
     def hippocampal_from_sensory(self, S: torch.Tensor) -> torch.Tensor:
@@ -506,8 +536,16 @@ class GridScaffold:
         """
         if S.ndim == 1:
             S = S.unsqueeze(0)
-
-        return torch.relu(S @ self.W_hs.T)
+        if self.learned_pseudo == "bidirectional" or self.learned_pseudo == "hs":
+            if self.hidden_layer_factor != 0:
+                hidden = torch.sigmoid(S @ self.hidden_hs.T)
+                return torch.relu(hidden @ self.W_hs.T)
+            else:
+                return torch.relu(
+                    S @ self.W_hs.T
+                )  # to relu or not to relu, that is the question.
+        else:
+            return torch.relu(S @ self.W_hs.T)
 
     @torch.no_grad()
     def calculate_update(
@@ -524,10 +562,10 @@ class GridScaffold:
         else:
             raise ValueError("Invalid calculate_update_scaling_method")
         if self.scaling_updates:
-            if output.shape==torch.Size([self.N_h]):
-                output = output-self.hippocampal_from_sensory(input)[0]
-            if output.shape==torch.Size([self.input_size]):
-                output = output-self.sensory_from_hippocampal(input)[0]
+            if output.shape == torch.Size([self.N_h]):
+                output = output - self.hippocampal_from_sensory(input)[0]
+            if output.shape == torch.Size([self.input_size]):
+                output = output - self.sensory_from_hippocampal(input)[0]
         ret = torch.einsum("j,i->ji", output, input) / (scale + 1e-10)
 
         # print("input", input)
@@ -537,7 +575,7 @@ class GridScaffold:
         return ret
 
     @torch.no_grad()
-    def calculate_update_Wsh_fix(
+    def calculate_update_Wsh(
         self, input: torch.Tensor, output: torch.Tensor
     ) -> torch.Tensor:
         if self.use_h_fix:
@@ -557,96 +595,29 @@ class GridScaffold:
 
         return ret.T
 
-    def learned_pseudo_inversehs(self, input, output):
-        if self.scaling_updates:
-            output = output-torch.relu(input @ self.W_hs.T)
-        # print("s", input.shape)
-        # print("h", output.shape)
+    def learned_pseudo_inverse_hs(self, input, output):
         b_k_hs = (self.inhibition_matrix_hs @ input) / (
             1 + input.T @ self.inhibition_matrix_hs @ input
         )
-        # ERROR VECTOR EK
-        # E_k = output - self.W_hs @ input
 
-        # NORMALIZATION FACTOR
-
-        # E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_hs @ input)
-        # L2Enorm = torch.abs(E)
-
-        # GAMMA CALCULATION
-
-        # gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
-
-        # print("b_k_hs", b_k_hs.shape)
-        # self.inhibition_matrix_hs = gamma * (self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.input_size, device=self.device))
         self.inhibition_matrix_hs = (
-            self.inhibition_matrix_hs - self.inhibition_matrix_hs * input @ b_k_hs.T
+            self.inhibition_matrix_hs
+            - self.inhibition_matrix_hs @ torch.outer(input, b_k_hs.T)
         )
-        # print(self.inhibition_matrix_hs.shape)
-        # print((self.W_hs @ input).shape)
-        # print((output - self.W_hs @ input).shape)
-        # print(((h - self.W_hs @ s) @ b_k_hs.T).shape)
-        # self.W_hs += (h - self.W_hs @ s) @ b_k_hs.T
+
         self.W_hs += torch.outer((output - self.W_hs @ input), b_k_hs.T)
 
-        # b_k_sh = (h.T @ self.inhibition_matrix_sh.T) / (
-        #     1 + h.T @ self.inhibition_matrix_sh @ h
-        # )
-        # self.inhibition_matrix_sh -= (self.inhibition_matrix_sh @ h) @ b_k_sh
-        # self.W_sh += (s - self.W_sh @ h) @ b_k_sh.T
-        # self.W_sh += torch.outer(s - self.W_sh @ h, b_k_sh)
-
-    def learned_pseudo_inversesh(self, input, output):
-        if self.scaling_updates:
-            output = (output - (input @ self.W_sh.T))
-        # print("s", input.shape)
-        # print("h", output.shape)
+    def learned_pseudo_inverse_sh(self, input, output):
         b_k_sh = (self.inhibition_matrix_sh @ input) / (
             1 + input.T @ self.inhibition_matrix_sh @ input
         )
-        # ERROR VECTOR EK
-        # E_k = output - self.W_sh @ input
 
-        # NORMALIZATION FACTOR
-
-        # E = ((E_k.T @ E_k)/self.input_size) / (1 + input.T @ self.inhibition_matrix_sh @ input)
-        # L2Enorm = torch.abs(E)
-
-        # GAMMA CALCULATION
-
-        # gamma = 1/(1+ ((1-torch.exp(-L2Enorm))/self.epsilon))
-
-        # print("b_k_hs", b_k_hs.shape)
-        # self.inhibition_matrix_sh = gamma * (self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T + ((1-torch.exp(-L2Enorm))/self.epsilon) * torch.eye(self.N_h, device=self.device))
         self.inhibition_matrix_sh = (
-            self.inhibition_matrix_sh - self.inhibition_matrix_sh * input @ b_k_sh.T
+            self.inhibition_matrix_sh
+            - self.inhibition_matrix_sh @ torch.outer(input, b_k_sh.T)
         )
-        # print(self.inhibition_matrix_hs.shape)
-        # print((self.W_hs @ input).shape)
-        # print((output - self.W_hs @ input).shape)
-        # print(((h - self.W_hs @ s) @ b_k_hs.T).shape)
-        # self.W_hs += (h - self.W_hs @ s) @ b_k_hs.T
 
         self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
-
-        # b_k_sh = (h.T @ self.inhibition_matrix_sh.T) / (
-        #     1 + h.T @ self.inhibition_matrix_sh @ h
-        # )
-        # self.inhibition_matrix_sh -= (self.inhibition_matrix_sh @ h) @ b_k_sh
-        # self.W_sh += (s - self.W_sh @ h) @ b_k_sh.T
-        # self.W_sh += torch.outer(s - self.W_sh @ h, b_k_sh)
-
-    @torch.no_grad()
-    def calculate_update_Wsh(
-        self, hbook: torch.Tensor, sbook: torch.Tensor
-    ) -> torch.Tensor:
-        # input: (N)
-        # output: (M)
-        # M: (M x N)
-        h_plus = torch.linalg.pinv(hbook)
-        ret = torch.einsum("ik,jk->ij", sbook, h_plus)
-
-        return ret
 
     @torch.no_grad()
     def store_memory(self, s: torch.Tensor):
@@ -679,23 +650,48 @@ class GridScaffold:
             self.S[0] = s
         else:
             self.S[self.S.nonzero()[-1][0] + 1] = s
+        # print("current g we are learning", self.g)
         h = torch.relu(self.W_hg @ self.g - self.relu_theta)
-        if self.continualupdate:
-            self.W_gh += self.calculate_update(input=h, output=self.g)
+        # print("current h we are learning", h)
+        # print("is h in the h_book", torch.allclose(h, self.H[self.H.nonzero()[-1][0]]))
         if self.pseudo_inverse:
-            self.W_sh = self.calculate_update_Wsh_fix(input=h, output=s)
+            self.W_sh = self.calculate_update_Wsh(input=h, output=s)
             self.W_hs = self.calculate_update_Whs(input=s, output=h)
-        elif self.learned_pseudo:
-            # print("learned pseudo")
-            self.learned_pseudo_inversehs(input=s, output=h)
+        elif self.learned_pseudo == "bidirectional":
+            self.learned_pseudo_inverse_hs(
+                input=(
+                    torch.sigmoid(self.hidden_hs @ s)
+                    if self.hidden_layer_factor != 0
+                    else s
+                ),
+                output=h,
+            )
+            self.learned_pseudo_inverse_sh(
+                input=(
+                    torch.sigmoid(self.hidden_sh @ h)
+                    if self.hidden_layer_factor != 0
+                    else h
+                ),
+                output=s,
+            )
+        elif self.learned_pseudo == "hs":
+            hidden = (
+                torch.sigmoid(self.hidden_hs @ s)
+                if self.hidden_layer_factor != 0
+                else s
+            )
+            self.learned_pseudo_inverse_hs(input=hidden, output=h)
             # print(self.W_hs)
-            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
-        elif self.MagicMath:
-            self.W_hs = Rk1MrUpdate(self.W_sh, self.W_hs, c=s, d=h, Zero_tol=self.ZeroTol, Case_Print_Flag=0)
-            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
+            self.W_sh += self.calculate_update_Wsh(input=h, output=s)
+        # elif self.magic_math:
+        #     self.W_hs = Rk1MrUpdate(
+        #         self.W_sh, self.W_hs, c=s, d=h, zero_tol=self.zero_tol, Case_Print_Flag=0
+        #     )
+        #     print(self.W_sh.shape)
+        #     self.W_sh += self.calculate_update_Wsh(input=h, output=s)
         else:
             self.W_hs += self.calculate_update(input=s, output=h)
-            self.W_sh += self.calculate_update_Wsh_fix(input=h, output=s)
+            self.W_sh += self.calculate_update_Wsh(input=h, output=s)
 
         # assert torch.allclose(
         #     self.W_sh @ h, s
@@ -704,10 +700,81 @@ class GridScaffold:
         #     self.W_hs @ s, h
         # ), f"Whs should be the pseudo-inverse of Wsh. Got {self.W_hs @ s} and expected {h}"
 
-        # print("S", s)
-        # print("H", h)
-        # print("HIPPO FROM S", torch.relu(self.W_hs @ s))
-        # print("S FROM HIPPO", self.W_sh @ h)
+        print("info for each h directly after learning it")
+        h_from_s = self.hippocampal_from_sensory(s)
+        g_from_h_from_s = self.grid_from_hippocampal(h_from_s)
+        g_denoised = self.denoise(g_from_h_from_s)
+        h_from_s_denoised = self.hippocampal_from_grid(g_denoised)
+
+        print("h max, min, mean", torch.max(h), torch.min(h), torch.mean(h))
+        print(
+            "h_from_s max, min, mean",
+            torch.max(h_from_s),
+            torch.min(h_from_s),
+            torch.mean(h_from_s),
+        )
+        print(
+            "h_from_s_denoised max, min, mean",
+            torch.max(h_from_s_denoised),
+            torch.min(h_from_s_denoised),
+            torch.mean(h_from_s_denoised),
+        )
+
+        print(
+            "avg nonzero/greaterzero h from book:", torch.sum(h != 0), torch.sum(h > 0)
+        )
+        print(
+            "avg nonzero/greaterzero h from s:",
+            torch.sum(h_from_s != 0),
+            torch.sum(h_from_s > 0),
+        )
+        print(
+            "avg nonzero/greaterzero h from s denoised:",
+            torch.sum(h_from_s_denoised != 0),
+            torch.sum(h_from_s_denoised > 0),
+        )
+        # print(h.shape, h_from_s.shape)
+        print(
+            "mse/cosinesimilarity h from book and h from s",
+            torch.nn.functional.mse_loss(h, h_from_s),
+            torch.nn.functional.cosine_similarity(
+                h.reshape(1, -1), h_from_s.reshape(1, -1)
+            ),
+        )
+        print(
+            "mse/cosinesimilarity h from book and h from s denoised",
+            torch.nn.functional.mse_loss(h, h_from_s_denoised),
+            torch.nn.functional.cosine_similarity(
+                h.reshape(1, -1), h_from_s_denoised.reshape(1, -1)
+            ),
+        )
+        s_from_h = self.sensory_from_hippocampal(h)
+        s_from_h_from_s = self.sensory_from_hippocampal(h_from_s)
+        s_from_h_from_s_denoised = self.sensory_from_hippocampal(h_from_s_denoised)
+        print(
+            "mse/cosinesimilarity s and s from h from s",
+            torch.nn.functional.mse_loss(s, s_from_h_from_s),
+            torch.nn.functional.cosine_similarity(
+                s.reshape(1, -1), s_from_h_from_s.reshape(1, -1)
+            ),
+        )
+        print(
+            "mse/cosinesimilarity s and s from h from s denoised",
+            torch.nn.functional.mse_loss(s, s_from_h_from_s_denoised),
+            torch.nn.functional.cosine_similarity(
+                s.reshape(1, -1), s_from_h_from_s_denoised.reshape(1, -1)
+            ),
+        )
+        print(
+            "mse/cosinesimilarity s and s from h",
+            torch.nn.functional.mse_loss(s, s_from_h),
+            torch.nn.functional.cosine_similarity(
+                s.reshape(1, -1), s_from_h.reshape(1, -1)
+            ),
+        )
+
+        # hidden = torch.sigmoid(self.hidden_sh @ h)
+        # print("S FROM HIPPO", self.W_sh @ hidden)
 
     @torch.no_grad()
     def shift(self, velocity):
@@ -746,7 +813,7 @@ class GridScaffold:
 
         if not as_tuple_list:
             return onehotted
-        
+
         pos = 0
         onehotted_list = []
         for module in self.modules:
@@ -785,29 +852,22 @@ class GridScaffold:
         return G
 
     @torch.no_grad()
-    def dream(self, seen_gs, obs):
-        i=0
-        #reverse the order of seen_gs
-        changed = 1
-        sweep = 0
-        # while changed != 0:
-        #     changed = 0
-        for g in seen_gs:
-            if (i<self.dream_fix or self.slumber==True):
-                temp = torch.tensor(list(g))
-                h = torch.relu(self.W_hg @ temp - self.relu_theta)
-                s = self.W_sh @ h
-                dh = self.W_hs @ s - h
-                if dh.norm() > self.ZeroTol:
-                    self.W_hs += self.calculate_update(input=s, output=h)
-                    changed += 1
-                i+=1
-            # print("Changed = ", changed)
-            # print("sweep number = ", sweep)
-            # sweep = sweep+1
-            
-        return changed
+    def dream(self, seen_gss):
+        i = 0
+        # print("seen_gs", seen_gss)
+        # reverse the order of seen_gs
+        seen_gs = list(seen_gss)
+        seen_gs.reverse()
 
+        for g in seen_gs:
+            # if i<self.dream_fix:
+            self.g = torch.tensor(list(g))
+            h = torch.relu(self.W_hg @ self.g - self.relu_theta)
+            s = self.W_sh @ h
+            dh = self.W_hs @ s - h
+            if dh.norm() > self.zero_tol:
+                self.W_hs += self.calculate_update(input=s, output=h)
+            # i+=1
 
     @torch.no_grad()
     def learn_path(self, observations, velocities):
@@ -841,17 +901,33 @@ class GridScaffold:
             self.learn(obs, vel)
 
             # testing code
-            first_image_grid_position_estimates.append(self.estimate_position(first_obs).flatten().clone())
-            first_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obs))).flatten().clone())
+            first_image_grid_position_estimates.append(
+                self.estimate_position(first_obs).flatten().clone()
+            )
+            first_image_grid_positions.append(
+                self.denoise(
+                    self.grid_from_hippocampal(self.hippocampal_from_sensory(first_obs))
+                )
+                .flatten()
+                .clone()
+            )
 
             if i > 0:
-                second_image_grid_position_estimates.append(self.estimate_position(second_obs).flatten().clone())
-                second_image_grid_positions.append(self.denoise(self.grid_from_hippocampal(self.hippocampal_from_sensory(second_obs))).flatten().clone())
+                second_image_grid_position_estimates.append(
+                    self.estimate_position(second_obs).flatten().clone()
+                )
+                second_image_grid_positions.append(
+                    self.denoise(
+                        self.grid_from_hippocampal(
+                            self.hippocampal_from_sensory(second_obs)
+                        )
+                    )
+                    .flatten()
+                    .clone()
+                )
             if self.dream_fix != None:
-                if (i+1)%self.dream_fix == 0:
-                    # print("image number = ", i+1)
-                    fixnum = self.dream(sgs, observations[i:])
-                    imgs_fixed.append(fixnum)
+                if (i + 1) % self.dream_fix == 0:
+                    self.dream(seen_gs)
 
         print("Unique Gs seen while learning:", len(seen_gs))
         print("Unique Hs seen while learning:", len(seen_hs))
@@ -869,12 +945,12 @@ class GridScaffold:
             # print(self.denoise(torch.tensor(list(g))))
             seen_g_s.add(tuple(self.denoise(torch.tensor(list(g)))))
         print("Unique Gs seen while learning (after denoising):", len(seen_g_s))
-        if self.dream_fix != None:
-            return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions, imgs_fixed
-        else :
-            return first_image_grid_position_estimates, second_image_grid_position_estimates, first_image_grid_positions, second_image_grid_positions
-
-
+        return (
+            first_image_grid_position_estimates,
+            second_image_grid_position_estimates,
+            first_image_grid_positions,
+            second_image_grid_positions,
+        )
 
     @torch.no_grad()
     def learn(self, observation, velocity):
@@ -906,13 +982,14 @@ class GridScaffold:
         for h in H:
             used_Hs.add(tuple(h.tolist()))
         print("Unique Hs seen while recalling:", len(used_Hs))
-
+        # print(used_Hs)
         G = self.grid_from_hippocampal(H)
         used_gs = set()
         for g in G:
             # print(g)
             used_gs.add(tuple(g.tolist()))
         print("Unique Gs seen while recalling (before denoising):", len(used_gs))
+        # print(used_gs)
         G_ = self.denoise(G)
         used_G_s = set()
         for g in G_:
@@ -973,6 +1050,19 @@ class GridScaffold:
         S_ = self.sensory_from_hippocampal(H_)
 
         return S_
+
+    # old W_sh update
+    # @torch.no_grad()
+    # def calculate_update_Wsh(
+    #     self, hbook: torch.Tensor, sbook: torch.Tensor
+    # ) -> torch.Tensor:
+    #     # input: (N)
+    #     # output: (M)
+    #     # M: (M x N)
+    #     h_plus = torch.linalg.pinv(hbook)
+    #     ret = torch.einsum("ik,jk->ij", sbook, h_plus)
+
+    #     return ret
 
     def graph_scaffold(self):
         pass

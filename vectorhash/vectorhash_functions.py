@@ -191,12 +191,15 @@ def expectation_of_relu_normal(mu, std):
     Calculate the expectation of a ReLU applied to a normal distribution with mean mu and standard deviation std.
     """
     mu_over_std = mu / std
-    return mu * norm.cdf(mu_over_std) + std / math.sqrt(2 * pi) * np.exp(-mu_over_std ** 2 / 2)
+    return mu * norm.cdf(mu_over_std) + std / math.sqrt(2 * pi) * np.exp(
+        -(mu_over_std**2) / 2
+    )
+
 
 if __name__ == "__main__":
     # print(chinese_remainder_theorem([3, 5, 7], [1, 2, 3]))
     N = 10000
-    std=3
+    std = 3
     means = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     Ns = [10, 100, 1000, 10000, 100000, 1000000, 10000000]
     results = np.zeros((len(means), len(Ns)))
@@ -207,7 +210,7 @@ if __name__ == "__main__":
             x2 = torch.relu(torch.normal(mean, std, (N,))) - expected
             results[i, j] = torch.mean(x1 * x2)
             print(f"mean={mean}, N={N}, similarity={results}")
-    
+
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots()
@@ -218,14 +221,14 @@ if __name__ == "__main__":
     ax.set_ylabel("similarity")
     ax.legend()
 
-
     plt.savefig("sim.png")
 
-def Rk1MrUpdate(A, A_pinv, c, d, Zero_tol, Case_Print_Flag):
+
+def Rk1MrUpdate(A, A_pinv, c, d, zero_tol, Case_Print_Flag):
     # size c = [n,1]
     # size d = [m,1]
-    c = c.reshape(-1,1)
-    d = d.reshape(-1,1)
+    c = c.reshape(-1, 1)
+    d = d.reshape(-1, 1)
     n = c.shape[0]
     m = d.shape[0]
     V = A_pinv @ c
@@ -235,44 +238,57 @@ def Rk1MrUpdate(A, A_pinv, c, d, Zero_tol, Case_Print_Flag):
     W = (torch.eye(n) - A @ A_pinv) @ c
     M = (torch.eye(m) - A_pinv @ A) @ d
     ## squared norm of the two abovesaid vectors
-    w_snorm = torch.norm(W,p=2)**2   
-    m_snorm = torch.norm(M,p=2)**2
+    w_snorm = torch.norm(W, p=2) ** 2
+    m_snorm = torch.norm(M, p=2) ** 2
 
-    if w_snorm>=Zero_tol and m_snorm>=Zero_tol:
+    if w_snorm >= zero_tol and m_snorm >= zero_tol:
         if Case_Print_Flag == 1:
-            print('case 1')
-        G = ((-1/w_snorm) * V @ W.T) - ((1/m_snorm) * (M @ N.T)) + ((b/m_snorm/w_snorm) * (M @ W.T))
+            print("case 1")
+        G = (
+            ((-1 / w_snorm) * V @ W.T)
+            - ((1 / m_snorm) * (M @ N.T))
+            + ((b / m_snorm / w_snorm) * (M @ W.T))
+        )
 
-    elif w_snorm<Zero_tol and m_snorm>=Zero_tol and abs(b)<Zero_tol:
+    elif w_snorm < zero_tol and m_snorm >= zero_tol and abs(b) < zero_tol:
         if Case_Print_Flag == 1:
-            print('case 2')  
-        v_snorm = torch.norm(V,2)**2     
-        G = (-1/v_snorm) * (V @ V.T) @ A_pinv + (-(1/m_snorm) * M @ N.T)
-    
-    elif w_snorm<Zero_tol and abs(b)>Zero_tol:
-        if Case_Print_Flag == 1:
-            print('case 3')
-        v_snorm = torch.norm(V,2)**2
-        G = ((1/b) * M @ V.T @ A_pinv - ((b/(v_snorm * m_snorm + b**2))) * ((v_snorm / b) * M + V) @ ((m_snorm / b) * A_pinv.T @ V + N).T)  
-    
-    elif m_snorm<Zero_tol and w_snorm>=Zero_tol and abs(b)<Zero_tol:
-        if Case_Print_Flag == 1:
-            print('case 4')
-        n_snorm = torch.norm(N,2)**2
-        G = (-1/n_snorm) * A_pinv @ (N @ N.T) + (-(1/ w_snorm) * V @ W.T)
-                                     
-    elif m_snorm<Zero_tol and abs(b)>Zero_tol:
-        if Case_Print_Flag == 1:
-            print('case 5')        
-        n_snorm = torch.norm(N,2)**2 
-        G = ((1/b) * A_pinv @ N @ W.T) - (((b/(w_snorm * n_snorm + b**2)) * ((w_snorm/b) * A_pinv @ N + V)) @ (((n_snorm/b) * W + N).T))
+            print("case 2")
+        v_snorm = torch.norm(V, 2) ** 2
+        G = (-1 / v_snorm) * (V @ V.T) @ A_pinv + (-(1 / m_snorm) * M @ N.T)
 
-    elif m_snorm<Zero_tol and w_snorm<Zero_tol and abs(b)<Zero_tol:
+    elif w_snorm < zero_tol and abs(b) > zero_tol:
         if Case_Print_Flag == 1:
-            print('case 6')
-        v_snorm = torch.norm(V,2)**2
-        n_snorm = torch.norm(N,2)**2
-        G = ((-1/v_snorm) * (V @ V.T) @ A_pinv) - ((1/n_snorm) * A_pinv @ (N @ N.T)) + (((V.T @ A_pinv @ N) / (v_snorm * n_snorm)) @ (V @ N.T))
+            print("case 3")
+        v_snorm = torch.norm(V, 2) ** 2
+        G = (1 / b) * M @ V.T @ A_pinv - ((b / (v_snorm * m_snorm + b**2))) * (
+            (v_snorm / b) * M + V
+        ) @ ((m_snorm / b) * A_pinv.T @ V + N).T
+
+    elif m_snorm < zero_tol and w_snorm >= zero_tol and abs(b) < zero_tol:
+        if Case_Print_Flag == 1:
+            print("case 4")
+        n_snorm = torch.norm(N, 2) ** 2
+        G = (-1 / n_snorm) * A_pinv @ (N @ N.T) + (-(1 / w_snorm) * V @ W.T)
+
+    elif m_snorm < zero_tol and abs(b) > zero_tol:
+        if Case_Print_Flag == 1:
+            print("case 5")
+        n_snorm = torch.norm(N, 2) ** 2
+        G = ((1 / b) * A_pinv @ N @ W.T) - (
+            ((b / (w_snorm * n_snorm + b**2)) * ((w_snorm / b) * A_pinv @ N + V))
+            @ (((n_snorm / b) * W + N).T)
+        )
+
+    elif m_snorm < zero_tol and w_snorm < zero_tol and abs(b) < zero_tol:
+        if Case_Print_Flag == 1:
+            print("case 6")
+        v_snorm = torch.norm(V, 2) ** 2
+        n_snorm = torch.norm(N, 2) ** 2
+        G = (
+            ((-1 / v_snorm) * (V @ V.T) @ A_pinv)
+            - ((1 / n_snorm) * A_pinv @ (N @ N.T))
+            + (((V.T @ A_pinv @ N) / (v_snorm * n_snorm)) @ (V @ N.T))
+        )
 
     A_pinv_New = A_pinv + G
     return A_pinv_New
@@ -292,7 +308,6 @@ def ConvertToXYNew(gin, shape):
 
     gin = gin.reshape(shape)
 
-
     # y sum
     x = []
     for i in range(shape[1]):
@@ -305,12 +320,13 @@ def ConvertToXYNew(gin, shape):
     x_med = continuous_median_1d(x, half=half_prob)
     return x_med, y_med
 
+
 def continuous_median_1d(prob, half):
     """
     Given a 1D probability vector 'prob' (with prob.sum() == 1)
     that represents a density which is uniform over each interval [i, i+1),
     compute the continuous median coordinate.
-    
+
     For example, if the median falls at x = 2.3, then 0.2 of the probability
     comes from [0,1), 0.3 from [1,2), and 0.3 (i.e. 0.3 out of the cell's mass)
     from the interval [2,3), so that the median is 2 + 0.3.
@@ -341,20 +357,20 @@ def GraphGrid(ax, shape, points, first_point=None, title=None):
     """
     t = np.arange(len(points))
 
-    if len(points)==2:
+    if len(points) == 2:
         c = ["red", "blue"]
         for i in range(2):
             xs = [point[1] for point in points[i]]
             ys = [point[0] for point in points[i]]
-            sc = ax.scatter(xs, ys, c=t, label=f"after learning {c}", cmap='viridis')
-            #print number of points on the grid
+            sc = ax.scatter(xs, ys, c=t, label=f"after learning {c}", cmap="viridis")
+            # print number of points on the grid
             # have plot start at 0 and finish at shape + 1
             # show grid lines but only at integer values
     else:
         xs = [point[1] for point in points]
         ys = [point[0] for point in points]
-        sc = ax.scatter(xs, ys, c=t, label="after learning", cmap='viridis')
-        #print number of points on the grid
+        sc = ax.scatter(xs, ys, c=t, label="after learning", cmap="viridis")
+        # print number of points on the grid
         print(len(points))
         # have plot start at 0 and finish at shape + 1
         # show grid lines but only at integer values
@@ -362,7 +378,14 @@ def GraphGrid(ax, shape, points, first_point=None, title=None):
     if title is not None:
         ax.set_title(title)
     if first_point is not None:
-        ax.plot(first_point[1], first_point[0], c="green", label="start", marker="x", markersize=10)
+        ax.plot(
+            first_point[1],
+            first_point[0],
+            c="green",
+            label="start",
+            marker="x",
+            markersize=10,
+        )
     # ax.colorbar()
     ax.set_xticks(np.arange(0, shape[0], 1))
     ax.set_yticks(np.arange(0, shape[1], 1))
@@ -371,26 +394,28 @@ def GraphGrid(ax, shape, points, first_point=None, title=None):
     ax.set_ylim(0, shape[1])
     ax.legend()
     return sc
-    
+
+
 def GraphGrids(points_lists, shapes_lists, first_points, titles, main_title):
     assert len(points_lists) == len(shapes_lists) == len(first_points) == len(titles)
     fig, axs = plt.subplots(1, len(points_lists), figsize=(20, 7))
     for i in range(len(points_lists)):
-        sc = GraphGrid(axs[i], shapes_lists[i], points_lists[i], first_points[i], titles[i])
-    
-    fig.suptitle(main_title)
+        sc = GraphGrid(
+            axs[i], shapes_lists[i], points_lists[i], first_points[i], titles[i]
+        )
 
+    fig.suptitle(main_title)
 
     # add colorbar on bottom going from 0 to len(points)
 
     # [left, bottom, width, height]
     cax = fig.add_axes([0.1, 0.05, 0.8, 0.02])
 
-    cbar = fig.colorbar(sc, cax=cax, orientation='horizontal')
+    cbar = fig.colorbar(sc, cax=cax, orientation="horizontal")
     plt.show()
 
 
-def ConvertXtoYOld(gin,shape):
+def ConvertXtoYOld(gin, shape):
     """
     Converts a 1D vector to a grid
 
@@ -402,12 +427,13 @@ def ConvertXtoYOld(gin,shape):
     index = torch.argmax(gin)
     x = index % shape[1]
     y = index // shape[1]
-    return x+0.5, y+0.5
+    return x + 0.5, y + 0.5
+
 
 def ConvertToXYZ(gin: torch.Tensor, shape):
     half_prob = torch.sum(gin).item() / 2
     gin = gin.reshape(shape)
-    [x,y,z] = [torch.sum(gin, dim=i).flatten().cpu().numpy() for i in range(3)]
+    [x, y, z] = [torch.sum(gin, dim=i).flatten().cpu().numpy() for i in range(3)]
 
     print(x.shape, y.shape, z.shape)
 
@@ -416,10 +442,11 @@ def ConvertToXYZ(gin: torch.Tensor, shape):
     z_med = continuous_median_1d(z, half=half_prob)
     return x_med, y_med, z_med
 
+
 def calculate_theoretical_capacity(shapes, N_h, input_size):
     N_g = 0
     for shape in shapes:
         l = torch.prod(torch.tensor(shape)).item()
         N_g += l
-    
+
     return N_g * N_h / input_size
