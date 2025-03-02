@@ -237,6 +237,7 @@ class GridScaffold:
         self.dream_fix = dream_fix
         self.h_normal_mean = h_normal_mean
         self.h_normal_std = h_normal_std
+        self.slumber = slumber
 
         self.pseudo_inverse = pseudo_inverse
         self.ratshift = ratshift
@@ -955,6 +956,7 @@ class GridScaffold:
         assert len(observations) == len(velocities)
 
         seen_gs = set()
+        sgs = []
         seen_gs_recall = set()
         seen_g_s_recall = set()
         seen_hs = set()
@@ -968,10 +970,14 @@ class GridScaffold:
         first_image_grid_positions = []
         second_image_grid_positions = []
 
+        imgs_fixed = []
+
+        i = 0
         for i in tqdm(range(len(observations))):
             obs = observations[i]
             vel = velocities[i]
             seen_gs.add(tuple(self.g.tolist()))
+            sgs.append(tuple(self.g.tolist()))
             seen_hs.add(torch.relu(self.W_hg @ self.g - self.relu_theta))
             self.learn(obs, vel)
 
