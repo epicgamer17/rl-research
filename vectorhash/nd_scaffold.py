@@ -7,6 +7,7 @@ from ratslam_velocity_shift import inject_activity
 from scipy.stats import norm
 from vectorhash_functions import expectation_of_relu_normal, Rk1MrUpdate
 import matplotlib.pyplot as plt
+from vectorhash_functions import chinese_remainder_theorem
 
 
 def plot_recall_info(info):
@@ -228,6 +229,7 @@ class GridScaffold:
             ), "use_h_fix only makes sense with norm scaling"
 
         self.shapes = torch.Tensor(shapes).int()
+        """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
@@ -236,7 +238,7 @@ class GridScaffold:
         self.dream_fix = dream_fix
         self.h_normal_mean = h_normal_mean
         self.h_normal_std = h_normal_std
-        self.slumber = slumber
+        # self.slumber = slumber
 
         self.pseudo_inverse = pseudo_inverse
         self.ratshift = ratshift
@@ -410,6 +412,48 @@ class GridScaffold:
         for module in self.modules:
             vecs.append(module.onehot())
         return torch.cat(vecs)
+
+    def cartesian_coordinates_to_grid_state(self, euclidian: torch.Tensor) -> torch.Tensor:
+        """
+        Input shape: `(d)` where `d` is the dimensionality of the points.
+
+        Output shape: `(N_g)` where `N_g` is the number of grid cells.
+        """
+        g = torch.zeros(self.N_g, device=self.device)
+        i = 0
+        for shape in self.shapes:
+            phis = torch.remainder(euclidian, shape.to(self.device)).int()
+            gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
+            gpattern[tuple(phis)] = 1
+            gpattern = gpattern.flatten()
+            g[i : i + len(gpattern)] = gpattern
+            i += len(gpattern)
+
+        return g
+
+    def grid_state_to_cartesian_coordinates(self, g: torch.Tensor) -> torch.Tensor:
+        """
+        Input shape: `(N_g)` where `N_g` is the number of grid cells.
+
+        Output shape: `(d)` where `d` is the dimensionality of the points.
+        """
+
+        remainders = torch.zeros((len(self.shapes), len(self.shapes[0])), device=self.device)
+        i = 0
+        for j, shape in enumerate(self.shapes):
+            l = torch.prod(torch.tensor(shape)).item()
+            gpattern: torch.Tensor = g[i : i + l].clone().detach().view(tuple(shape))
+            remainder = gpattern.nonzero()
+            remainders[j] = remainder
+            i += l
+        
+        coordinates = torch.zeros(len(self.shapes[0]), device=self.device)
+        for d in range(len(self.shapes[0])):
+            coordinates[d] = chinese_remainder_theorem(
+                self.shapes[:, d].int().cpu().numpy(), remainders[:, d].int().cpu().numpy()
+            )
+        
+        return coordinates
 
     def checkpoint(self, path):
         checkpoint = {
@@ -1043,6 +1087,11 @@ class GridScaffold:
         # }
         # plot_recall_info(info)
         return S_
+    
+    def recall_from_position(self, g): 
+        h = self.hippocampal_from_grid(g)
+        s = self.sensory_from_hippocampal(h)
+        return s
 
     def temporal_recall(self, noisy_observations: torch.Tensor) -> torch.Tensor:
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L113
