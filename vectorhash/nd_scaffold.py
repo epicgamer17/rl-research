@@ -204,7 +204,8 @@ class GridScaffold:
         # learned pseudo params
         learned_pseudo="bidirectional",
         hidden_layer_factor=10,
-        # epsilon=0.01,
+        stationary=False,
+        epsilon=None,
         #
         calculate_update_scaling_method="norm",
         # use second iterative pseudo inverse
@@ -303,6 +304,7 @@ class GridScaffold:
         assert learned_pseudo in ["bidirectional", "hs", "none"]
         self.learned_pseudo = learned_pseudo
         self.hidden_layer_factor = hidden_layer_factor
+        self.stationary = stationary
         if learned_pseudo == "bidirectional":
             # both directions
             hidden_size_sh = self.N_h * self.hidden_layer_factor
@@ -311,9 +313,19 @@ class GridScaffold:
             else:
                 self.hidden_sh = torch.rand(hidden_size_sh, self.N_h) - 0.5
             self.W_sh = torch.zeros(self.input_size, hidden_size_sh)
-            self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
-                hidden_size_sh
-            )
+
+            if stationary:
+                self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
+                    hidden_size_sh
+                )
+            else:
+                if epsilon == None:
+                    self.epsilon = hidden_size_sh
+                else:
+                    self.epsilon = epsilon
+                self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
+                    self.epsilon**2
+                )
 
             hidden_size_hs = self.input_size * self.hidden_layer_factor
             if hidden_size_hs == 0:
@@ -321,9 +333,18 @@ class GridScaffold:
             else:
                 self.hidden_hs = torch.rand(hidden_size_hs, self.input_size) - 0.5
             self.W_hs = torch.zeros(self.N_h, hidden_size_hs)
-            self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
-                hidden_size_hs
-            )
+            if stationary:
+                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                    hidden_size_hs
+                )
+            else:
+                if epsilon == None:
+                    self.epsilon = hidden_size_hs
+                else:
+                    self.epsilon = epsilon
+                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                    self.epsilon**2
+                )
         elif learned_pseudo == "hs":
             # only s to h
             self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
@@ -333,9 +354,18 @@ class GridScaffold:
             else:
                 self.hidden_hs = torch.rand(hidden_size_hs, self.input_size) - 0.5
             self.W_hs = torch.zeros(self.N_h, hidden_size_hs)
-            self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
-                hidden_size_hs
-            )
+            if stationary:
+                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                    hidden_size_hs
+                )
+            else:
+                if epsilon == None:
+                    self.epsilon = hidden_size_hs
+                else:
+                    self.epsilon = epsilon
+                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                    self.epsilon**2
+                )
 
         else:
             self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
@@ -595,28 +625,79 @@ class GridScaffold:
         return ret.T
 
     def learned_pseudo_inverse_hs(self, input, output):
-        b_k_hs = (self.inhibition_matrix_hs @ input) / (
-            1 + input.T @ self.inhibition_matrix_hs @ input
-        )
+        if self.stationary:
+            b_k_hs = (self.inhibition_matrix_hs @ input) / (
+                1 + input.T @ self.inhibition_matrix_hs @ input
+            )
 
-        self.inhibition_matrix_hs = (
-            self.inhibition_matrix_hs
-            - self.inhibition_matrix_hs @ torch.outer(input, b_k_hs.T)
-        )
+            self.inhibition_matrix_hs = (
+                self.inhibition_matrix_hs
+                - self.inhibition_matrix_hs @ torch.outer(input, b_k_hs.T)
+            )
 
-        self.W_hs += torch.outer((output - self.W_hs @ input), b_k_hs.T)
+            self.W_hs += torch.outer((output - self.W_hs @ input), b_k_hs.T)
+        else:
+            b_k_hs = (self.inhibition_matrix_hs @ input) / (
+                1 + input.T @ self.inhibition_matrix_hs @ input
+            )
+            # ERROR VECTOR EK
+            e_k = output - self.W_hs @ input
+
+            # NORMALIZATION FACTOR
+            E = ((e_k.T @ e_k) / self.inhibition_matrix_hs.shape[0]) / (
+                1 + input.T @ self.inhibition_matrix_hs @ input
+            )
+            # E = torch.abs(E)
+
+            # GAMMA CALCULATION
+            gamma = 1 / (1 + ((1 - torch.exp(-E)) / self.epsilon))
+
+            self.inhibition_matrix_hs = gamma * (
+                self.inhibition_matrix_hs
+                - self.inhibition_matrix_hs @ torch.outer(input, b_k_hs.T)
+                + ((1 - torch.exp(-E)) / self.epsilon)
+                * torch.eye(self.inhibition_matrix_hs.shape[0], device=self.device)
+            )
+            self.W_hs += torch.outer((output - self.W_hs @ input), b_k_hs.T)
 
     def learned_pseudo_inverse_sh(self, input, output):
-        b_k_sh = (self.inhibition_matrix_sh @ input) / (
-            1 + input.T @ self.inhibition_matrix_sh @ input
-        )
+        if self.stationary:
+            b_k_sh = (self.inhibition_matrix_sh @ input) / (
+                1 + input.T @ self.inhibition_matrix_sh @ input
+            )
 
-        self.inhibition_matrix_sh = (
-            self.inhibition_matrix_sh
-            - self.inhibition_matrix_sh @ torch.outer(input, b_k_sh.T)
-        )
+            self.inhibition_matrix_sh = (
+                self.inhibition_matrix_sh
+                - self.inhibition_matrix_sh @ torch.outer(input, b_k_sh.T)
+            )
 
-        self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
+            self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
+        else:
+            # (N_h, N_h) x (N_h, 1) / (1 + (1, N_h) x (N_h, N_h) x (N_h, 1)) = (N_h, 1)
+            b_k_sh = (self.inhibition_matrix_sh @ input) / (
+                1 + input.T @ self.inhibition_matrix_sh @ input
+            )
+
+            # (784, 1) - (784, N_h) x (N_h, 1) = (784, 1)
+            e_k = output - self.W_sh @ input
+
+            # ((1, 784) x (784, 1) / (1)) / ((1, N_h) x (N_h, N_h) x (N_h x 1))
+            E = ((e_k.T @ e_k) / self.inhibition_matrix_sh.shape[0]) / (
+                1 + input.T @ self.inhibition_matrix_sh @ input
+            )
+            # E = torch.abs(E)
+
+            # scalar
+            gamma = 1 / (1 + ((1 - torch.exp(-E)) / self.epsilon))
+
+            # (N_h, N_h) - (N_h, N_h) x (N_h, 1) x (1, N_h) + scalar * (N_h, N_h) = (N_h, N_h)
+            self.inhibition_matrix_sh = gamma * (
+                self.inhibition_matrix_sh
+                - self.inhibition_matrix_sh @ torch.outer(input, b_k_sh.T)
+                + ((1 - torch.exp(-E)) / self.epsilon)
+                * torch.eye(self.inhibition_matrix_sh.shape[0], device=self.device)
+            )
+            self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
 
     @torch.no_grad()
     def store_memory(self, s: torch.Tensor):
