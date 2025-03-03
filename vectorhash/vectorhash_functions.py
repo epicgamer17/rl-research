@@ -146,14 +146,14 @@ def modulo_inverse(modulo, number):
     return i
 
 
-def spacefillingcurve(modules):
+def space_filling_curve(modules):
     number_of_module_dims = len(modules[0])
     assert all(len(module) == number_of_module_dims for module in modules)
 
-    return addcurves(number_of_module_dims - 1, modules, [])
+    return add_curves(number_of_module_dims - 1, modules, [])
 
 
-def addcurves(dim, modules, velocities):
+def add_curves(dim, modules, velocities):
     dims = len(modules[0])
 
     if dim == 0:
@@ -175,7 +175,7 @@ def addcurves(dim, modules, velocities):
         a = a * module[dim]
     for i in range(a - 1):
         ## in spot so add curve(n-1, mods)
-        addcurves(dim - 1, modules, velocities)
+        add_curves(dim - 1, modules, velocities)
         ## add a vector of dimesnion n, all 0 but a 1 in the nth dimension
     b = torch.zeros(dims)
     b[dim] = 1

@@ -206,7 +206,8 @@ class GridScaffold:
         learned_pseudo="bidirectional",
         hidden_layer_factor=10,
         stationary=False,
-        epsilon=None,
+        epsilon_sh=None,
+        epsilon_hs=None,
         #
         calculate_update_scaling_method="norm",
         # use second iterative pseudo inverse
@@ -314,40 +315,34 @@ class GridScaffold:
             if hidden_size_sh == 0:
                 hidden_size_sh = self.N_h
             else:
-                self.hidden_sh = torch.rand((hidden_size_sh, self.N_h), device=device) - 0.5
+                self.hidden_sh = (
+                    torch.rand((hidden_size_sh, self.N_h), device=device) - 0.5
+                )
             self.W_sh = torch.zeros((self.input_size, hidden_size_sh), device=device)
 
-            if stationary:
-                self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
-                    hidden_size_sh
-                )
+            if epsilon_sh == None:
+                self.epsilon_sh = hidden_size_sh
             else:
-                if epsilon == None:
-                    self.epsilon = hidden_size_sh
-                else:
-                    self.epsilon = epsilon
-                self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
-                    self.epsilon**2
-                )
+                self.epsilon_sh = epsilon_sh
+            self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
+                self.epsilon_sh**2
+            )
 
             hidden_size_hs = self.input_size * self.hidden_layer_factor
             if hidden_size_hs == 0:
                 hidden_size_hs = self.input_size
             else:
-                self.hidden_hs = torch.rand((hidden_size_hs, self.input_size), device=device) - 0.5
+                self.hidden_hs = (
+                    torch.rand((hidden_size_hs, self.input_size), device=device) - 0.5
+                )
             self.W_hs = torch.zeros((self.N_h, hidden_size_hs), device=device)
-            if stationary:
-                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
-                    hidden_size_hs
-                )
+            if epsilon_hs == None:
+                self.epsilon_hs = hidden_size_hs
             else:
-                if epsilon == None:
-                    self.epsilon = hidden_size_hs
-                else:
-                    self.epsilon = epsilon
-                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
-                    self.epsilon**2
-                )
+                self.epsilon_hs = epsilon_hs
+            self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                self.epsilon_hs**2
+            )
         elif learned_pseudo == "hs":
             # only s to h
             self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
@@ -355,20 +350,17 @@ class GridScaffold:
             if hidden_size_hs == 0:
                 hidden_size_hs = self.input_size
             else:
-                self.hidden_hs = torch.rand((hidden_size_hs, self.input_size), device=device) - 0.5
+                self.hidden_hs = (
+                    torch.rand((hidden_size_hs, self.input_size), device=device) - 0.5
+                )
             self.W_hs = torch.zeros((self.N_h, hidden_size_hs), device=device)
-            if stationary:
-                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
-                    hidden_size_hs
-                )
+            if epsilon_hs == None:
+                self.epsilon_hs = hidden_size_hs
             else:
-                if epsilon == None:
-                    self.epsilon = hidden_size_hs
-                else:
-                    self.epsilon = epsilon
-                self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
-                    self.epsilon**2
-                )
+                self.epsilon_hs = epsilon_hs
+            self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
+                self.epsilon_hs**2
+            )
 
         else:
             self.W_sh = torch.zeros((self.input_size, self.N_h), device=device)
@@ -700,12 +692,12 @@ class GridScaffold:
             # E = torch.abs(E)
 
             # GAMMA CALCULATION
-            gamma = 1 / (1 + ((1 - torch.exp(-E)) / self.epsilon))
+            gamma = 1 / (1 + ((1 - torch.exp(-E)) / self.epsilon_hs))
 
             self.inhibition_matrix_hs = gamma * (
                 self.inhibition_matrix_hs
                 - self.inhibition_matrix_hs @ torch.outer(input, b_k_hs.T)
-                + ((1 - torch.exp(-E)) / self.epsilon)
+                + ((1 - torch.exp(-E)) / self.epsilon_hs)
                 * torch.eye(self.inhibition_matrix_hs.shape[0], device=self.device)
             )
             self.W_hs += torch.outer((output - self.W_hs @ input), b_k_hs.T)
@@ -738,13 +730,13 @@ class GridScaffold:
             # E = torch.abs(E)
 
             # scalar
-            gamma = 1 / (1 + ((1 - torch.exp(-E)) / self.epsilon))
+            gamma = 1 / (1 + ((1 - torch.exp(-E)) / self.epsilon_sh))
 
             # (N_h, N_h) - (N_h, N_h) x (N_h, 1) x (1, N_h) + scalar * (N_h, N_h) = (N_h, N_h)
             self.inhibition_matrix_sh = gamma * (
                 self.inhibition_matrix_sh
                 - self.inhibition_matrix_sh @ torch.outer(input, b_k_sh.T)
-                + ((1 - torch.exp(-E)) / self.epsilon)
+                + ((1 - torch.exp(-E)) / self.epsilon_sh)
                 * torch.eye(self.inhibition_matrix_sh.shape[0], device=self.device)
             )
             self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
@@ -1183,8 +1175,8 @@ class GridScaffold:
         # }
         # plot_recall_info(info)
         return S_
-    
-    def recall_from_position(self, g): 
+
+    def recall_from_position(self, g):
         h = self.hippocampal_from_grid(g)
         s = self.sensory_from_hippocampal(h)
         return s
