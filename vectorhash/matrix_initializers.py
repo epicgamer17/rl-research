@@ -1,5 +1,6 @@
 import torch
 
+
 class SparseMatrixInitializer:
     def __init__(self, device=None):
         self.device = device
@@ -20,7 +21,7 @@ class SparseMatrixBySparsityInitializer(SparseMatrixInitializer):
         self.sparsity = sparsity
 
     def __call__(self, shape):
-        mask = (torch.rand(shape, device=self.device) < 1-self.sparsity).float()
+        mask = (torch.rand(shape, device=self.device) < 1 - self.sparsity).float()
         return torch.normal(0, 1, shape, device=self.device) * mask
 
 
@@ -34,11 +35,14 @@ class SparseMatrixByScalingInitializer(SparseMatrixInitializer):
     def __call__(self, shape):
         return torch.normal(self.mean, self.std, shape, device=self.device)
 
+
 class ConstantInitializer(SparseMatrixInitializer):
     def __init__(self, value: torch.Tensor, device=None):
         super().__init__(device=device)
         self.value = value
 
     def __call__(self, shape):
-        assert shape == self.value.shape, "Shape mismatch between constant and requested shape"
+        assert (
+            shape == self.value.shape
+        ), "Shape mismatch between constant and requested shape"
         return self.value.detach().clone().to(self.device)
