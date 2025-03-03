@@ -314,8 +314,8 @@ class GridScaffold:
             if hidden_size_sh == 0:
                 hidden_size_sh = self.N_h
             else:
-                self.hidden_sh = torch.rand(hidden_size_sh, self.N_h) - 0.5
-            self.W_sh = torch.zeros(self.input_size, hidden_size_sh)
+                self.hidden_sh = torch.rand((hidden_size_sh, self.N_h), device=device) - 0.5
+            self.W_sh = torch.zeros((self.input_size, hidden_size_sh), device=device)
 
             if stationary:
                 self.inhibition_matrix_sh = torch.eye(hidden_size_sh, device=device) / (
@@ -334,8 +334,8 @@ class GridScaffold:
             if hidden_size_hs == 0:
                 hidden_size_hs = self.input_size
             else:
-                self.hidden_hs = torch.rand(hidden_size_hs, self.input_size) - 0.5
-            self.W_hs = torch.zeros(self.N_h, hidden_size_hs)
+                self.hidden_hs = torch.rand((hidden_size_hs, self.input_size), device=device) - 0.5
+            self.W_hs = torch.zeros((self.N_h, hidden_size_hs), device=device)
             if stationary:
                 self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
                     hidden_size_hs
@@ -355,8 +355,8 @@ class GridScaffold:
             if hidden_size_hs == 0:
                 hidden_size_hs = self.input_size
             else:
-                self.hidden_hs = torch.rand(hidden_size_hs, self.input_size) - 0.5
-            self.W_hs = torch.zeros(self.N_h, hidden_size_hs)
+                self.hidden_hs = torch.rand((hidden_size_hs, self.input_size), device=device) - 0.5
+            self.W_hs = torch.zeros((self.N_h, hidden_size_hs), device=device)
             if stationary:
                 self.inhibition_matrix_hs = torch.eye(hidden_size_hs, device=device) / (
                     hidden_size_hs
