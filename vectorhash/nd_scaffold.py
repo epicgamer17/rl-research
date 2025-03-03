@@ -443,7 +443,9 @@ class GridScaffold:
             vecs.append(module.onehot())
         return torch.cat(vecs)
 
-    def cartesian_coordinates_to_grid_state(self, euclidian: torch.Tensor) -> torch.Tensor:
+    def grid_state_from_cartesian_coordinates(
+        self, coordinates: torch.Tensor
+    ) -> torch.Tensor:
         """
         Input shape: `(d)` where `d` is the dimensionality of the points.
 
@@ -452,7 +454,7 @@ class GridScaffold:
         g = torch.zeros(self.N_g, device=self.device)
         i = 0
         for shape in self.shapes:
-            phis = torch.remainder(euclidian, shape.to(self.device)).int()
+            phis = torch.remainder(coordinates, shape.to(self.device)).int()
             gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
             gpattern[tuple(phis)] = 1
             gpattern = gpattern.flatten()
@@ -461,14 +463,16 @@ class GridScaffold:
 
         return g
 
-    def grid_state_to_cartesian_coordinates(self, g: torch.Tensor) -> torch.Tensor:
+    def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
         """
         Input shape: `(N_g)` where `N_g` is the number of grid cells.
 
         Output shape: `(d)` where `d` is the dimensionality of the points.
         """
 
-        remainders = torch.zeros((len(self.shapes), len(self.shapes[0])), device=self.device)
+        remainders = torch.zeros(
+            (len(self.shapes), len(self.shapes[0])), device=self.device
+        )
         i = 0
         for j, shape in enumerate(self.shapes):
             l = torch.prod(torch.tensor(shape)).item()
@@ -476,13 +480,14 @@ class GridScaffold:
             remainder = gpattern.nonzero()
             remainders[j] = remainder
             i += l
-        
+
         coordinates = torch.zeros(len(self.shapes[0]), device=self.device)
         for d in range(len(self.shapes[0])):
             coordinates[d] = chinese_remainder_theorem(
-                self.shapes[:, d].int().cpu().numpy(), remainders[:, d].int().cpu().numpy()
+                self.shapes[:, d].int().cpu().numpy(),
+                remainders[:, d].int().cpu().numpy(),
             )
-        
+
         return coordinates
 
     def checkpoint(self, path):
