@@ -1087,6 +1087,11 @@ class GridScaffold:
             second_image_grid_positions,
         )
 
+    def learn_direct(self, observations, offset=0):
+        for i in tqdm(range(len(observations))):
+            self.g = self.G[i+offset]
+            self.store_memory(observations[i], debug=False)
+
     @torch.no_grad()
     def learn(self, observation, velocity):
         """Add a memory to the memory scaffold and shift the grid coding state by a given velocity.
