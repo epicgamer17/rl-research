@@ -912,6 +912,10 @@ class GridScaffold:
 
         self.g = self._g()
 
+    def reset_g(self):
+        coordinates = self.cartesian_coordinates_from_grid_state(self.g)
+        self.shift(-coordinates)
+
     def onehot(self, g: torch.Tensor) -> torch.Tensor:
         """Returns the one-hot encoding of a given grid state.
 
