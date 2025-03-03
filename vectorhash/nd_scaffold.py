@@ -745,7 +745,7 @@ class GridScaffold:
             self.W_sh += torch.outer((output - self.W_sh @ input), b_k_sh.T)
 
     @torch.no_grad()
-    def store_memory(self, s: torch.Tensor):
+    def store_memory(self, s: torch.Tensor, debug=True):
         """Stores a memory in the scaffold.
         Input shape: `(input_size)`
         """
@@ -825,81 +825,82 @@ class GridScaffold:
         #     self.W_hs @ s, h
         # ), f"Whs should be the pseudo-inverse of Wsh. Got {self.W_hs @ s} and expected {h}"
 
-        print("info for each h directly after learning it")
-        h_from_s = self.hippocampal_from_sensory(s)
-        g_from_h_from_s = self.grid_from_hippocampal(h_from_s)
-        g_denoised = self.denoise(g_from_h_from_s)
-        h_from_s_denoised = self.hippocampal_from_grid(g_denoised)
+        if debug:
+            print("info for each h directly after learning it")
+            h_from_s = self.hippocampal_from_sensory(s)
+            g_from_h_from_s = self.grid_from_hippocampal(h_from_s)
+            g_denoised = self.denoise(g_from_h_from_s)
+            h_from_s_denoised = self.hippocampal_from_grid(g_denoised)
 
-        print("h max, min, mean", torch.max(h), torch.min(h), torch.mean(h))
-        print(
-            "h_from_s max, min, mean",
-            torch.max(h_from_s),
-            torch.min(h_from_s),
-            torch.mean(h_from_s),
-        )
-        print(
-            "h_from_s_denoised max, min, mean",
-            torch.max(h_from_s_denoised),
-            torch.min(h_from_s_denoised),
-            torch.mean(h_from_s_denoised),
-        )
+            print("h max, min, mean", torch.max(h), torch.min(h), torch.mean(h))
+            print(
+                "h_from_s max, min, mean",
+                torch.max(h_from_s),
+                torch.min(h_from_s),
+                torch.mean(h_from_s),
+            )
+            print(
+                "h_from_s_denoised max, min, mean",
+                torch.max(h_from_s_denoised),
+                torch.min(h_from_s_denoised),
+                torch.mean(h_from_s_denoised),
+            )
 
-        print(
-            "avg nonzero/greaterzero h from book:", torch.sum(h != 0), torch.sum(h > 0)
-        )
-        print(
-            "avg nonzero/greaterzero h from s:",
-            torch.sum(h_from_s != 0),
-            torch.sum(h_from_s > 0),
-        )
-        print(
-            "avg nonzero/greaterzero h from s denoised:",
-            torch.sum(h_from_s_denoised != 0),
-            torch.sum(h_from_s_denoised > 0),
-        )
-        # print(h.shape, h_from_s.shape)
-        print(
-            "mse/cosinesimilarity h from book and h from s",
-            torch.nn.functional.mse_loss(h, h_from_s),
-            torch.nn.functional.cosine_similarity(
-                h.reshape(1, -1), h_from_s.reshape(1, -1)
-            ),
-        )
-        print(
-            "mse/cosinesimilarity h from book and h from s denoised",
-            torch.nn.functional.mse_loss(h, h_from_s_denoised),
-            torch.nn.functional.cosine_similarity(
-                h.reshape(1, -1), h_from_s_denoised.reshape(1, -1)
-            ),
-        )
-        s_from_h = self.sensory_from_hippocampal(h)
-        s_from_h_from_s = self.sensory_from_hippocampal(h_from_s)
-        s_from_h_from_s_denoised = self.sensory_from_hippocampal(h_from_s_denoised)
-        print(
-            "mse/cosinesimilarity s and s from h from s",
-            torch.nn.functional.mse_loss(s, s_from_h_from_s),
-            torch.nn.functional.cosine_similarity(
-                s.reshape(1, -1), s_from_h_from_s.reshape(1, -1)
-            ),
-        )
-        print(
-            "mse/cosinesimilarity s and s from h from s denoised",
-            torch.nn.functional.mse_loss(s, s_from_h_from_s_denoised),
-            torch.nn.functional.cosine_similarity(
-                s.reshape(1, -1), s_from_h_from_s_denoised.reshape(1, -1)
-            ),
-        )
-        print(
-            "mse/cosinesimilarity s and s from h",
-            torch.nn.functional.mse_loss(s, s_from_h),
-            torch.nn.functional.cosine_similarity(
-                s.reshape(1, -1), s_from_h.reshape(1, -1)
-            ),
-        )
+            print(
+                "avg nonzero/greaterzero h from book:", torch.sum(h != 0), torch.sum(h > 0)
+            )
+            print(
+                "avg nonzero/greaterzero h from s:",
+                torch.sum(h_from_s != 0),
+                torch.sum(h_from_s > 0),
+            )
+            print(
+                "avg nonzero/greaterzero h from s denoised:",
+                torch.sum(h_from_s_denoised != 0),
+                torch.sum(h_from_s_denoised > 0),
+            )
+            # print(h.shape, h_from_s.shape)
+            print(
+                "mse/cosinesimilarity h from book and h from s",
+                torch.nn.functional.mse_loss(h, h_from_s),
+                torch.nn.functional.cosine_similarity(
+                    h.reshape(1, -1), h_from_s.reshape(1, -1)
+                ),
+            )
+            print(
+                "mse/cosinesimilarity h from book and h from s denoised",
+                torch.nn.functional.mse_loss(h, h_from_s_denoised),
+                torch.nn.functional.cosine_similarity(
+                    h.reshape(1, -1), h_from_s_denoised.reshape(1, -1)
+                ),
+            )
+            s_from_h = self.sensory_from_hippocampal(h)
+            s_from_h_from_s = self.sensory_from_hippocampal(h_from_s)
+            s_from_h_from_s_denoised = self.sensory_from_hippocampal(h_from_s_denoised)
+            print(
+                "mse/cosinesimilarity s and s from h from s",
+                torch.nn.functional.mse_loss(s, s_from_h_from_s),
+                torch.nn.functional.cosine_similarity(
+                    s.reshape(1, -1), s_from_h_from_s.reshape(1, -1)
+                ),
+            )
+            print(
+                "mse/cosinesimilarity s and s from h from s denoised",
+                torch.nn.functional.mse_loss(s, s_from_h_from_s_denoised),
+                torch.nn.functional.cosine_similarity(
+                    s.reshape(1, -1), s_from_h_from_s_denoised.reshape(1, -1)
+                ),
+            )
+            print(
+                "mse/cosinesimilarity s and s from h",
+                torch.nn.functional.mse_loss(s, s_from_h),
+                torch.nn.functional.cosine_similarity(
+                    s.reshape(1, -1), s_from_h.reshape(1, -1)
+                ),
+            )
 
-        # hidden = torch.sigmoid(self.hidden_sh @ h)
-        # print("S FROM HIPPO", self.W_sh @ hidden)
+            # hidden = torch.sigmoid(self.hidden_sh @ h)
+            # print("S FROM HIPPO", self.W_sh @ hidden)
 
     @torch.no_grad()
     def shift(self, velocity):
