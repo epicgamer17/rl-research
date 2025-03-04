@@ -45,16 +45,5 @@ the following environments
 - **LeDuc Hold'em**: A simplified poker variant for studying imperfect information games.
 - **Mississippi Marbles**: A custom environment with unique dynamics and strategies.
 
-These environments allow for iterative training and evaluation, ensuring that agents can generalize across different strategic challenges.
-
-## Future Directions
-
-The most exciting aspect of the project lies in its forward-looking roadmap:
-
-- **Advanced Board Game Mastery**: Building agents for games like Risk and Catan to explore the applications of RL agents in long-term strategic planning and dynamic, multi-agent scenarios
-
-- **Meta-Learning and Self-Play**: Enhancing learning efficiency by implementing meta-learning techniques and improving self-play dynamics.
-
-The project's ongoing commitment to theoretical learning and experimentation makes it a unique platform for students, researchers, and enthusiasts alike. By combining cutting-edge algorithms with practical applications, this repository aims to push the boundaries of reinforcement learning in board game environments.
-
-In summary, [epicgamer17/rl-research](https://github.com/epicgamer17/rl-research) stands as a dynamic and ambitious project under the McGill AI Lab, committed to advancing RL techniques for mastering board games, with a clear vision for future innovation and collaboration.
+These environments allow for iterative training and evaluation, 
+ensuring that agents can generalize across different strategic challenges.
