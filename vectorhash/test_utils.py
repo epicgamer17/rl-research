@@ -40,6 +40,7 @@ from vectorhash import (
     build_initializer,
     GridHippocampalScaffold,
     ExactPseudoInverseHippocampalSensoryLayer,
+    IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
 )
 from hippocampal_sensory_layers import *
 
@@ -83,7 +84,9 @@ def dynamics_patts(
     return h_l2_err, s_l2_err, s_l1_err
 
 
-def capacity_test(shapes, N_h, sbook: torch.Tensor, Npatts_list, nruns, device):
+def capacity_test(shapes, N_h, sbook: torch.Tensor, Npatts_list, nruns, device, method):
+    assert method in ["exact", "iterative"]
+
     err_h_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
@@ -100,18 +103,33 @@ def capacity_test(shapes, N_h, sbook: torch.Tensor, Npatts_list, nruns, device):
             sanity_check=False,
             device=device,
             sparse_matrix_initializer=initializer,
-            relu_theta=0.5
+            relu_theta=0.5,
         )
-        sensory_hippocampal_layer = ExactPseudoInverseHippocampalSensoryLayer(
-            input_size=sbook.shape[0],
-            N_h=scaffold.N_h,
-            N_patts=scaffold.N_patts,
-            hbook=scaffold.H[:Npatts],
-            device=device,
-        )
-        sensory_hippocampal_layer.learn_batch(sbook[:Npatts])
+        if method == "exact":
+            sensory_hippocampal_layer = ExactPseudoInverseHippocampalSensoryLayer(
+                input_size=sbook.shape[1],
+                N_h=scaffold.N_h,
+                N_patts=scaffold.N_patts,
+                hbook=scaffold.H[:Npatts],
+                device=device,
+            )
+            sensory_hippocampal_layer.learn_batch(sbook[:Npatts])
+        elif method == "iterative":
+            sensory_hippocampal_layer = (
+                IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
+                    input_size=sbook.shape[1],
+                    N_h=scaffold.N_h,
+                    hidden_layer_factor=1,
+                    epsilon_hs=0.1,
+                    epsilon_sh=0.1,
+                    device=device,
+                )
+            )
+            for j in tqdm(range(Npatts)):
+                sensory_hippocampal_layer.learn(scaffold.H[j], sbook[j])
+
         for r in range(nruns):
-            sbook_noisy = sbook #corrupt_p_1(sbook)[:Npatts]
+            sbook_noisy = sbook  # corrupt_p_1(sbook)[:Npatts]
             err_h_l2[k, r], err_s_l2[k, r], err_s_l1[k, r] = dynamics_patts(
                 scaffold,
                 sensory_hippocampal_layer,
@@ -125,7 +143,7 @@ def capacity_test(shapes, N_h, sbook: torch.Tensor, Npatts_list, nruns, device):
     return err_h_l2, err_s_l2, err_s_l1
 
 
-def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device):
+def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device, method):
     err_h_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
@@ -134,7 +152,7 @@ def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device):
 
     for l, Np in enumerate(Np_lst):
         err_h_l2[l], err_s_l2[l], err_s_l1[l] = capacity_test(
-            shapes, Np, sbook_torch, Npatts_lst, nruns, device
+            shapes, Np, sbook_torch, Npatts_lst, nruns, device, method=method
         )
 
     return err_h_l2, err_s_l2, err_s_l1
