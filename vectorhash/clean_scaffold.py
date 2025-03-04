@@ -4,6 +4,7 @@ import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
 from vectorhash_functions import chinese_remainder_theorem
+from tqdm import tqdm
 
 class GridModule:
     def __init__(self, shape: tuple[int], device=None, T=1, ratshift=True) -> None:
@@ -130,7 +131,6 @@ class GridHippocampalScaffold:
         self,
         shapes: torch.Tensor,
         N_h: int,
-        input_size: int,
         sparse_matrix_initializer=None,
         relu_theta=0.5,
         ratshift=False,
@@ -145,7 +145,6 @@ class GridHippocampalScaffold:
         self.T = T
         self.shapes = torch.Tensor(shapes).int()
         """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
-        self.input_size = input_size
         self.relu_theta = relu_theta
         self.ratshift = ratshift
         self.modules = [
@@ -209,14 +208,17 @@ class GridHippocampalScaffold:
                 (self.N_g, *[len(d) for d in dim_vecs]), device=self.device
             )
 
-            for state in grid_states:
+            for state in tqdm(grid_states):
                 i = 0
                 for shape in self.shapes:
                     phis = torch.remainder(state, shape.to(self.device)).int()
                     gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
-                    gpattern[(phis)] = 1
+                    gpattern[tuple(phis)] = 1
                     gpattern = gpattern.flatten()
-                    gbook[i : i + len(gpattern), tuple(state)] = gpattern
+                    if len(state) == 2:
+                        gbook[i : i + len(gpattern), state[0], state[1]] = gpattern
+                    if len(state) == 3:
+                        gbook[i : i + len(gpattern), state[0], state[1], state[2]] = gpattern
                     i += len(gpattern)
 
             return gbook.flatten(1).T
