@@ -53,7 +53,7 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
         input_size: int,
         N_h: int,
         hidden_layer_factor: int,
-        stationary=False,
+        stationary=True,
         epsilon_sh=None,
         epsilon_hs=None,
         device=None,
