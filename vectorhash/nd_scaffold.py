@@ -528,11 +528,6 @@ class GridScaffold:
         return torch.einsum("bi,bj->ij", g_train, h_train) / scale
 
     @torch.no_grad()
-    def _W_hs(self) -> torch.Tensor:
-        """Calculates the matrix of weights to go from the hippocampal layer to the grid layer heteroassociatively. Shape: `(N_g, N_h)`"""
-        return torch.einsum("bi,bj->ij", self.S, self.H) / self.N_h
-
-    @torch.no_grad()
     def hippocampal_from_grid(self, G: torch.Tensor) -> torch.Tensor:
         """
         Input shape `(B, N_g)`
