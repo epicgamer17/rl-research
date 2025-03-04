@@ -332,3 +332,159 @@ class VectorHaSH:
         # }
         # plot_recall_info(info)
         return S_
+
+
+import math
+from scipy.stats import norm
+from matrix_initializers import *
+from vectorhash_functions import expectation_of_relu_normal
+
+
+def build_initializer(
+    shapes,
+    initalization_method="by_sparsity",
+    W_gh_var=1,
+    percent_nonzero_relu=0.9,
+    sparse_initialization=0.1,
+    device=None,
+):
+    if initalization_method == "by_scaling":
+        W_hg_std = math.sqrt(W_gh_var)
+        W_hg_mean = (
+            -W_hg_std * norm.ppf(1 - percent_nonzero_relu) / math.sqrt(len(shapes))
+        )
+        h_normal_mean = len(shapes) * W_hg_mean
+        h_normal_std = math.sqrt(len(shapes)) * W_hg_std
+        relu_theta = 0
+        sparse_initializer = SparseMatrixByScalingInitializer(
+            mean=W_hg_mean, scale=W_hg_std, device=device
+        )
+    elif initalization_method == "by_sparsity":
+        gamma = 1 - sparse_initialization
+        relu_theta = math.sqrt(gamma * len(shapes)) * norm.ppf(1 - percent_nonzero_relu)
+        W_hg_mean = 0
+        W_hg_std = math.sqrt(gamma * len(shapes))
+        h_normal_mean = -relu_theta
+        h_normal_std = (1 - sparse_initialization) * len(shapes)
+        sparse_initializer = SparseMatrixBySparsityInitializer(
+            sparsity=sparse_initialization, device=device
+        )
+    return (
+        sparse_initializer,
+        relu_theta,
+        expectation_of_relu_normal(h_normal_mean, h_normal_std),
+    )
+
+
+def build_scaffold(
+    shapes,
+    N_h,
+    initalization_method="by_sparsity",
+    W_gh_var=1,
+    percent_nonzero_relu=0.9,
+    sparse_initialization=0.1,
+    T=1e-3,
+    device=None,
+):
+    initializer, relu_theta, mean_h = build_initializer(
+        shapes,
+        initalization_method,
+        W_gh_var,
+        percent_nonzero_relu,
+        sparse_initialization=sparse_initialization,
+        device=device,
+    )
+    scaffold = GridHippocampalScaffold(
+        shapes=shapes,
+        N_h=N_h,
+        sparse_matrix_initializer=initializer,
+        relu_theta=relu_theta,
+        ratshift=False,
+        sanity_check=True,
+        calculate_g_method="fast",
+        T=T,
+        device=device,
+    )
+
+    return scaffold, mean_h
+
+def build_vectorhash_architecture(
+    shapes,
+    N_h,
+    input_size,
+    initalization_method="by_sparsity",
+    W_gh_var=1,
+    percent_nonzero_relu=0.9,
+    sparse_initialization=0.1,
+    T=1e-3,
+    device=None,
+    hippocampal_sensory_layer_type="iterative_pseudoinverse",
+    hidden_layer_factor=3,
+    stationary=True,
+    epsilon_hs=1,
+    epsilon_sh=1,
+
+):
+    assert initalization_method in ["by_scaling", "by_sparsity"]
+    assert hippocampal_sensory_layer_type in [
+        "exact_pseudoinverse",
+        "iterative_pseudoinverse",
+        "hebbian",
+        "naive_hebbian",
+        "mixed",
+    ]
+
+    scaffold, mean_h = build_scaffold(
+        shapes,
+        N_h,
+        input_size,
+        initalization_method=initalization_method,
+        W_gh_var=W_gh_var,
+        percent_nonzero_relu=percent_nonzero_relu,
+        sparse_initialization=sparse_initialization,
+        T=T,
+        device=device,
+    )
+
+    if hippocampal_sensory_layer_type == "exact_pseudoinverse":
+        hippocampal_sensory_layer = ExactPseudoInverseHippocampalSensoryLayer(
+            input_size=input_size,
+            N_h=N_h,
+            N_patts=scaffold.N_patts,
+            hbook=scaffold.N_h,
+            device=device,
+        )
+    elif hippocampal_sensory_layer == "hebbian":
+        hippocampal_sensory_layer = HebbianHippocampalSensoryLayer(
+            input_size=input_size,
+            N_h=N_h,
+            N_patts=scaffold.N_patts,
+            device=device,
+            use_h_fix=True,
+            mean_h=mean_h,
+            scaling_updates=True,
+            device=device,
+        )
+    elif hippocampal_sensory_layer == "naive_hebbian":
+        hippocampal_sensory_layer = HebbianHippocampalSensoryLayer(
+            input_size=input_size,
+            N_h=N_h,
+            N_patts=scaffold.N_patts,
+            device=device,
+            use_h_fix=False,
+            mean_h=mean_h,
+            scaling_updates=False,
+            device=device,
+        )
+    elif hippocampal_sensory_layer == "iterative_pseudoinverse":
+        hippocampal_sensory_layer = (
+            IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
+                input_size=input_size,
+                N_h=N_h,
+                hidden_layer_factor=hidden_layer_factor,
+                stationary=stationary,
+                epsilon_hs=epsilon_hs,
+                epsilon_sh=epsilon_sh,
+                device=device,
+            )
+        )
