@@ -12,7 +12,7 @@ class HippocampalSensoryLayer:
         self.N_h = N_h
         self.device = device
 
-    def hippocampal_from_sensory(self, S: torch.Tensor):
+    def hippocampal_from_sensory(self, S: torch.Tensor) -> torch.Tensor:
         """
         Input shape: `(B, input_size)`
 
@@ -24,7 +24,7 @@ class HippocampalSensoryLayer:
         """
         pass
 
-    def sensory_from_hippocampal(self, H: torch.Tensor):
+    def sensory_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
         """
         Input shape `(B, N_h)`
 

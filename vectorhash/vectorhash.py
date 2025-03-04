@@ -369,6 +369,7 @@ def build_initializer(
         sparse_initializer = SparseMatrixBySparsityInitializer(
             sparsity=sparse_initialization, device=device
         )
+
     return (
         sparse_initializer,
         relu_theta,
@@ -408,6 +409,7 @@ def build_scaffold(
 
     return scaffold, mean_h
 
+
 def build_vectorhash_architecture(
     shapes,
     N_h,
@@ -423,7 +425,6 @@ def build_vectorhash_architecture(
     stationary=True,
     epsilon_hs=1,
     epsilon_sh=1,
-
 ):
     assert initalization_method in ["by_scaling", "by_sparsity"]
     assert hippocampal_sensory_layer_type in [
