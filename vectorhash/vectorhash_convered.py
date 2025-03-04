@@ -1,11 +1,11 @@
-import tqdm
+from tqdm import tqdm
 import torch
 from numpy.random import randn, randint
 from vectorhash_imported import *
 from scipy.linalg import norm
 from nd_scaffold import *
 from matrix_initializers import *
-
+from vectorhash import build_initializer, GridHippocampalScaffold
 
 def corrupt_pcont(pflip, ptrue):
     if pflip == 0:
@@ -33,22 +33,20 @@ def capacity_gcpc_vectorized(
     l = 0
     for Np in Np_lst:
         k = 0
-        for Npatts in tqdm.tqdm(Npatts_lst):
-            gs = GridScaffold(
+        for Npatts in tqdm(Npatts_lst):
+            initializer, _, _ = build_initializer(
+                shapes,
+                "by_sparsity",
+                device=device,
+            )
+            gs = GridHippocampalScaffold(
                 shapes=shapes,
                 N_h=Np,
-                input_size=1,
-                h_normal_mean=0,
-                h_normal_std=1,
-                device=device,
-                sparse_matrix_initializer=SparseMatrixBySparsityInitializer(
-                    sparsity=0.6, device=device
-                ),
-                calculate_g_method="fast",
+                sparse_matrix_initializer=initializer,
                 relu_theta=0.5,
-                continualupdate=False,
-                initialize_W_gh_with_zeroes=False,
-                sanity_check=False
+                ratshift=False,
+                sanity_check=False,
+                device=device,
             )
 
             scores = torch.zeros((nruns, Npatts))
