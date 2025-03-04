@@ -210,13 +210,11 @@ class GridScaffold:
         #
         calculate_update_scaling_method="norm",
         # use second iterative pseudo inverse
-        magic_math=False,
         sanity_check=True,
         calculate_g_method="fast",
         scaling_updates=True,
         # schwarz dreaming stuff
         dream_fix=None,
-        zero_tol=1e-5,
     ) -> None:
         assert calculate_update_scaling_method in ["norm", "n_h"]
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
@@ -234,8 +232,6 @@ class GridScaffold:
         self.input_size = input_size
         self.device = device
         self.relu_theta = relu_theta
-        self.zero_tol = zero_tol
-        self.magic_math = magic_math
         self.dream_fix = dream_fix
         self.h_normal_mean = h_normal_mean
         self.h_normal_std = h_normal_std
