@@ -200,7 +200,6 @@ class GridScaffold:
         ratshift=False,
         # use true pseudo inverse
         pseudo_inverse=False,
-        batch_update=False,
         use_h_fix=True,
         # learned pseudo params
         learned_pseudo="bidirectional",
@@ -376,14 +375,7 @@ class GridScaffold:
         ### testing S such that Whs = H @ S^-1
         self.S = torch.zeros((self.N_patts, self.input_size), device=device)
 
-        # self.batch_update = batch_update
         self.use_h_fix = use_h_fix
-
-        # if self.batch_update:
-        #     self.W_sh_update = torch.zeros((self.input_size, self.N_h), device=device)
-        #     self.W_hs_update = torch.zeros((self.N_h, self.input_size), device=device)
-        #     self.update_count = 0
-        #     self.update_interval = 20
 
         self.mean_h = expectation_of_relu_normal(self.h_normal_mean, self.h_normal_std)
 
@@ -747,25 +739,6 @@ class GridScaffold:
         Input shape: `(input_size)`
         """
 
-        # if self.batch_update:
-        #     h = torch.relu(self.W_hg @ self.g - self.relu_theta)
-        #     self.W_sh_update += self.calculate_update(input=h, output=s)
-        #     self.W_hs_update += self.calculate_update(input=s, output=h)
-        #     self.update_count += 1
-
-        #     if self.update_count == self.update_interval:
-        #         self.W_sh += self.W_sh_update
-        #         self.W_hs += self.W_hs_update
-
-        #         self.W_sh_update = torch.zeros(
-        #             (self.input_size, self.N_h), device=self.device
-        #         )
-        #         self.W_hs_update = torch.zeros(
-        #             (self.N_h, self.input_size), device=self.device
-        #         )
-        #         self.update_count = 0
-        #     return
-
         # https://github.com/tmir00/TemporalNeuroAI/blob/c37e4d57d0d2d76e949a5f31735f902f4fd2c3c7/model/model.py#L55C1-L55C69
         # replaces first empyty row in S with s
         if self.S[0].sum() == 0:
@@ -805,12 +778,6 @@ class GridScaffold:
             self.learned_pseudo_inverse_hs(input=hidden, output=h)
             # print(self.W_hs)
             self.W_sh += self.calculate_update_Wsh(input=h, output=s)
-        # elif self.magic_math:
-        #     self.W_hs = Rk1MrUpdate(
-        #         self.W_sh, self.W_hs, c=s, d=h, zero_tol=self.zero_tol, Case_Print_Flag=0
-        #     )
-        #     print(self.W_sh.shape)
-        #     self.W_sh += self.calculate_update_Wsh(input=h, output=s)
         else:
             self.W_hs += self.calculate_update(input=s, output=h)
             self.W_sh += self.calculate_update_Wsh(input=h, output=s)
