@@ -261,6 +261,14 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
             H = H.unsqueeze(0)
 
         return H @ self.W_sh.T
+    
+    @torch.no_grad()
+    def learn_batch(self, sbook):
+        # assume sbook[:len(sbook)] corresponds with hbook[:len(sbook)]
+        self.sbook = sbook
+        self.W_hs = self.hbook.T @ torch.linalg.pinv(self.sbook).T
+        self.W_sh = self.sbook.T @ torch.linalg.pinv(self.hbook).T
+
 
 
 class HebbianHippocampalSensoryLayer(HippocampalSensoryLayer):

@@ -1,8 +1,4 @@
 from nd_scaffold import *
-from typing import Tuple
-import matplotlib
-from matplotlib import pyplot as plt
-
 
 UP = torch.tensor([0, 1])
 DOWN = torch.tensor([0, -1])
@@ -38,3 +34,107 @@ def get_action():
             print("Invalid action, type quit to exit")
 
     return a
+
+
+from vectorhash import (
+    build_initializer,
+    GridHippocampalScaffold,
+    ExactPseudoInverseHippocampalSensoryLayer,
+)
+from hippocampal_sensory_layers import *
+
+
+def corrupt_p_1(codebook, p=0.1):
+    if p == 0.0:
+        return codebook
+    rand_indices = torch.sign(
+        torch.rand(size=codebook.shape, device=codebook.device) - p
+    )
+    return torch.multiply(codebook, rand_indices)
+
+
+def dynamics_patts(
+    scaffold: GridHippocampalScaffold,
+    sensory_hippocampal_layer: HippocampalSensoryLayer,
+    s_noisy,  # (Npatts, input_size)
+    s_true,
+    h_true,
+    N_iter,
+    N_patts,
+):
+    s_noisy = s_noisy[:N_patts]
+    h_in_original = sensory_hippocampal_layer.hippocampal_from_sensory(s_noisy)
+    h = torch.clone(h_in_original)
+    for i in range(N_iter):
+        g = scaffold.denoise(scaffold.grid_from_hippocampal(h))
+        h = scaffold.hippocampal_from_grid(g)
+    h_out = torch.clone(h)
+    s_out = torch.sign(sensory_hippocampal_layer.sensory_from_hippocampal(h))
+
+    sbook = s_true[:N_patts]
+    hbook = h_true[:N_patts]
+
+    h_l2_err = torch.linalg.vector_norm(h_out - hbook) / scaffold.N_h
+    s_l2_err = (
+        torch.linalg.vector_norm(s_out - sbook) / sensory_hippocampal_layer.input_size
+    )
+    s_l1_err = torch.mean(torch.abs(s_out - sbook)) / 2
+
+    return h_l2_err, s_l2_err, s_l1_err
+
+
+def capacity_test(shapes, N_h, sbook: torch.Tensor, Npatts_list, nruns, device):
+    err_h_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
+    err_s_l1 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
+    err_s_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
+
+    initializer, _, _ = build_initializer(
+        shapes, sparse_initialization=0.4, device=device
+    )
+
+    for k in tqdm(range(len(Npatts_list))):
+        Npatts = Npatts_list[k]
+        scaffold = GridHippocampalScaffold(
+            shapes=shapes,
+            N_h=N_h,
+            sanity_check=False,
+            device=device,
+            sparse_matrix_initializer=initializer,
+            relu_theta=0.5
+        )
+        sensory_hippocampal_layer = ExactPseudoInverseHippocampalSensoryLayer(
+            input_size=sbook.shape[0],
+            N_h=scaffold.N_h,
+            N_patts=scaffold.N_patts,
+            hbook=scaffold.H[:Npatts],
+            device=device,
+        )
+        sensory_hippocampal_layer.learn_batch(sbook[:Npatts])
+        for r in range(nruns):
+            sbook_noisy = sbook #corrupt_p_1(sbook)[:Npatts]
+            err_h_l2[k, r], err_s_l2[k, r], err_s_l1[k, r] = dynamics_patts(
+                scaffold,
+                sensory_hippocampal_layer,
+                sbook,
+                sbook_noisy,
+                scaffold.H,
+                1,
+                Npatts,
+            )
+
+    return err_h_l2, err_s_l2, err_s_l1
+
+
+def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device):
+    err_h_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
+    err_s_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
+    err_s_l1 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
+
+    sbook_torch = torch.from_numpy(sbook).to(device).float().T
+
+    for l, Np in enumerate(Np_lst):
+        err_h_l2[l], err_s_l2[l], err_s_l1[l] = capacity_test(
+            shapes, Np, sbook_torch, Npatts_lst, nruns, device
+        )
+
+    return err_h_l2, err_s_l2, err_s_l1
