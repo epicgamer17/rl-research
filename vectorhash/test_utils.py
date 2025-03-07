@@ -62,6 +62,7 @@ def dynamics_patts(
     h_true,
     N_iter,
     N_patts,
+    sign_output=False,
 ):
     s_noisy = s_noisy[:N_patts]
     h_in_original = sensory_hippocampal_layer.hippocampal_from_sensory(s_noisy)
@@ -70,7 +71,11 @@ def dynamics_patts(
         g = scaffold.denoise(scaffold.grid_from_hippocampal(h))
         h = scaffold.hippocampal_from_grid(g)
     h_out = torch.clone(h)
-    s_out = torch.sign(sensory_hippocampal_layer.sensory_from_hippocampal(h))
+
+    if sign_output:
+        s_out = torch.sign(sensory_hippocampal_layer.sensory_from_hippocampal(h))
+    else:
+        s_out = sensory_hippocampal_layer.sensory_from_hippocampal(h)
 
     sbook = s_true[:N_patts]
     hbook = h_true[:N_patts]
@@ -84,7 +89,16 @@ def dynamics_patts(
     return h_l2_err, s_l2_err, s_l1_err
 
 
-def capacity_test(shapes, N_h, sbook: torch.Tensor, Npatts_list, nruns, device, method):
+def capacity_test(
+    shapes,
+    N_h,
+    sbook: torch.Tensor,
+    Npatts_list,
+    nruns,
+    device,
+    method,
+    sign_output=False,
+):
     assert method in ["exact", "iterative"]
 
     err_h_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
@@ -138,12 +152,13 @@ def capacity_test(shapes, N_h, sbook: torch.Tensor, Npatts_list, nruns, device, 
                 scaffold.H,
                 1,
                 Npatts,
+                sign_output=sign_output,
             )
 
     return err_h_l2, err_s_l2, err_s_l1
 
 
-def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device, method):
+def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device, method, sign_output):
     err_h_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
@@ -152,7 +167,14 @@ def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device, method):
 
     for l, Np in enumerate(Np_lst):
         err_h_l2[l], err_s_l2[l], err_s_l1[l] = capacity_test(
-            shapes, Np, sbook_torch, Npatts_lst, nruns, device, method=method
+            shapes,
+            Np,
+            sbook_torch,
+            Npatts_lst,
+            nruns,
+            device,
+            method=method,
+            sign_output=sign_output,
         )
 
     return err_h_l2, err_s_l2, err_s_l1
