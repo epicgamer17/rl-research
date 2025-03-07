@@ -137,7 +137,17 @@ class GridModule:
             )
 
     @torch.no_grad()
-    def grid_state_from_cartesian_coordinates(self, coordinates: torch.Tensor):
+    def grid_state_from_cartesian_coordinates(
+        self, coordinates: torch.Tensor
+    ) -> torch.Tensor:
+        """Convert integer-valued cartesian coordinates into a onehot-encoded grid state
+
+        Args:
+            coordinates (torch.Tensor): Tensor of integers, length equal to the dimensionality of the grid module
+
+        Returns:
+            torch.Tensor: A one-hot encoded tensor of the grid state
+        """
         phis = torch.remainder(coordinates, torch.Tensor(self.shape)).int()
         gpattern = torch.zeros_like(self.state)
         gpattern[tuple(phis)] = 1
@@ -146,11 +156,30 @@ class GridModule:
 
     @torch.no_grad()
     def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
+        """Convert a onehot-encoded grid state into integer-valued cartesian coordinates
+
+        Args:
+            g (torch.Tensor): One-hot encoded grid state
+
+        Returns:
+            torch.Tensor: Tensor of coordinates, length equal to the dimensionality of the grid module in
+            `{0, 1, ..., \lambda_1 - 1} x {0, 1, ..., \lambda_2 - 1} x ... x {0, 1, ..., \lambda_d - 1}  `
+        """
         reshaped = g.view(*self.shape).nonzero()
         return reshaped
 
     @torch.no_grad()
-    def grid_state_from_cartesian_coordinates_extended(self, coordinates: torch.Tensor):
+    def grid_state_from_cartesian_coordinates_extended(
+        self, coordinates: torch.Tensor
+    ) -> torch.Tensor:
+        """Convert real-valued cartesian coordinates into a continuous grid state
+
+        Args:
+            coordinates (torch.Tensor): Coordinates in the range [0, \lambda_1) x ... x [0, \lambda_d) \subseteq \mathbb{R}^d
+
+        Returns:
+            torch.Tensor: A real grid state g in [0,1]^{\lambda_1 \cdot ... \cdot \lambda_d} where \sum_{i=1}^{\lambda_1 \cdot ... \cdot \lambda_d} g_i = 1
+        """
         coordinates = torch.remainder(coordinates, torch.Tensor(self.shape).int())
         floored = torch.floor(coordinates).int()
         next_floored = torch.remainder(
@@ -174,6 +203,14 @@ class GridModule:
     def cartesian_coordinates_from_grid_state_extended(
         self, g: torch.Tensor
     ) -> torch.Tensor:
+        """Convert a continuous grid state into real-valued cartesian coordinates
+
+        Args:
+            g (torch.Tensor): A continuous grid state in [0,1]^{\lambda_1 \cdot ... \cdot \lambda_d} where \sum_{i=1}^{\lambda_1 \cdot ... \cdot \lambda_d} g_i = 1
+
+        Returns:
+            torch.Tensor: Coordinates in the range [0, \lambda_1) x ... x [0, \lambda_d) \subseteq \mathbb{R}^d
+        """
         sums = list()
         dims = range(len(self.shape))
         for i in range(len(self.shape)):
