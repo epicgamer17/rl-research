@@ -36,6 +36,7 @@ class GridModule:
         """`a, b, c, ..., z -> abc...z`
         """
 
+    @torch.no_grad()
     def denoise_onehot(self, onehot: torch.Tensor) -> torch.Tensor:
         """Denoise a batch of one-hot encoded states.
 
@@ -53,6 +54,7 @@ class GridModule:
         state = onehot.view((onehot.shape[0], *self.shape))
         return self.denoise(state).flatten(1)
 
+    @torch.no_grad()
     def denoise(self, state: torch.Tensor) -> torch.Tensor:
         """Denoise a batch of grid states. This finds the maximum value in the grid and sets it to 1, and all other values to 0.
         If there are multiple maximum values, pick a random. (not all set to 1 / number of maximum values)
@@ -90,10 +92,12 @@ class GridModule:
         #     denoised_module = np.zeros_like(state)
         # return torch.tensor(denoised_module, device=self.device)
 
+    @torch.no_grad()
     def denoise_self(self):
         """Denoises this grid module's state"""
         self.state = self.denoise(self.state).squeeze(0)
 
+    @torch.no_grad()
     def onehot(self) -> torch.Tensor:
         """Returns the one-hot encoding of the state of this grid module.
 
@@ -109,6 +113,7 @@ class GridModule:
         r = torch.einsum(self.einsum_str, *pdfs).flatten()
         return (r / (self.T * r.sum(dim=0))).softmax(dim=0)
 
+    @torch.no_grad()
     def shift(self, v: torch.Tensor):
         """Shifts the state of the grid module by a given velocity.
 
@@ -131,6 +136,7 @@ class GridModule:
                 dims=tuple(i for i in range(len(self.shape))),
             )
 
+    @torch.no_grad()
     def grid_state_from_cartesian_coordinates(self, coordinates: torch.Tensor):
         phis = torch.remainder(coordinates, torch.Tensor(self.shape)).int()
         gpattern = torch.zeros_like(self.state)
@@ -138,10 +144,12 @@ class GridModule:
         gpattern = gpattern.flatten()
         return gpattern
 
+    @torch.no_grad()
     def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
         reshaped = g.view(*self.shape).nonzero()
         return reshaped
 
+    @torch.no_grad()
     def grid_state_from_cartesian_coordinates_extended(self, coordinates: torch.Tensor):
         coordinates = torch.remainder(coordinates, torch.Tensor(self.shape).int())
         floored = torch.floor(coordinates).int()
@@ -162,6 +170,7 @@ class GridModule:
             state[tuple(indices[i])] = a
         return state.flatten()
 
+    @torch.no_grad()
     def cartesian_coordinates_from_grid_state_extended(
         self, g: torch.Tensor
     ) -> torch.Tensor:
@@ -290,6 +299,7 @@ class GridHippocampalScaffold:
                 i += module.l
             return gbook
 
+    @torch.no_grad()
     def _g(self) -> torch.Tensor:
         """Calculates the current grid coding state tensor. Shape: `(N_g)`"""
         vecs = list()
@@ -297,6 +307,7 @@ class GridHippocampalScaffold:
             vecs.append(module.onehot())
         return torch.cat(vecs)
 
+    @torch.no_grad()
     def grid_state_from_cartesian_coordinates(
         self, coordinates: torch.Tensor
     ) -> torch.Tensor:
@@ -313,6 +324,7 @@ class GridHippocampalScaffold:
 
         return g
 
+    @torch.no_grad()
     def grid_state_from_cartesian_coordinates_extended(
         self, coordinates: torch.Tensor
     ) -> torch.Tensor:
@@ -330,6 +342,7 @@ class GridHippocampalScaffold:
             i += len(pattern)
         return g
 
+    @torch.no_grad()
     def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
         """
         Input shape: `(N_g)` where `N_g` is the number of grid cells.
@@ -357,6 +370,7 @@ class GridHippocampalScaffold:
 
         return coordinates
 
+    @torch.no_grad()
     def cartesian_coordinates_from_grid_state_extended(
         self, g: torch.Tensor
     ) -> torch.Tensor:
