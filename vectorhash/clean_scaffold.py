@@ -175,7 +175,7 @@ class GridModule:
         coordinates = torch.zeros(len(self.shape))
         for i, l in enumerate(self.shape):
             w = sums[i]
-            print(f"w[{i}]", w)
+            # print(f"w[{i}]", w)
             coordinates[i] = circular_mean_2(torch.arange(l), w, l).item()
 
         return coordinates
