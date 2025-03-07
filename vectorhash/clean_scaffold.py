@@ -6,6 +6,7 @@ from ratslam_velocity_shift import inject_activity
 from vectorhash_functions import chinese_remainder_theorem, circular_mean_2
 from tqdm import tqdm
 
+
 class GridModule:
     def __init__(self, shape: tuple[int], device=None, T=1, ratshift=True) -> None:
         """Initializes a grid module with a given shape and a temperature.
@@ -179,6 +180,7 @@ class GridModule:
 
         return coordinates
 
+
 class GridHippocampalScaffold:
     def __init__(
         self,
@@ -305,14 +307,27 @@ class GridHippocampalScaffold:
         """
         g = torch.zeros(self.N_g, device=self.device)
         i = 0
-        for shape in self.shapes:
-            phis = torch.remainder(coordinates, shape.to(self.device)).int()
-            gpattern = torch.zeros(tuple(shape.tolist()), device=self.device)
-            gpattern[tuple(phis)] = 1
-            gpattern = gpattern.flatten()
-            g[i : i + len(gpattern)] = gpattern
-            i += len(gpattern)
+        for module in self.modules:
+            pattern = module.grid_state_from_cartesian_coordinates(coordinates)
+            g[i : i + len(pattern)] = pattern
 
+        return g
+
+    def grid_state_from_cartesian_coordinates_extended(
+        self, coordinates: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Input shape: `(d)` where `d` is the dimensionality of the points.
+
+        Output shape: `(N_g)` where `N_g` is the number of grid cells.
+        """
+
+        g = torch.zeros(self.N_g, device=self.device)
+        i = 0
+        for module in self.modules:
+            pattern = module.grid_state_from_cartesian_coordinates_extended(coordinates)
+            g[i : i + len(pattern)] = pattern
+            i += len(pattern)
         return g
 
     def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
@@ -325,13 +340,13 @@ class GridHippocampalScaffold:
         remainders = torch.zeros(
             (len(self.shapes), len(self.shapes[0])), device=self.device
         )
+
         i = 0
-        for j, shape in enumerate(self.shapes):
-            l = torch.prod(torch.tensor(shape)).item()
-            gpattern: torch.Tensor = g[i : i + l].clone().detach().view(tuple(shape))
-            remainder = gpattern.nonzero()
-            remainders[j] = remainder
-            i += l
+        for j, module in enumerate(self.modules):
+            remainders[j] = module.cartesian_coordinates_from_grid_state(
+                g[i + module.l]
+            )
+            i += module.l
 
         coordinates = torch.zeros(len(self.shapes[0]), device=self.device)
         for d in range(len(self.shapes[0])):
@@ -341,6 +356,11 @@ class GridHippocampalScaffold:
             )
 
         return coordinates
+
+    def cartesian_coordinates_from_grid_state_extended(
+        self, g: torch.Tensor
+    ) -> torch.Tensor:
+        raise NotImplementedError()
 
     @torch.no_grad()
     def _W_gh(self, noisy=False, noisy_std=1, Npatts=None) -> torch.Tensor:
@@ -410,8 +430,7 @@ class GridHippocampalScaffold:
 
     @torch.no_grad()
     def reset_g(self):
-        """Reset the position of the scaffold to 0
-        """
+        """Reset the position of the scaffold to 0"""
         coordinates = self.cartesian_coordinates_from_grid_state(self.g)
         self.shift(-coordinates)
 
