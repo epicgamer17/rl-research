@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
-from vectorhash_functions import chinese_remainder_theorem
+from vectorhash_functions import chinese_remainder_theorem, circular_mean_2
 from tqdm import tqdm
 
 class GridModule:
@@ -24,6 +24,16 @@ class GridModule:
         """The number of elements in the grid, i.e. the product of each element in the shape. Ex. a `3x3x4` grid has `l=36`."""
         self.T = T
         self.device = device
+
+        einsum_indices = [
+            chr(ord("a") + i) for i in range(len(self.shape))
+        ]  # a, b, c, ...
+        einsum_str = (
+            ",".join(einsum_indices) + "->" + "".join(einsum_indices)
+        )  # a,b,c, ...->abc...
+        self.einsum_str = einsum_str
+        """`a, b, c, ..., z -> abc...z`
+        """
 
     def denoise_onehot(self, onehot: torch.Tensor) -> torch.Tensor:
         """Denoise a batch of one-hot encoded states.
@@ -94,13 +104,8 @@ class GridModule:
             pdf = torch.sum(self.state, dim=[j for j in dims if j != i])
             pdfs.append(pdf)
 
-        einsum_indices = [
-            chr(ord("a") + i) for i in range(len(self.shape))
-        ]  # a, b, c, ...
-        einsum_str = (
-            ",".join(einsum_indices) + "->" + "".join(einsum_indices)
-        )  # a,b,c, ...->abc...
-        r = torch.einsum(einsum_str, *pdfs).flatten()
+        #
+        r = torch.einsum(self.einsum_str, *pdfs).flatten()
         return (r / (self.T * r.sum(dim=0))).softmax(dim=0)
 
     def shift(self, v: torch.Tensor):
@@ -125,6 +130,54 @@ class GridModule:
                 dims=tuple(i for i in range(len(self.shape))),
             )
 
+    def grid_state_from_cartesian_coordinates(self, coordinates: torch.Tensor):
+        phis = torch.remainder(coordinates, torch.Tensor(self.shape)).int()
+        gpattern = torch.zeros_like(self.state)
+        gpattern[tuple(phis)] = 1
+        gpattern = gpattern.flatten()
+        return gpattern
+
+    def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
+        reshaped = g.view(*self.shape).nonzero()
+        return reshaped
+
+    def grid_state_from_cartesian_coordinates_extended(self, coordinates: torch.Tensor):
+        coordinates = torch.remainder(coordinates, torch.Tensor(self.shape).int())
+        floored = torch.floor(coordinates).int()
+        next_floored = torch.remainder(
+            coordinates + 1, torch.Tensor(self.shape).int()
+        ).int()
+        remainder = coordinates - floored
+        alpha = torch.einsum(
+            self.einsum_str, *torch.vstack([1 - remainder, remainder]).T
+        ).flatten()
+        indices = torch.cartesian_prod(*torch.vstack([floored, next_floored]).T)
+        # print("s:", indices)
+        # print(alpha)
+
+        state = torch.zeros_like(self.state)
+        for i, a in enumerate(alpha):
+            # print(indices[i])
+            state[tuple(indices[i])] = a
+        return state.flatten()
+
+    def cartesian_coordinates_from_grid_state_extended(
+        self, g: torch.Tensor
+    ) -> torch.Tensor:
+        sums = list()
+        dims = range(len(self.shape))
+        for i in range(len(self.shape)):
+            dim = [j for j in dims if j != i]
+            pdf = torch.sum(g.reshape(*self.shape), dim=dim)
+            sums.append(pdf)
+
+        coordinates = torch.zeros(len(self.shape))
+        for i, l in enumerate(self.shape):
+            w = sums[i]
+            print(f"w[{i}]", w)
+            coordinates[i] = circular_mean_2(torch.arange(l), w, l).item()
+
+        return coordinates
 
 class GridHippocampalScaffold:
     def __init__(
@@ -218,7 +271,9 @@ class GridHippocampalScaffold:
                     if len(state) == 2:
                         gbook[i : i + len(gpattern), state[0], state[1]] = gpattern
                     if len(state) == 3:
-                        gbook[i : i + len(gpattern), state[0], state[1], state[2]] = gpattern
+                        gbook[i : i + len(gpattern), state[0], state[1], state[2]] = (
+                            gpattern
+                        )
                     i += len(gpattern)
 
             return gbook.flatten(1).T
