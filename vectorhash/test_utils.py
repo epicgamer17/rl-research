@@ -1,4 +1,13 @@
-from nd_scaffold import *
+import torch
+from vectorhash import (
+    build_initializer,
+    GridHippocampalScaffold,
+    ExactPseudoInverseHippocampalSensoryLayer,
+    IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
+)
+from hippocampal_sensory_layers import *
+from clean_scaffold import ArgmaxSmoothing, SoftmaxSmoothing, PolynomialSmoothing
+from tqdm import tqdm
 
 UP = torch.tensor([0, 1])
 DOWN = torch.tensor([0, -1])
@@ -36,15 +45,6 @@ def get_action():
     return a
 
 
-from vectorhash import (
-    build_initializer,
-    GridHippocampalScaffold,
-    ExactPseudoInverseHippocampalSensoryLayer,
-    IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
-)
-from hippocampal_sensory_layers import *
-
-
 def corrupt_p_1(codebook, p=0.1):
     if p == 0.0:
         return codebook
@@ -69,18 +69,17 @@ def dynamics_patts(
     h = torch.clone(h_in_original)
     for i in range(N_iter):
         g = scaffold.denoise(scaffold.grid_from_hippocampal(h))
+        print(g)
         h = scaffold.hippocampal_from_grid(g)
-    h_out = torch.clone(h)
 
+    s_out = sensory_hippocampal_layer.sensory_from_hippocampal(h)
     if sign_output:
-        s_out = torch.sign(sensory_hippocampal_layer.sensory_from_hippocampal(h))
-    else:
-        s_out = sensory_hippocampal_layer.sensory_from_hippocampal(h)
+        s_out = torch.sign(s_out)
 
     sbook = s_true[:N_patts]
     hbook = h_true[:N_patts]
 
-    h_l2_err = torch.linalg.vector_norm(h_out - hbook) / scaffold.N_h
+    h_l2_err = torch.linalg.vector_norm(h - hbook) / scaffold.N_h
     s_l2_err = (
         torch.linalg.vector_norm(s_out - sbook) / sensory_hippocampal_layer.input_size
     )
@@ -96,10 +95,13 @@ def capacity_test(
     Npatts_list,
     nruns,
     device,
-    method,
+    pseudoinverse_method="exact",
     sign_output=False,
+    smoothing_method="argmax",
+    T=1e-3,
 ):
-    assert method in ["exact", "iterative"]
+    assert pseudoinverse_method in ["exact", "iterative"]
+    assert smoothing_method in ["argmax", "softmax", "polynomial"]
 
     err_h_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
@@ -108,6 +110,13 @@ def capacity_test(
     initializer, _, _ = build_initializer(
         shapes, sparse_initialization=0.4, device=device
     )
+
+    if smoothing_method == "argmax":
+        smoothing = ArgmaxSmoothing()
+    elif smoothing_method == "softmax":
+        smoothing = SoftmaxSmoothing(T)
+    elif smoothing_method == "polynomial":
+        smoothing = PolynomialSmoothing(2)
 
     for k in tqdm(range(len(Npatts_list))):
         Npatts = Npatts_list[k]
@@ -118,8 +127,9 @@ def capacity_test(
             device=device,
             sparse_matrix_initializer=initializer,
             relu_theta=0.5,
+            smoothing=smoothing,
         )
-        if method == "exact":
+        if pseudoinverse_method == "exact":
             sensory_hippocampal_layer = ExactPseudoInverseHippocampalSensoryLayer(
                 input_size=sbook.shape[1],
                 N_h=scaffold.N_h,
@@ -128,7 +138,7 @@ def capacity_test(
                 device=device,
             )
             sensory_hippocampal_layer.learn_batch(sbook[:Npatts])
-        elif method == "iterative":
+        elif pseudoinverse_method == "iterative":
             sensory_hippocampal_layer = (
                 IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
                     input_size=sbook.shape[1],
@@ -158,7 +168,20 @@ def capacity_test(
     return err_h_l2, err_s_l2, err_s_l1
 
 
-def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device, method, sign_output):
+def capacity1(
+    shapes,
+    Np_lst,
+    Npatts_lst,
+    nruns,
+    sbook,
+    device,
+    pseudoinverse_method="exact",
+    sign_output=False,
+    smoothing_method="argmax",
+):
+    assert pseudoinverse_method in ["exact", "iterative"]
+    assert smoothing_method in ["argmax", "softmax", "polynomial"]
+    
     err_h_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
@@ -173,8 +196,9 @@ def capacity1(shapes, Np_lst, Npatts_lst, nruns, sbook, device, method, sign_out
             Npatts_lst,
             nruns,
             device,
-            method=method,
+            pseudoinverse_method=pseudoinverse_method,
             sign_output=sign_output,
+            smoothing_method=smoothing_method,
         )
 
     return err_h_l2, err_s_l2, err_s_l1

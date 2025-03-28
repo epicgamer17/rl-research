@@ -1,4 +1,4 @@
-from clean_scaffold import GridHippocampalScaffold
+from clean_scaffold import GridHippocampalScaffold, SoftmaxSmoothing
 from hippocampal_sensory_layers import *
 from tqdm import tqdm
 
@@ -384,8 +384,8 @@ def build_scaffold(
     W_gh_var=1,
     percent_nonzero_relu=0.9,
     sparse_initialization=0.1,
-    T=1e-3,
     device=None,
+    smoothing=SoftmaxSmoothing(T=1e-3),
 ):
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
@@ -395,6 +395,7 @@ def build_scaffold(
         sparse_initialization=sparse_initialization,
         device=device,
     )
+    smoothing = smoothing
     scaffold = GridHippocampalScaffold(
         shapes=shapes,
         N_h=N_h,
@@ -403,7 +404,7 @@ def build_scaffold(
         ratshift=False,
         sanity_check=True,
         calculate_g_method="fast",
-        T=T,
+        smoothing=smoothing,
         device=device,
     )
 

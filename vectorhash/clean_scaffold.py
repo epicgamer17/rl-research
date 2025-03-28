@@ -7,8 +7,69 @@ from vectorhash_functions import chinese_remainder_theorem, circular_mean_2
 from tqdm import tqdm
 
 
+class Smoothing:
+    def __init__(self):
+        pass
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        """Smooth a batch of tensors.
+
+        Input shape: (B, ...)
+
+        """
+        pass
+
+
+class SoftmaxSmoothing(Smoothing):
+    def __init__(self, T=1e-3):
+        super().__init__()
+        assert T > 0
+        self.T = T
+
+    def __call__(self, x):
+        y = x.flatten(1).T
+        maxes = torch.max(y, dim=0).values
+        y = y - maxes
+        exp = torch.exp(y)
+        out = (exp / torch.sum(exp, dim=0)).T
+        return out.reshape(*x.shape)
+
+
+class PolynomialSmoothing(Smoothing):
+    def __init__(self, k):
+        super().__init__()
+        assert k > 0
+        self.k = k
+        pass
+
+    def __call__(self, x):
+        y = x.flatten(1).T
+        y = y**self.k
+        out = (y / torch.sum(y, dim=0)).T
+        return out.reshape(*x.shape)
+
+
+class ArgmaxSmoothing(Smoothing):
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, x):
+        y = x.flatten(1).T
+        maxes = torch.max(y, dim=0).values
+        y = torch.where(y == maxes, torch.ones_like(y), torch.zeros_like(y))
+        scaled = (y / torch.sum(y, dim=0, keepdim=True)).T
+        return scaled
+
+
 class GridModule:
-    def __init__(self, shape: tuple[int], device=None, T=1, ratshift=True) -> None:
+    def __init__(
+        self,
+        shape: tuple[int],
+        device=None,
+        T=1,
+        ratshift=True,
+        smoothing=SoftmaxSmoothing(T=1e-3),
+    ) -> None:
         """Initializes a grid module with a given shape and a temperature.
 
         Args:
@@ -16,6 +77,7 @@ class GridModule:
             T (int, optional): The temperature of the grid used with softmax when computing the onehot encoded state probabilities. Defaults to 1.
         """
         self.shape = shape
+        self.smoothing = smoothing
         # self.state = torch.rand(shape, device=device)
         self.state = torch.zeros(shape, device=device)
         self.ratshift = ratshift
@@ -26,15 +88,11 @@ class GridModule:
         self.T = T
         self.device = device
 
-        einsum_indices = [
-            chr(ord("a") + i) for i in range(len(self.shape))
-        ]  # a, b, c, ...
-        einsum_str = (
-            ",".join(einsum_indices) + "->" + "".join(einsum_indices)
-        )  # a,b,c, ...->abc...
-        self.einsum_str = einsum_str
-        """`a, b, c, ..., z -> abc...z`
-        """
+    @torch.no_grad()
+    def onehot(self) -> torch.Tensor:
+        """Get the current state as a flattened onehot vector (normalized)"""
+        return self.state.flatten() / self.state.sum()
+        #return self.state.flatten()
 
     @torch.no_grad()
     def denoise_onehot(self, onehot: torch.Tensor) -> torch.Tensor:
@@ -69,49 +127,8 @@ class GridModule:
         """
         if state.ndim == len(self.shape):
             state = state.unsqueeze(0)
-        dims = [i for i in range(1, len(self.shape) + 1)]  # 1, 2, ..., n
-        maxes = torch.amax(state, dim=dims, keepdim=True)
 
-        state = torch.where(
-            state == maxes, torch.ones_like(state), torch.zeros_like(state)
-        )
-        scaled = state / torch.sum(state, dim=dims, keepdim=True)
-        return scaled
-
-        # Check if there are any non-zero elements in the module
-        # if len(torch.nonzero(state)) > 0:
-        #     max_value = np.max(state)  # Find the maximum value in the module
-        #     print(max_value)
-        #     # Create a binary array where positions with the max value are 1, others are 0
-        #     max_positions = np.where(state == max_value)[0]
-        #     random_position = np.random.choice(max_positions)
-        #     denoised_module = np.zeros_like(state)
-        #     denoised_module[random_position] = 1
-        # else:
-        #     # If the module is all zeros, create an array of the same shape with all zeros
-        #     denoised_module = np.zeros_like(state)
-        # return torch.tensor(denoised_module, device=self.device)
-
-    @torch.no_grad()
-    def denoise_self(self):
-        """Denoises this grid module's state"""
-        self.state = self.denoise(self.state).squeeze(0)
-
-    @torch.no_grad()
-    def onehot(self) -> torch.Tensor:
-        """Returns the one-hot encoding of the state of this grid module.
-
-        Output shape: `(l)` where `l` is the product of the shape of the grid (i.e. a 3x3x4 grid has l=36).
-        """
-        pdfs = list()
-        dims = range(len(self.shape))
-        for i in range(len(self.shape)):
-            pdf = torch.sum(self.state, dim=[j for j in dims if j != i])
-            pdfs.append(pdf)
-
-        #
-        r = torch.einsum(self.einsum_str, *pdfs).flatten()
-        return (r / (self.T * r.sum(dim=0))).softmax(dim=0)
+        return self.smoothing(state)
 
     @torch.no_grad()
     def shift(self, v: torch.Tensor):
@@ -203,7 +220,7 @@ class GridModule:
     def cartesian_coordinates_from_grid_state_extended(
         self, g: torch.Tensor
     ) -> torch.Tensor:
-        """Convert a continuous grid state into real-valued cartesian coordinates
+        """Convert a continuous grid state into real-valued cartesian coordinates. NOT WORKING YET
 
         Args:
             g (torch.Tensor): A continuous grid state in [0,1]^{\lambda_1 \cdot ... \cdot \lambda_d} where \sum_{i=1}^{\lambda_1 \cdot ... \cdot \lambda_d} g_i = 1
@@ -237,19 +254,19 @@ class GridHippocampalScaffold:
         ratshift=False,
         sanity_check=True,
         calculate_g_method="fast",
-        T=1e-3,
+        smoothing=SoftmaxSmoothing(T=1e-3),
         device=None,
     ):
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
 
         self.device = device
-        self.T = T
         self.shapes = torch.Tensor(shapes).int()
         """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
         self.relu_theta = relu_theta
         self.ratshift = ratshift
         self.modules = [
-            GridModule(shape, device=device, T=T, ratshift=ratshift) for shape in shapes
+            GridModule(shape, device=device, ratshift=ratshift, smoothing=smoothing)
+            for shape in shapes
         ]
         """The list of grid modules in the scaffold."""
         # for module in self.modules:
@@ -484,27 +501,6 @@ class GridHippocampalScaffold:
         """Reset the position of the scaffold to 0"""
         coordinates = self.cartesian_coordinates_from_grid_state(self.g)
         self.shift(-coordinates)
-
-    @torch.no_grad()
-    def onehot(self, g: torch.Tensor) -> torch.Tensor:
-        """Returns the one-hot encoding of a given grid state.
-
-        Input shape: `(N_g)`
-
-        Args:
-            G: The tensor of grid states.
-
-        Output shape: `(N_g)`
-        """
-        pos = 0
-        for module in self.modules:
-            x = g[pos : pos + module.l]
-            x_onehot = (x / (x.sum() * self.T)).softmax(dim=0)
-            # print(x_onehot)
-            g[pos : pos + module.l] = x_onehot
-            pos += module.l
-
-        return g
 
     @torch.no_grad()
     def denoise(self, G: torch.Tensor) -> torch.Tensor:
