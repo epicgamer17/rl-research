@@ -77,30 +77,6 @@ def circular_mean(points: torch.Tensor, grid_size: int):
     return Arg * grid_size / (2 * torch.pi)
 
 
-def circular_mean_2(samples: torch.Tensor, weights: torch.Tensor, high=2 * pi):
-    modified = torch.where(samples > high / 2, samples - high, samples)
-    weighted = modified * weights / weights.sum()
-    indices = weighted.nonzero()
-    if len(indices) == 0:
-        return torch.zeros(1)
-    mean = torch.mean(weighted[indices])
-    ret = torch.where(mean > 0, mean, mean + high)
-
-    # print(
-    #     f"""
-    #      samples: {samples} 
-    #      weights: {weights} 
-    #      modified: {modified}
-    #      weighted: {modified * weights / weights.sum()}
-    #      indices: {weighted.nonzero()}
-    #      weighted_nonzero: {weighted[weighted.nonzero()]}
-    #      mean: {mean}
-    #      ret: {ret}
-          
-    #       """
-    # )
-    return ret
-
 
 def softmax_2d(x: torch.Tensor):
     """

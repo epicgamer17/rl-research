@@ -3,7 +3,12 @@ import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from ratslam_velocity_shift import inject_activity
-from vectorhash_functions import chinese_remainder_theorem, circular_mean_2
+from vectorhash_functions import (
+    chinese_remainder_theorem,
+    circular_mean,
+    outer,
+    generate_1d_gaussian_kernel,
+)
 from tqdm import tqdm
 
 
@@ -228,20 +233,21 @@ class GridModule:
         Returns:
             torch.Tensor: Coordinates in the range [0, \lambda_1) x ... x [0, \lambda_d) \subseteq \mathbb{R}^d
         """
-        sums = list()
-        dims = range(len(self.shape))
-        for i in range(len(self.shape)):
-            dim = [j for j in dims if j != i]
-            pdf = torch.sum(g.reshape(*self.shape), dim=dim)
-            sums.append(pdf)
+        raise NotImplemented
+        # sums = list()
+        # dims = range(len(self.shape))
+        # reshaped = g.reshape(*self.shape)
 
-        coordinates = torch.zeros(len(self.shape))
-        for i, l in enumerate(self.shape):
-            w = sums[i]
-            # print(f"w[{i}]", w)
-            coordinates[i] = circular_mean_2(torch.arange(l), w, l).item()
+        # for dim in dims:
+        #     sums.append(self.sum_marginal(dim, reshaped))
 
-        return coordinates
+        # coordinates = torch.zeros(len(self.shape))
+        # for i, l in enumerate(self.shape):
+        #     w = sums[i]
+        #     # print(f"w[{i}]", w)
+        #     coordinates[i] = circular_mean_2(torch.arange(l), w, l).item()
+
+        # return coordinates
 
 
 class GridHippocampalScaffold:
