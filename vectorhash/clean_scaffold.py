@@ -93,11 +93,35 @@ class GridModule:
         self.T = T
         self.device = device
 
+        einsum_indices = [
+            chr(ord("a") + i) for i in range(len(self.shape))
+        ]  # a, b, c, ...
+
+        einsum_str = (
+            ",".join(einsum_indices) + "->" + "".join(einsum_indices)
+        )  # a,b,c, ...->abc...
+
+        self.einsum_str = einsum_str
+
+        """`a, b, c, ..., z -> abc...z`
+
+
+        """
+
+    @torch.no_grad()
+    def get_marginal(self, dim):
+        return self.sum_marginal(dim, self.state)
+
+    def sum_marginal(self, dim, state):
+        dims = range(len(self.shape))
+        dim_to_sum = tuple(j for j in dims if not j == dim)
+        return torch.sum(state, dim=dim_to_sum)
+
     @torch.no_grad()
     def onehot(self) -> torch.Tensor:
         """Get the current state as a flattened onehot vector (normalized)"""
         return self.state.flatten() / self.state.sum()
-        #return self.state.flatten()
+        # return self.state.flatten()
 
     @torch.no_grad()
     def denoise_onehot(self, onehot: torch.Tensor) -> torch.Tensor:
@@ -258,6 +282,7 @@ class GridHippocampalScaffold:
         sparse_matrix_initializer=None,
         relu_theta=0.5,
         ratshift=False,
+        convolutional_shift=True,
         sanity_check=True,
         calculate_g_method="fast",
         smoothing=SoftmaxSmoothing(T=1e-3),
@@ -270,6 +295,7 @@ class GridHippocampalScaffold:
         """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
         self.relu_theta = relu_theta
         self.ratshift = ratshift
+        self.convolutional_shift = convolutional_shift
         self.modules = [
             GridModule(shape, device=device, ratshift=ratshift, smoothing=smoothing)
             for shape in shapes
@@ -493,12 +519,54 @@ class GridHippocampalScaffold:
 
     @torch.no_grad()
     def shift(self, velocity):
-        """Shifts the grid coding state by a given velocity.
+        """Shifts the grid coding state by a given displacement.
 
         The length of `velocity` must be equal to the dimensionality of the grid modules.
         """
-        for module in self.modules:
-            module.shift(velocity)
+
+        if self.convolutional_shift:
+            filters = [
+                generate_1d_gaussian_kernel(3, mu=velocity[i], sigma=1, device=self.device)
+                for i in len(velocity)
+            ]
+            all_recovered_marginals = []  # (dim x module)
+            for dim in len(self.shapes[0]):
+                l = torch.prod(self.shapes[:, dim])
+                marginals = [module.get_marginal(dim) for module in self.modules]
+                sizes = [len(marginal) for marginal in marginals]
+                tile_sizes = [l // module.shape[dim] for module in self.modules]
+                tiled = [
+                    torch.tile(marginal, (tile_size,))
+                    for marginal, tile_size in zip(marginals, tile_sizes)
+                ]
+
+                v = torch.ones_like(tiled[0])
+                for t in tiled:
+                    v *= t
+
+                v = torch.nn.functional.conv1d(
+                    v.unsqueeze(0).unsqueeze(0),
+                    filters[dim].unsqueeze(0).unsqueeze(0),
+                    padding="circular",
+                )
+
+                v = v.reshape(sizes)
+                all_recovered_marginals = []
+                for d in range(len(sizes)):
+                    dims_to_sum = [i for i in range(len(sizes)) if not i == d]
+                    recovered = torch.sum(v, dims_to_sum)
+                    all_recovered_marginals.append(recovered)
+
+        else:
+            for module in self.modules:
+                module.shift(velocity)
+
+        for i, module in enumerate, self.modules:
+            marginals = [
+                marginals.append(all_recovered_marginals[d, i])
+                for d in range(self.shapes[0])
+            ]
+            module.state = outer(marginals)
 
         self.g = self._g()
 
