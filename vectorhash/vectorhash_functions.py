@@ -1,3 +1,4 @@
+import scipy.special
 import torch
 from functools import reduce
 from scipy.stats import norm
@@ -475,3 +476,25 @@ def calculate_theoretical_capacity(shapes, N_h, input_size):
         N_g += l
 
     return N_g * N_h / input_size
+
+
+def outer(tensors):
+    einsum_indices = [chr(ord("a") + i) for i in range(len(tensors))]  # a, b, c, ...
+
+    einsum_str = (
+        ",".join(einsum_indices) + "->" + "".join(einsum_indices)
+    )  # a,b,c, ...->abc...
+
+    return torch.einsum(einsum_str, *tensors)
+
+
+def generate_1d_gaussian_kernel(radius, mu=0, sigma=1, device=None):
+    """
+    Genereate a 1-D Gaussian convolution kernel.
+    """
+    x = torch.arange(-radius, radius + 1, device=device)
+
+    low = (x - mu - 0.5) / (sigma * 2**0.5)
+    high = (x - mu + 0.5) / (sigma * 2**0.5)
+    w = 0.5 * (scipy.special.erf(high) - scipy.special.erf(low))
+    return w
