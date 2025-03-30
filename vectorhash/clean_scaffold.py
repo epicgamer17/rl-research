@@ -526,7 +526,9 @@ class GridHippocampalScaffold:
 
         if self.convolutional_shift:
             filters = [
-                generate_1d_gaussian_kernel(3, mu=velocity[i], sigma=1, device=self.device)
+                generate_1d_gaussian_kernel(
+                    3, mu=velocity[i], sigma=1, device=self.device
+                )
                 for i in len(velocity)
             ]
             all_recovered_marginals = []  # (dim x module)
@@ -604,3 +606,25 @@ class GridHippocampalScaffold:
             pos += module.l
 
         return G
+
+    def estimate_certainty(self, k: float):
+        sums = torch.zeros(len(self.shapes[0]))
+        for dim in len(self.shapes[0]):
+            l = torch.prod(self.shapes[:, dim])
+            marginals = [module.get_marginal(dim) for module in self.modules]
+            tile_sizes = [l // module.shape[dim] for module in self.modules]
+            tiled = [
+                torch.tile(marginal, (tile_size,))
+                for marginal, tile_size in zip(marginals, tile_sizes)
+            ]
+
+            v = torch.ones_like(tiled[0])
+            for t in tiled:
+                v *= t
+
+            mean = circular_mean(v * torch.arange(0, len(v)), len(v))
+            low = mean - k
+            high = mean + k
+            indices = torch.arange(torch.ceil(low-k), torch.floor(high+k)+1)
+            sums[dim] = torch.sum(v[indices])
+        return sums
