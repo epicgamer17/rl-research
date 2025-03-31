@@ -335,7 +335,7 @@ class GridHippocampalScaffold:
                 == self.denoise(
                     self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
                 )
-            ), "G -> H -> G should preserve G"
+            ), f"G -> H -> G should preserve G: {self.G}, {self.denoise(self.grid_from_hippocampal(self.hippocampal_from_grid(self.G)))}"
 
         self.g = self._g()
         """The current grid coding state tensor. Shape: `(N_g)`"""
@@ -524,51 +524,59 @@ class GridHippocampalScaffold:
         The length of `velocity` must be equal to the dimensionality of the grid modules.
         """
 
+        dims = len(self.shapes[0])
         if self.convolutional_shift:
             filters = [
-                generate_1d_gaussian_kernel(
-                    3, mu=velocity[i], sigma=1, device=self.device
-                )
-                for i in len(velocity)
+                generate_1d_gaussian_kernel(6, mu=-v, sigma=0.3, device=self.device)
+                for v in velocity
             ]
             all_recovered_marginals = []  # (dim x module)
-            for dim in len(self.shapes[0]):
-                l = torch.prod(self.shapes[:, dim])
+            prev_districtions = []
+            for dim in range(dims):
                 marginals = [module.get_marginal(dim) for module in self.modules]
-                sizes = [len(marginal) for marginal in marginals]
-                tile_sizes = [l // module.shape[dim] for module in self.modules]
-                tiled = [
-                    torch.tile(marginal, (tile_size,))
-                    for marginal, tile_size in zip(marginals, tile_sizes)
-                ]
-
-                v = torch.ones_like(tiled[0])
-                for t in tiled:
-                    v *= t
-
-                v = torch.nn.functional.conv1d(
-                    v.unsqueeze(0).unsqueeze(0),
-                    filters[dim].unsqueeze(0).unsqueeze(0),
-                    padding="circular",
+                v = self.expand_distribution(dim, marginals)
+                prev_districtions.append(v)
+                padded = torch.nn.functional.pad(
+                    v.unsqueeze(0),
+                    (len(filters[dim]) // 2, len(filters[dim]) // 2),
+                    mode="circular",
                 )
+                v = torch.nn.functional.conv1d(
+                    padded.unsqueeze(0),
+                    filters[dim].unsqueeze(0).unsqueeze(0),
+                    padding="valid",
+                ).squeeze()
+                print("conv result:", v)
+                assert torch.isclose(v.sum(), torch.Tensor([1.0])), v.sum()
 
-                v = v.reshape(sizes)
-                all_recovered_marginals = []
-                for d in range(len(sizes)):
-                    dims_to_sum = [i for i in range(len(sizes)) if not i == d]
-                    recovered = torch.sum(v, dims_to_sum)
-                    all_recovered_marginals.append(recovered)
+
+                y = torch.zeros(size=tuple(self.shapes[:, dim]))
+                for i in range(len(v)):
+                    y[tuple(torch.remainder(i, self.shapes[:, dim]))] = v[i]
+                print(y)
+
+                recovered_marginals = []
+                for d in range(len(self.shapes)):
+                    dims_to_sum = [i for i in range(len(self.shapes)) if not i == d]
+                    recovered = torch.sum(y, dims_to_sum)
+                    recovered /= torch.sum(recovered) # prevent losing mass
+                    assert torch.isclose(torch.sum(recovered), torch.Tensor([1.0])), torch.sum(recovered)
+                    recovered_marginals.append(recovered)
+                all_recovered_marginals.append(recovered_marginals)
+
+            for i, module in enumerate(self.modules):
+                marginals = [all_recovered_marginals[d][i] for d in range(dims)]
+                outered = outer(marginals)
+                module.state = outered
+            
+            # for dim in range(dims):
+            #     print(prev_districtions[dim])
+            #     print(self.expand_distribution(dim))
+            #     assert torch.all(torch.isclose(self.expand_distribution(dim), prev_districtions[dim]))
 
         else:
             for module in self.modules:
                 module.shift(velocity)
-
-        for i, module in enumerate, self.modules:
-            marginals = [
-                marginals.append(all_recovered_marginals[d, i])
-                for d in range(self.shapes[0])
-            ]
-            module.state = outer(marginals)
 
         self.g = self._g()
 
@@ -610,21 +618,40 @@ class GridHippocampalScaffold:
     def estimate_certainty(self, k: float):
         sums = torch.zeros(len(self.shapes[0]))
         for dim in len(self.shapes[0]):
-            l = torch.prod(self.shapes[:, dim])
             marginals = [module.get_marginal(dim) for module in self.modules]
-            tile_sizes = [l // module.shape[dim] for module in self.modules]
-            tiled = [
-                torch.tile(marginal, (tile_size,))
-                for marginal, tile_size in zip(marginals, tile_sizes)
-            ]
-
-            v = torch.ones_like(tiled[0])
-            for t in tiled:
-                v *= t
-
+            v = self.expand_distribution(dim, marginals)
             mean = circular_mean(v * torch.arange(0, len(v)), len(v))
             low = mean - k
             high = mean + k
-            indices = torch.arange(torch.ceil(low-k), torch.floor(high+k)+1)
+            indices = torch.arange(torch.ceil(low - k), torch.floor(high + k) + 1)
             sums[dim] = torch.sum(v[indices])
         return sums
+
+    def expand_distribution(self, dim, marginals):
+        l = torch.prod(self.shapes[:, dim])
+        tile_sizes = [l // module.shape[dim] for module in self.modules]
+        tiled = [
+            torch.tile(marginal, (tile_size,))
+            for marginal, tile_size in zip(marginals, tile_sizes)
+        ]
+        v = torch.ones_like(tiled[0])
+
+        for t in tiled:
+            v *= t
+
+        return v
+    
+    def condense_distribution(self, dim, p):
+        y = torch.zeros(size=tuple(self.shapes[:, dim]))
+        for i in range(len(p)):
+            y[tuple(torch.remainder(i, self.shapes[:, dim]))] = p[i]
+
+        recovered_marginals = []
+        for d in range(len(self.shapes)):
+            dims_to_sum = [i for i in range(len(self.shapes)) if not i == d]
+            recovered = torch.sum(y, dims_to_sum)
+            recovered /= torch.sum(recovered) # prevent losing mass
+            assert torch.isclose(torch.sum(recovered), torch.Tensor([1.0])), torch.sum(recovered)
+            recovered_marginals.append(recovered)
+        
+        return recovered_marginals
