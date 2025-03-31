@@ -386,7 +386,12 @@ def build_scaffold(
     sparse_initialization=0.1,
     device=None,
     smoothing=SoftmaxSmoothing(T=1e-3),
+    shift="roll"
 ):
+    assert shift in ["roll", "rat", "conv"]
+    ratshift = shift == "rat"
+    convolutional_shift= shift == "conv"
+
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
         initalization_method,
@@ -401,7 +406,8 @@ def build_scaffold(
         N_h=N_h,
         sparse_matrix_initializer=initializer,
         relu_theta=relu_theta,
-        ratshift=False,
+        ratshift=ratshift,
+        convolutional_shift=convolutional_shift,
         sanity_check=True,
         calculate_g_method="fast",
         smoothing=smoothing,
