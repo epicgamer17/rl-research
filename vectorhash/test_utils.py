@@ -6,7 +6,7 @@ from vectorhash import (
     IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
 )
 from hippocampal_sensory_layers import *
-from clean_scaffold import ArgmaxSmoothing, SoftmaxSmoothing, PolynomialSmoothing
+from smoothing import ArgmaxSmoothing, SoftmaxSmoothing, PolynomialSmoothing
 from tqdm import tqdm
 
 UP = torch.tensor([0, 1])
