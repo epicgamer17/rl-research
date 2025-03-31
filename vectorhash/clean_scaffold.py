@@ -546,14 +546,14 @@ class GridHippocampalScaffold:
                     filters[dim].unsqueeze(0).unsqueeze(0),
                     padding="valid",
                 ).squeeze()
-                print("conv result:", v)
+                # print("conv result:", v)
                 assert torch.isclose(v.sum(), torch.Tensor([1.0])), v.sum()
 
 
                 y = torch.zeros(size=tuple(self.shapes[:, dim]))
                 for i in range(len(v)):
                     y[tuple(torch.remainder(i, self.shapes[:, dim]))] = v[i]
-                print(y)
+                # print(y)
 
                 recovered_marginals = []
                 for d in range(len(self.shapes)):
@@ -617,13 +617,13 @@ class GridHippocampalScaffold:
 
     def estimate_certainty(self, k: float):
         sums = torch.zeros(len(self.shapes[0]))
-        for dim in len(self.shapes[0]):
+        for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in self.modules]
             v = self.expand_distribution(dim, marginals)
             mean = circular_mean(v * torch.arange(0, len(v)), len(v))
             low = mean - k
             high = mean + k
-            indices = torch.arange(torch.ceil(low - k), torch.floor(high + k) + 1)
+            indices = torch.arange(torch.ceil(low - k), torch.floor(high + k) + 1).int()
             sums[dim] = torch.sum(v[indices])
         return sums
 
