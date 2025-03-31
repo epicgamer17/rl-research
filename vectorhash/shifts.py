@@ -97,5 +97,4 @@ class ConvolutionalShift(Shift):
 
         for i, module in enumerate(modules):
             marginals = [all_recovered_marginals[d][i] for d in range(dims)]
-            outered = outer(marginals)
-            module.state = outered
+            module.state = module.state_from_marginals(marginals)

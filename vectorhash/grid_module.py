@@ -1,6 +1,6 @@
 import torch
 from smoothing import SoftmaxSmoothing
-
+from vectorhash_functions import outer
 
 class GridModule:
     def __init__(
@@ -40,16 +40,22 @@ class GridModule:
 
         """
 
+    @torch.no_grad()
     def zero(self):
         self.state = torch.zeros(self.shape, device=self.device)
         i = tuple(0 for _ in range(len(self.shape)))
         self.state[i] = 1
 
+    # note that the two below methods assume that the distributions across each dimension of the module are independent
     @torch.no_grad()
     def get_marginal(self, dim):
-        return self.sum_marginal(dim, self.state)
+        return self.marginal_from_state(dim, self.state)
+    
+    @torch.no_grad()
+    def state_from_marginals(self, marginals):
+        return outer(marginals)
 
-    def sum_marginal(self, dim, state):
+    def marginal_from_state(self, dim, state):
         dims = range(len(self.shape))
         dim_to_sum = tuple(j for j in dims if not j == dim)
         return torch.sum(state, dim=dim_to_sum)
