@@ -1,5 +1,6 @@
 from clean_scaffold import GridHippocampalScaffold, SoftmaxSmoothing
 from hippocampal_sensory_layers import *
+from shifts import *
 from tqdm import tqdm
 
 
@@ -376,6 +377,15 @@ def build_initializer(
         expectation_of_relu_normal(h_normal_mean, h_normal_std),
     )
 
+def build_shift(shift, device=None):
+    assert shift in ["roll", "rat", "conv"]
+
+    if shift == "roll":
+        return RollShift(device)
+    elif shift == "rat":
+        return RatShift(device)
+    elif shift == "conv":
+        return ConvolutionalShift(device=device)
 
 def build_scaffold(
     shapes,
@@ -384,14 +394,10 @@ def build_scaffold(
     W_gh_var=1,
     percent_nonzero_relu=0.9,
     sparse_initialization=0.1,
-    device=None,
     smoothing=SoftmaxSmoothing(T=1e-3),
-    shift="roll"
+    shift="roll",
+    device=None,
 ):
-    assert shift in ["roll", "rat", "conv"]
-    ratshift = shift == "rat"
-    convolutional_shift= shift == "conv"
-
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
         initalization_method,
@@ -401,13 +407,13 @@ def build_scaffold(
         device=device,
     )
     smoothing = smoothing
+    shift = build_shift(shift, device)
     scaffold = GridHippocampalScaffold(
         shapes=shapes,
         N_h=N_h,
         sparse_matrix_initializer=initializer,
         relu_theta=relu_theta,
-        ratshift=ratshift,
-        convolutional_shift=convolutional_shift,
+        shift_method=shift,
         sanity_check=True,
         calculate_g_method="fast",
         smoothing=smoothing,

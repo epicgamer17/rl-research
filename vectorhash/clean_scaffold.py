@@ -1,224 +1,15 @@
-import math
 import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
-from ratslam_velocity_shift import inject_activity
 from smoothing import *
+from shifts import *
 from vectorhash_functions import (
     chinese_remainder_theorem,
     circular_mean,
-    outer,
-    generate_1d_gaussian_kernel,
+    expand_distribution,
 )
 from tqdm import tqdm
-
-
-class GridModule:
-    def __init__(
-        self,
-        shape: tuple[int],
-        device=None,
-        T=1,
-        ratshift=True,
-        smoothing=SoftmaxSmoothing(T=1e-3),
-    ) -> None:
-        """Initializes a grid module with a given shape and a temperature.
-
-        Args:
-            shape (tuple[int]): The shape of the grid.
-            T (int, optional): The temperature of the grid used with softmax when computing the onehot encoded state probabilities. Defaults to 1.
-        """
-        self.shape = shape
-        self.smoothing = smoothing
-        # self.state = torch.rand(shape, device=device)
-        self.state = torch.zeros(shape, device=device)
-        self.ratshift = ratshift
-        i = tuple(0 for _ in range(len(shape)))
-        self.state[i] = 1
-        self.l = torch.prod(torch.tensor(shape)).item()
-        """The number of elements in the grid, i.e. the product of each element in the shape. Ex. a `3x3x4` grid has `l=36`."""
-        self.T = T
-        self.device = device
-
-        einsum_indices = [
-            chr(ord("a") + i) for i in range(len(self.shape))
-        ]  # a, b, c, ...
-
-        einsum_str = (
-            ",".join(einsum_indices) + "->" + "".join(einsum_indices)
-        )  # a,b,c, ...->abc...
-
-        self.einsum_str = einsum_str
-
-        """`a, b, c, ..., z -> abc...z`
-
-
-        """
-
-    @torch.no_grad()
-    def get_marginal(self, dim):
-        return self.sum_marginal(dim, self.state)
-
-    def sum_marginal(self, dim, state):
-        dims = range(len(self.shape))
-        dim_to_sum = tuple(j for j in dims if not j == dim)
-        return torch.sum(state, dim=dim_to_sum)
-
-    @torch.no_grad()
-    def onehot(self) -> torch.Tensor:
-        """Get the current state as a flattened onehot vector (normalized)"""
-        return self.state.flatten() / self.state.sum()
-        # return self.state.flatten()
-
-    @torch.no_grad()
-    def denoise_onehot(self, onehot: torch.Tensor) -> torch.Tensor:
-        """Denoise a batch of one-hot encoded states.
-
-        Input shape: `(B, l)` where l is the product of the shape of the grid.
-
-        Args:
-            onehot: The tensor of one-hot encoded states.
-
-        Output shape: `(B, l)`
-        """
-        # assert sum(onehot.sum(dim=1) == 1) == onehot.shape[0], "Not one-hot encoded"
-        if onehot.ndim == 1:
-            onehot = onehot.unsqueeze(0)
-
-        state = onehot.view((onehot.shape[0], *self.shape))
-        return self.denoise(state).flatten(1)
-
-    @torch.no_grad()
-    def denoise(self, state: torch.Tensor) -> torch.Tensor:
-        """Denoise a batch of grid states. This finds the maximum value in the grid and sets it to 1, and all other values to 0.
-        If there are multiple maximum values, pick a random. (not all set to 1 / number of maximum values)
-
-        Input shape: `(B, *shape)` where `shape` is the shape of the grid.
-
-        Args:
-            state: The tensor of grid states.
-
-        Output shape: `(B, *shape)` where `shape` is the shape of the grid.
-
-        """
-        if state.ndim == len(self.shape):
-            state = state.unsqueeze(0)
-
-        return self.smoothing(state)
-
-    @torch.no_grad()
-    def shift(self, v: torch.Tensor):
-        """Shifts the state of the grid module by a given velocity.
-
-        Input shape: `(len(shape))`
-
-        Args:
-            v: The velocity by which to shift the grid state.
-            (x, y, angular velocity)
-        """
-        v_ = v.int()
-        if self.ratshift:
-            assert len(v) == 3  # x, y, angular velocity
-            speed = (v[0].item() ** 2 + v[1].item() ** 2) ** 0.5
-            theta = math.atan2(v[1].item(), v[0].item())
-            self.state = inject_activity(self.state, speed, theta, v[2].item())
-        else:
-            self.state = torch.roll(
-                self.state,
-                tuple([v_[i].item() for i in range(len(v_))]),
-                dims=tuple(i for i in range(len(self.shape))),
-            )
-
-    @torch.no_grad()
-    def grid_state_from_cartesian_coordinates(
-        self, coordinates: torch.Tensor
-    ) -> torch.Tensor:
-        """Convert integer-valued cartesian coordinates into a onehot-encoded grid state
-
-        Args:
-            coordinates (torch.Tensor): Tensor of integers, length equal to the dimensionality of the grid module
-
-        Returns:
-            torch.Tensor: A one-hot encoded tensor of the grid state
-        """
-        phis = torch.remainder(coordinates, torch.Tensor(self.shape)).int()
-        gpattern = torch.zeros_like(self.state)
-        gpattern[tuple(phis)] = 1
-        gpattern = gpattern.flatten()
-        return gpattern
-
-    @torch.no_grad()
-    def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
-        """Convert a onehot-encoded grid state into integer-valued cartesian coordinates
-
-        Args:
-            g (torch.Tensor): One-hot encoded grid state
-
-        Returns:
-            torch.Tensor: Tensor of coordinates, length equal to the dimensionality of the grid module in
-            `{0, 1, ..., \lambda_1 - 1} x {0, 1, ..., \lambda_2 - 1} x ... x {0, 1, ..., \lambda_d - 1}  `
-        """
-        reshaped = g.view(*self.shape).nonzero()
-        return reshaped
-
-    @torch.no_grad()
-    def grid_state_from_cartesian_coordinates_extended(
-        self, coordinates: torch.Tensor
-    ) -> torch.Tensor:
-        """Convert real-valued cartesian coordinates into a continuous grid state
-
-        Args:
-            coordinates (torch.Tensor): Coordinates in the range [0, \lambda_1) x ... x [0, \lambda_d) \subseteq \mathbb{R}^d
-
-        Returns:
-            torch.Tensor: A real grid state g in [0,1]^{\lambda_1 \cdot ... \cdot \lambda_d} where \sum_{i=1}^{\lambda_1 \cdot ... \cdot \lambda_d} g_i = 1
-        """
-        coordinates = torch.remainder(coordinates, torch.Tensor(self.shape).int())
-        floored = torch.floor(coordinates).int()
-        next_floored = torch.remainder(
-            coordinates + 1, torch.Tensor(self.shape).int()
-        ).int()
-        remainder = coordinates - floored
-        alpha = torch.einsum(
-            self.einsum_str, *torch.vstack([1 - remainder, remainder]).T
-        ).flatten()
-        indices = torch.cartesian_prod(*torch.vstack([floored, next_floored]).T)
-        # print("s:", indices)
-        # print(alpha)
-
-        state = torch.zeros_like(self.state)
-        for i, a in enumerate(alpha):
-            # print(indices[i])
-            state[tuple(indices[i])] = a
-        return state.flatten()
-
-    @torch.no_grad()
-    def cartesian_coordinates_from_grid_state_extended(
-        self, g: torch.Tensor
-    ) -> torch.Tensor:
-        """Convert a continuous grid state into real-valued cartesian coordinates. NOT WORKING YET
-
-        Args:
-            g (torch.Tensor): A continuous grid state in [0,1]^{\lambda_1 \cdot ... \cdot \lambda_d} where \sum_{i=1}^{\lambda_1 \cdot ... \cdot \lambda_d} g_i = 1
-
-        Returns:
-            torch.Tensor: Coordinates in the range [0, \lambda_1) x ... x [0, \lambda_d) \subseteq \mathbb{R}^d
-        """
-        raise NotImplemented
-        # sums = list()
-        # dims = range(len(self.shape))
-        # reshaped = g.reshape(*self.shape)
-
-        # for dim in dims:
-        #     sums.append(self.sum_marginal(dim, reshaped))
-
-        # coordinates = torch.zeros(len(self.shape))
-        # for i, l in enumerate(self.shape):
-        #     w = sums[i]
-        #     # print(f"w[{i}]", w)
-        #     coordinates[i] = circular_mean_2(torch.arange(l), w, l).item()
-
-        # return coordinates
+from grid_module import GridModule
 
 
 class GridHippocampalScaffold:
@@ -228,11 +19,10 @@ class GridHippocampalScaffold:
         N_h: int,
         sparse_matrix_initializer=None,
         relu_theta=0.5,
-        ratshift=False,
-        convolutional_shift=True,
         sanity_check=True,
         calculate_g_method="fast",
         smoothing=SoftmaxSmoothing(T=1e-3),
+        shift_method: Shift = None,
         device=None,
     ):
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
@@ -241,11 +31,13 @@ class GridHippocampalScaffold:
         self.shapes = torch.Tensor(shapes).int()
         """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
         self.relu_theta = relu_theta
-        self.ratshift = ratshift
-        self.convolutional_shift = convolutional_shift
+
+        if shift_method == None:
+            shift_method = RollShift(device)
+        self.shift_method = shift_method
+
         self.modules = [
-            GridModule(shape, device=device, ratshift=ratshift, smoothing=smoothing)
-            for shape in shapes
+            GridModule(shape, device=device, smoothing=smoothing) for shape in shapes
         ]
         """The list of grid modules in the scaffold."""
         # for module in self.modules:
@@ -471,67 +263,15 @@ class GridHippocampalScaffold:
         The length of `velocity` must be equal to the dimensionality of the grid modules.
         """
 
-        dims = len(self.shapes[0])
-        if self.convolutional_shift:
-            filters = [
-                generate_1d_gaussian_kernel(6, mu=-v, sigma=0.3, device=self.device)
-                for v in velocity
-            ]
-            all_recovered_marginals = []  # (dim x module)
-            prev_districtions = []
-            for dim in range(dims):
-                marginals = [module.get_marginal(dim) for module in self.modules]
-                v = self.expand_distribution(dim, marginals)
-                prev_districtions.append(v)
-                padded = torch.nn.functional.pad(
-                    v.unsqueeze(0),
-                    (len(filters[dim]) // 2, len(filters[dim]) // 2),
-                    mode="circular",
-                )
-                v = torch.nn.functional.conv1d(
-                    padded.unsqueeze(0),
-                    filters[dim].unsqueeze(0).unsqueeze(0),
-                    padding="valid",
-                ).squeeze()
-                # print("conv result:", v)
-                assert torch.isclose(v.sum(), torch.Tensor([1.0])), v.sum()
-
-
-                y = torch.zeros(size=tuple(self.shapes[:, dim]))
-                for i in range(len(v)):
-                    y[tuple(torch.remainder(i, self.shapes[:, dim]))] = v[i]
-                # print(y)
-
-                recovered_marginals = []
-                for d in range(len(self.shapes)):
-                    dims_to_sum = [i for i in range(len(self.shapes)) if not i == d]
-                    recovered = torch.sum(y, dims_to_sum)
-                    recovered /= torch.sum(recovered) # prevent losing mass
-                    assert torch.isclose(torch.sum(recovered), torch.Tensor([1.0])), torch.sum(recovered)
-                    recovered_marginals.append(recovered)
-                all_recovered_marginals.append(recovered_marginals)
-
-            for i, module in enumerate(self.modules):
-                marginals = [all_recovered_marginals[d][i] for d in range(dims)]
-                outered = outer(marginals)
-                module.state = outered
-            
-            # for dim in range(dims):
-            #     print(prev_districtions[dim])
-            #     print(self.expand_distribution(dim))
-            #     assert torch.all(torch.isclose(self.expand_distribution(dim), prev_districtions[dim]))
-
-        else:
-            for module in self.modules:
-                module.shift(velocity)
+        self.shift_method(self.modules, velocity)
 
         self.g = self._g()
 
     @torch.no_grad()
     def reset_g(self):
         """Reset the position of the scaffold to 0"""
-        coordinates = self.cartesian_coordinates_from_grid_state(self.g)
-        self.shift(-coordinates)
+        for module in self.modules:
+            module.zero()
 
     @torch.no_grad()
     def denoise(self, G: torch.Tensor) -> torch.Tensor:
@@ -566,39 +306,17 @@ class GridHippocampalScaffold:
         sums = torch.zeros(len(self.shapes[0]))
         for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in self.modules]
-            v = self.expand_distribution(dim, marginals)
-            mean = circular_mean(v * torch.arange(0, len(v)), len(v))
-            low = mean - k
-            high = mean + k
-            indices = torch.arange(torch.ceil(low - k), torch.floor(high + k) + 1).int()
+            v = expand_distribution(marginals)
+            mean = circular_mean(v * torch.arange(0, len(v)), len(v)) % len(v)
+            low = torch.ceil(mean - k)
+            high = torch.floor(mean + k)
+            indices = torch.arange(low, high + 1).int()
+            print(mean)
+            print(indices)
             sums[dim] = torch.sum(v[indices])
         return sums
 
-    def expand_distribution(self, dim, marginals):
-        l = torch.prod(self.shapes[:, dim])
-        tile_sizes = [l // module.shape[dim] for module in self.modules]
-        tiled = [
-            torch.tile(marginal, (tile_size,))
-            for marginal, tile_size in zip(marginals, tile_sizes)
-        ]
-        v = torch.ones_like(tiled[0])
-
-        for t in tiled:
-            v *= t
-
+    def expand_distribution(self, dim: int):
+        marginals = [module.get_marginal(dim) for module in self.modules]
+        v = expand_distribution(marginals)
         return v
-    
-    def condense_distribution(self, dim, p):
-        y = torch.zeros(size=tuple(self.shapes[:, dim]))
-        for i in range(len(p)):
-            y[tuple(torch.remainder(i, self.shapes[:, dim]))] = p[i]
-
-        recovered_marginals = []
-        for d in range(len(self.shapes)):
-            dims_to_sum = [i for i in range(len(self.shapes)) if not i == d]
-            recovered = torch.sum(y, dims_to_sum)
-            recovered /= torch.sum(recovered) # prevent losing mass
-            assert torch.isclose(torch.sum(recovered), torch.Tensor([1.0])), torch.sum(recovered)
-            recovered_marginals.append(recovered)
-        
-        return recovered_marginals

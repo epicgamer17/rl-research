@@ -77,7 +77,6 @@ def circular_mean(points: torch.Tensor, grid_size: int):
     return Arg * grid_size / (2 * torch.pi)
 
 
-
 def softmax_2d(x: torch.Tensor):
     """
     Computes the softmax of a 2d tensor
@@ -474,3 +473,37 @@ def generate_1d_gaussian_kernel(radius, mu=0, sigma=1, device=None):
     high = (x - mu + 0.5) / (sigma * 2**0.5)
     w = 0.5 * (scipy.special.erf(high) - scipy.special.erf(low))
     return w
+
+
+def expand_distribution(marginals: list[torch.Tensor]):
+    l = 1
+    for marginal in marginals:
+        l *= len(marginal)
+
+    tile_sizes = [l // len(marginal) for marginal in marginals]
+    tiled = [
+        torch.tile(marginal, (tile_size,))
+        for marginal, tile_size in zip(marginals, tile_sizes)
+    ]
+    v = torch.ones_like(tiled[0])
+
+    for t in tiled:
+        v *= t
+
+    return v
+
+
+def condense_distribution(marginal_lengths: list[int], p: torch.Tensor):
+    y = torch.zeros(size=tuple(marginal_lengths))
+    divisor = torch.Tensor(marginal_lengths).int()
+    for i in range(len(p)):
+        index = tuple(torch.remainder(i, divisor))
+        y[index] = p[i]
+
+    recovered_marginals = []
+    for m in range(len(marginal_lengths)):
+        dims_to_sum = [i for i in range(len(marginal_lengths)) if not i == m]
+        recovered = torch.sum(y, dims_to_sum)
+        recovered_marginals.append(recovered)
+
+    return recovered_marginals
