@@ -9,3 +9,4 @@
 *.dill
 *.pkl
 **/checkpoints/
+*.DS_Store

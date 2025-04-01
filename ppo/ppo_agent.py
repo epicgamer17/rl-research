@@ -9,19 +9,18 @@ from agent_configs import PPOConfig
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
-from utils import (
-    normalize_policy,
-    action_mask,
-    get_legal_moves,
-    update_linear_lr_schedule,
-)
-from utils.utils import clip_low_prob_actions, normalize_policies
-
 sys.path.append("../")
+
+
+from utils.utils import clip_low_prob_actions, normalize_policies, update_linear_schedule, get_legal_moves, action_mask
+
 
 import datetime
 from ppo.ppo_network import Network
 from replay_buffers.base_replay_buffer import BasePPOReplayBuffer
+from experiments.actor_critic_memory.acm_memory import MMbuffer
+from experiments.actor_critic_memory.ACMconfig import Buffconfig, MHABconfig
+from experiments.actor_critic_memory.acm_network import MHA
 from base_agent.agent import BaseAgent
 
 
@@ -42,14 +41,25 @@ class PPOAgent(BaseAgent):
             # )
         ),
         from_checkpoint=False,
+        Buffconfig=None,
+        MHAconfig=None
     ):
         super(PPOAgent, self).__init__(env, config, name, device=device, from_checkpoint=from_checkpoint)
+        print("NUM actions", self.num_actions)
         self.model = Network(
             config=config,
+            MHABconfig=MHAconfig,
             output_size=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=(1, 8),
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
         )
+
+        self.Buffconfig = Buffconfig
+        self.MHAconfig = MHAconfig
+        if self.Buffconfig is not None:
+            self.MBuff = MMbuffer(
+                buffer_size=Buffconfig.buffer_size
+            )
 
         if self.config.actor.optimizer == Adam:
             self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
@@ -123,13 +133,22 @@ class PPOAgent(BaseAgent):
         self.actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
         self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
 
-    def predict(self, state, info: dict = None, mask_actions: bool = True):
+    def predict(self, state, info: dict = None, mask_actions: bool = True, env=None):
         assert info is not None if mask_actions else True, "Need info to mask actions"
-        state_input = self.preprocess(state)
+        # print("State shape", state.shape)
+        # print("State:", state)
+        # print("MHABpreprocess shape", self.MHABpreprocess(state).shape)
+        # print("MHABpreprocess:", self.MHABpreprocess(state))
+        if self.MHAconfig is not None:
+            state_input = self.MHABpreprocess(state).unsqueeze(0)
         value = self.model.critic(inputs=state_input)
+        # print("State input shape", state_input.shape)
+        # print("State input:", state_input)
         if self.discrete_action_space:
             policy = self.model.actor(inputs=state_input)[0]
-            if mask_actions:
+            # print("POLICY SHAPE", policy.shape)
+            # print("POLICY", policy)
+            if False:
                 legal_moves = get_legal_moves(info)
                 policy = action_mask(
                     policy, legal_moves, mask_value=0, device=self.device
@@ -160,10 +179,13 @@ class PPOAgent(BaseAgent):
         assert info is not None if mask_actions else True, "Need info to mask actions"
         # print("Training Actor")
         inputs = inputs.to(self.device)
+        if self.MHAconfig is not None:
+            inputs = self.MHABpreprocess(inputs)
         actions = actions.to(self.device)
         log_probabilities = log_probabilities.to(self.device)
         advantages = advantages.to(self.device)
-
+        print("INPUTS SHAPE", inputs.shape)
+        print("INPUTS", inputs)
         if self.discrete_action_space:
             probabilities = self.model.actor(inputs)
             if mask_actions:
@@ -203,8 +225,11 @@ class PPOAgent(BaseAgent):
 
         entropy_loss = distribution.entropy().mean()
         actor_loss = actor_loss - (self.config.entropy_coefficient * entropy_loss)
+
         self.actor_optimizer.zero_grad()
-        actor_loss.backward()
+        actor_loss.backward(retain_graph=True)
+        if self.MHAconfig is not None:
+            self.model.MHA.learn(actor_loss)
         if self.config.actor.clipnorm > 0:
             clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
 
@@ -221,21 +246,47 @@ class PPOAgent(BaseAgent):
 
         return approx_kl.detach()
 
+    def MHABpreprocess(self, state):
+        """
+        Preprocess the state"
+        """
+        # Normalize the state
+        preprocessedstate = self.preprocess(state)
+        # Get history from memory buffer
+        if len(self.MBuff) > 0:
+            history = self.MBuff.getmemories()
+            # print("History", history)            
+            history = torch.cat(history, dim=0)
+            # print("History", history)
+            history = history.view(-1, 12)
+            # print("History", history)
+            # print("History shape", history.shape)
+            # print("Preprocessed state", preprocessedstate)
+            # print("Preprocessed state shape", preprocessedstate.shape)
+
+            augmented_state = self.model.MHA(preprocessedstate, history)
+        else:
+            history = torch.zeros(12).to(self.device)
+            history = history.view(-1, 12)
+            augmented_state = self.model.MHA(preprocessedstate, history)
+        return augmented_state
+
     def critic_learn(self, inputs, returns):
         inputs = inputs.to(self.device)
+        if self.MHAconfig is not None:
+            inputs = self.MHABpreprocess(inputs)
         returns = returns.to(self.device)
 
         critic_loss = (
             self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
         ).mean()
-
         print("critic loss", critic_loss)
         print(critic_loss.requires_grad)
         self.critic_optimizer.zero_grad()
-        critic_loss.backward()
+        critic_loss.backward(retain_graph=False)
         if self.config.critic.clipnorm > 0:
             clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
-
+        # self.model.MHA.learn(critic_loss)
         self.critic_optimizer.step()
         return critic_loss.detach()
 
@@ -246,7 +297,7 @@ class PPOAgent(BaseAgent):
         log_probabilities = torch.from_numpy(samples["log_probabilities"])
         advantages = torch.from_numpy(samples["advantages"])
         returns = torch.from_numpy(samples["returns"])
-        infos = torch.from_numpy(samples["infos"])
+        infos = samples["infos"]
         inputs = self.preprocess(observations)
 
         indices = torch.randperm(len(observations))
@@ -262,9 +313,9 @@ class PPOAgent(BaseAgent):
         for iteration in range(self.config.train_policy_iterations):
             # actor_scheduler.step()
             # print(actor_scheduler.get_last_lr())
-            self.actor_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
+            self.actor_optimizer.param_groups[0]["lr"] = update_linear_schedule(
                 self.config.actor.learning_rate,
-                0,
+                10000,
                 self.config.train_policy_iterations,
                 iteration,
             )
@@ -284,9 +335,9 @@ class PPOAgent(BaseAgent):
                     batch_info,
                 )
                 self.stats["actor_loss"].append(kl_divergence)
-            if kl_divergence > 1.5 * self.config.target_kl:
-                print("Early stopping at iteration {}".format(iteration))
-                break
+            # if kl_divergence > 1.5 * self.config.target_kl:
+            #     print("Early stopping at iteration {}".format(iteration))
+            #     break
             # kl_divergence = self.train_actor(
             #     inputs, actions, log_probabilities, advantages, learning_rate
             # )
@@ -303,9 +354,9 @@ class PPOAgent(BaseAgent):
         for iteration in range(self.config.train_value_iterations):
             # critic_scheduler.step()
             # print(critic_scheduler.get_last_lr())
-            self.critic_optimizer.param_groups[0]["lr"] = update_linear_lr_schedule(
+            self.critic_optimizer.param_groups[0]["lr"] = update_linear_schedule(
                 self.config.critic.learning_rate,
-                0,
+                10000,
                 self.config.train_value_iterations,
                 iteration,
             )
@@ -350,6 +401,7 @@ class PPOAgent(BaseAgent):
                     self.replay_buffer.store(
                         state, info, action, value, log_probability, reward
                     )
+                    self.MBuff.add(torch.from_numpy(state), torch.tensor(action), torch.tensor(reward), torch.tensor(next_state), torch.tensor(log_probability), torch.tensor(0 if (terminated or truncated) else 1))
 
                     done = terminated or truncated
                     state = next_state
@@ -358,7 +410,7 @@ class PPOAgent(BaseAgent):
 
                     if done or timestep == self.config.steps_per_epoch - 1:
                         last_value = (
-                            0 if done else self.model.critic(self.preprocess(next_state))
+                            0 if done else self.model.critic(self.MHABpreprocess(next_state))
                         )
                         self.replay_buffer.finish_trajectory(last_value)
                         num_episodes += 1

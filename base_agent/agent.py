@@ -42,7 +42,6 @@ class BaseAgent:
     ):
         if from_checkpoint:
             self.from_checkpoint = True
-
         self.model: Module = None
         self.optimizer: Optimizer = None
         self.model_name = name
