@@ -1,3 +1,4 @@
+import scipy.special
 import torch
 from functools import reduce
 from scipy.stats import norm
@@ -74,31 +75,6 @@ def circular_mean(points: torch.Tensor, grid_size: int):
 
     # rescale to [0, grid_size)
     return Arg * grid_size / (2 * torch.pi)
-
-
-def circular_mean_2(samples: torch.Tensor, weights: torch.Tensor, high=2 * pi):
-    modified = torch.where(samples > high / 2, samples - high, samples)
-    weighted = modified * weights / weights.sum()
-    indices = weighted.nonzero()
-    if len(indices) == 0:
-        return torch.zeros(1)
-    mean = torch.mean(weighted[indices])
-    ret = torch.where(mean > 0, mean, mean + high)
-
-    # print(
-    #     f"""
-    #      samples: {samples} 
-    #      weights: {weights} 
-    #      modified: {modified}
-    #      weighted: {modified * weights / weights.sum()}
-    #      indices: {weighted.nonzero()}
-    #      weighted_nonzero: {weighted[weighted.nonzero()]}
-    #      mean: {mean}
-    #      ret: {ret}
-          
-    #       """
-    # )
-    return ret
 
 
 def softmax_2d(x: torch.Tensor):
@@ -475,3 +451,59 @@ def calculate_theoretical_capacity(shapes, N_h, input_size):
         N_g += l
 
     return N_g * N_h / input_size
+
+
+def outer(tensors):
+    einsum_indices = [chr(ord("a") + i) for i in range(len(tensors))]  # a, b, c, ...
+
+    einsum_str = (
+        ",".join(einsum_indices) + "->" + "".join(einsum_indices)
+    )  # a,b,c, ...->abc...
+
+    return torch.einsum(einsum_str, *tensors)
+
+
+def generate_1d_gaussian_kernel(radius, mu=0, sigma=1, device=None):
+    """
+    Genereate a 1-D Gaussian convolution kernel.
+    """
+    x = torch.arange(-radius, radius + 1, device=device)
+
+    low = (x - mu - 0.5) / (sigma * 2**0.5)
+    high = (x - mu + 0.5) / (sigma * 2**0.5)
+    w = 0.5 * (scipy.special.erf(high) - scipy.special.erf(low))
+    return w
+
+
+def expand_distribution(marginals: list[torch.Tensor]):
+    l = 1
+    for marginal in marginals:
+        l *= len(marginal)
+
+    tile_sizes = [l // len(marginal) for marginal in marginals]
+    tiled = [
+        torch.tile(marginal, (tile_size,))
+        for marginal, tile_size in zip(marginals, tile_sizes)
+    ]
+    v = torch.ones_like(tiled[0])
+
+    for t in tiled:
+        v *= t
+
+    return v
+
+
+def condense_distribution(marginal_lengths: list[int], p: torch.Tensor):
+    y = torch.zeros(size=tuple(marginal_lengths))
+    divisor = torch.Tensor(marginal_lengths).int()
+    for i in range(len(p)):
+        index = tuple(torch.remainder(i, divisor))
+        y[index] = p[i]
+
+    recovered_marginals = []
+    for m in range(len(marginal_lengths)):
+        dims_to_sum = [i for i in range(len(marginal_lengths)) if not i == m]
+        recovered = torch.sum(y, dims_to_sum)
+        recovered_marginals.append(recovered)
+
+    return recovered_marginals
