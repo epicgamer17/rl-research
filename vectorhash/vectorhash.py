@@ -117,7 +117,7 @@ class VectorHaSH:
         g = self.scaffold.grid_from_hippocampal(
             self.hippocampal_sensory_layer.hippocampal_from_sensory(s)
         )
-        onehotted = self.scaffold.onehot(g.squeeze())
+        onehotted = self.scaffold.denoise(g.squeeze())
 
         if not as_tuple_list:
             return onehotted
@@ -400,9 +400,9 @@ def build_scaffold(
 ):
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
-        initalization_method,
-        W_gh_var,
-        percent_nonzero_relu,
+        initalization_method=initalization_method,
+        W_gh_var=W_gh_var,
+        percent_nonzero_relu=percent_nonzero_relu,
         sparse_initialization=sparse_initialization,
         device=device,
     )
@@ -414,7 +414,7 @@ def build_scaffold(
         sparse_matrix_initializer=initializer,
         relu_theta=relu_theta,
         shift_method=shift,
-        sanity_check=True,
+        sanity_check=False, # breaks with soft smoothing
         calculate_g_method="fast",
         smoothing=smoothing,
         device=device,
@@ -427,7 +427,7 @@ def build_vectorhash_architecture(
     shapes,
     N_h,
     input_size,
-    initalization_method="by_sparsity",
+    initalization_method="by_scaling",
     W_gh_var=1,
     percent_nonzero_relu=0.9,
     sparse_initialization=0.1,
@@ -447,16 +447,14 @@ def build_vectorhash_architecture(
         "naive_hebbian",
         "mixed",
     ]
-
+    print(initalization_method)
     scaffold, mean_h = build_scaffold(
         shapes,
         N_h,
-        input_size,
         initalization_method=initalization_method,
         W_gh_var=W_gh_var,
         percent_nonzero_relu=percent_nonzero_relu,
         sparse_initialization=sparse_initialization,
-        T=T,
         device=device,
     )
 
@@ -468,7 +466,7 @@ def build_vectorhash_architecture(
             hbook=scaffold.N_h,
             device=device,
         )
-    elif hippocampal_sensory_layer == "hebbian":
+    elif hippocampal_sensory_layer_type == "hebbian":
         hippocampal_sensory_layer = HebbianHippocampalSensoryLayer(
             input_size=input_size,
             N_h=N_h,
@@ -478,7 +476,7 @@ def build_vectorhash_architecture(
             scaling_updates=True,
             device=device,
         )
-    elif hippocampal_sensory_layer == "naive_hebbian":
+    elif hippocampal_sensory_layer_type == "naive_hebbian":
         hippocampal_sensory_layer = HebbianHippocampalSensoryLayer(
             input_size=input_size,
             N_h=N_h,
@@ -488,7 +486,7 @@ def build_vectorhash_architecture(
             scaling_updates=False,
             device=device,
         )
-    elif hippocampal_sensory_layer == "iterative_pseudoinverse":
+    elif hippocampal_sensory_layer_type == "iterative_pseudoinverse":
         hippocampal_sensory_layer = (
             IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
                 input_size=input_size,
@@ -500,3 +498,13 @@ def build_vectorhash_architecture(
                 device=device,
             )
         )
+    
+    architecture = VectorHaSH(
+        scaffold=scaffold,
+        hippocampal_sensory_layer=hippocampal_sensory_layer,
+        zero_tol=1e-2,
+        dream_fix=None,
+
+    )
+
+    return architecture

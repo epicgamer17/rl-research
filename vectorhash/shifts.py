@@ -28,7 +28,7 @@ class RollShift(Shift):
             module.state = torch.roll(
                 module.state,
                 tuple([v_[i].item() for i in range(len(v_))]),
-                dims=tuple(i for i in range(len(self.shape))),
+                dims=tuple(i for i in range(len(module.shape))),
             )
 
 

@@ -86,7 +86,7 @@ def load_prepare_mnist_data(
     use_fix=False,
 ):
     dataset = load_mnist_dataset()
-    return prepare_image_data(
+    return prepare_data(
         dataset,
         num_imgs=num_imgs,
         preprocess_sensory=preprocess_sensory,

@@ -214,7 +214,7 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
         else:
             return torch.relu(
                 S @ self.W_hs.T
-            )  # to relu or not to relu, that is the question.
+            )  # to relu or not to relu, that is the question. HAHAHA nice one ezra
 
 
 class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
