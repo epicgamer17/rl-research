@@ -24,9 +24,10 @@ class GridHippocampalScaffold:
         smoothing=SoftmaxSmoothing(T=1e-3),
         shift_method: Shift = None,
         device=None,
+        relu=True,
     ):
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
-
+        self.relu=relu
         self.device = device
         self.shapes = torch.Tensor(shapes).int()
         """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
@@ -226,7 +227,10 @@ class GridHippocampalScaffold:
         """
         if G.ndim == 1:
             G = G.unsqueeze(0)
-        return torch.relu(G @ self.W_hg.T - self.relu_theta)
+        if self.relu:
+            return torch.relu(G @ self.W_hg.T - self.relu_theta)
+        else:
+            return (G @ self.W_hg.T - self.relu_theta)
 
     @torch.no_grad()
     def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:

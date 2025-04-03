@@ -11,11 +11,13 @@ class VectorHaSH:
         hippocampal_sensory_layer: HippocampalSensoryLayer,
         zero_tol=1e-2,
         dream_fix=False,
+        self_certainty=None,
     ):
         self.scaffold = scaffold
         self.hippocampal_sensory_layer = hippocampal_sensory_layer
         self.zero_tol = zero_tol
         self.dream_fix = dream_fix
+        self.certainty = self_certainty
 
     @torch.no_grad()
     def store_memory(self, s: torch.Tensor, debug=True):
@@ -333,6 +335,16 @@ class VectorHaSH:
         # }
         # plot_recall_info(info)
         return S_
+    
+    @torch.no_grad()
+    def main_loop(self, time_step_length, odometry, observation, k=1):
+        dx, dy, dtheta = odometry
+        self.scaffold.shift(self.scaffold.modules, (dx,dy,dtheta)) # integrate time_step_length in ratshift
+        certainty = self.scaffold.estimate_certainty(k=k)
+        if certainty >= self.certainty:
+            self.store_memory(observation)
+        else:
+            print("Certainty not high enough, not storing memory.")
 
 
 import math
@@ -397,6 +409,7 @@ def build_scaffold(
     smoothing=SoftmaxSmoothing(T=1e-3),
     shift="roll",
     device=None,
+    relu=False,
 ):
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
@@ -418,6 +431,7 @@ def build_scaffold(
         calculate_g_method="fast",
         smoothing=smoothing,
         device=device,
+        relu=relu,
     )
 
     return scaffold, mean_h
@@ -434,10 +448,11 @@ def build_vectorhash_architecture(
     T=1e-3,
     device=None,
     hippocampal_sensory_layer_type="iterative_pseudoinverse",
-    hidden_layer_factor=3,
+    hidden_layer_factor=1,
     stationary=True,
     epsilon_hs=1,
     epsilon_sh=1,
+    relu=False,
 ):
     assert initalization_method in ["by_scaling", "by_sparsity"]
     assert hippocampal_sensory_layer_type in [
@@ -456,6 +471,7 @@ def build_vectorhash_architecture(
         percent_nonzero_relu=percent_nonzero_relu,
         sparse_initialization=sparse_initialization,
         device=device,
+        relu=relu,
     )
 
     if hippocampal_sensory_layer_type == "exact_pseudoinverse":
@@ -496,6 +512,7 @@ def build_vectorhash_architecture(
                 epsilon_hs=epsilon_hs,
                 epsilon_sh=epsilon_sh,
                 device=device,
+                relu=relu,
             )
         )
     

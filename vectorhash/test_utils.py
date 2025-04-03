@@ -4,6 +4,8 @@ from vectorhash import (
     GridHippocampalScaffold,
     ExactPseudoInverseHippocampalSensoryLayer,
     IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
+    VectorHaSH,
+    build_vectorhash_architecture,
 )
 from hippocampal_sensory_layers import *
 from smoothing import ArgmaxSmoothing, SoftmaxSmoothing, PolynomialSmoothing
@@ -63,6 +65,7 @@ def dynamics_patts(
     N_iter,
     N_patts,
     sign_output=False,
+    relu=False,
 ):
     s_noisy = s_noisy[:N_patts]
     h_in_original = sensory_hippocampal_layer.hippocampal_from_sensory(s_noisy)
@@ -89,80 +92,68 @@ def dynamics_patts(
 
 
 def capacity_test(
-    shapes,
-    N_h,
     sbook: torch.Tensor,
     Npatts_list,
     nruns,
     device,
-    pseudoinverse_method="exact",
     sign_output=False,
-    smoothing_method="argmax",
-    T=1e-3,
+    shapes=[(3,3), (5,5), (7,7)],
+    N_h=1000,
+    input_size=784,
+    initalization_method="by_scaling",
+    W_gh_var=1,
+    percent_nonzero_relu=0.7,
+    sparse_initialization=0.1,
+    T=1e-6,
+    hippocampal_sensory_layer_type="iterative_pseudoinverse",
+    hidden_layer_factor=1,
+    stationary=True,
+    epsilon_hs=0.1,
+    epsilon_sh=0.1,
+    relu=False
 ):
-    assert pseudoinverse_method in ["exact", "iterative"]
-    assert smoothing_method in ["argmax", "softmax", "polynomial"]
+    
+    model = build_vectorhash_architecture(
+        shapes=shapes,
+        N_h=N_h,
+        input_size=input_size,
+        initalization_method=initalization_method,
+        W_gh_var=W_gh_var,
+        percent_nonzero_relu=percent_nonzero_relu,
+        sparse_initialization=sparse_initialization,
+        T=T,
+        device=device,
+        hippocampal_sensory_layer_type=hippocampal_sensory_layer_type,
+        hidden_layer_factor=hidden_layer_factor,
+        stationary=stationary,
+        epsilon_hs=epsilon_hs,
+        epsilon_sh=epsilon_sh,
+        relu=relu
+    )
 
     err_h_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
 
-    initializer, _, _ = build_initializer(
-        shapes, sparse_initialization=0.4, device=device
-    )
 
-    if smoothing_method == "argmax":
-        smoothing = ArgmaxSmoothing()
-    elif smoothing_method == "softmax":
-        smoothing = SoftmaxSmoothing(T)
-    elif smoothing_method == "polynomial":
-        smoothing = PolynomialSmoothing(2)
 
     for k in tqdm(range(len(Npatts_list))):
         Npatts = Npatts_list[k]
-        scaffold = GridHippocampalScaffold(
-            shapes=shapes,
-            N_h=N_h,
-            sanity_check=False,
-            device=device,
-            sparse_matrix_initializer=initializer,
-            relu_theta=0.5,
-            smoothing=smoothing,
-        )
-        if pseudoinverse_method == "exact":
-            sensory_hippocampal_layer = ExactPseudoInverseHippocampalSensoryLayer(
-                input_size=sbook.shape[1],
-                N_h=scaffold.N_h,
-                N_patts=scaffold.N_patts,
-                hbook=scaffold.H[:Npatts],
-                device=device,
-            )
-            sensory_hippocampal_layer.learn_batch(sbook[:Npatts])
-        elif pseudoinverse_method == "iterative":
-            sensory_hippocampal_layer = (
-                IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
-                    input_size=sbook.shape[1],
-                    N_h=scaffold.N_h,
-                    hidden_layer_factor=1,
-                    epsilon_hs=0.1,
-                    epsilon_sh=0.1,
-                    device=device,
-                )
-            )
-            for j in tqdm(range(Npatts)):
-                sensory_hippocampal_layer.learn(scaffold.H[j], sbook[j])
+        for j in tqdm(range(Npatts)):
+            model.hippocampal_sensory_layer.learn(model.scaffold.H[j], sbook[j])
 
         for r in range(nruns):
             sbook_noisy = sbook  # corrupt_p_1(sbook)[:Npatts]
             err_h_l2[k, r], err_s_l2[k, r], err_s_l1[k, r] = dynamics_patts(
-                scaffold,
-                sensory_hippocampal_layer,
+                model.scaffold,
+                model.hippocampal_sensory_layer,
                 sbook,
                 sbook_noisy,
-                scaffold.H,
+                model.scaffold.H,
                 1,
                 Npatts,
                 sign_output=sign_output,
+                relu=relu,
             )
 
     return err_h_l2, err_s_l2, err_s_l1
