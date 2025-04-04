@@ -10,6 +10,7 @@ from vectorhash_functions import (
 )
 from tqdm import tqdm
 from grid_module import GridModule
+from smoothing import ArgmaxSmoothing
 
 
 class GridHippocampalScaffold:
@@ -326,3 +327,17 @@ class GridHippocampalScaffold:
         marginals = [module.get_marginal(dim) for module in self.modules]
         v = expand_distribution(marginals)
         return v
+
+    def get_onehot(self):
+        smoothing = ArgmaxSmoothing()
+        pos = 0
+        onehotted = torch.zeros_like(self.g)
+        for module in self.modules:
+            x = self.g[:, pos : pos + module.l]
+            x_onehot = smoothing(x.unsqueeze(0)).squeeze()
+            # print(x)
+            # print(x_denoised)
+            onehotted[:, pos : pos + module.l] = x_onehot
+            pos += module.l
+
+        return onehotted
