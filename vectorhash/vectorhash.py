@@ -247,14 +247,16 @@ class VectorHaSH:
             self.store_memory(observations[i], debug=False)
 
     @torch.no_grad()
-    def learn(self, observation, velocity):
+    def learn(self, observation, velocity=None):
         """Add a memory to the memory scaffold and shift the grid coding state by a given velocity.
 
         observation shape: `(input_size)`
         velocity shape: `(D)` where `D` is the dimensionality of the grid modules.
         """
+
         self.store_memory(observation)
-        self.scaffold.shift(velocity)
+        if velocity:
+            self.scaffold.shift(velocity)
 
     @torch.no_grad()
     def recall(self, observations) -> torch.Tensor:
