@@ -65,7 +65,6 @@ def dynamics_patts(
     N_iter,
     N_patts,
     sign_output=False,
-    relu=False,
 ):
     s_noisy = s_noisy[:N_patts]
     h_in_original = sensory_hippocampal_layer.hippocampal_from_sensory(s_noisy)
@@ -110,7 +109,8 @@ def capacity_test(
     stationary=True,
     epsilon_hs=0.1,
     epsilon_sh=0.1,
-    relu=False
+    relu=False,
+    smoothing_method=SoftmaxSmoothing(T=1e-6),
 ):
     
     model = build_vectorhash_architecture(
@@ -128,7 +128,8 @@ def capacity_test(
         stationary=stationary,
         epsilon_hs=epsilon_hs,
         epsilon_sh=epsilon_sh,
-        relu=relu
+        relu=relu,
+        smoothing=smoothing_method,
     )
 
     err_h_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
@@ -150,7 +151,7 @@ def capacity_test(
                 sbook,
                 sbook_noisy,
                 model.scaffold.H,
-                1,
+                nruns,
                 Npatts,
                 sign_output=sign_output,
                 relu=relu,
@@ -166,12 +167,20 @@ def capacity1(
     nruns,
     sbook,
     device,
-    pseudoinverse_method="exact",
+    init_method="by_scaling",
+    W_gh_var=1,
+    percent_nonzero_relu=0.7,
+    sparse_initialization=0.1,
+    T=1e-6,
+    hippocampal_sensory_layer_type="iterative_pseudoinverse",
+    hidden_layer_factor=1,
+    stationary=True,
+    epsilon_hs=0.1,
+    epsilon_sh=0.1,
+    relu=False,
     sign_output=False,
-    smoothing_method="argmax",
+    smoothing_method=SoftmaxSmoothing(T=1e-6),
 ):
-    assert pseudoinverse_method in ["exact", "iterative"]
-    assert smoothing_method in ["argmax", "softmax", "polynomial"]
     
     err_h_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
@@ -181,14 +190,24 @@ def capacity1(
 
     for l, Np in enumerate(Np_lst):
         err_h_l2[l], err_s_l2[l], err_s_l1[l] = capacity_test(
-            shapes,
-            Np,
-            sbook_torch,
-            Npatts_lst,
-            nruns,
-            device,
-            pseudoinverse_method=pseudoinverse_method,
+            N_h=Np,
+            sbook=sbook_torch,
+            Npatts_list=Npatts_lst,
+            nruns=nruns,
+            device=device,
             sign_output=sign_output,
+            shapes=shapes,
+            input_size=sbook_torch.shape[0],
+            initalization_method=init_method,
+            W_gh_var=W_gh_var,
+            percent_nonzero_relu=percent_nonzero_relu,
+            T=T,
+            hippocampal_sensory_layer_type=hippocampal_sensory_layer_type,
+            hidden_layer_factor=hidden_layer_factor,
+            stationary=stationary,
+            epsilon_hs=epsilon_hs,
+            epsilon_sh=epsilon_sh,
+            relu=relu,
             smoothing_method=smoothing_method,
         )
 

@@ -455,6 +455,7 @@ def build_vectorhash_architecture(
     epsilon_hs=1,
     epsilon_sh=1,
     relu=False,
+    smoothing=SoftmaxSmoothing(T=1e-6),
 ):
     assert initalization_method in ["by_scaling", "by_sparsity"]
     assert hippocampal_sensory_layer_type in [
@@ -474,6 +475,7 @@ def build_vectorhash_architecture(
         sparse_initialization=sparse_initialization,
         device=device,
         relu=relu,
+        smoothing=smoothing,
     )
 
     if hippocampal_sensory_layer_type == "exact_pseudoinverse":
