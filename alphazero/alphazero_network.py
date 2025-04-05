@@ -1,5 +1,5 @@
 from typing import Callable, Tuple
-from agent_configs.alphazero_config import AlphaZeroConfig
+from agent_configs import AlphaZeroConfig
 from torch import nn, Tensor
 from utils.utils import to_lists
 
