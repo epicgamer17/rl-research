@@ -117,11 +117,11 @@ class AnimalAIVectorhashAgent:
         coordinates = torch.zeros(3, device=self.vectorhash.scaffold.device)
         coordinates[0] = (
             self.animal_ai_data["exact_position"][0]
-            + self.animal_ai_data["start_position"][0]
+            - self.animal_ai_data["start_position"][0]
         )
         coordinates[1] = (
             self.animal_ai_data["exact_position"][1]
-            + self.animal_ai_data["start_position"][1]
+            - self.animal_ai_data["start_position"][1]
         )
         coordinates[2] = (
             self.animal_ai_data["exact_angle"] + self.animal_ai_data["start_angle"]
