@@ -62,13 +62,21 @@ class AnimalAIVectorhashAgent:
     def step(self, action):
         """
         0 - nothing
+
         1 - rotate right by 6 degrees
+        
         2 - rotate left by 6 degrees
+
         3 - accelerate forward
+
         4 - accelerate forward and rotate CW by 6 degrees
+
         5 - accelerate forward and rotate CCW by 6 degrees
+
         6 - accelerate backward
+
         7 - accelerate backward and rotate CW by 6 degrees
+
         8 - accelerate backward and rotate CCW by 6 degrees
         """
         obs, reward, done, info = self.env.step(action)
@@ -90,7 +98,7 @@ class AnimalAIVectorhashAgent:
 
         certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
         if torch.all(certainty >= self.vectorhash.certainty):
-            self.vectorhash.store_memory(image)
+            self.vectorhash.store_memory(image.flatten())
         else:
             print(
                 f"Certainty {certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
