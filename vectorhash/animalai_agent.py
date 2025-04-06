@@ -22,7 +22,8 @@ class AnimalAIVectorhashAgent:
         self.device = self.vectorhash.scaffold.device
 
         obs, info = self.env.reset()
-        image, p, v = self.postprocess_obs(obs)
+        image = self.postprocess_image(obs)
+        p, v = self.postprocess_health_pos_vel(info)
 
         self.animal_ai_data = {
             "exact_angle": 0,
@@ -31,33 +32,45 @@ class AnimalAIVectorhashAgent:
             "start_angle": 0,
         }
 
-        self.vectorhash.store_memory()
+        print(image.shape)
+        print(image.flatten().shape)
 
-    def postprocess_obs(self, obs):
-        image = obs[0]
-        health, velocity, position = obs[1][1], obs[1][1:4], obs[1][4:7]
+        self.vectorhash.store_memory(image.flatten())
+    
+    def postprocess_image(self, image):
+        grayscale_img = color.rgb2gray(image)
+        torch_img = torch.from_numpy(grayscale_img)
+        return torch_img
+    
+    def postprocess_health_pos_vel(self, data):
+        health, velocity, position = data[1], data[1:4], data[4:7]
         p_x, p_y, p_z = (
             position  # x,z dimensions are typical forward/back/left/right, y dimension is up/down
         )
         v_x, v_y, v_z = velocity
 
-        p = np.array([p_x, p_z])
-        v = np.array([v_x, v_z])
+        p = torch.Tensor([p_x, p_z], device=self.device)
+        v = torch.Tensor([v_x, v_z], device=self.device)
 
-        grayscale_img = color.rgb2gray(image)
-        torch_img = torch.from_numpy(grayscale_img)
-        return torch_img, p, v
+        return p,v
+
+    def postprocess_obs(self, obs):
+        image = self.postprocess_image(obs[0])
+        p,v = self.postprocess_health_pos_vel(obs[1])
+        return image, p, v
 
     def step(self, action):
-        # 0 - nothing
-        # 1 - rotate right by 6 degrees
-        # 2 - rotate left by 6 degrees
-        # 3 - accelerate forward
-        # 4 - accelerate forward and rotate CW by 6 degrees
-        # 5 - accelerate forward and rotate CCW by 6 degrees
-        # 6 - accelerate backward
-        # 7 - accelerate backward and rotate CW by 6 degrees
-        # 8 - accelerate backward and rotate CCW by 6 degrees
+        """
+        0 - nothing
+        1 - rotate right by 6 degrees
+        2 - rotate left by 6 degrees
+        3 - accelerate forward
+        4 - accelerate forward and rotate CW by 6 degrees
+        5 - accelerate forward and rotate CCW by 6 degrees
+        6 - accelerate backward
+        7 - accelerate backward and rotate CW by 6 degrees
+        8 - accelerate backward and rotate CCW by 6 degrees
+        """
         obs, reward, done, info = self.env.step(action)
         image, p, v = self.postprocess_obs(obs)
 
@@ -76,11 +89,11 @@ class AnimalAIVectorhashAgent:
         )
 
         certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
-        if certainty >= self.vectorhash.certainty:
+        if torch.all(certainty >= self.vectorhash.certainty):
             self.vectorhash.store_memory(image)
         else:
             print(
-                f"Certainty {certainty.round(2)}<{self.vectorhash.certainty}, not storing memory."
+                f"Certainty {certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
             )
 
         # obs (84x84x3), in [0,1]
