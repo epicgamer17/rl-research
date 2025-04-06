@@ -1,10 +1,10 @@
 import os
 import pathlib
 import matplotlib.pyplot as plt
-from nd_scaffold import GridScaffold
+from clean_scaffold import GridHippocampalScaffold
 
 
-def graph_scaffold(g: GridScaffold, dir=None):
+def graph_scaffold(g: GridHippocampalScaffold, dir=None):
     if dir is not None:
         os.makedirs(dir, exist_ok=True)
         base_path = dir
@@ -55,7 +55,7 @@ def graph_scaffold(g: GridScaffold, dir=None):
 
 
 if __name__ == "__main__":
-    GS = GridScaffold(
+    GS = GridHippocampalScaffold(
         shapes=[(2, 2, 3), (3, 3, 5)],
         # shapes = [(3,4,5), (3,4,5), (5,7,8)],
         N_h=400,
@@ -176,3 +176,27 @@ def print_imgs_side_by_side_on_top(imgs, out="mnist.png", captions=None, title=N
         plt.close(fig)
     else:
         plt.show()
+
+
+def plot_path(path, beliefs, out=None):
+    fig, ax = plt.subplots(1, 2, figsize=(8, 4), dpi=600)
+    # scatter plot the path as points, with lines between them
+    ax[0].scatter(path[:, 0], path[:, 1], c="blue", s=1)
+    ax[0].plot(path[:, 0], path[:, 1], c="blue", linewidth=0.5)
+    ax[0].set_title("Path")
+    ax[0].set_xlabel("X")
+    ax[0].set_ylabel("Y")
+    ax[0].set_aspect('equal', adjustable='box')
+
+    # plot beliefs as a scatter plot
+    ax[1].scatter(beliefs[:, 0], beliefs[:, 1], c="red", s=1)
+    ax[1].set_title("Beliefs")
+    ax[1].set_xlabel("X")
+    ax[1].set_ylabel("Y")
+    ax[1].set_aspect('equal', adjustable='box')
+    if out is not None:
+        plt.savefig(out)
+        plt.close(fig)
+    else:
+        plt.show()
+    return fig, ax

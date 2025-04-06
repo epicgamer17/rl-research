@@ -4,7 +4,7 @@ from gymnasium import Env
 from vectorhash import VectorHaSH
 from skimage import color
 from clean_scaffold import get_dim_distribution_from_g
-
+from graph_utils import plot_path
 _epsilon = 1e-8
 def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
     # print(predicted)
@@ -150,5 +150,9 @@ class AnimalAIVectorhashAgent:
                 print(f"Step {i}: {self.calculate_position_err()}")
         print("Final position error: ", self.calculate_position_err())
         return errs, path
+    
+    def agent_plot_path(self,path, beliefs):
+        plot_path(path,beliefs, out="animalai_path.png", title="AnimalAI Path")
+
     def close(self):
         self.env.close()
