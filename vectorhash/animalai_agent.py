@@ -1,12 +1,10 @@
 import torch
-import numpy as np
 from gymnasium import Env
 from vectorhash import VectorHaSH
 from skimage import color
 from clean_scaffold import get_dim_distribution_from_g
 from matplotlib import animation
 import matplotlib.pyplot as plt
-from functools import partial
 
 from graph_utils import plot_path
 _epsilon = 1e-8
