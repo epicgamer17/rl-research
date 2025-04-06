@@ -141,5 +141,14 @@ class AnimalAIVectorhashAgent:
 
         return categorical_crossentropy(x_dist, x_true_dist), categorical_crossentropy(y_dist, y_true_dist), categorical_crossentropy(theta_dist, theta_true_dist)
 
+    def test_path(self, path):
+        errs = [self.calculate_position_err()]
+        for i in range(len(path)):
+            action = path[i]
+            self.step(action)
+            if i % 100 == 0:
+                print(f"Step {i}: {self.calculate_position_err()}")
+        print("Final position error: ", self.calculate_position_err())
+        return errs, path
     def close(self):
         self.env.close()

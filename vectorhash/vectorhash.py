@@ -460,7 +460,6 @@ def build_vectorhash_architecture(
     relu=False,
     shift="roll",
     smoothing=SoftmaxSmoothing(T=1e-6),
-    shift="roll",
 ):
     assert initalization_method in ["by_scaling", "by_sparsity"]
     assert hippocampal_sensory_layer_type in [
