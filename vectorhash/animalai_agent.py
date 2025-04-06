@@ -16,11 +16,11 @@ def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis
     return -torch.sum(log_prob * target, axis=axis)
 
 class AnimalAIVectorhashAgent:
-    def __init__(self, vectorhash: VectorHaSH, env: Env):
+    def __init__(self, vectorhash: VectorHaSH, env: Env, hard_store: bool = True):
         self.env = env
         self.vectorhash = vectorhash
         self.device = self.vectorhash.scaffold.device
-
+        self.hard = hard_store
         obs, info = self.env.reset()
         image = self.postprocess_image(obs)
         p, v = self.postprocess_health_pos_vel(info)
@@ -95,17 +95,23 @@ class AnimalAIVectorhashAgent:
         self.vectorhash.scaffold.shift(
             torch.tensor([noisy_dp[0], noisy_dp[1], noisy_dtheta], device=self.device)
         )
-
+        current_g = self.vectorhash.scaffold.g
+        current_g_certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
+        sensory_g = self.vectorhash.scaffold.grid_from_hippocampal(self.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(image.flatten()))
+        self.vectorhash.scaffold.g = sensory_g
         certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
-        if torch.all(certainty >= self.vectorhash.certainty):
-            self.vectorhash.store_memory(image.flatten())
+        if torch.sum(current_g_certainty) >= torch.sum(certainty):
+            self.vectorhash.scaffold.g = self.vectorhash.scaffold.denoise(current_g)
+            self.vectorhash.store_memory(image.flatten(), hard=self.hard)
         else:
             print(
                 f"Certainty {certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
             )
-
+            
+            self.vectorhash.store_memory(image.flatten(), hard=True)
         # obs (84x84x3), in [0,1]
-
+        print("HIII")
+        print(self.vectorhash.scaffold.g)
         self.animal_ai_data["exact_position"] = p
         self.animal_ai_data["exact_angle"] += dtheta
 

@@ -20,12 +20,14 @@ class VectorHaSH:
         self.certainty = self_certainty
 
     @torch.no_grad()
-    def store_memory(self, s: torch.Tensor, debug=True):
+    def store_memory(self, s: torch.Tensor, debug=True, hard=False):
         """Stores a memory in the scaffold.
         Input shape: `(input_size)`
         """
-
-        h = self.scaffold.hippocampal_from_grid(self.scaffold.g)[0]
+        if hard:
+            h= self.scaffold.hippocampal_from_grid(self.scaffold.denoise(self.scaffold.g))[0]
+        else:
+            h = self.scaffold.hippocampal_from_grid(self.scaffold.g)[0]
         # print("current h we are learning", h)
         # print("is h in the h_book", torch.allclose(h, self.H[self.H.nonzero()[-1][0]]))
 
@@ -392,7 +394,7 @@ def build_initializer(
     )
 
 def build_shift(shift, device=None):
-    assert shift in ["roll", "rat", "conv"]
+    assert shift in ["roll", "rat", "conv", "shift"]
 
     if shift == "roll":
         return RollShift(device)
@@ -400,6 +402,8 @@ def build_shift(shift, device=None):
         return RatShift(device)
     elif shift == "conv":
         return ConvolutionalShift(device=device)
+    else:
+        return Shift(device)
 
 def build_scaffold(
     shapes,
@@ -454,6 +458,7 @@ def build_vectorhash_architecture(
     epsilon_hs=1,
     epsilon_sh=1,
     relu=False,
+    shift="roll",
     smoothing=SoftmaxSmoothing(T=1e-6),
     shift="roll",
 ):

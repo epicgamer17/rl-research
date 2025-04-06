@@ -48,7 +48,7 @@ class RatShift(Shift):
 
 
 class ConvolutionalShift(Shift):
-    def __init__(self, filter_std=0.3, filter_radius=6, device=None):
+    def __init__(self, filter_std=0.1, filter_radius=6, device=None):
         super().__init__(device)
         self.filter_std = filter_std
         self.filter_radius = filter_radius
