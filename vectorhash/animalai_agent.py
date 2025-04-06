@@ -8,6 +8,7 @@ from matplotlib import animation
 import matplotlib.pyplot as plt
 from functools import partial
 
+from graph_utils import plot_path
 _epsilon = 1e-8
 
 
@@ -191,6 +192,19 @@ class AnimalAIVectorhashAgent:
             categorical_crossentropy(y_dist, y_true_dist),
             categorical_crossentropy(theta_dist, theta_true_dist),
         )
+
+    def test_path(self, path):
+        errs = [self.calculate_position_err()]
+        for i in range(len(path)):
+            action = path[i]
+            self.step(action)
+            if i % 100 == 0:
+                print(f"Step {i}: {self.calculate_position_err()}")
+        print("Final position error: ", self.calculate_position_err())
+        return errs, path
+    
+    def agent_plot_path(self,path, beliefs):
+        plot_path(path,beliefs, out="animalai_path.png", title="AnimalAI Path")
 
     def close(self):
         self.env.close()
