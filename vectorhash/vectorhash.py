@@ -447,7 +447,6 @@ def build_vectorhash_architecture(
     W_gh_var=1,
     percent_nonzero_relu=0.9,
     sparse_initialization=0.1,
-    T=1e-3,
     device=None,
     hippocampal_sensory_layer_type="iterative_pseudoinverse",
     hidden_layer_factor=1,
