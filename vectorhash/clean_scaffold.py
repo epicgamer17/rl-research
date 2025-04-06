@@ -184,7 +184,7 @@ class GridHippocampalScaffold:
         i = 0
         for j, module in enumerate(self.modules):
             remainders[j] = module.cartesian_coordinates_from_grid_state(
-                g[i + module.l]
+                g[i:i + module.l]
             )
             i += module.l
 
@@ -333,11 +333,11 @@ class GridHippocampalScaffold:
         pos = 0
         onehotted = torch.zeros_like(self.g)
         for module in self.modules:
-            x = self.g[:, pos : pos + module.l]
+            x = self.g[pos : pos + module.l]
             x_onehot = smoothing(x.unsqueeze(0)).squeeze()
             # print(x)
             # print(x_denoised)
-            onehotted[:, pos : pos + module.l] = x_onehot
+            onehotted[pos : pos + module.l] = x_onehot
             pos += module.l
 
         return onehotted
