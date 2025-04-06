@@ -28,7 +28,7 @@ class GridHippocampalScaffold:
         relu=True,
     ):
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
-        self.relu=relu
+        self.relu = relu
         self.device = device
         self.shapes = torch.Tensor(shapes).int()
         """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
@@ -231,7 +231,7 @@ class GridHippocampalScaffold:
         if self.relu:
             return torch.relu(G @ self.W_hg.T - self.relu_theta)
         else:
-            return (G @ self.W_hg.T - self.relu_theta)
+            return G @ self.W_hg.T - self.relu_theta
 
     @torch.no_grad()
     def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
@@ -341,3 +341,14 @@ class GridHippocampalScaffold:
             pos += module.l
 
         return onehotted
+
+
+def get_dim_distribution_from_g(s: GridHippocampalScaffold, g: torch.Tensor, dim: int):
+    marginals = []
+    i = 0
+    for module in s.modules:
+        marginals.append(
+            module.marginal_from_state(dim, g[i : i + module.l].reshape(module.shape))
+        )
+    v = expand_distribution(marginals)
+    return v

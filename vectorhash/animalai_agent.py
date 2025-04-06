@@ -3,7 +3,17 @@ import numpy as np
 from gymnasium import Env
 from vectorhash import VectorHaSH
 from skimage import color
+from clean_scaffold import get_dim_distribution_from_g
 
+_epsilon = 1e-8
+def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    # print(predicted)
+    predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
+    # print(predicted)
+    predicted = torch.clamp(predicted, _epsilon, 1.0 - _epsilon)
+    # print(predicted)
+    log_prob = torch.log(predicted)
+    return -torch.sum(log_prob * target, axis=axis)
 
 class AnimalAIVectorhashAgent:
     def __init__(self, vectorhash: VectorHaSH, env: Env):
@@ -79,20 +89,30 @@ class AnimalAIVectorhashAgent:
         self.animal_ai_data["exact_angle"] += dtheta
 
     def calculate_position_err(self):
-        p_x, p_z, theta = (
-            self.vectorhash.scaffold.cartesian_coordinates_from_grid_state(
-                self.vectorhash.scaffold.get_onehot()
-            )
-            .cpu()
-            .numpy()
-        )
-        p_shifted = np.array([p_x, p_z]) + self.animal_ai_data["start_position"]
-        theta_shifted = theta + self.animal_ai_data["start_angle"]
+        x_dist, y_dist, theta_dist = [
+            self.vectorhash.scaffold.expand_distribution(i) for i in [0, 1, 2]
+        ]
 
-        return (
-            p_shifted - self.animal_ai_data["exact_position"],
-            theta_shifted - self.animal_ai_data["exact_angle"],
+        coordinates = torch.zeros(3, device=self.vectorhash.scaffold.device)
+        coordinates[0] = (
+            self.animal_ai_data["exact_position"][0]
+            + self.animal_ai_data["start_position"][0]
         )
+        coordinates[1] = (
+            self.animal_ai_data["exact_position"][1]
+            + self.animal_ai_data["start_position"][1]
+        )
+        coordinates[2] = (
+            self.animal_ai_data["exact_angle"] + self.animal_ai_data["start_angle"]
+        )
+
+        g = self.vectorhash.scaffold.grid_state_from_cartesian_coordinates(coordinates)
+        x_true_dist, y_true_dist, theta_true_dist = [
+            get_dim_distribution_from_g(self.vectorhash.scaffold, g, dim)
+            for dim in [0, 1, 2]
+        ]
+
+        return categorical_crossentropy(x_dist, x_true_dist), categorical_crossentropy(y_dist, y_true_dist), categorical_crossentropy(theta_dist, theta_true_dist)
 
     def close(self):
         self.env.close()
