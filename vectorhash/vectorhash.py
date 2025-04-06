@@ -2,7 +2,7 @@ from clean_scaffold import GridHippocampalScaffold, SoftmaxSmoothing
 from hippocampal_sensory_layers import *
 from shifts import *
 from tqdm import tqdm
-
+import copy
 
 class VectorHaSH:
     def __init__(
@@ -18,6 +18,13 @@ class VectorHaSH:
         self.zero_tol = zero_tol
         self.dream_fix = dream_fix
         self.certainty = self_certainty
+        self.init_scaffold = copy.deepcopy(scaffold)
+        self.init_hippocampal_sensory_layer = copy.deepcopy(hippocampal_sensory_layer)
+
+    @torch.no_grad()
+    def reset(self):
+        self.scaffold = copy.deepcopy(self.init_scaffold)
+        self.hippocampal_sensory_layer = copy.deepcopy(self.init_hippocampal_sensory_layer)
 
     @torch.no_grad()
     def store_memory(self, s: torch.Tensor, debug=True, hard=False):
