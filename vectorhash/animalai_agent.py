@@ -50,20 +50,19 @@ class VectorhashAgentHistory:
         fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(15, 8), dpi=600)
 
         text = fig.suptitle("t=0")
+        ax1.set_title('true image')
+        ax2.set_title('predicted image')
         a1 = ax1.imshow(self._true_images[0])
         a2 = ax2.imshow(self._estimated_images[0])
 
-        def frames_func():
-            return zip(self._true_images, self._estimated_images)
-
-        def plot_func(frame, *fargs):
-            true_img, estimated_img = fargs
+        def plot_func(frame):
+            true_img, estimated_img = self._true_images[frame], self._estimated_images[frame]
             a1.set_data(true_img)
             a2.set_data(estimated_img)
             text.set_text(f"t={frame}")
             return a1, a2, text
 
-        self.ani = animation.FuncAnimation(fig, plot_func, frames_func, blit=False)
+        self.ani = animation.FuncAnimation(fig, plot_func, len(self._estimated_images) - 1, blit=False)
 
         return self.ani
 
