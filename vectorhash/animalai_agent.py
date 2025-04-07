@@ -47,7 +47,7 @@ class VectorhashAgentHistory:
         self._estimated_angles.append(estimated_angle)
 
     def make_image_video(self):
-        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(15, 8), dpi=600)
+        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(7.5, 4), dpi=300)
 
         text = fig.suptitle("t=0")
         ax1.set_title('true image')
@@ -96,7 +96,7 @@ class AnimalAIVectorhashAgent:
         print(image.shape)
         print(image.flatten().shape)
 
-        self.vectorhash.store_memory(image.flatten())
+        self.vectorhash.store_memory(image.flatten().to(self.device))
         self.history = VectorhashAgentHistory()
 
     def postprocess_image(self, image):
@@ -111,8 +111,8 @@ class AnimalAIVectorhashAgent:
         )
         v_x, v_y, v_z = velocity
 
-        p = torch.Tensor([p_x, p_z], device=self.device)
-        v = torch.Tensor([v_x, v_z], device=self.device)
+        p = torch.Tensor([p_x, p_z]).to(self.device)
+        v = torch.Tensor([v_x, v_z]).to(self.device)
 
         return p, v
 
@@ -161,20 +161,20 @@ class AnimalAIVectorhashAgent:
         current_g_certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
         sensory_g = self.vectorhash.scaffold.grid_from_hippocampal(
             self.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(
-                image.flatten()
+                image.flatten().to(self.device)
             )
         )
         self.vectorhash.scaffold.g = sensory_g
         certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
         if torch.sum(current_g_certainty) >= torch.sum(certainty):
             self.vectorhash.scaffold.g = self.vectorhash.scaffold.denoise(current_g)[0]
-            self.vectorhash.store_memory(image.flatten(), hard=self.hard)
+            self.vectorhash.store_memory(image.flatten().to(self.device), hard=self.hard)
         else:
             print(
                 f"Certainty {certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
             )
 
-            self.vectorhash.store_memory(image.flatten(), hard=True)
+            # self.vectorhash.store_memory(image.flatten().to(self.device), hard=True)
         # obs (84x84x3), in [0,1]
         print("HIII")
         print(self.vectorhash.scaffold.g)
@@ -220,7 +220,7 @@ class AnimalAIVectorhashAgent:
         p, v = self.postprocess_health_pos_vel(info)
 
         # self.vectorhash.reset()
-        self.vectorhash.store_memory(img.flatten())
+        self.vectorhash.store_memory(img.flatten().to(self.device))
         self.history.append(
             true_image=torch.clone(img).cpu(),
             estimated_image=torch.clone(

@@ -312,12 +312,12 @@ class GridHippocampalScaffold:
         for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in self.modules]
             v = expand_distribution(marginals)
-            mean = circular_mean(v * torch.arange(0, len(v)), len(v))
+            mean = circular_mean(v * torch.arange(0, len(v), device=self.device), len(v))
             if mean > len(v) // 2:
                 mean -= len(v)
             low = torch.ceil(mean - k)
             high = torch.floor(mean + k)
-            indices = torch.arange(low, high + 1).int()
+            indices = torch.arange(low, high + 1, device=self.device).int()
             print(mean)
             print(indices)
             sums[dim] = torch.sum(v[indices])

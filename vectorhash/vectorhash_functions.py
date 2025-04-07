@@ -471,7 +471,7 @@ def generate_1d_gaussian_kernel(radius, mu=0, sigma=1, device=None):
 
     low = (x - mu - 0.5) / (sigma * 2**0.5)
     high = (x - mu + 0.5) / (sigma * 2**0.5)
-    w = 0.5 * (scipy.special.erf(high) - scipy.special.erf(low))
+    w = 0.5 * (scipy.special.erf(high.cpu()) - scipy.special.erf(low.cpu()))
     return w
 
 
@@ -494,8 +494,8 @@ def expand_distribution(marginals: list[torch.Tensor]):
 
 
 def condense_distribution(marginal_lengths: list[int], p: torch.Tensor):
-    y = torch.zeros(size=tuple(marginal_lengths))
-    divisor = torch.Tensor(marginal_lengths).int()
+    y = torch.zeros(size=tuple(marginal_lengths), device=p.device)
+    divisor = torch.tensor(marginal_lengths).int().to(p.device)
     for i in range(len(p)):
         index = tuple(torch.remainder(i, divisor))
         y[index] = p[i]

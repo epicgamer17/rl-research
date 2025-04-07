@@ -114,7 +114,7 @@ class GridModule:
         Returns:
             torch.Tensor: A one-hot encoded tensor of the grid state
         """
-        phis = torch.remainder(coordinates, torch.Tensor(self.shape)).int()
+        phis = torch.remainder(coordinates, torch.Tensor(self.shape).to(self.device)).int()
         gpattern = torch.zeros_like(self.state)
         gpattern[tuple(phis)] = 1
         gpattern = gpattern.flatten()

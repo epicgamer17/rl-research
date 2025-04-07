@@ -55,9 +55,9 @@ class ConvolutionalShift(Shift):
 
     def generate_kernels(self, velocity: torch.Tensor) -> list[torch.Tensor]:
         return [
-            generate_1d_gaussian_kernel(
+            torch.Tensor(generate_1d_gaussian_kernel(
                 self.filter_radius, mu=-v, sigma=self.filter_std, device=self.device
-            )
+            )).to(self.device)
             for v in velocity
         ]
 
