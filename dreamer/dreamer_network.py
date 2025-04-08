@@ -73,12 +73,15 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(
         self,
+        input_shape: Tuple[int, ...],
         is_image: bool,
+        hidden_size: int,
+        norm: Callable = nn.RMSNorm,
+        activation: Callable = nn.SELU,
+        output_activation: Callable = nn.Sigmoid,
+        output_size: int = 3,
     ):
-        if is_image:
-            self.conv_layers = Conv2dStack()
-        else:
-            self.dense_layers = DenseStack()
+        pass
 
 
 class DynamicsPredictor(nn.Module):

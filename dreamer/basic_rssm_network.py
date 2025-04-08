@@ -3,6 +3,7 @@ from typing import Callable, Tuple
 from torch import nn, Tensor
 import torch.nn.functional as F
 import torch
+import numpy as np
 
 from modules.conv import Conv2dStack
 from modules.dense import DenseStack, build_dense
@@ -79,12 +80,86 @@ class Decoder(nn.Module):
         is_image: bool,
         hidden_dim,
         state_dim,
+        embedding_dim,
+        min_resolution: int = 4,
         norm: Callable = nn.RMSNorm,
         activation: Callable = nn.SELU,
         output_activation: Callable = nn.Sigmoid,
-        output_size: int = 3,
     ):
-        pass
+        self.activation = activation
+        self.is_image = is_image
+        self.hidden_dim = hidden_dim
+        self.state_dim = state_dim
+        if is_image:
+            # (C, W, H)
+            assert len(input_shape) == 3
+            assert input_shape[1] == input_shape[2]
+
+            assert 3 <= min_resolution[0] <= 16, min_resolution
+            assert 3 <= min_resolution[1] <= 16, min_resolution
+            num_layers = int(np.log2(input_shape[1] / min_resolution))
+
+            # embedding_dim is the formula below
+            # output_size = min_resolution**2 * depth * 2 ** (num_layers - 1)
+
+            conv_transpose_input_size = min_resolution**2 * 3 * 2 ** (num_layers - 1)
+
+            self.input_layer = nn.Linear(hidden_dim + state_dim, embedding_dim)
+            self.linear_layer = nn.Linear(embedding_dim, conv_transpose_input_size)
+
+            self.conv_transpose_layers = nn.ModuleList()
+            self.norm_layers = nn.ModuleList()
+            for i in range(num_layers):
+                # (B, C_in, W, H) -> (B, C_out, W, H)
+                self.conv_transpose_layers.append(
+                    nn.ConvTranspose2d(
+                        in_channels=conv_transpose_input_size,
+                        out_channels=conv_transpose_input_size // 2,
+                        kernel_size=3,  # param used in DreamerV3 code
+                        stride=2,
+                        padding="same",
+                    )
+                )
+
+                conv_transpose_input_size = conv_transpose_input_size // 2
+
+                self.norm_layers.append(norm(conv_transpose_input_size, eps=1e-6))
+
+            self.output_layer = nn.ConvTranspose2d(
+                in_channels=conv_transpose_input_size,
+                out_channels=3,
+                kernel_size=3,
+                stride=2,
+                padding="same",
+            )
+            self.output_activation = output_activation
+        else:
+            raise NotImplementedError("Only image inputs are supported")
+
+    def forward(self, hidden: Tensor, state: Tensor) -> Tensor:
+        if self.is_image:
+            x = torch.cat((hidden, state), dim=-1)
+            x = self.input_layer(x)
+            x = self.linear_layer(x)
+
+            x = x.view(
+                x.size(0),
+                -1,
+                int(np.sqrt(self.embedding_dim)),
+                int(np.sqrt(self.embedding_dim)),
+            )
+
+            for conv_transpose, norm in zip(
+                self.conv_transpose_layers, self.norm_layers
+            ):
+                x = self.activation(norm(conv_transpose(x)))
+
+            x = self.output_layer(x)
+            if self.output_activation is not None:
+                x = self.output_activation(x)
+        else:
+            raise NotImplementedError("Only image inputs are supported")
+        return x
 
 
 class DynamicsPredictor(nn.Module):
