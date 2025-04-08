@@ -5,8 +5,9 @@ from skimage import color
 from clean_scaffold import get_dim_distribution_from_g
 from matplotlib import animation
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
-from graph_utils import plot_path
+from graph_utils import plot_path, plot_probability_distribution_on_ax
 
 _epsilon = 1e-8
 
@@ -24,56 +25,94 @@ def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis
 class VectorhashAgentHistory:
     def __init__(self):
         self._true_positions = []
-        self._estimated_positions = []
+        self._true_angles = []
+        self._x_distributions = []
+        self._y_distributions = []
+        self._theta_distributions = []
         self._true_images = []
         self._estimated_images = []
-        self._true_angles = []
-        self._estimated_angles = []
 
     def append(
         self,
         true_position,
-        estimated_position,
+        true_angle,
+        x_distribution,
+        y_distribution,
+        theta_distribution,
         true_image,
         estimated_image,
-        true_angle,
-        estimated_angle,
     ):
         self._true_positions.append(true_position)
-        self._estimated_positions.append(estimated_position)
+        self._x_distributions.append(x_distribution)
+        self._y_distributions.append(y_distribution)
+        self._theta_distributions.append(theta_distribution)
         self._true_images.append(true_image)
         self._estimated_images.append(estimated_image)
-        self._true_angles.append(true_angle)
-        self._estimated_angles.append(estimated_angle)
 
     def make_image_video(self):
-        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(7.5, 4), dpi=300)
+        fig = plt.figure(layout="constrained", figsize=(8, 8), dpi=300)
+        gs = GridSpec(6, 6, figure=fig)
 
         text = fig.suptitle("t=0")
-        ax1.set_title('true image')
-        ax2.set_title('predicted image')
-        a1 = ax1.imshow(self._true_images[0])
-        a2 = ax2.imshow(self._estimated_images[0])
+
+        im_true_ax = fig.add_subplot(gs[0:3, 0:3])
+        im_pred_ax = fig.add_subplot(gs[0:3, 3:6])
+        x_dist_ax = fig.add_subplot(gs[4, 0:4])
+        y_dist_ax = fig.add_subplot(gs[4, 0:4])
+        theta_dist_ax = fig.add_subplot(gs[4, 0:4])
+        im_true_ax.set_title("true image")
+        im_pred_ax.set_title("predicted image")
+        x_dist_ax.set_title("x dist")
+        y_dist_ax.set_title("y dist")
+        theta_dist_ax.set_title("θ dist")
+
+        im_true_artist = im_true_ax.imshow(self._true_images[0])
+        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0])
+        x_dist_artist = plot_probability_distribution_on_ax(
+            self._x_distributions[0], x_dist_ax
+        )
+        y_dist_artist = plot_probability_distribution_on_ax(
+            self._y_distributions[0], y_dist_ax
+        )
+        theta_dist_artist = plot_probability_distribution_on_ax(
+            self._theta_distributions[0], theta_dist_ax
+        )
 
         def plot_func(frame):
-            true_img, estimated_img = self._true_images[frame], self._estimated_images[frame]
-            a1.set_data(true_img)
-            a2.set_data(estimated_img)
-            text.set_text(f"t={frame}")
-            return a1, a2, text
+            im_true_artist.set_data(self._true_images[frame])
+            im_pred_artist.set_data(self._estimated_images[frame])
 
-        self.ani = animation.FuncAnimation(fig, plot_func, len(self._estimated_images) - 1, blit=False)
+            x_dist_artist.set_data(values=self._x_distributions[frame], edges=None)
+            y_dist_artist.set_data(values=self._y_distributions[frame], edges=None)
+            theta_dist_artist.set_data(
+                values=self._theta_distributions[frame], edges=None
+            )
+
+            text.set_text(f"t={frame}")
+            return (
+                im_true_artist,
+                im_pred_artist,
+                x_dist_artist,
+                y_dist_artist,
+                theta_dist_artist,
+                text,
+            )
+
+        self.ani = animation.FuncAnimation(
+            fig, plot_func, len(self._estimated_images) - 1, blit=False
+        )
 
         return self.ani
 
     def reset(self):
         self.ani = None
         self._true_positions = []
-        self._estimated_positions = []
+        self._true_angles = []
+        self._x_distributions = []
+        self._y_distributions = []
+        self._theta_distributions = []
         self._true_images = []
         self._estimated_images = []
-        self._true_angles = []
-        self._estimated_angles = []
 
 
 class AnimalAIVectorhashAgent:
@@ -168,7 +207,9 @@ class AnimalAIVectorhashAgent:
         certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
         if torch.sum(current_g_certainty) >= torch.sum(certainty):
             self.vectorhash.scaffold.g = self.vectorhash.scaffold.denoise(current_g)[0]
-            self.vectorhash.store_memory(image.flatten().to(self.device), hard=self.hard)
+            self.vectorhash.store_memory(
+                image.flatten().to(self.device), hard=self.hard
+            )
         else:
             print(
                 f"Certainty {certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
@@ -223,6 +264,8 @@ class AnimalAIVectorhashAgent:
         self.vectorhash.store_memory(img.flatten().to(self.device))
         self.history.append(
             true_image=torch.clone(img).cpu(),
+            true_angle=self.animal_ai_data["exact_angle"]
+            - self.animal_ai_data["start_angle"],
             estimated_image=torch.clone(
                 self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
                     self.vectorhash.scaffold.hippocampal_from_grid(
@@ -233,13 +276,15 @@ class AnimalAIVectorhashAgent:
             .reshape(84, 84)
             .cpu(),
             true_position=torch.clone(p - self.animal_ai_data["start_position"]).cpu(),
-            estimated_position=torch.clone(
-                p - self.animal_ai_data["start_position"]
+            x_distribution=torch.clone(
+                self.vectorhash.scaffold.expand_distribution(0)
             ).cpu(),
-            true_angle=self.animal_ai_data["exact_angle"]
-            - self.animal_ai_data["start_angle"],
-            estimated_angle=self.animal_ai_data["exact_angle"]
-            - self.animal_ai_data["start_angle"],
+            y_distribution=torch.clone(
+                self.vectorhash.scaffold.expand_distribution(1)
+            ).cpu(),
+            theta_distribution=torch.clone(
+                self.vectorhash.scaffold.expand_distribution(2)
+            ).cpu(),
         )
 
         errs = [self.calculate_position_err()]
@@ -257,22 +302,20 @@ class AnimalAIVectorhashAgent:
                 .reshape(84, 84)
                 .cpu()
             )
-            estimated_coordinates = (
-                self.vectorhash.scaffold.cartesian_coordinates_from_grid_state(
-                    self.vectorhash.scaffold.get_onehot()
-                )
-            )
-            estimated_position = torch.Tensor(
-                [estimated_coordinates[0], estimated_coordinates[1]], device="cpu"
-            )
-            estimated_angle = estimated_coordinates[2].cpu().item()
             self.history.append(
                 true_image=torch.clone(true_img).cpu(),
                 estimated_image=estimated_img,
                 true_position=torch.clone(true_p).cpu(),
-                estimated_position=estimated_position,
                 true_angle=true_ang,
-                estimated_angle=estimated_angle,
+                x_distribution=torch.clone(
+                    self.vectorhash.scaffold.expand_distribution(0)
+                ).cpu(),
+                y_distribution=torch.clone(
+                    self.vectorhash.scaffold.expand_distribution(1)
+                ).cpu(),
+                theta_distribution=torch.clone(
+                    self.vectorhash.scaffold.expand_distribution(2)
+                ).cpu(),
             )
             if i % 100 == 0:
                 print(f"Step {i}: {self.calculate_position_err()}")
