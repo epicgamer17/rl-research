@@ -188,9 +188,9 @@ class DynamicsPredictor(nn.Module):
 
             ### Store results in lists (instead of in-place modification) ###
             posterior_means_list.append(posterior_mean.unsqueeze(1))
-            posterior_logvars_list.append(posterior_logvar.unsqueeze(1))
+            posterior_log_vars_list.append(posterior_log_var.unsqueeze(1))
             prior_means_list.append(prior_mean.unsqueeze(1))
-            prior_logvars_list.append(prior_logvar.unsqueeze(1))
+            prior_log_vars_list.append(prior_log_var.unsqueeze(1))
             prior_states_list.append(prior_state_t.unsqueeze(1))
             posterior_states_list.append(posterior_state_t.unsqueeze(1))
             hiddens_list.append(hidden_t.unsqueeze(1))
@@ -200,9 +200,9 @@ class DynamicsPredictor(nn.Module):
         prior_states = torch.cat(prior_states_list, dim=1)
         posterior_states = torch.cat(posterior_states_list, dim=1)
         prior_means = torch.cat(prior_means_list, dim=1)
-        prior_logvars = torch.cat(prior_logvars_list, dim=1)
+        prior_logvars = torch.cat(prior_log_vars_list, dim=1)
         posterior_means = torch.cat(posterior_means_list, dim=1)
-        posterior_logvars = torch.cat(posterior_logvars_list, dim=1)
+        posterior_logvars = torch.cat(posterior_log_vars_list, dim=1)
 
         return (
             hiddens,
