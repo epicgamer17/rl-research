@@ -401,16 +401,17 @@ def build_initializer(
     )
 
 def build_shift(shift, device=None):
-    assert shift in ["roll", "rat", "conv", "shift"]
+    shifts = ["roll", "rat", "conv", "conv_expanded"]
+    assert shift in shifts, f"invalid shift: {shift}, expected one of {shifts}"
 
     if shift == "roll":
         return RollShift(device)
     elif shift == "rat":
         return RatShift(device)
     elif shift == "conv":
+        return ModularConvolutionalShift(device=device)
+    elif shift == "conv_expanded":
         return ConvolutionalShift(device=device)
-    else:
-        return Shift(device)
 
 def build_scaffold(
     shapes,
