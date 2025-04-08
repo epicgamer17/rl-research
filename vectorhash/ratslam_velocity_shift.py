@@ -106,7 +106,5 @@ def calculate_alpha(
 def g(a, b):
     if b == 0:
         return 1 - a
-    elif b == 1:
-        return a
     else:
-        raise ValueError("b must be 0 or 1", b)
+        return a
