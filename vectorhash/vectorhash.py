@@ -477,7 +477,7 @@ def build_vectorhash_architecture(
         "naive_hebbian",
         "mixed",
     ]
-    assert shift in ["roll", "conv"]
+    assert shift in ["roll", "conv", "rat"]
     print(initalization_method)
     scaffold, mean_h = build_scaffold(
         shapes,

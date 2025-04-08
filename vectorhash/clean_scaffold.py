@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
 from smoothing import *
+import copy
 from shifts import *
 from vectorhash_functions import (
     chinese_remainder_theorem,
@@ -234,6 +235,32 @@ class GridHippocampalScaffold:
             return G @ self.W_hg.T - self.relu_theta
 
     @torch.no_grad()
+    def modules_from_g(self, g: torch.Tensor) -> list[GridModule]:
+        """
+        Input shape `(B, N_g)`
+
+        Output shape `(B, M, d)`
+
+        Args:
+            g (torch.Tensor): Grid coding state tensor.
+        """
+        if g.shape[0] != 1:
+            g = g.flatten()
+        print(g.shape)
+        print(g)
+        pos = 0
+        modules = []
+        for module in self.modules:
+            x = g[pos : pos + module.l]
+            modules.append(x.reshape(-1, *module.shape))
+            pos += module.l
+        curr_modules = copy.deepcopy(self.modules)
+        for i, module in enumerate(curr_modules):
+            module.state = modules[i][0]
+            module.state = module.state.to(self.device)
+        return curr_modules
+
+    @torch.no_grad()
     def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
         """
         Input shape `(B, N_h)`
@@ -307,10 +334,12 @@ class GridHippocampalScaffold:
 
         return G
 
-    def estimate_certainty(self, k: float):
+    def estimate_certainty(self, k: float, g=None):
+
+        modules = self.modules
         sums = torch.zeros(len(self.shapes[0]))
         for dim in range(len(self.shapes[0])):
-            marginals = [module.get_marginal(dim) for module in self.modules]
+            marginals = [module.get_marginal(dim) for module in modules]
             v = expand_distribution(marginals)
             mean = circular_mean(v * torch.arange(0, len(v), device=self.device), len(v))
             if mean > len(v) // 2:
@@ -324,6 +353,7 @@ class GridHippocampalScaffold:
         return sums
 
     def expand_distribution(self, dim: int):
+
         marginals = [module.get_marginal(dim) for module in self.modules]
         v = expand_distribution(marginals)
         return v
@@ -350,5 +380,6 @@ def get_dim_distribution_from_g(s: GridHippocampalScaffold, g: torch.Tensor, dim
         marginals.append(
             module.marginal_from_state(dim, g[i : i + module.l].reshape(module.shape))
         )
+    print(marginals)
     v = expand_distribution(marginals)
     return v

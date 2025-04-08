@@ -1,3 +1,4 @@
+import math
 from time import time
 import torch
 from torch.nn.utils import clip_grad_norm_
@@ -125,7 +126,7 @@ class RainbowAgent(BaseAgent):
             "score": self.env.spec.reward_threshold,
             "test_score": self.env.spec.reward_threshold,
         }
-    
+
     def checkpoint_model_weights(self, checkpoint):
         checkpoint = super().checkpoint_model_weights(checkpoint)
         checkpoint["target_model"] = self.target_model.state_dict()
@@ -148,7 +149,9 @@ class RainbowAgent(BaseAgent):
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(self, distribution, info: dict = None, mask_actions: bool = True):
+    def select_actions(
+        self, distribution, info: dict = None, mask_actions: bool = True
+    ):
         assert info is not None if mask_actions else True, "Need info to mask actions"
         # print(info)
         if self.config.atom_size > 1:
@@ -200,7 +203,9 @@ class RainbowAgent(BaseAgent):
         # print(online_predictions)
         # (B, atom_size)
         if self.config.atom_size > 1:
-            assert isinstance(self.config.loss_function, KLDivergenceLoss) or isinstance(
+            assert isinstance(
+                self.config.loss_function, KLDivergenceLoss
+            ) or isinstance(
                 self.config.loss_function, CategoricalCrossentropyLoss
             ), "Only KLDivergenceLoss and CategoricalCrossentropyLoss are supported for atom_size > 1, recieved {}".format(
                 self.config.loss_function
@@ -348,7 +353,7 @@ class RainbowAgent(BaseAgent):
             state, info = self.env.reset()
             target_size = self.config.min_replay_buffer_size
             while self.replay_buffer.size < target_size:
-                if (self.replay_buffer.size % (target_size // 100)) == 0:
+                if (self.replay_buffer.size % (math.ceil(target_size / 100))) == 0:
                     print(
                         f"filling replay buffer: {self.replay_buffer.size} / ({target_size})"
                     )
@@ -393,7 +398,9 @@ class RainbowAgent(BaseAgent):
             )
         else:
             raise ValueError(
-                "Invalid epsilon decay type: {}".format(self.config.eg_epsilon_decay_type)
+                "Invalid epsilon decay type: {}".format(
+                    self.config.eg_epsilon_decay_type
+                )
             )
 
     def train(self):
@@ -423,8 +430,8 @@ class RainbowAgent(BaseAgent):
                     )
                     # print("Action", action)
                     # print("Epislon Greedy Epsilon", self.eg_epsilon)
-                    next_state, reward, terminated, truncated, next_info = self.env.step(
-                        action
+                    next_state, reward, terminated, truncated, next_info = (
+                        self.env.step(action)
                     )
                     done = terminated or truncated
                     # print("State", state)
@@ -478,7 +485,9 @@ class RainbowAgent(BaseAgent):
                 # print(self.stats["score"])
                 # print(len(self.replay_buffer))
                 self.training_time = time() - start_time
-                self.total_environment_steps = self.training_step * self.config.replay_interval
+                self.total_environment_steps = (
+                    self.training_step * self.config.replay_interval
+                )
                 self.save_checkpoint()
             # gc.collect()
             self.training_step += 1

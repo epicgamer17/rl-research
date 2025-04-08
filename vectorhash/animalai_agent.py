@@ -50,7 +50,7 @@ class VectorhashAgentHistory:
         self._estimated_images.append(estimated_image)
 
     def make_image_video(self):
-        fig = plt.figure(layout="constrained", figsize=(8, 8), dpi=300)
+        fig = plt.figure(layout="constrained", figsize=(8, 8), dpi=250)
         gs = GridSpec(6, 6, figure=fig)
 
         text = fig.suptitle("t=0")
@@ -196,26 +196,35 @@ class AnimalAIVectorhashAgent:
         self.vectorhash.scaffold.shift(
             torch.tensor([noisy_dp[0], noisy_dp[1], noisy_dtheta], device=self.device)
         )
-        current_g = self.vectorhash.scaffold.g
+        current_g_modules = self.vectorhash.scaffold.modules_from_g(self.vectorhash.scaffold.denoise(self.vectorhash.scaffold.g)[0])
+        print("AHHH", self.vectorhash.scaffold.modules[0].state)
+        print("AHHH",current_g_modules[0].state)
+        self.vectorhash.scaffold.modules = current_g_modules
+        self.vectorhash.scaffold._g()
         current_g_certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
-        sensory_g = self.vectorhash.scaffold.grid_from_hippocampal(
+        sensory_g_modules = self.vectorhash.scaffold.modules_from_g(self.vectorhash.scaffold.denoise(self.vectorhash.scaffold.grid_from_hippocampal(
             self.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(
                 image.flatten().to(self.device)
-            )
-        )
-        self.vectorhash.scaffold.g = sensory_g
+            )[0]
+        )[0])[0])
+        print("SAHHH",sensory_g_modules[0].state)
+        self.vectorhash.scaffold.modules = sensory_g_modules
+        self.vectorhash.scaffold._g()
         certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
+        print("CURRENT_G_CERTAINTY", current_g_certainty)
+        print("SENSORY_G_CERTAINTY", certainty)
         if torch.sum(current_g_certainty) >= torch.sum(certainty):
-            self.vectorhash.scaffold.g = self.vectorhash.scaffold.denoise(current_g)[0]
-            self.vectorhash.store_memory(
-                image.flatten().to(self.device), hard=self.hard
-            )
+            self.vectorhash.scaffold.modules = current_g_modules
+            self.vectorhash.scaffold._g()
+            self.vectorhash.store_memory(image.flatten().to(self.device), hard=True)
+            # self.vectorhash.scaffold.g = self.vectorhash.scaffold.denoise(current_g)[0]
         else:
             print(
                 f"Certainty {certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
             )
-
-            # self.vectorhash.store_memory(image.flatten().to(self.device), hard=True)
+            # self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
+            self.vectorhash.scaffold.modules = sensory_g_modules
+            self.vectorhash.scaffold._g()
         # obs (84x84x3), in [0,1]
         print("HIII")
         print(self.vectorhash.scaffold.g)
@@ -268,8 +277,8 @@ class AnimalAIVectorhashAgent:
             - self.animal_ai_data["start_angle"],
             estimated_image=torch.clone(
                 self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
-                    self.vectorhash.scaffold.hippocampal_from_grid(
-                        self.vectorhash.scaffold.g
+                    self.vectorhash.scaffold.hippocampal_from_grid(self.vectorhash.scaffold.denoise(
+                        self.vectorhash.scaffold.g)[0]
                     )[0]
                 )[0]
             )
