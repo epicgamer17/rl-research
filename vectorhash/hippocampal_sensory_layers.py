@@ -57,6 +57,7 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
         epsilon_sh=None,
         epsilon_hs=None,
         device=None,
+        relu=False,
     ):
         super().__init__(input_size, N_h, device)
 
@@ -64,7 +65,7 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
         self.stationary = stationary
         self.epsilon_hs = epsilon_hs
         self.epsilon_sh = epsilon_sh
-
+        self.relu= relu
         hidden_size_sh = self.N_h * self.hidden_layer_factor
         if hidden_size_sh == 0:
             hidden_size_sh = self.N_h
@@ -210,11 +211,15 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
 
         if self.hidden_layer_factor != 0:
             hidden = torch.sigmoid(S @ self.hidden_hs.T)
-            return torch.relu(hidden @ self.W_hs.T)
+            if self.relu:
+                return torch.relu(hidden @ self.W_hs.T)
+            else:
+                return (hidden @ self.W_hs.T)  # to relu or not to relu, that is the question.
         else:
-            return torch.relu(
-                S @ self.W_hs.T
-            )  # to relu or not to relu, that is the question.
+            if self.relu:
+                return torch.relu(S @ self.W_hs.T)
+            else:
+                return (S @ self.W_hs.T)  # to relu or not to relu, that is the question.
 
 
 class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
@@ -264,6 +269,13 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
     
     @torch.no_grad()
     def learn_batch(self, sbook):
+        if len(sbook) > len(self.hbook):
+            print("error: sbook length cannot be greater than hbook length")
+            raise "too many patterns for given hbook size"
+        elif len(sbook) < len(self.hbook):
+            print("warning: reshaping local copy of hbook to match sbook size")
+            hbook_modified = self.hbook[:len(sbook)].clone()
+            self.hbook = hbook_modified
         # assume sbook[:len(sbook)] corresponds with hbook[:len(sbook)]
         self.sbook = sbook
         self.W_hs = self.hbook.T @ torch.linalg.pinv(self.sbook).T

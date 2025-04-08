@@ -188,8 +188,8 @@ class CustomUnityToGymWrapper(gym.Env):
         else:
             action_tuple.add_discrete(action)
         self._env.set_actions(self.name, action_tuple)
-        print("action_tuple", action_tuple._continuous)
-        print("action_tuple", action_tuple._discrete)
+        # print("action_tuple", action_tuple._continuous)
+        # print("action_tuple", action_tuple._discrete)
 
         self._env.step()
         decision_step, terminal_step = self._env.get_steps(self.name)

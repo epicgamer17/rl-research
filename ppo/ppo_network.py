@@ -1,6 +1,7 @@
 from typing import Callable, Tuple
 from agent_configs.ppo_config import PPOConfig
 from torch import Tensor
+from experiments.actor_critic_memory.acm_network import MHA
 from utils.utils import to_lists
 
 from modules.conv import Conv2dStack
@@ -10,7 +11,7 @@ import torch.nn as nn
 
 class Network(nn.Module):
     def __init__(
-        self, config: PPOConfig, input_shape: Tuple[int], output_size: int, discrete
+        self,config: PPOConfig, input_shape: Tuple[int], output_size: int, discrete, MHABconfig=None,
     ):
         if discrete:
             assert output_size > 0
@@ -20,12 +21,18 @@ class Network(nn.Module):
         super(Network, self).__init__()
         self.critic = CriticNetwork(config, input_shape)
         self.actor = ActorNetwork(config, input_shape, output_size, discrete)
+        if MHABconfig is not None:
+            self.MHA = MHA(
+                config=MHABconfig, logging=False
+            )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         self.actor.initialize(initializer)
         self.critic.initialize(initializer)
 
-    def forward(self, inputs: Tensor):
+    def forward(self, inputs: Tensor, history: Tensor = None):
+        if self.MHA is not None:
+            inputs = self.MHA(inputs, history)
         return self.actor(inputs), self.critic(inputs)
 
 

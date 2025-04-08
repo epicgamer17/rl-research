@@ -1,230 +1,17 @@
-import math
 import torch
 import numpy as np
 from matrix_initializers import SparseMatrixBySparsityInitializer
-from ratslam_velocity_shift import inject_activity
-from vectorhash_functions import chinese_remainder_theorem, circular_mean_2
+from smoothing import *
+import copy
+from shifts import *
+from vectorhash_functions import (
+    chinese_remainder_theorem,
+    circular_mean,
+    expand_distribution,
+)
 from tqdm import tqdm
-
-
-class GridModule:
-    def __init__(self, shape: tuple[int], device=None, T=1, ratshift=True) -> None:
-        """Initializes a grid module with a given shape and a temperature.
-
-        Args:
-            shape (tuple[int]): The shape of the grid.
-            T (int, optional): The temperature of the grid used with softmax when computing the onehot encoded state probabilities. Defaults to 1.
-        """
-        self.shape = shape
-        # self.state = torch.rand(shape, device=device)
-        self.state = torch.zeros(shape, device=device)
-        self.ratshift = ratshift
-        i = tuple(0 for _ in range(len(shape)))
-        self.state[i] = 1
-        self.l = torch.prod(torch.tensor(shape)).item()
-        """The number of elements in the grid, i.e. the product of each element in the shape. Ex. a `3x3x4` grid has `l=36`."""
-        self.T = T
-        self.device = device
-
-        einsum_indices = [
-            chr(ord("a") + i) for i in range(len(self.shape))
-        ]  # a, b, c, ...
-        einsum_str = (
-            ",".join(einsum_indices) + "->" + "".join(einsum_indices)
-        )  # a,b,c, ...->abc...
-        self.einsum_str = einsum_str
-        """`a, b, c, ..., z -> abc...z`
-        """
-
-    @torch.no_grad()
-    def denoise_onehot(self, onehot: torch.Tensor) -> torch.Tensor:
-        """Denoise a batch of one-hot encoded states.
-
-        Input shape: `(B, l)` where l is the product of the shape of the grid.
-
-        Args:
-            onehot: The tensor of one-hot encoded states.
-
-        Output shape: `(B, l)`
-        """
-        # assert sum(onehot.sum(dim=1) == 1) == onehot.shape[0], "Not one-hot encoded"
-        if onehot.ndim == 1:
-            onehot = onehot.unsqueeze(0)
-
-        state = onehot.view((onehot.shape[0], *self.shape))
-        return self.denoise(state).flatten(1)
-
-    @torch.no_grad()
-    def denoise(self, state: torch.Tensor) -> torch.Tensor:
-        """Denoise a batch of grid states. This finds the maximum value in the grid and sets it to 1, and all other values to 0.
-        If there are multiple maximum values, pick a random. (not all set to 1 / number of maximum values)
-
-        Input shape: `(B, *shape)` where `shape` is the shape of the grid.
-
-        Args:
-            state: The tensor of grid states.
-
-        Output shape: `(B, *shape)` where `shape` is the shape of the grid.
-
-        """
-        if state.ndim == len(self.shape):
-            state = state.unsqueeze(0)
-        dims = [i for i in range(1, len(self.shape) + 1)]  # 1, 2, ..., n
-        maxes = torch.amax(state, dim=dims, keepdim=True)
-
-        state = torch.where(
-            state == maxes, torch.ones_like(state), torch.zeros_like(state)
-        )
-        scaled = state / torch.sum(state, dim=dims, keepdim=True)
-        return scaled
-
-        # Check if there are any non-zero elements in the module
-        # if len(torch.nonzero(state)) > 0:
-        #     max_value = np.max(state)  # Find the maximum value in the module
-        #     print(max_value)
-        #     # Create a binary array where positions with the max value are 1, others are 0
-        #     max_positions = np.where(state == max_value)[0]
-        #     random_position = np.random.choice(max_positions)
-        #     denoised_module = np.zeros_like(state)
-        #     denoised_module[random_position] = 1
-        # else:
-        #     # If the module is all zeros, create an array of the same shape with all zeros
-        #     denoised_module = np.zeros_like(state)
-        # return torch.tensor(denoised_module, device=self.device)
-
-    @torch.no_grad()
-    def denoise_self(self):
-        """Denoises this grid module's state"""
-        self.state = self.denoise(self.state).squeeze(0)
-
-    @torch.no_grad()
-    def onehot(self) -> torch.Tensor:
-        """Returns the one-hot encoding of the state of this grid module.
-
-        Output shape: `(l)` where `l` is the product of the shape of the grid (i.e. a 3x3x4 grid has l=36).
-        """
-        pdfs = list()
-        dims = range(len(self.shape))
-        for i in range(len(self.shape)):
-            pdf = torch.sum(self.state, dim=[j for j in dims if j != i])
-            pdfs.append(pdf)
-
-        #
-        r = torch.einsum(self.einsum_str, *pdfs).flatten()
-        return (r / (self.T * r.sum(dim=0))).softmax(dim=0)
-
-    @torch.no_grad()
-    def shift(self, v: torch.Tensor):
-        """Shifts the state of the grid module by a given velocity.
-
-        Input shape: `(len(shape))`
-
-        Args:
-            v: The velocity by which to shift the grid state.
-            (x, y, angular velocity)
-        """
-        v_ = v.int()
-        if self.ratshift:
-            assert len(v) == 3  # x, y, angular velocity
-            speed = (v[0].item() ** 2 + v[1].item() ** 2) ** 0.5
-            theta = math.atan2(v[1].item(), v[0].item())
-            self.state = inject_activity(self.state, speed, theta, v[2].item())
-        else:
-            self.state = torch.roll(
-                self.state,
-                tuple([v_[i].item() for i in range(len(v_))]),
-                dims=tuple(i for i in range(len(self.shape))),
-            )
-
-    @torch.no_grad()
-    def grid_state_from_cartesian_coordinates(
-        self, coordinates: torch.Tensor
-    ) -> torch.Tensor:
-        """Convert integer-valued cartesian coordinates into a onehot-encoded grid state
-
-        Args:
-            coordinates (torch.Tensor): Tensor of integers, length equal to the dimensionality of the grid module
-
-        Returns:
-            torch.Tensor: A one-hot encoded tensor of the grid state
-        """
-        phis = torch.remainder(coordinates, torch.Tensor(self.shape)).int()
-        gpattern = torch.zeros_like(self.state)
-        gpattern[tuple(phis)] = 1
-        gpattern = gpattern.flatten()
-        return gpattern
-
-    @torch.no_grad()
-    def cartesian_coordinates_from_grid_state(self, g: torch.Tensor) -> torch.Tensor:
-        """Convert a onehot-encoded grid state into integer-valued cartesian coordinates
-
-        Args:
-            g (torch.Tensor): One-hot encoded grid state
-
-        Returns:
-            torch.Tensor: Tensor of coordinates, length equal to the dimensionality of the grid module in
-            `{0, 1, ..., \lambda_1 - 1} x {0, 1, ..., \lambda_2 - 1} x ... x {0, 1, ..., \lambda_d - 1}  `
-        """
-        reshaped = g.view(*self.shape).nonzero()
-        return reshaped
-
-    @torch.no_grad()
-    def grid_state_from_cartesian_coordinates_extended(
-        self, coordinates: torch.Tensor
-    ) -> torch.Tensor:
-        """Convert real-valued cartesian coordinates into a continuous grid state
-
-        Args:
-            coordinates (torch.Tensor): Coordinates in the range [0, \lambda_1) x ... x [0, \lambda_d) \subseteq \mathbb{R}^d
-
-        Returns:
-            torch.Tensor: A real grid state g in [0,1]^{\lambda_1 \cdot ... \cdot \lambda_d} where \sum_{i=1}^{\lambda_1 \cdot ... \cdot \lambda_d} g_i = 1
-        """
-        coordinates = torch.remainder(coordinates, torch.Tensor(self.shape).int())
-        floored = torch.floor(coordinates).int()
-        next_floored = torch.remainder(
-            coordinates + 1, torch.Tensor(self.shape).int()
-        ).int()
-        remainder = coordinates - floored
-        alpha = torch.einsum(
-            self.einsum_str, *torch.vstack([1 - remainder, remainder]).T
-        ).flatten()
-        indices = torch.cartesian_prod(*torch.vstack([floored, next_floored]).T)
-        # print("s:", indices)
-        # print(alpha)
-
-        state = torch.zeros_like(self.state)
-        for i, a in enumerate(alpha):
-            # print(indices[i])
-            state[tuple(indices[i])] = a
-        return state.flatten()
-
-    @torch.no_grad()
-    def cartesian_coordinates_from_grid_state_extended(
-        self, g: torch.Tensor
-    ) -> torch.Tensor:
-        """Convert a continuous grid state into real-valued cartesian coordinates
-
-        Args:
-            g (torch.Tensor): A continuous grid state in [0,1]^{\lambda_1 \cdot ... \cdot \lambda_d} where \sum_{i=1}^{\lambda_1 \cdot ... \cdot \lambda_d} g_i = 1
-
-        Returns:
-            torch.Tensor: Coordinates in the range [0, \lambda_1) x ... x [0, \lambda_d) \subseteq \mathbb{R}^d
-        """
-        sums = list()
-        dims = range(len(self.shape))
-        for i in range(len(self.shape)):
-            dim = [j for j in dims if j != i]
-            pdf = torch.sum(g.reshape(*self.shape), dim=dim)
-            sums.append(pdf)
-
-        coordinates = torch.zeros(len(self.shape))
-        for i, l in enumerate(self.shape):
-            w = sums[i]
-            # print(f"w[{i}]", w)
-            coordinates[i] = circular_mean_2(torch.arange(l), w, l).item()
-
-        return coordinates
+from grid_module import GridModule
+from smoothing import ArgmaxSmoothing
 
 
 class GridHippocampalScaffold:
@@ -234,22 +21,26 @@ class GridHippocampalScaffold:
         N_h: int,
         sparse_matrix_initializer=None,
         relu_theta=0.5,
-        ratshift=False,
         sanity_check=True,
         calculate_g_method="fast",
-        T=1e-3,
+        smoothing=SoftmaxSmoothing(T=1e-3),
+        shift_method: Shift = None,
         device=None,
+        relu=True,
     ):
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
-
+        self.relu = relu
         self.device = device
-        self.T = T
         self.shapes = torch.Tensor(shapes).int()
         """(M, d) where M is the number of grid modules and d is the dimensionality of the grid modules."""
         self.relu_theta = relu_theta
-        self.ratshift = ratshift
+
+        if shift_method == None:
+            shift_method = RollShift(device)
+        self.shift_method = shift_method
+
         self.modules = [
-            GridModule(shape, device=device, T=T, ratshift=ratshift) for shape in shapes
+            GridModule(shape, device=device, smoothing=smoothing) for shape in shapes
         ]
         """The list of grid modules in the scaffold."""
         # for module in self.modules:
@@ -286,7 +77,7 @@ class GridHippocampalScaffold:
                 == self.denoise(
                     self.grid_from_hippocampal(self.hippocampal_from_grid(self.G))
                 )
-            ), "G -> H -> G should preserve G"
+            ), f"G -> H -> G should preserve G: {self.G}, {self.denoise(self.grid_from_hippocampal(self.hippocampal_from_grid(self.G)))}"
 
         self.g = self._g()
         """The current grid coding state tensor. Shape: `(N_g)`"""
@@ -394,7 +185,7 @@ class GridHippocampalScaffold:
         i = 0
         for j, module in enumerate(self.modules):
             remainders[j] = module.cartesian_coordinates_from_grid_state(
-                g[i + module.l]
+                g[i:i + module.l]
             )
             i += module.l
 
@@ -438,7 +229,36 @@ class GridHippocampalScaffold:
         """
         if G.ndim == 1:
             G = G.unsqueeze(0)
-        return torch.relu(G @ self.W_hg.T - self.relu_theta)
+        if self.relu:
+            return torch.relu(G @ self.W_hg.T - self.relu_theta)
+        else:
+            return G @ self.W_hg.T - self.relu_theta
+
+    @torch.no_grad()
+    def modules_from_g(self, g: torch.Tensor) -> list[GridModule]:
+        """
+        Input shape `(B, N_g)`
+
+        Output shape `(B, M, d)`
+
+        Args:
+            g (torch.Tensor): Grid coding state tensor.
+        """
+        if g.shape[0] != 1:
+            g = g.flatten()
+        print(g.shape)
+        print(g)
+        pos = 0
+        modules = []
+        for module in self.modules:
+            x = g[pos : pos + module.l]
+            modules.append(x.reshape(-1, *module.shape))
+            pos += module.l
+        curr_modules = copy.deepcopy(self.modules)
+        for i, module in enumerate(curr_modules):
+            module.state = modules[i][0]
+            module.state = module.state.to(self.device)
+        return curr_modules
 
     @torch.no_grad()
     def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
@@ -470,41 +290,20 @@ class GridHippocampalScaffold:
 
     @torch.no_grad()
     def shift(self, velocity):
-        """Shifts the grid coding state by a given velocity.
+        """Shifts the grid coding state by a given displacement.
 
         The length of `velocity` must be equal to the dimensionality of the grid modules.
         """
-        for module in self.modules:
-            module.shift(velocity)
+
+        self.shift_method(self.modules, velocity)
 
         self.g = self._g()
 
     @torch.no_grad()
     def reset_g(self):
         """Reset the position of the scaffold to 0"""
-        coordinates = self.cartesian_coordinates_from_grid_state(self.g)
-        self.shift(-coordinates)
-
-    @torch.no_grad()
-    def onehot(self, g: torch.Tensor) -> torch.Tensor:
-        """Returns the one-hot encoding of a given grid state.
-
-        Input shape: `(N_g)`
-
-        Args:
-            G: The tensor of grid states.
-
-        Output shape: `(N_g)`
-        """
-        pos = 0
         for module in self.modules:
-            x = g[pos : pos + module.l]
-            x_onehot = (x / (x.sum() * self.T)).softmax(dim=0)
-            # print(x_onehot)
-            g[pos : pos + module.l] = x_onehot
-            pos += module.l
-
-        return g
+            module.zero()
 
     @torch.no_grad()
     def denoise(self, G: torch.Tensor) -> torch.Tensor:
@@ -534,3 +333,53 @@ class GridHippocampalScaffold:
             pos += module.l
 
         return G
+
+    def estimate_certainty(self, k: float, g=None):
+
+        modules = self.modules
+        sums = torch.zeros(len(self.shapes[0]))
+        for dim in range(len(self.shapes[0])):
+            marginals = [module.get_marginal(dim) for module in modules]
+            v = expand_distribution(marginals)
+            mean = circular_mean(v * torch.arange(0, len(v), device=self.device), len(v))
+            if mean > len(v) // 2:
+                mean -= len(v)
+            low = torch.ceil(mean - k)
+            high = torch.floor(mean + k)
+            indices = torch.arange(low, high + 1, device=self.device).int()
+            print(mean)
+            print(indices)
+            sums[dim] = torch.sum(v[indices])
+        return sums
+
+    def expand_distribution(self, dim: int):
+
+        marginals = [module.get_marginal(dim) for module in self.modules]
+        v = expand_distribution(marginals)
+        return v
+
+    def get_onehot(self):
+        smoothing = ArgmaxSmoothing()
+        pos = 0
+        onehotted = torch.zeros_like(self.g)
+        for module in self.modules:
+            x = self.g[pos : pos + module.l]
+            x_onehot = smoothing(x.unsqueeze(0)).squeeze()
+            # print(x)
+            # print(x_denoised)
+            onehotted[pos : pos + module.l] = x_onehot
+            pos += module.l
+
+        return onehotted
+
+
+def get_dim_distribution_from_g(s: GridHippocampalScaffold, g: torch.Tensor, dim: int):
+    marginals = []
+    i = 0
+    for module in s.modules:
+        marginals.append(
+            module.marginal_from_state(dim, g[i : i + module.l].reshape(module.shape))
+        )
+    print(marginals)
+    v = expand_distribution(marginals)
+    return v

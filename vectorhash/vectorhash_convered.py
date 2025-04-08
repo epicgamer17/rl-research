@@ -44,7 +44,6 @@ def capacity_gcpc_vectorized(
                 N_h=Np,
                 sparse_matrix_initializer=initializer,
                 relu_theta=0.5,
-                ratshift=False,
                 sanity_check=False,
                 device=device,
             )

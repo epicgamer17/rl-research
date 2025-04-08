@@ -1,7 +1,8 @@
-from clean_scaffold import GridHippocampalScaffold
+from clean_scaffold import GridHippocampalScaffold, SoftmaxSmoothing
 from hippocampal_sensory_layers import *
+from shifts import *
 from tqdm import tqdm
-
+import copy
 
 class VectorHaSH:
     def __init__(
@@ -10,19 +11,30 @@ class VectorHaSH:
         hippocampal_sensory_layer: HippocampalSensoryLayer,
         zero_tol=1e-2,
         dream_fix=False,
+        self_certainty=None,
     ):
         self.scaffold = scaffold
         self.hippocampal_sensory_layer = hippocampal_sensory_layer
         self.zero_tol = zero_tol
         self.dream_fix = dream_fix
+        self.certainty = self_certainty
+        self.init_scaffold = copy.deepcopy(scaffold)
+        self.init_hippocampal_sensory_layer = copy.deepcopy(hippocampal_sensory_layer)
 
     @torch.no_grad()
-    def store_memory(self, s: torch.Tensor, debug=True):
+    def reset(self):
+        self.scaffold = copy.deepcopy(self.init_scaffold)
+        self.hippocampal_sensory_layer = copy.deepcopy(self.init_hippocampal_sensory_layer)
+
+    @torch.no_grad()
+    def store_memory(self, s: torch.Tensor, debug=True, hard=False):
         """Stores a memory in the scaffold.
         Input shape: `(input_size)`
         """
-
-        h = self.scaffold.hippocampal_from_grid(self.scaffold.g)[0]
+        if hard:
+            h= self.scaffold.hippocampal_from_grid(self.scaffold.denoise(self.scaffold.g))[0]
+        else:
+            h = self.scaffold.hippocampal_from_grid(self.scaffold.g)[0]
         # print("current h we are learning", h)
         # print("is h in the h_book", torch.allclose(h, self.H[self.H.nonzero()[-1][0]]))
 
@@ -116,7 +128,7 @@ class VectorHaSH:
         g = self.scaffold.grid_from_hippocampal(
             self.hippocampal_sensory_layer.hippocampal_from_sensory(s)
         )
-        onehotted = self.scaffold.onehot(g.squeeze())
+        onehotted = self.scaffold.denoise(g.squeeze())
 
         if not as_tuple_list:
             return onehotted
@@ -244,14 +256,16 @@ class VectorHaSH:
             self.store_memory(observations[i], debug=False)
 
     @torch.no_grad()
-    def learn(self, observation, velocity):
+    def learn(self, observation, velocity=None):
         """Add a memory to the memory scaffold and shift the grid coding state by a given velocity.
 
         observation shape: `(input_size)`
         velocity shape: `(D)` where `D` is the dimensionality of the grid modules.
         """
+
         self.store_memory(observation)
-        self.scaffold.shift(velocity)
+        if velocity:
+            self.scaffold.shift(velocity)
 
     @torch.no_grad()
     def recall(self, observations) -> torch.Tensor:
@@ -332,6 +346,16 @@ class VectorHaSH:
         # }
         # plot_recall_info(info)
         return S_
+    
+    @torch.no_grad()
+    def main_loop(self, time_step_length, odometry, observation, k=1):
+        dx, dy, dtheta = odometry
+        self.scaffold.shift(self.scaffold.modules, (dx,dy,dtheta)) # integrate time_step_length in ratshift
+        certainty = self.scaffold.estimate_certainty(k=k)
+        if certainty >= self.certainty:
+            self.store_memory(observation)
+        else:
+            print("Certainty not high enough, not storing memory.")
 
 
 import math
@@ -376,6 +400,17 @@ def build_initializer(
         expectation_of_relu_normal(h_normal_mean, h_normal_std),
     )
 
+def build_shift(shift, device=None):
+    assert shift in ["roll", "rat", "conv", "shift"]
+
+    if shift == "roll":
+        return RollShift(device)
+    elif shift == "rat":
+        return RatShift(device)
+    elif shift == "conv":
+        return ConvolutionalShift(device=device)
+    else:
+        return Shift(device)
 
 def build_scaffold(
     shapes,
@@ -384,27 +419,32 @@ def build_scaffold(
     W_gh_var=1,
     percent_nonzero_relu=0.9,
     sparse_initialization=0.1,
-    T=1e-3,
+    smoothing=SoftmaxSmoothing(T=1e-3),
+    shift="roll",
     device=None,
+    relu=False,
 ):
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
-        initalization_method,
-        W_gh_var,
-        percent_nonzero_relu,
+        initalization_method=initalization_method,
+        W_gh_var=W_gh_var,
+        percent_nonzero_relu=percent_nonzero_relu,
         sparse_initialization=sparse_initialization,
         device=device,
     )
+    smoothing = smoothing
+    shift = build_shift(shift, device)
     scaffold = GridHippocampalScaffold(
         shapes=shapes,
         N_h=N_h,
         sparse_matrix_initializer=initializer,
         relu_theta=relu_theta,
-        ratshift=False,
-        sanity_check=True,
+        shift_method=shift,
+        sanity_check=False, # breaks with soft smoothing
         calculate_g_method="fast",
-        T=T,
+        smoothing=smoothing,
         device=device,
+        relu=relu,
     )
 
     return scaffold, mean_h
@@ -414,17 +454,19 @@ def build_vectorhash_architecture(
     shapes,
     N_h,
     input_size,
-    initalization_method="by_sparsity",
+    initalization_method="by_scaling",
     W_gh_var=1,
     percent_nonzero_relu=0.9,
     sparse_initialization=0.1,
-    T=1e-3,
     device=None,
     hippocampal_sensory_layer_type="iterative_pseudoinverse",
-    hidden_layer_factor=3,
+    hidden_layer_factor=1,
     stationary=True,
     epsilon_hs=1,
     epsilon_sh=1,
+    relu=False,
+    shift="roll",
+    smoothing=SoftmaxSmoothing(T=1e-6),
 ):
     assert initalization_method in ["by_scaling", "by_sparsity"]
     assert hippocampal_sensory_layer_type in [
@@ -434,17 +476,19 @@ def build_vectorhash_architecture(
         "naive_hebbian",
         "mixed",
     ]
-
+    assert shift in ["roll", "conv", "rat"]
+    print(initalization_method)
     scaffold, mean_h = build_scaffold(
         shapes,
         N_h,
-        input_size,
         initalization_method=initalization_method,
         W_gh_var=W_gh_var,
         percent_nonzero_relu=percent_nonzero_relu,
         sparse_initialization=sparse_initialization,
-        T=T,
         device=device,
+        relu=relu,
+        smoothing=smoothing,
+        shift=shift,
     )
 
     if hippocampal_sensory_layer_type == "exact_pseudoinverse":
@@ -455,7 +499,7 @@ def build_vectorhash_architecture(
             hbook=scaffold.N_h,
             device=device,
         )
-    elif hippocampal_sensory_layer == "hebbian":
+    elif hippocampal_sensory_layer_type == "hebbian":
         hippocampal_sensory_layer = HebbianHippocampalSensoryLayer(
             input_size=input_size,
             N_h=N_h,
@@ -465,7 +509,7 @@ def build_vectorhash_architecture(
             scaling_updates=True,
             device=device,
         )
-    elif hippocampal_sensory_layer == "naive_hebbian":
+    elif hippocampal_sensory_layer_type == "naive_hebbian":
         hippocampal_sensory_layer = HebbianHippocampalSensoryLayer(
             input_size=input_size,
             N_h=N_h,
@@ -475,7 +519,7 @@ def build_vectorhash_architecture(
             scaling_updates=False,
             device=device,
         )
-    elif hippocampal_sensory_layer == "iterative_pseudoinverse":
+    elif hippocampal_sensory_layer_type == "iterative_pseudoinverse":
         hippocampal_sensory_layer = (
             IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
                 input_size=input_size,
@@ -485,5 +529,16 @@ def build_vectorhash_architecture(
                 epsilon_hs=epsilon_hs,
                 epsilon_sh=epsilon_sh,
                 device=device,
+                relu=relu,
             )
         )
+    
+    architecture = VectorHaSH(
+        scaffold=scaffold,
+        hippocampal_sensory_layer=hippocampal_sensory_layer,
+        zero_tol=1e-2,
+        dream_fix=None,
+
+    )
+
+    return architecture
