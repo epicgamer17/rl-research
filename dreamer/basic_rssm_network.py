@@ -275,18 +275,18 @@ class DynamicsPredictor(nn.Module):
         prior_states = torch.cat(prior_states_list, dim=1)
         posterior_states = torch.cat(posterior_states_list, dim=1)
         prior_means = torch.cat(prior_means_list, dim=1)
-        prior_logvars = torch.cat(prior_log_vars_list, dim=1)
+        prior_log_vars = torch.cat(prior_log_vars_list, dim=1)
         posterior_means = torch.cat(posterior_means_list, dim=1)
-        posterior_logvars = torch.cat(posterior_log_vars_list, dim=1)
+        posterior_log_vars = torch.cat(posterior_log_vars_list, dim=1)
 
         return (
             hiddens,
             prior_states,
             posterior_states,
             prior_means,
-            prior_logvars,
+            prior_log_vars,
             posterior_means,
-            posterior_logvars,
+            posterior_log_vars,
         )
 
 
@@ -295,13 +295,15 @@ class RewardPredictor(nn.Module):
         self,
         hidden_dim,
         state_dim,
+        layers: int = 2,
+        activation: Callable = nn.SiLU,
     ):
         super(RewardPredictor, self).__init__()
 
         self.dense_layers = DenseStack(
             initial_width=hidden_dim + state_dim,
-            widths=[hidden_dim, hidden_dim],
-            activation_final=nn.ReLU,
+            widths=[hidden_dim] * layers,
+            activation_final=activation,
             noisy_sigma=0.0,
         )
 
@@ -316,5 +318,29 @@ class RewardPredictor(nn.Module):
 
 
 class ContinuePredictor(nn.Module):
-    def __init__():
-        pass
+    def __init__(
+        self,
+        hidden_dim,
+        state_dim,
+        layers: int = 2,
+        activation: Callable = nn.SiLU,
+    ):
+        super(ContinuePredictor, self).__init__()
+
+        self.dense_layers = DenseStack(
+            initial_width=hidden_dim + state_dim,
+            widths=[hidden_dim] * layers,
+            activation_final=activation,
+            noisy_sigma=0.0,
+        )
+
+        # bernouli output
+        self.output_layer = nn.Linear(hidden_dim, 1)
+        self.output_activation = nn.Sigmoid()
+
+    def forward(self, hidden, state):
+        x = torch.cat((hidden, state), dim=-1)
+        x = self.dense_layers(x)
+        x = self.output_layer(x)
+        x = self.output_activation(x)
+        return x
