@@ -7,8 +7,10 @@ import datetime
 sys.path.append("../")
 from base_agent.agent import BaseAgent
 import time
+import numpy as np
+import copy
 
-class CFRAgent(BaseAgent):
+class CFRAgent(): # BaseAgent):
     def __init__(
             self,
             env,
@@ -26,30 +28,37 @@ class CFRAgent(BaseAgent):
         ),
         from_checkpoint=False
     ):
-        super(CFRAgent, self).__init__(env, config, name=name, device=device, from_checkpoint=from_checkpoint)
+        # super(CFRAgent, self).__init__(env, config, name=name, device=device, from_checkpoint=from_checkpoint)
+        self.name = name
+        self.env = env
+        self.device = device
         self.config = config
-        self.players = config["num_players"]
+        self.players = config.num_players
         self.network = CFRNetwork(
-            config=config["network"],
+            config=config.network,
             input_shape=env.observation_space.shape,
             output_shape=env.action_space.n,
         )
 
-        self.value_buffer = nfsp_reservoir_buffer.NFSPReservoirBuffer(
+        self.value_buffer = [nfsp_reservoir_buffer.NFSPReservoirBuffer(
             observation_dimensions=env.observation_space.shape,
             observation_dtype=torch.float32,
-            max_size=config["replay_buffer_size"],
+            max_size=config.replay_buffer_size,
             num_actions=env.action_space.n,
-            batch_size=config["minibatch_size"],
-            compressed_observations=False)
-        
+            batch_size=config.minibatch_size,
+            compressed_observations=False) for _ in range(self.players)]
+      
         self.policy_buffer = nfsp_reservoir_buffer.NFSPReservoirBuffer(
             observation_dimensions=env.observation_space.shape,
             observation_dtype=torch.float32,
-            max_size=config["replay_buffer_size"],
+            max_size=config.replay_buffer_size,
             num_actions=env.action_space.n,
-            batch_size=config["minibatch_size"],
+            batch_size=config.minibatch_size,
             compressed_observations=False)
+   
+        self.traversals = config.traversals
+        self.steps_per_epoch = config.steps_per_epoch
+        self.training_steps = config.training_steps
 
     def predict(self, state, player_id):
         """
@@ -63,26 +72,31 @@ class CFRAgent(BaseAgent):
             return action_probs.cpu().numpy()
     
 
-    def select_actions(self, predicted, info, mask_actions=False):
+    def select_actions(self, predicted, info, mask_actions=False, traverser=False):
         """
         Select action based on predicted regret valeus.
 
         """
         positive_regret = torch.clamp(predicted, min=0)
         regret_sum = positive_regret.sum(dim=1)
+        sample = None
+        policy = None
         if regret_sum == 0:
-            action = torch.randint(0, predicted.shape[1], (predicted.shape[0],))
+            sample = torch.randint(0, predicted.shape[1], (predicted.shape[0],))
+            policy = np.array([1/predicted.shape[1]]*predicted.shape[1])
         else:
-            action = torch.multinomial(positive_regret / regret_sum, 1)
-        action = action.squeeze(1).cpu().numpy()
-        return action
+            sample = torch.multinomial(positive_regret / regret_sum, 1)
+            policy = np.array(predicted.cpu().numpy() / regret_sum.cpu().numpy())
+
+        sample = sample.squeeze(1).cpu().numpy()
+        return sample, policy
 
     def learn(self, player_id):
         """
         For each CFR iteration, update traverser's value network from scratch (batches number of SGD mini-batches).
         """
         # GET BATCHES FROM VALUE BUFFER
-        samples = self.value_buffer.sample()
+        samples = self.value_buffer[player_id].sample()
         # LOOP THROUGH FOR CONFIG NUMBER OF SGD ITERS
         self.network.values[player_id].reset()
         for sample in samples:
@@ -103,16 +117,20 @@ class CFRAgent(BaseAgent):
         super().train()
 
         start_time = time() - self.training_time
-        state, info = self.env.reset()
         for i in range(self.config.training_steps):
-            # FOR training_steps CFR ITERATIONS
+            # FOR training_steps CFR ITERATIONS         
             for p in range(self.players):
                 # FOR EACH PLAYER, DO T TRAVERSALS
                 for t in range(self.config.traversals):
-                    # FOR EACH TRAVERSAL, COLLECT GAME DATA AND PUT IN REPLAY BUFFER
-                    # TRAVERSE (PARAMS, REPLAY BUFFERS, OTHER POLICIES)
-                    # RECURSIVE CALLS TO TRAVERSE
+                    # FOR EACH TRAVERSAL, RESET ENVIRONEMENT (DEBATABLE STEP) BUT RESET WITH SET SEED FOR RECREATION
+                    random_seed = np.random.randint(0, 2**32 - 1)
+                    self.env.seed(random_seed)
+                    observation, reward, termination, truncation, info = self.env.reset()
+                    traverse_history = [] # for recreation
+
+                    self.traverse(history=traverse_history, iteration_T=i, seed=random_seed, game=self.env, active_player=self.env.agent_selection, traverser=p)
                     print(f"Player {p} Traversal {t}")
+                # NOW LEARN FROM THE PLAYER'S VALUE BUFFER
                 self.learn(p)
             print(f"Iteration {i} done")
         
@@ -126,8 +144,56 @@ class CFRAgent(BaseAgent):
         return self.network.policy
 
 
+    @torch.no_grad()
+    def traverse(self, history, iteration_T, seed, game, active_player, traverser):
+        """
+        Traverse the game tree recursive call.
+        :param history: The current history of the game (for recreation purposes).
+        :param iteration_T: The current iteration of the CFR algorithm (for linear cfr weighting).
+        :param seed: The current seed of the game (for recreation purposes).
+        :param env: The environment object.
+        :param active_player: The current active player.
+        """
+        # GET CURRENT STATE
+        observation, reward, termination, truncation, info = game.last()
+        if termination or truncation:
+            # IF TERMINATED THEN PASS UP VALUE TO PARET (THIS IS A RECURSIVE CALL)
+            return reward #IE PAYOFF only for activate player
+        elif active_player == traverser:
+            predictions = self.predict(observation["observation"], active_player)
+            sample, policy = self.select_actions(predictions, info, mask_actions=observation["mask"], traverser=True) # MASKING NOT YET IMPLEMENTED
+            # if active player, branch off and traverse
+            v_policy = [0] * len(policy)
+            reg = [0] * len(policy)
+            for i in range(len(policy)):
+                recreate_env = self.recreate_env(game, history, seed) # UGGGG
+                recreate_env.step(i)
+                v_policy[i] = self.traverse(history, iteration_T, seed, recreate_env, active_player.next(), traverser) # RAWRRRR RECURSIVE DO WE NEED THIS???????
+            for i in range(len(policy)):
+                reg[i] = v_policy[i] - torch.sum(torch.tensor(v_policy) * torch.tensor(policy)).item()
+            # ADD TO ACTIVE PLAYER'S VALUE BUFFER
+            self.value_buffer[active_player].add(observation, reg, iteration_T)
+        else:
+            predictions = self.predict(observation["observation"], active_player)
+            sample, policy = self.select_actions(predictions, info, mask_actions=observation["mask"], traverser=False) # MASKING NOT YET IMPLEMENTED
+            self.policy_buffer.add(observation, policy, iteration_T)
+            game.step(sample)
+            history.append(sample)
+            return self.traverse(history, iteration_T, seed, game, active_player.next(), traverser)
 
 
-
-
-
+    def recreate_env(self, env, history, seed):
+        """
+        Recreate the environment from the history and seed.
+        :param env: The environment object.
+        :param history: The current history of the game (for recreation purposes).
+        :param seed: The current seed of the game (for recreation purposes).
+        :return: The recreated environment.
+        """
+        # RECREATE ENVIRONMENT
+        env = copy.deepcopy(env)
+        env.seed(seed)
+        env.reset()
+        for action in history:
+            env.step(action)
+        return env
