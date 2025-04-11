@@ -14,3 +14,5 @@ class CFRConfig():
         self.steps_per_epoch = config_dict["steps_per_epoch"]
         self.traversals = config_dict["traversals"]
         self.training_steps = config_dict["training_steps"]
+        self.observation_space = game_config["observation_space"]
+        self.action_space = game_config["action_space"]

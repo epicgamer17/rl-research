@@ -10,8 +10,8 @@ class CFRNetwork(nn.Module):
     ):
         self.config = config
         super(CFRNetwork, self).__init__()
-        self.values = [PolicyNetwork(config=config["value"]) for _ in range(config["num_players"])]
-        self.policy = ValueNetwork(config=config["policy"])
+        self.values = [ValueNetwork(config=config["value"]) for _ in range(config["num_players"])]
+        self.policy = PolicyNetwork(config=config["policy"])
 
     
 class ValueNetwork(nn.Module):
@@ -19,10 +19,22 @@ class ValueNetwork(nn.Module):
                  config=None,
     ):
         self.config = config
-        self.optimizer = self.config["optimizer"]
         super(ValueNetwork, self).__init__()
+        layer1 = torch.nn.Linear(self.config["input_shape"], self.config["hidden_size"])
+        layer2 = torch.nn.Linear(self.config["hidden_size"], self.config["hidden_size"])
+        layer3 = torch.nn.Linear(self.config["hidden_size"], self.config["hidden_size"])
+        layer4 = torch.nn.LayerNorm(self.config["hidden_size"])
+        layer5 = torch.nn.Linear(self.config["hidden_size"], self.config["output_shape"])
         self.layers = torch.nn.ModuleList([
-            layer for layer in self.config.layers])
+            layer1,
+            layer2,
+            layer3,
+            layer4,
+            layer5,
+        ])
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.config["learning_rate"])
+
+
     
     def forward(self, x):
         """
@@ -30,8 +42,11 @@ class ValueNetwork(nn.Module):
         :param x: Input tensor.
         :return: Output tensor.
         """
-        for layer in self.layers:
-            x = layer(x)
+        for i in range(len(self.layers)):
+            if i<=3:
+                x = torch.nn.functional.relu(self.layers[i](x))
+            else:
+                x = self.layers[i](x)
         return x
     
     def reset(self):
@@ -62,8 +77,20 @@ class PolicyNetwork(nn.Module):
     ):
         self.config = config
         super(PolicyNetwork, self).__init__()
+        layer1 = torch.nn.Linear(self.config["input_shape"], self.config["hidden_size"])
+        layer2 = torch.nn.Linear(self.config["hidden_size"], self.config["hidden_size"])
+        layer3 = torch.nn.Linear(self.config["hidden_size"], self.config["hidden_size"])
+        # add a normalization layer -mean / std 
+        layer4 = torch.nn.LayerNorm(self.config["hidden_size"])
+        layer5 = torch.nn.Linear(self.config["hidden_size"], self.config["output_shape"])
         self.layers = torch.nn.ModuleList([
-            layer for layer in self.config.layers])
+            layer1,
+            layer2,
+            layer3,
+            layer4,
+            layer5,
+        ])
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.config["learning_rate"])
     
     def forward(self, x):
         """
@@ -71,8 +98,11 @@ class PolicyNetwork(nn.Module):
         :param x: Input tensor.
         :return: Output tensor.
         """
-        for layer in self.layers:
-            x = layer(x)
+        for i in range(len(self.layers)):
+            if i<=3:
+                x = torch.nn.functional.relu(self.layers[i](x))
+            else:
+                x = self.layers[i](x)
         return x
     
     def reset(self):

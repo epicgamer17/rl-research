@@ -1,7 +1,8 @@
 import sys
 import torch
-from agent_configs import CFRConfig
 from cfr_network import CFRNetwork
+from agent_configs import CFRConfig
+
 from replay_buffers import nfsp_reservoir_buffer
 import datetime
 sys.path.append("../")
@@ -29,6 +30,8 @@ class CFRAgent(): # BaseAgent):
         from_checkpoint=False
     ):
         # super(CFRAgent, self).__init__(env, config, name=name, device=device, from_checkpoint=from_checkpoint)
+        self.observation_space = config.observation_space
+        self.action_space = config.action_space
         self.name = name
         self.env = env
         self.device = device
@@ -36,25 +39,25 @@ class CFRAgent(): # BaseAgent):
         self.players = config.num_players
         self.network = CFRNetwork(
             config=config.network,
-            input_shape=env.observation_space.shape,
-            output_shape=env.action_space.n,
+            input_shape=self.observation_space,
+            output_shape=self.action_space,
         )
 
         self.value_buffer = [nfsp_reservoir_buffer.NFSPReservoirBuffer(
-            observation_dimensions=env.observation_space.shape,
+            observation_dimensions=self.observation_space,
             observation_dtype=torch.float32,
             max_size=config.replay_buffer_size,
-            num_actions=env.action_space.n,
+            num_actions=self.action_space,
             batch_size=config.minibatch_size,
-            compressed_observations=False) for _ in range(self.players)]
+            compressed_observations=True) for _ in range(self.players)]
       
         self.policy_buffer = nfsp_reservoir_buffer.NFSPReservoirBuffer(
-            observation_dimensions=env.observation_space.shape,
+            observation_dimensions=self.observation_space,
             observation_dtype=torch.float32,
             max_size=config.replay_buffer_size,
-            num_actions=env.action_space.n,
+            num_actions=self.action_space,
             batch_size=config.minibatch_size,
-            compressed_observations=False)
+            compressed_observations=True)
    
         self.traversals = config.traversals
         self.steps_per_epoch = config.steps_per_epoch
