@@ -31,6 +31,7 @@ class VectorhashAgentHistory:
         self._theta_distributions = []
         self._true_images = []
         self._estimated_images = []
+        self._velocity_history = []
 
     def append(
         self,
@@ -43,6 +44,7 @@ class VectorhashAgentHistory:
         estimated_image,
     ):
         self._true_positions.append(true_position)
+        self._true_angles.append(true_angle)
         self._x_distributions.append(x_distribution)
         self._y_distributions.append(y_distribution)
         self._theta_distributions.append(theta_distribution)
@@ -50,10 +52,10 @@ class VectorhashAgentHistory:
         self._estimated_images.append(estimated_image)
 
     def make_image_video(self):
-        fig = plt.figure(layout="constrained", figsize=(8, 8), dpi=250)
+        fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
         gs = GridSpec(6, 6, figure=fig)
 
-        text = fig.suptitle("t=0")
+        text_artist = fig.suptitle("t=0")
 
         im_true_ax = fig.add_subplot(gs[0:3, 0:3])
         im_pred_ax = fig.add_subplot(gs[0:3, 3:6])
@@ -70,8 +72,8 @@ class VectorhashAgentHistory:
         y_dist_ax.set_xlim(0, len(self._y_distributions[0]))
         theta_dist_ax.set_xlim(0, len(self._theta_distributions[0]))
 
-        im_true_artist = im_true_ax.imshow(self._true_images[0])
-        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0])
+        im_true_artist = im_true_ax.imshow(self._true_images[0], vmin=0, vmax=1)
+        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0], vmin=0, vmax=1)
         x_dist_artist = plot_probability_distribution_on_ax(
             self._x_distributions[0], x_dist_ax
         )
@@ -81,6 +83,10 @@ class VectorhashAgentHistory:
         theta_dist_artist = plot_probability_distribution_on_ax(
             self._theta_distributions[0], theta_dist_ax
         )
+
+        x_true_pos_artist = x_dist_ax.plot([self._true_positions[0][0]], [1.0], "ro")
+        y_true_pos_artist = y_dist_ax.plot([self._true_positions[0][1]], [1.0], "ro")
+        theta_true_pos_artist = theta_dist_ax.plot([self._true_angles[0]], [1.0], "ro")
 
         def plot_func(frame):
             im_true_artist.set_data(self._true_images[frame])
@@ -92,14 +98,21 @@ class VectorhashAgentHistory:
                 values=self._theta_distributions[frame], edges=None
             )
 
-            text.set_text(f"t={frame}")
+            x_true_pos_artist[0].set_data([self._true_positions[frame][0]], [1.0])
+            y_true_pos_artist[0].set_data([self._true_positions[frame][1]], [1.0])
+            theta_true_pos_artist[0].set_data([self._true_angles[frame]], [1.0])
+
+            text_artist.set_text(f"t={frame}")
             return (
                 im_true_artist,
                 im_pred_artist,
                 x_dist_artist,
                 y_dist_artist,
                 theta_dist_artist,
-                text,
+                text_artist,
+                x_true_pos_artist,
+                y_true_pos_artist,
+                theta_true_pos_artist,
             )
 
         self.ani = animation.FuncAnimation(
