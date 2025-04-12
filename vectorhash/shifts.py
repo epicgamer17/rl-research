@@ -108,7 +108,7 @@ class ConvolutionalShift(Shift):
 
 
 class ModularConvolutionalShift(Shift):
-    def __init__(self, position_filter_std=0.1, angle_filter_std=6, device=None):
+    def __init__(self, position_filter_std=1, angle_filter_std=12, device=None):
         self.position_filter_std = position_filter_std
         self.angle_filter_std = angle_filter_std
         super().__init__(device)

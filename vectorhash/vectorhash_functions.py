@@ -483,9 +483,11 @@ def generate_1d_gaussian_kernel(radius, mu=0, sigma=1, device=None):
 
 
 def calculate_shift_kernel(radius, shift, std, device=None):
-    x = torch.arange(-radius, radius + 1, device=device) - (shift / std)
-    low = x - 0.5
-    high = x + 0.5
+    k=3
+    x = torch.arange(-radius*k, (radius + 1)*k, k, device=device) 
+    x = x - (shift / std)
+    low = x - 0.5*k
+    high = x + 0.5*k
     w = 0.5 * (
         scipy.special.erf(high.cpu() / (2**0.5))
         - scipy.special.erf(low.cpu() / (2**0.5))
