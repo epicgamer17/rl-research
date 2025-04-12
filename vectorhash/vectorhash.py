@@ -409,7 +409,7 @@ def build_shift(shift, device=None):
     elif shift == "rat":
         return RatShift(device)
     elif shift == "conv":
-        return ModularConvolutionalShift(device=device)
+        return ModularConvolutionalShift(device=device, position_filter_std=1, angle_filter_std=12)
     elif shift == "conv_expanded":
         return ConvolutionalShift(device=device)
 

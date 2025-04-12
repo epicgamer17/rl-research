@@ -57,14 +57,18 @@ class VectorhashAgentHistory:
 
         im_true_ax = fig.add_subplot(gs[0:3, 0:3])
         im_pred_ax = fig.add_subplot(gs[0:3, 3:6])
-        x_dist_ax = fig.add_subplot(gs[4, 0:4])
+        x_dist_ax = fig.add_subplot(gs[3, 0:4])
         y_dist_ax = fig.add_subplot(gs[4, 0:4])
-        theta_dist_ax = fig.add_subplot(gs[4, 0:4])
+        theta_dist_ax = fig.add_subplot(gs[5, 0:4])
         im_true_ax.set_title("true image")
         im_pred_ax.set_title("predicted image")
         x_dist_ax.set_title("x dist")
         y_dist_ax.set_title("y dist")
         theta_dist_ax.set_title("θ dist")
+
+        x_dist_ax.set_xlim(0, len(self._x_distributions[0]))
+        y_dist_ax.set_xlim(0, len(self._y_distributions[0]))
+        theta_dist_ax.set_xlim(0, len(self._theta_distributions[0]))
 
         im_true_artist = im_true_ax.imshow(self._true_images[0])
         im_pred_artist = im_pred_ax.imshow(self._estimated_images[0])

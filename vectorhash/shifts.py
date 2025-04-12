@@ -7,6 +7,7 @@ from vectorhash_functions import (
     outer,
     expand_distribution,
     condense_distribution,
+    calculate_shift_kernel,
 )
 
 
@@ -48,19 +49,23 @@ class RatShift(Shift):
 
 
 class ConvolutionalShift(Shift):
-    def __init__(self, filter_std=0.1, filter_radius=6, device=None):
+    def __init__(
+        self, position_filter_std=0.1, angle_filter_std=6, filter_radius=6, device=None
+    ):
         super().__init__(device)
-        self.filter_std = filter_std
+        self.position_filter_std = position_filter_std
+        self.angle_filter_std = angle_filter_std
         self.filter_radius = filter_radius
 
     def generate_kernels(self, velocity: torch.Tensor) -> list[torch.Tensor]:
         return [
-            torch.Tensor(
-                generate_1d_gaussian_kernel(
-                    self.filter_radius, mu=-v, sigma=self.filter_std, device=self.device
-                )
-            ).to(self.device)
-            for v in velocity
+            generate_1d_gaussian_kernel(
+                self.filter_radius,
+                mu=-v,
+                sigma=self.position_filter_std if i < 2 else self.angle_filter_std,
+                device=self.device,
+            )
+            for i, v in enumerate(velocity)
         ]
 
     def circular_conv(self, v: torch.Tensor, filter: torch.Tensor):
@@ -103,8 +108,9 @@ class ConvolutionalShift(Shift):
 
 
 class ModularConvolutionalShift(Shift):
-    def __init__(self, filter_std=0.1, device=None):
-        self.filter_std = filter_std
+    def __init__(self, position_filter_std=0.1, angle_filter_std=6, device=None):
+        self.position_filter_std = position_filter_std
+        self.angle_filter_std = angle_filter_std
         super().__init__(device)
 
     def generate_kernel(self, module: GridModule, velocity: torch.Tensor):
@@ -112,24 +118,28 @@ class ModularConvolutionalShift(Shift):
         filters_1d = []
         for i in range(len(velocity)):
             filters_1d.append(
-                torch.tensor(
-                    generate_1d_gaussian_kernel(
-                        shape[i],
-                        mu=-velocity[i],
-                        sigma=self.filter_std,
-                        device=self.device,
-                    )
-                ).to(self.device)
+                calculate_shift_kernel(
+                    radius=(shape[i] - 1) // 2,
+                    shift=-(velocity[i] % module.shape[i]),
+                    std=(
+                        self.position_filter_std if i < 2 else self.angle_filter_std
+                    ),
+                    device=self.device,
+                )
             )
 
-        return outer(filters_1d)
+        ret = outer(filters_1d)
+        assert torch.isclose(
+            ret.sum(), torch.ones(1, device=self.device)
+        ), f"{ret.sum()}, {ret}"
+        return ret
 
     def calculate_pad_tuple(self, module: GridModule):
         pad = []
         shape = tuple(module.shape)
-        for l in shape:
-            pad.append(l)
-            pad.append(l)
+        for l in reversed(shape):
+            pad.append((l - 1) // 2)
+            pad.append((l - 1) // 2)
         return tuple(pad)
 
     def __call__(self, modules, velocity):
@@ -139,9 +149,14 @@ class ModularConvolutionalShift(Shift):
             state = module.state.unsqueeze(0)
             padded = torch.nn.functional.pad(state, pad, "circular")
 
-            conv_result = torch.nn.functional.conv3d(
-                padded.unsqueeze(0), kernel.unsqueeze(0).unsqueeze(0), padding="valid"
-            ).squeeze(0).squeeze(0)
+            conv_result = (
+                torch.nn.functional.conv3d(
+                    padded.unsqueeze(0), kernel.unsqueeze(0).unsqueeze(0)
+                )
+                .squeeze(0)
+                .squeeze(0)
+                .squeeze(0)
+            )
 
             conv_result = conv_result / conv_result.sum()
             module.state = conv_result

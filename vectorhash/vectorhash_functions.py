@@ -472,7 +472,31 @@ def generate_1d_gaussian_kernel(radius, mu=0, sigma=1, device=None):
     low = (x - mu - 0.5) / (sigma * 2**0.5)
     high = (x - mu + 0.5) / (sigma * 2**0.5)
     w = 0.5 * (scipy.special.erf(high.cpu()) - scipy.special.erf(low.cpu()))
-    return w
+
+    t = torch.tensor(w).to(device).clip(1e-8)
+    if t.sum() < 1:
+        print(
+            f"warning: tsum<1, params: r={radius}, mu={mu}, std={sigma}. low={low}, high={high}, w={w}"
+        )
+    t = t / t.sum()
+    return t
+
+
+def calculate_shift_kernel(radius, shift, std, device=None):
+    x = torch.arange(-radius, radius + 1, device=device) - (shift / std)
+    low = x - 0.5
+    high = x + 0.5
+    w = 0.5 * (
+        scipy.special.erf(high.cpu() / (2**0.5))
+        - scipy.special.erf(low.cpu() / (2**0.5))
+    )
+    t = torch.tensor(w).to(device).clip(1e-8)
+    if t.sum() < 1:
+        print(
+            f"warning: tsum<1, params: r={radius}, shift={shift}, std={std}. low={low}, high={high}, w={w}"
+        )
+    t = t / t.sum()
+    return t
 
 
 def expand_distribution(marginals: list[torch.Tensor]):
