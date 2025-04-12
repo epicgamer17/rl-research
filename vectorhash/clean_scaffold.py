@@ -335,8 +335,11 @@ class GridHippocampalScaffold:
         return G
 
     def estimate_certainty(self, k: float, g=None):
+        if g == None:
+            modules = self.modules_from_g(self.g)
+        else:
+            modules = self.modules_from_g(g)
 
-        modules = self.modules
         sums = torch.zeros(len(self.shapes[0]))
         for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in modules]
@@ -347,8 +350,6 @@ class GridHippocampalScaffold:
             low = torch.ceil(mean - k)
             high = torch.floor(mean + k)
             indices = torch.arange(low, high + 1, device=self.device).int()
-            print(mean)
-            print(indices)
             sums[dim] = torch.sum(v[indices])
         return sums
 
