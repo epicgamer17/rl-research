@@ -16,3 +16,4 @@ class CFRConfig():
         self.training_steps = config_dict["training_steps"]
         self.observation_space = game_config["observation_space"]
         self.action_space = game_config["action_space"]
+        self.active_player_obj = config_dict["active_player_obj"]

@@ -17,7 +17,6 @@ class ActivePlayer():
         if player < 0 or player >= self.players:
             raise ValueError("Invalid player index.")
         self.active_player = player
-        print(f"Active player set to {self.active_player}.")
     
     def get_active_player(self):
         """
@@ -31,4 +30,4 @@ class ActivePlayer():
         Move to the next player.
         """
         self.active_player = (self.active_player + 1) % self.players
-        print(f"Active player moved to {self.active_player}.")
+        return self.active_player

@@ -13,6 +13,18 @@ class CFRNetwork(nn.Module):
         self.values = [ValueNetwork(config=config["value"]) for _ in range(config["num_players"])]
         self.policy = PolicyNetwork(config=config["policy"])
 
+    def forward(self, x):
+        """
+        Forward pass through the network.
+        :param x: Input tensor.
+        :return: Output tensor.
+        """
+        for i in range(len(self.layers)):
+            if i<=3:
+                x = torch.nn.functional.relu(self.layers[i](x))
+            else:
+                x = self.layers[i](x)
+        return x
     
 class ValueNetwork(nn.Module):
     def __init__(self,
@@ -64,9 +76,11 @@ class ValueNetwork(nn.Module):
         """
         self.optimizer.zero_grad()
         outputs = self.forward(batch[1])
-        loss = (batch[0] * ((outputs - batch[2]) ** 2)).mean()
+        # optional : weight each loss by iteration num batch[0].unsqueeze(1) * 
+        loss = (((outputs - batch[2].detach()) ** 2)).mean()
         loss.backward()
         self.optimizer.step()
+        return loss.item()
 
 
 
@@ -112,3 +126,16 @@ class PolicyNetwork(nn.Module):
         for layer in self.layers:
             if hasattr(layer, 'reset_parameters'):
                 layer.reset_parameters()
+
+    def learn(self, batch):
+        """
+        Given a batch of experiences, update the network params
+        :param batch: Batch of experiences Tuple of form(iteration_num, state, regret).
+        """
+        self.optimizer.zero_grad()
+        outputs = self.forward(batch[1])
+        # optional : weight each loss by iteration num batch[0].unsqueeze(1) * 
+        loss = (((outputs - batch[2].detach()) ** 2)).mean()
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
