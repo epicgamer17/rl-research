@@ -178,7 +178,7 @@ class AnimalAIVectorhashAgent:
         p, v = self.postprocess_health_pos_vel(obs[1])
         return image, p, v
 
-    def step(self, action):
+    def step(self, action, noise=[]):
         """
         0 - nothing
 
@@ -200,7 +200,8 @@ class AnimalAIVectorhashAgent:
         """
         obs, reward, done, info = self.env.step(action)
         image, p, v = self.postprocess_obs(obs)
-
+        if noise[2] == 'normal':
+            noise = torch.distributions.normal.Normal(loc=noise[0], scale=noise[1])
         ### calculation of noisy input
         dtheta = 0
         if action == 1 or action == 4 or action == 4:
@@ -211,6 +212,10 @@ class AnimalAIVectorhashAgent:
 
         dp = p - self.animal_ai_data["exact_position"]
         noisy_dp = dp  # + random noise
+        if noise!=[]:
+            # add gaussian noise to dtheta and dp
+            noisy_dtheta = dtheta + noise.sample().item()
+            noisy_dp = dp + noise.sample((2,)).tolist()
         v = torch.tensor([noisy_dp[0], noisy_dp[1], noisy_dtheta], device=self.device)
 
         ### aliases
@@ -284,11 +289,17 @@ class AnimalAIVectorhashAgent:
             categorical_crossentropy(theta_dist, theta_true_dist),
         )
 
-    def test_path(self, path):
+    def test_path(self, path, noise=[]):
         self.history.reset()
         state, info = self.env.reset()
         img = self.postprocess_image(state)
         p, v = self.postprocess_health_pos_vel(info)
+
+        if noise!=[]:
+            print("------------USING NOISED ODOMETRY INPUTS-----------")
+            print("Mean: ", noise[0])
+            print("Std: ", noise[1])
+            print("Noise type: ", noise[2])
 
         # self.vectorhash.reset()
         self.vectorhash.store_memory(img.flatten().to(self.device))
@@ -320,7 +331,7 @@ class AnimalAIVectorhashAgent:
         errs = [self.calculate_position_err()]
         for i in range(len(path)):
             action = path[i]
-            true_img, true_p, true_ang, v = self.step(action)
+            true_img, true_p, true_ang, v = self.step(action, noise=noise)
             estimated_img = (
                 torch.clone(
                     self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
