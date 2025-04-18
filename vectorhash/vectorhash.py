@@ -362,7 +362,7 @@ import math
 from scipy.stats import norm
 from matrix_initializers import *
 from vectorhash_functions import expectation_of_relu_normal
-
+from shifts import ModularConvolutionalShift
 
 def build_initializer(
     shapes,
@@ -409,7 +409,7 @@ def build_shift(shift, device=None):
     elif shift == "rat":
         return RatShift(device)
     elif shift == "conv":
-        return ModularConvolutionalShift(device=device, position_filter_std=1, angle_filter_std=12)
+        return ModularConvolutionalShift(device=device)
     elif shift == "conv_expanded":
         return ConvolutionalShift(device=device)
 
@@ -420,10 +420,11 @@ def build_scaffold(
     W_gh_var=1,
     percent_nonzero_relu=0.9,
     sparse_initialization=0.1,
-    smoothing=SoftmaxSmoothing(T=1e-3),
-    shift="roll",
+    smoothing=SoftmaxSmoothing(T=1e-4),
+    shift=ModularConvolutionalShift(),
     device=None,
     relu=False,
+    limits=None
 ):
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
@@ -434,7 +435,7 @@ def build_scaffold(
         device=device,
     )
     smoothing = smoothing
-    shift = build_shift(shift, device)
+    # shift = build_shift(shift, device)
     scaffold = GridHippocampalScaffold(
         shapes=shapes,
         N_h=N_h,
@@ -446,6 +447,7 @@ def build_scaffold(
         smoothing=smoothing,
         device=device,
         relu=relu,
+        limits=limits
     )
 
     return scaffold, mean_h
@@ -466,8 +468,9 @@ def build_vectorhash_architecture(
     epsilon_hs=1,
     epsilon_sh=1,
     relu=False,
-    shift="roll",
+    shift=ModularConvolutionalShift(),
     smoothing=SoftmaxSmoothing(T=1e-6),
+    limits=None,
 ):
     assert initalization_method in ["by_scaling", "by_sparsity"]
     assert hippocampal_sensory_layer_type in [
@@ -477,7 +480,6 @@ def build_vectorhash_architecture(
         "naive_hebbian",
         "mixed",
     ]
-    assert shift in ["roll", "conv", "rat"]
     print(initalization_method)
     scaffold, mean_h = build_scaffold(
         shapes,
@@ -490,7 +492,9 @@ def build_vectorhash_architecture(
         relu=relu,
         smoothing=smoothing,
         shift=shift,
+        limits=limits
     )
+    shift.device = device
 
     if hippocampal_sensory_layer_type == "exact_pseudoinverse":
         hippocampal_sensory_layer = ExactPseudoInverseHippocampalSensoryLayer(
