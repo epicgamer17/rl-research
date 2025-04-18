@@ -44,13 +44,13 @@ class VectorhashAgentHistory:
         true_image,
         estimated_image,
     ):
-        self._true_positions.append(true_position)
+        self._true_positions.append(true_position.clone().cpu())
         self._true_angles.append(true_angle)
-        self._x_distributions.append(x_distribution)
-        self._y_distributions.append(y_distribution)
-        self._theta_distributions.append(theta_distribution)
-        self._true_images.append(true_image)
-        self._estimated_images.append(estimated_image)
+        self._x_distributions.append(x_distribution.clone().cpu())
+        self._y_distributions.append(y_distribution.clone().cpu())
+        self._theta_distributions.append(theta_distribution.clone().cpu())
+        self._true_images.append(true_image.clone().cpu())
+        self._estimated_images.append(estimated_image.clone().cpu())
 
     def make_image_video(self):
         fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
@@ -99,8 +99,8 @@ class VectorhashAgentHistory:
                 values=self._theta_distributions[frame], edges=None
             )
 
-            x_true_pos_artist[0].set_data([self._true_positions[frame][0] % 40], [1.0])
-            y_true_pos_artist[0].set_data([self._true_positions[frame][1] % 40], [1.0])
+            x_true_pos_artist[0].set_data([self._true_positions[frame][0]], [1.0])
+            y_true_pos_artist[0].set_data([self._true_positions[frame][1]], [1.0])
             theta_true_pos_artist[0].set_data([self._true_angles[frame]], [1.0])
 
             text_artist.set_text(f"t={frame}")
@@ -225,7 +225,9 @@ class AnimalAIVectorhashAgent:
         scaffold.shift(v)
         g_denoised = scaffold.denoise(scaffold.g)[0]
         scaffold.modules = scaffold.modules_from_g(g_denoised)
-        odometry_certainty = scaffold.estimate_certainty(k=5)
+        odometry_certainty = scaffold.estimate_certainty(
+            limits=torch.Tensor([2, 2, 30])
+        )
 
         ### get new position distribution
         new_positions = scaffold.get_mean_positions()
@@ -292,29 +294,37 @@ class AnimalAIVectorhashAgent:
 
         # self.vectorhash.reset()
         self.vectorhash.store_memory(img.flatten().to(self.device))
-        self.history.append(
-            true_image=torch.clone(img).cpu(),
-            true_angle=self.animal_ai_data["exact_angle"]
-            - self.animal_ai_data["start_angle"],
-            estimated_image=torch.clone(
-                self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
-                    self.vectorhash.scaffold.hippocampal_from_grid(
-                        self.vectorhash.scaffold.denoise(self.vectorhash.scaffold.g)[0]
-                    )[0]
+
+        ## initial history store
+        estimated_image = (
+            self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
+                self.vectorhash.scaffold.hippocampal_from_grid(
+                    self.vectorhash.scaffold.denoise(self.vectorhash.scaffold.g)[0]
                 )[0]
-            )
-            .reshape(84, 84)
-            .cpu(),
-            true_position=torch.clone(p - self.animal_ai_data["start_position"]).cpu(),
-            x_distribution=torch.clone(
-                self.vectorhash.scaffold.expand_distribution(0)
+            )[0].reshape(84, 84)
+        )
+        self.history.append(
+            true_image=img,
+            true_angle=(
+                (
+                    self.animal_ai_data["exact_angle"]
+                    - self.animal_ai_data["start_angle"]
+                )
+                * self.vectorhash.scaffold.scale_factor[2]
+            ).item(),
+            estimated_image=estimated_img,
+            true_position=(
+                (p - self.animal_ai_data["start_position"]).cpu()
+                * torch.tensor(
+                    [
+                        self.vectorhash.scaffold.scale_factor[0],
+                        self.vectorhash.scaffold.scale_factor[1],
+                    ]
+                )
             ).cpu(),
-            y_distribution=torch.clone(
-                self.vectorhash.scaffold.expand_distribution(1)
-            ).cpu(),
-            theta_distribution=torch.clone(
-                self.vectorhash.scaffold.expand_distribution(2)
-            ).cpu(),
+            x_distribution=self.vectorhash.scaffold.expand_distribution(0),
+            y_distribution=self.vectorhash.scaffold.expand_distribution(1),
+            theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
         )
 
         errs = [self.calculate_position_err()]
@@ -322,30 +332,31 @@ class AnimalAIVectorhashAgent:
             action = path[i]
             true_img, true_p, true_ang, v = self.step(action)
             estimated_img = (
-                torch.clone(
-                    self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
-                        self.vectorhash.scaffold.hippocampal_from_grid(
-                            self.vectorhash.scaffold.g
-                        )[0]
+                self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
+                    self.vectorhash.scaffold.hippocampal_from_grid(
+                        self.vectorhash.scaffold.g
                     )[0]
-                )
-                .reshape(84, 84)
-                .cpu()
+                )[0].reshape(84, 84)
             )
             self.history.append(
-                true_image=torch.clone(true_img).cpu(),
+                true_image=true_img,
                 estimated_image=estimated_img,
-                true_position=torch.clone(true_p - self.animal_ai_data["start_position"]).cpu(),
-                true_angle=true_ang - self.animal_ai_data["start_angle"],
-                x_distribution=torch.clone(
-                    self.vectorhash.scaffold.expand_distribution(0)
+                true_position=(
+                    (true_p - self.animal_ai_data["start_position"]).cpu()
+                    * torch.tensor(
+                        [
+                            self.vectorhash.scaffold.scale_factor[0],
+                            self.vectorhash.scaffold.scale_factor[1],
+                        ]
+                    )
                 ).cpu(),
-                y_distribution=torch.clone(
-                    self.vectorhash.scaffold.expand_distribution(1)
-                ).cpu(),
-                theta_distribution=torch.clone(
-                    self.vectorhash.scaffold.expand_distribution(2)
-                ).cpu(),
+                true_angle=(
+                    (true_ang - self.animal_ai_data["start_angle"])
+                    * self.vectorhash.scaffold.scale_factor[2]
+                ).item(),
+                x_distribution=self.vectorhash.scaffold.expand_distribution(0),
+                y_distribution=self.vectorhash.scaffold.expand_distribution(1),
+                theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
             )
             if i % 100 == 0:
                 print(f"Step {i}: {self.calculate_position_err()}")

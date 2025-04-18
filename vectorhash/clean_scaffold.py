@@ -294,12 +294,13 @@ class GridHippocampalScaffold:
 
     @torch.no_grad()
     def shift(self, velocity):
-        """Shifts the grid coding state by a given displacement.
+        """Shifts the grid coding state by a given displacement. The velocity is given in
+        "world coordinates" and scaled to "grid coordinates" using self.scale_factor
 
         The length of `velocity` must be equal to the dimensionality of the grid modules.
         """
 
-        self.shift_method(self.modules, velocity / self.scale_factor)
+        self.shift_method(self.modules, velocity * self.scale_factor)
 
         self.g = self._g()
 
