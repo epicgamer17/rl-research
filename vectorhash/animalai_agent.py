@@ -200,8 +200,9 @@ class AnimalAIVectorhashAgent:
         """
         obs, reward, done, info = self.env.step(action)
         image, p, v = self.postprocess_obs(obs)
-        if noise[2] == 'normal':
-            noise = torch.distributions.normal.Normal(loc=noise[0], scale=noise[1])
+        if noise != []:
+            if noise[2] == 'normal':
+                noise = torch.distributions.normal.Normal(loc=noise[0], scale=noise[1])
         ### calculation of noisy input
         dtheta = 0
         if action == 1 or action == 4 or action == 4:
