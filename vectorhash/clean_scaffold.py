@@ -338,8 +338,10 @@ class GridHippocampalScaffold:
 
         return G
 
-    def estimate_certainty(self, limits: torch.Tensor, g=None):
-        """Estimate, over each dimension d, P(x  |mu_d - limits[d]|)
+    def estimate_certainty(self, limits: torch.Tensor = None, g=None):
+        """Estimate, over each dimension d, P( |X_d - mu_d| < k_d limits[d]) where
+        limits[d] is in "world coordinates" and not "grid coordinates" which will be
+        converted to "grid coordinates"
 
         Args:
             differences (torch.Tensor): _description_
@@ -353,6 +355,9 @@ class GridHippocampalScaffold:
         else:
             modules = self.modules_from_g(g)
 
+        if limits == None:
+            limits = torch.ones(len(self.shapes[0]), device=self.device)
+
         sums = torch.zeros(len(self.shapes[0]))
         for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in modules]
@@ -362,8 +367,8 @@ class GridHippocampalScaffold:
             )
             if mean > len(v) // 2:
                 mean -= len(v)
-            low = torch.ceil(mean - k)
-            high = torch.floor(mean + k)
+            low = torch.ceil(mean - self.scale_factor[dim] * limits[dim])
+            high = torch.floor(mean + self.scale_factor[dim] * limits[dim])
             indices = torch.arange(low, high + 1, device=self.device).int()
             sums[dim] = torch.sum(v[indices])
         return sums
@@ -374,12 +379,16 @@ class GridHippocampalScaffold:
         return v
 
     def get_mean_positions(self):
+        """Return mean positions in "world coordinates"
+
+        Returns torch.Tensor (x,y,θ)
+        """
         means = torch.zeros(len(self.shapes[0]))
         for d in range(len(self.shapes[0])):
             v = self.expand_distribution(d)
             mean = circular_mean(
                 v * torch.arange(0, len(v), device=self.device), len(v)
-            )
+            ) / self.scale_factor[d]
             means[d] = mean
         return means
 
