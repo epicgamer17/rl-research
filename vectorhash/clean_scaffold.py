@@ -85,11 +85,14 @@ class GridHippocampalScaffold:
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
         """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
+        
+        self.grid_limits = torch.ones(len(self.shapes[0]), device=self.device)
+        for d in range(len(self.shapes[0])):
+            self.grid_limits[d] = torch.prod(self.shapes[:, d]).item()
+
         if limits != None:
             for d in range(len(self.shapes[0])):
-                n = torch.prod(self.shapes[:, d]).item()
-                self.scale_factor[d] = n / limits[d]
-
+                self.scale_factor[d] = self.grid_limits[d] / limits[d]
     @torch.no_grad()
     def _G(self, method) -> torch.Tensor:
         """Calculates the matrix of all possible grid states. Shape: `(N_patts, N_g)`"""

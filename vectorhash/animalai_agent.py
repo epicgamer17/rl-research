@@ -201,7 +201,7 @@ class AnimalAIVectorhashAgent:
         obs, reward, done, info = self.env.step(action)
         image, p, v = self.postprocess_obs(obs)
         if noise != []:
-            if noise[2] == 'normal':
+            if noise[2] == "normal":
                 noise = torch.distributions.normal.Normal(loc=noise[0], scale=noise[1])
         ### calculation of noisy input
         dtheta = 0
@@ -213,7 +213,7 @@ class AnimalAIVectorhashAgent:
 
         dp = p - self.animal_ai_data["exact_position"]
         noisy_dp = dp  # + random noise
-        if noise!=[]:
+        if noise != []:
             # add gaussian noise to dtheta and dp
             noisy_dtheta = dtheta + noise.sample().item()
             noisy_dp = dp + noise.sample((2,)).tolist()
@@ -298,7 +298,7 @@ class AnimalAIVectorhashAgent:
         img = self.postprocess_image(state)
         p, v = self.postprocess_health_pos_vel(info)
 
-        if noise!=[]:
+        if noise != []:
             print("------------USING NOISED ODOMETRY INPUTS-----------")
             print("Mean: ", noise[0])
             print("Std: ", noise[1])
@@ -319,18 +319,29 @@ class AnimalAIVectorhashAgent:
             true_image=img,
             true_angle=(
                 (
-                    self.animal_ai_data["exact_angle"]
-                    - self.animal_ai_data["start_angle"]
+                    (
+                        self.animal_ai_data["exact_angle"]
+                        - self.animal_ai_data["start_angle"]
+                    )
+                    * self.vectorhash.scaffold.scale_factor[2]
                 )
-                * self.vectorhash.scaffold.scale_factor[2]
+                % self.vectorhash.scaffold.grid_limits[2]
             ).item(),
-            estimated_image=estimated_img,
+            estimated_image=estimated_image,
             true_position=(
-                (p - self.animal_ai_data["start_position"]).cpu()
-                * torch.tensor(
+                (
+                    (p - self.animal_ai_data["start_position"]).cpu()
+                    * torch.tensor(
+                        [
+                            self.vectorhash.scaffold.scale_factor[0],
+                            self.vectorhash.scaffold.scale_factor[1],
+                        ]
+                    )
+                )
+                % torch.tensor(
                     [
-                        self.vectorhash.scaffold.scale_factor[0],
-                        self.vectorhash.scaffold.scale_factor[1],
+                        self.vectorhash.scaffold.grid_limits[0],
+                        self.vectorhash.scaffold.grid_limits[1],
                     ]
                 )
             ).cpu(),
@@ -354,17 +365,28 @@ class AnimalAIVectorhashAgent:
                 true_image=true_img,
                 estimated_image=estimated_img,
                 true_position=(
-                    (true_p - self.animal_ai_data["start_position"]).cpu()
-                    * torch.tensor(
+                    (
+                        (true_p - self.animal_ai_data["start_position"]).cpu()
+                        * torch.tensor(
+                            [
+                                self.vectorhash.scaffold.scale_factor[0],
+                                self.vectorhash.scaffold.scale_factor[1],
+                            ]
+                        )
+                    )
+                    % torch.tensor(
                         [
-                            self.vectorhash.scaffold.scale_factor[0],
-                            self.vectorhash.scaffold.scale_factor[1],
+                            self.vectorhash.scaffold.grid_limits[0],
+                            self.vectorhash.scaffold.grid_limits[1],
                         ]
                     )
                 ).cpu(),
                 true_angle=(
-                    (true_ang - self.animal_ai_data["start_angle"])
-                    * self.vectorhash.scaffold.scale_factor[2]
+                    (
+                        (true_ang - self.animal_ai_data["start_angle"])
+                        * self.vectorhash.scaffold.scale_factor[2]
+                    )
+                    % self.vectorhash.scaffold.grid_limits[2]
                 ).item(),
                 x_distribution=self.vectorhash.scaffold.expand_distribution(0),
                 y_distribution=self.vectorhash.scaffold.expand_distribution(1),
