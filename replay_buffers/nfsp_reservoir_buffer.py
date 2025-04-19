@@ -46,14 +46,17 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             self.target_policy_buffer[self.add_calls] = target_policy
             self.size = min(self.size + 1, self.max_size)
         else:
-            idx = np.random.randint(0, self.add_calls + 1)
-            if idx < self.max_size:
+            # RESERVOIR ADDING FOR NEW OBSERVATIONS
+            # if max size is reached, we add the new observation with a probability of max_size / (add_calls + 1)
+            # then the idx of the new observation is a random integer between 0 and max_size
+            if np.random.rand() <= self.max_size / (self.add_calls + 1):
+                idx = np.random.randint(0, self.max_size) # self.max_size excluded and 0 included
                 self.observation_buffer[idx] = observation
                 self.info_buffer[idx] = info
                 self.target_policy_buffer[idx] = target_policy
         self.add_calls += 1
 
-    def sample(self):
+    def sample(self, type="random"):
         # http://erikerlandson.github.io/blog/2015/11/20/very-fast-reservoir-sampling/
         # assert len(self) >= self.batch_size
         if self.size < self.batch_size:
@@ -63,12 +66,23 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
                 targets=self.target_policy_buffer[: self.size],
             )
         indices = np.random.choice(len(self), self.batch_size, replace=False)
-        return dict(
-            observations=self.observation_buffer[indices],
-            infos=self.info_buffer[indices],
-            targets=self.target_policy_buffer[indices],
-        )
+        if type=="random":
+            return dict(
+                observations=self.observation_buffer[indices],
+                infos=self.info_buffer[indices],
+                targets=self.target_policy_buffer[indices],
+            )
+        # elif type=="reservoir":
+        #     index = self.batch_size
+        #     # else reservoir sampling with the following alg : store first batch_size elements
+        #     obeservation_reservoir = self.observation_buffer[: self.batch_size]
+        #     info_reservoir = self.info_buffer[: self.batch_size]
+        #     target_policy_reservoir = self.target_policy_buffer[: self.batch_size]
+        #     for i in len(self.size):
+            # the for each new observation, with probability batch_size/index, replace the random uniform over k elements with the new observation
 
+
+        # for each new 
         # observation_reservoir = self.observation_buffer[: self.batch_size]
         # info_reservoir = self.info_buffer[: self.batch_size]
         # target_policy_reservoir = self.target_policy_buffer[: self.batch_size]

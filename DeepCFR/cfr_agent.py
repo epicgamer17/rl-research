@@ -10,6 +10,7 @@ from base_agent.agent import BaseAgent
 import time
 import numpy as np
 import copy
+import os
 
 class CFRAgent(): # BaseAgent):
     def __init__(
@@ -37,6 +38,7 @@ class CFRAgent(): # BaseAgent):
         self.device = device
         self.config = config
         self.players = config.num_players
+        self.nodes_touched = 0
         self.active_player_obj = config.active_player_obj
         self.network = CFRNetwork(
             config=config.network,
@@ -114,8 +116,6 @@ class CFRAgent(): # BaseAgent):
         self.network.values[player_id].reset()
 
         for i in range(self.config.steps_per_epoch):
-            print("PLAYER ID", player_id)
-            print("LEARNING ITERATION", i)
             samples = self.value_buffer[player_id].sample()
             # get num of obs
             num_samples = len(samples["observations"])
@@ -124,14 +124,13 @@ class CFRAgent(): # BaseAgent):
             target_policy = torch.tensor(np.array([samples["targets"][sample] for sample in range(num_samples)]))
             iteration = torch.tensor([samples["infos"][sample]["iteration"] for sample in range(num_samples)])
             loss = self.network.values[player_id].learn(batch=[iteration, observations, target_policy])
-            print("LOSS", loss)
         
-    def policy_learn(self):
+    def policy_learn(self, linear=False):
         """
         Final training cycle, updating policy network on average strategy of players in past t iterations.
         """
+        losses = []
         for i in range(self.config.steps_per_epoch):
-            print("LEARNING ITERATION", i)
             samples = self.policy_buffer.sample()
             # get num of obs
             num_samples = len(samples["observations"])
@@ -139,11 +138,13 @@ class CFRAgent(): # BaseAgent):
             observations = torch.tensor(np.array([samples["observations"][sample]["observation"] for sample in range(num_samples)]))
             target_policy = torch.tensor(np.array([samples["targets"][sample] for sample in range(num_samples)]))
             iteration = torch.tensor([samples["infos"][sample]["iteration"] for sample in range(num_samples)])
-            loss = self.network.policy.learn(batch=[iteration, observations, target_policy])
-            print("POLICY LOSS", loss)
+            loss = self.network.policy.learn(batch=[iteration, observations, target_policy], linear=linear)
+            losses.append(loss)
 
-    def train(self):
+    def train(self, sampling="MC"):
+        assert sampling in ["MC", "Full"], print("Pick a valid sampling method") # check if sampling methods work
         start_time = time.time()
+        checkpoint_interval = 0.2
         for i in range(self.config.training_steps):
             # FOR training_steps CFR ITERATIONS         
             for p in range(self.players):
@@ -155,14 +156,23 @@ class CFRAgent(): # BaseAgent):
                     active_player = self.env.agent_selection[-1]
                     self.active_player_obj.set_active_player(int(active_player))
                     observation, reward, termination, truncation, info = self.env.last()
-                    traverse_history = [] # for recreation
-                    self.traverse(history=traverse_history, iteration_T=i, seed=random_seed, game=self.env, active_player=self.active_player_obj.get_active_player(), traverser=p)
-                    print(f"Player {p} Traversal {t}")
+                    if sampling=="Full":
+                        traverse_history = [] # for recreation
+                        self.traverse(history=traverse_history, iteration_T=i, seed=random_seed, game=self.env, active_player=self.active_player_obj.get_active_player(), traverser=p, sampling="Full")
+                    else:
+                        traverse_history = [] # for recreation
+                        self.traverse(history=traverse_history, iteration_T=i, seed=random_seed, game=self.env, active_player=self.active_player_obj.get_active_player(), traverser=p, sampling="MC")
+
                 # NOW LEARN FROM THE PLAYER'S VALUE BUFFER
                 self.learn(p)
             print(f"Iteration {i} done")
-        
-        self.policy_learn()
+            if i >= self.config.training_steps * checkpoint_interval:
+                print(f"Checkpointing at {self.nodes_touched} nodes touched")
+                print(f"Checkpointing at {checkpoint_interval*100}% of training steps, i.e {i} iterations")
+                # CHECKPOINT EVERY 20% OF TRAINING STEPS
+                self.save_checkpoint()
+                checkpoint_interval += 0.2
+
 
         self.training_time = time.time() - start_time
         self.total_environment_steps = self.config.training_steps * self.config.steps_per_epoch
@@ -173,11 +183,32 @@ class CFRAgent(): # BaseAgent):
         """
         Save the model checkpoint.
         """
-        torch.save(self.network.state_dict(), f"checkpoints/{self.name}.pt")
-        print(f"Checkpoint saved at {self.name}.pt")
+        if not os.path.exists("checkpoints/values"):
+            os.makedirs("checkpoints/values")
+        if not os.path.exists("checkpoints/policy/notlinear"):
+            os.makedirs("checkpoints/policy/notlinear")
+        if not os.path.exists("checkpoints/policy/linear"):
+            os.makedirs("checkpoints/policy/linear")
+        if not os.path.exists("checkpoints/values/"+str(self.nodes_touched)):
+            os.makedirs("checkpoints/values/"+str(self.nodes_touched))
+        if not os.path.exists("checkpoints/policy/notlinear/"+str(self.nodes_touched)):
+            os.makedirs("checkpoints/policy/notlinear/"+str(self.nodes_touched))
+        if not os.path.exists("checkpoints/policy/linear/"+str(self.nodes_touched)):
+            os.makedirs("checkpoints/policy/linear/"+str(self.nodes_touched))
+
+        # SAVE VALUE NETWORK
+        for i in range(self.players):
+            self.network.values[i].reset()
+            torch.save(self.network.values[i].state_dict(), f"checkpoints/values/{self.nodes_touched}/{self.name}_{i}.pt")
+        self.policy_learn(linear=False)
+        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/notlinear/{self.nodes_touched}/{self.name}.pt")
+        self.network.policy.reset()
+        self.policy_learn(linear=True)
+        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/linear/{self.nodes_touched}/{self.name}.pt")
+        self.network.policy.reset()
 
     @torch.no_grad()
-    def traverse(self, history, iteration_T, seed, game, active_player, traverser):
+    def traverse(self, history, iteration_T, seed, game, active_player, traverser, sampling="MC"):
         """
         Traverse the game tree recursive call.
         :param history: The current history of the game (for recreation purposes).
@@ -186,6 +217,7 @@ class CFRAgent(): # BaseAgent):
         :param env: The environment object.
         :param active_player: The current active player.
         """
+        self.nodes_touched += 1
         traverser_id = traverser
         self.active_player_obj.set_active_player(active_player)
         # GET CURRENT STATE
@@ -197,29 +229,45 @@ class CFRAgent(): # BaseAgent):
             predictions = self.predict(observation["observation"], active_player)
             sample, policy = self.select_actions(predictions, info=torch.from_numpy(observation["action_mask"]), mask_actions=True, traverser=traverser_id) # MASKING NOT YET IMPLEMENTED
             # if active player, branch off and traverse
-            v_policy = [0] * len(policy)
-            reg = [0] * len(policy)
-            for i in range(len(policy)):
-                if policy[i] == 0:
-                    continue
-                recreate_env = self.recreate_env(game, history, seed) # UGGGG
-                recreate_env.step(i)
-                history.append(i)
-                v_policy[i] = self.traverse(copy.deepcopy(history), iteration_T, seed, recreate_env,self.active_player_obj.next(), traverser=traverser_id) # RAWRRRR RECURSIVE DO WE NEED THIS???????
-                history.pop()
-            for i in range(len(policy)):
-                reg[i] = v_policy[i] - torch.sum(torch.tensor(v_policy) * torch.tensor(policy)).item()
-            # ADD TO ACTIVE PLAYER'S VALUE BUFFER
-            self.value_buffer[active_player].store(observation, target_policy=reg, iteration=iteration_T, info={"iteration": iteration_T+1})
-            return torch.sum(torch.tensor(v_policy) * torch.tensor(policy)).item() # RETURN VALUE FOR ACTIVE PLAYER #### ALTERNATIVELY JUST RETURN REWARD OF SAMPLED ACTION
+            if sampling == "Full":
+                v_policy = [0] * len(policy)
+                reg = [0] * len(policy)
+            else:
+                v_policy = [0] * len(policy)
+                reg = [0] * len(policy)
+            if sampling == "Full":
+                for i in range(len(policy)):
+                    if policy[i] == 0:
+                        continue
+                    recreate_env = self.recreate_env(game, history, seed) # UGGGG
+                    recreate_env.step(i)
+                    history.append(i)
+                    v_policy[i] = self.traverse(copy.deepcopy(history), iteration_T, seed, recreate_env,self.active_player_obj.next(), traverser=traverser_id) # RAWRRRR RECURSIVE DO WE NEED THIS???????
+                    history.pop()
+                for i in range(len(policy)):
+                    reg[i] = v_policy[i] - torch.sum(torch.tensor(v_policy) * torch.tensor(policy)).item()
+                # ADD TO ACTIVE PLAYER'S VALUE BUFFER
+                self.value_buffer[active_player].store(observation, target_policy=reg, iteration=iteration_T, info={"iteration": iteration_T+1})
+                return torch.sum(torch.tensor(v_policy) * torch.tensor(policy)).item() # RETURN VALUE FOR ACTIVE PLAYER #### ALTERNATIVELY JUST RETURN REWARD OF SAMPLED ACTION
+            else:
+                # sampling = MC
+                history.append(sample)
+                game.step(sample)
+                v_policy[sample] = self.traverse(copy.deepcopy(history), iteration_T, seed, game ,self.active_player_obj.next(), traverser=traverser_id)
+                for i in range(len(policy)):
+                    if i == sample:
+                        reg[i] = v_policy[i]/(policy[i].item())
+                    else:
+                        reg[i] = -v_policy[i]/(1-policy[i].item())
+                self.value_buffer[active_player].store(observation, target_policy=reg, iteration=iteration_T, info={"iteration": iteration_T+1})
+                return v_policy[sample]
         else:
             predictions = self.predict(observation["observation"], active_player)
             sample, policy = self.select_actions(predictions, info=torch.from_numpy(observation["action_mask"]), mask_actions=True, traverser=traverser_id) # MASKING NOT YET IMPLEMENTED
             self.policy_buffer.store(observation, target_policy=policy, iteration=iteration_T, info={"iteration": iteration_T+1})
             game.step(sample)
             history.append(sample)
-            return self.traverse(copy.deepcopy(history), iteration_T, seed, game, self.active_player_obj.next(), traverser=traverser_id)
-
+            return self.traverse(copy.deepcopy(history), iteration_T, seed, game, self.active_player_obj.next(), traverser=traverser_id)        
 
     def recreate_env(self, env, history, seed):
         """
@@ -236,36 +284,17 @@ class CFRAgent(): # BaseAgent):
             new_env.step(action)
         return new_env
 
-    def evaluate(self, const_policy, tested_agent, eval_games):
+    def evaluate(self, method="LBR"):
         """
         Evaluate the model on the test set.
         # MUST APPROXIMATE BEST RESPONSE LOSS FROM THE POLICY NETWORK
         :return: The evaluation loss.
         # add new policy network, one new value buffer
         """
-        rewards = []
-        for i in range(eval_games):
-            # FOR EACH EVAL GAME, RESET ENVIRONEMENT (DEBATABLE STEP) BUT RESET WITH SET SEED FOR RECREATION
-            random_seed = np.random.randint(0, 2**32 - 1)
-            self.env.reset(seed=random_seed)
-            active_player = self.env.agent_selection[-1]
-            self.active_player_obj.set_active_player(int(active_player))
-            observation, reward, termination, truncation, info = self.env.last()
-            while not termination or not truncation:
-                # GET CURRENT STATE
-                observation, reward, termination, truncation, info = self.env.last()
-                active_player = self.active_player_obj.get_active_player()
-                if active_player == 1:
-                    predictions = self.predict(observation["observation"], active_player)
-                    sample, policy = self.select_actions(predictions, info=torch.from_numpy(observation["action_mask"]), mask_actions=True)
-                else:
-                    sample = 2
-                # if active player, branch off and traverse
-                self.env.step(sample)
-                self.active_player_obj.next()
-            if reward!=0:
-                rewards.append(reward)
-        return np.mean(rewards), np.std(rewards)
+        assert method in ["HH", "LBR"], print("Pick a valid evaluation method")
+
+        # if method == hh then evaluate model head to head with another one, itself? NFSP?
+        # else learn a best reponse policy from the policy network
 
 
        
