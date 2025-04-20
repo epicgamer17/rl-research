@@ -17,7 +17,7 @@ class CFRAgent(): # BaseAgent):
             self,
             env,
             config=CFRConfig,
-            name=datetime.datetime.now().timestamp(),
+            name=str(datetime.datetime.now().timestamp()),
             device: torch.device = (
             torch.device("cuda")
             if torch.cuda.is_available()
@@ -169,9 +169,9 @@ class CFRAgent(): # BaseAgent):
             if i >= self.config.training_steps * checkpoint_interval:
                 print(f"Checkpointing at {self.nodes_touched} nodes touched")
                 print(f"Checkpointing at {checkpoint_interval*100}% of training steps, i.e {i} iterations")
-                # CHECKPOINT EVERY 20% OF TRAINING STEPS
-                self.save_checkpoint()
-                checkpoint_interval += 0.2
+                # CHECKPOINT EVERY 10% OF TRAINING STEPS
+                self.save_checkpoint(i)
+                checkpoint_interval += 0.1
 
 
         self.training_time = time.time() - start_time
@@ -179,7 +179,7 @@ class CFRAgent(): # BaseAgent):
         self.save_checkpoint()
         return self.network.policy
 
-    def save_checkpoint(self):
+    def save_checkpoint(self, iteration=None):
         """
         Save the model checkpoint.
         """
@@ -195,16 +195,17 @@ class CFRAgent(): # BaseAgent):
             os.makedirs("checkpoints/policy/notlinear/"+str(self.nodes_touched))
         if not os.path.exists("checkpoints/policy/linear/"+str(self.nodes_touched)):
             os.makedirs("checkpoints/policy/linear/"+str(self.nodes_touched))
-
+        if iteration is None:
+            iteration = self.config.training_steps
         # SAVE VALUE NETWORK
         for i in range(self.players):
             self.network.values[i].reset()
-            torch.save(self.network.values[i].state_dict(), f"checkpoints/values/{self.nodes_touched}/{self.name}_{i}.pt")
+            torch.save(self.network.values[i].state_dict(), f"checkpoints/values/{self.nodes_touched}/{self.name}_{i}_{iteration}.pt")
         self.policy_learn(linear=False)
-        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/notlinear/{self.nodes_touched}/{self.name}.pt")
+        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/notlinear/{self.nodes_touched}/{self.name}_{iteration}.pt")
         self.network.policy.reset()
         self.policy_learn(linear=True)
-        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/linear/{self.nodes_touched}/{self.name}.pt")
+        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/linear/{self.nodes_touched}/{self.name}_{iteration}.pt")
         self.network.policy.reset()
 
     @torch.no_grad()
