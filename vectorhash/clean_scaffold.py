@@ -27,6 +27,7 @@ class GridHippocampalScaffold:
         shift_method: Shift = None,
         device=None,
         relu=True,
+        limits=None,  # assumes 1-1 mapping in units
     ):
         assert calculate_g_method in ["hairpin", "fast", "spiral"]
         self.relu = relu
@@ -82,6 +83,16 @@ class GridHippocampalScaffold:
         self.g = self._g()
         """The current grid coding state tensor. Shape: `(N_g)`"""
 
+        self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
+        """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
+        
+        self.grid_limits = torch.ones(len(self.shapes[0]), device=self.device)
+        for d in range(len(self.shapes[0])):
+            self.grid_limits[d] = torch.prod(self.shapes[:, d]).item()
+
+        if limits != None:
+            for d in range(len(self.shapes[0])):
+                self.scale_factor[d] = self.grid_limits[d] / limits[d]
     @torch.no_grad()
     def _G(self, method) -> torch.Tensor:
         """Calculates the matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
@@ -185,7 +196,7 @@ class GridHippocampalScaffold:
         i = 0
         for j, module in enumerate(self.modules):
             remainders[j] = module.cartesian_coordinates_from_grid_state(
-                g[i:i + module.l]
+                g[i : i + module.l]
             )
             i += module.l
 
@@ -237,28 +248,50 @@ class GridHippocampalScaffold:
     @torch.no_grad()
     def modules_from_g(self, g: torch.Tensor) -> list[GridModule]:
         """
-        Input shape `(B, N_g)`
+        Input shape: `(N_g)`
 
-        Output shape `(B, M, d)`
+        Output: list of length `M`, where each entry corresponds with a grid module
 
         Args:
             g (torch.Tensor): Grid coding state tensor.
         """
-        if g.shape[0] != 1:
-            g = g.flatten()
-        print(g.shape)
-        print(g)
         pos = 0
-        modules = []
+        module_states = []
         for module in self.modules:
             x = g[pos : pos + module.l]
-            modules.append(x.reshape(-1, *module.shape))
+            module_states.append(x.reshape(*module.shape))
             pos += module.l
-        curr_modules = copy.deepcopy(self.modules)
-        for i, module in enumerate(curr_modules):
-            module.state = modules[i][0]
-            module.state = module.state.to(self.device)
-        return curr_modules
+
+        new_modules = copy.deepcopy(self.modules)
+        for i, module in enumerate(new_modules):
+            module.state = module_states[i].to(self.device)
+        return new_modules
+    
+    @torch.no_grad()
+    def additive_shift(self, new_g):
+        """
+        Adds the two distributions together and normalizes the result.
+        """
+        modules = self.modules_from_g(new_g)
+        for i, module in enumerate(modules):
+            module.state = module.state + self.modules[i].state
+        self.modules = modules
+        self._g()
+        self.g = self.denoise(G=self.g, onehot=True)[0]
+        self.modules= self.modules_from_g(self.g)
+
+    @torch.no_grad()
+    def multiplicative_shift(self, new_g):
+        """
+        Multiplies the two distributions together and normalizes the result.
+        """
+        modules = self.modules_from_g(new_g)
+        for i, module in enumerate(modules):
+            module.state = module.state * self.modules[i].state
+        self.modules = modules
+        self._g()
+        self.g = self.denoise(G=self.g, onehot=True)[0]
+        self.modules= self.modules_from_g(self.g)
 
     @torch.no_grad()
     def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
@@ -290,12 +323,13 @@ class GridHippocampalScaffold:
 
     @torch.no_grad()
     def shift(self, velocity):
-        """Shifts the grid coding state by a given displacement.
+        """Shifts the grid coding state by a given displacement. The velocity is given in
+        "world coordinates" and scaled to "grid coordinates" using self.scale_factor
 
         The length of `velocity` must be equal to the dimensionality of the grid modules.
         """
 
-        self.shift_method(self.modules, velocity)
+        self.shift_method(self.modules, velocity * self.scale_factor)
 
         self.g = self._g()
 
@@ -306,7 +340,7 @@ class GridHippocampalScaffold:
             module.zero()
 
     @torch.no_grad()
-    def denoise(self, G: torch.Tensor) -> torch.Tensor:
+    def denoise(self, G: torch.Tensor, onehot=True) -> torch.Tensor:
         """Denoise a batch of grid coding states.
 
         Input shape: `(B, N_g)`
@@ -326,7 +360,10 @@ class GridHippocampalScaffold:
             x = G[:, pos : pos + module.l]
             # for i in range(len(x)):
             #     print(x[i])
-            x_denoised = module.denoise_onehot(x)
+            if onehot:
+                x_denoised = module.denoise_onehot(x)
+            else:
+                x_denoised = module.denoise(x)
             # print(x)
             # print(x_denoised)
             G[:, pos : pos + module.l] = x_denoised
@@ -334,29 +371,59 @@ class GridHippocampalScaffold:
 
         return G
 
-    def estimate_certainty(self, k: float, g=None):
+    def estimate_certainty(self, limits: torch.Tensor = None, g=None):
+        """Estimate, over each dimension d, P( |X_d - mu_d| < k_d limits[d]) where
+        limits[d] is in "world coordinates" and not "grid coordinates" which will be
+        converted to "grid coordinates"
 
-        modules = self.modules
+        Args:
+            differences (torch.Tensor): _description_
+            g (_type_, optional): _description_. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
+        if g == None:
+            modules = self.modules_from_g(self.g)
+        else:
+            modules = self.modules_from_g(g)
+
+        if limits == None:
+            limits = torch.ones(len(self.shapes[0]), device=self.device)
+
         sums = torch.zeros(len(self.shapes[0]))
         for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in modules]
             v = expand_distribution(marginals)
-            mean = circular_mean(v * torch.arange(0, len(v), device=self.device), len(v))
+            mean = circular_mean(
+                v * torch.arange(0, len(v), device=self.device), len(v)
+            )
             if mean > len(v) // 2:
                 mean -= len(v)
-            low = torch.ceil(mean - k)
-            high = torch.floor(mean + k)
+            low = torch.ceil(mean - self.scale_factor[dim] * limits[dim])
+            high = torch.floor(mean + self.scale_factor[dim] * limits[dim])
             indices = torch.arange(low, high + 1, device=self.device).int()
-            print(mean)
-            print(indices)
             sums[dim] = torch.sum(v[indices])
         return sums
 
     def expand_distribution(self, dim: int):
-
         marginals = [module.get_marginal(dim) for module in self.modules]
         v = expand_distribution(marginals)
         return v
+
+    def get_mean_positions(self):
+        """Return mean positions in "world coordinates"
+
+        Returns torch.Tensor (x,y,θ)
+        """
+        means = torch.zeros(len(self.shapes[0]))
+        for d in range(len(self.shapes[0])):
+            v = self.expand_distribution(d)
+            mean = circular_mean(
+                v * torch.arange(0, len(v), device=self.device), len(v)
+            ) / self.scale_factor[d]
+            means[d] = mean
+        return means
 
     def get_onehot(self):
         smoothing = ArgmaxSmoothing()

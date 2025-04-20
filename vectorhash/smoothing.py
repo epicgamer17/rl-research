@@ -23,7 +23,7 @@ class SoftmaxSmoothing(Smoothing):
         y = x.flatten(1).T
         maxes = torch.max(y, dim=0).values
         y = y - maxes
-        exp = torch.exp(y)
+        exp = torch.exp(y / self.T)
         out = (exp / torch.sum(exp, dim=0)).T
         return out.reshape(*x.shape)
 

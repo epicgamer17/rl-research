@@ -5,8 +5,10 @@ from skimage import color
 from clean_scaffold import get_dim_distribution_from_g
 from matplotlib import animation
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
-from graph_utils import plot_path
+from graph_utils import plot_path, plot_probability_distribution_on_ax
+from vectorhash_functions import circular_mean
 
 _epsilon = 1e-8
 
@@ -24,56 +26,111 @@ def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis
 class VectorhashAgentHistory:
     def __init__(self):
         self._true_positions = []
-        self._estimated_positions = []
+        self._true_angles = []
+        self._x_distributions = []
+        self._y_distributions = []
+        self._theta_distributions = []
         self._true_images = []
         self._estimated_images = []
-        self._true_angles = []
-        self._estimated_angles = []
+        self._velocity_history = []
 
     def append(
         self,
         true_position,
-        estimated_position,
+        true_angle,
+        x_distribution,
+        y_distribution,
+        theta_distribution,
         true_image,
         estimated_image,
-        true_angle,
-        estimated_angle,
     ):
-        self._true_positions.append(true_position)
-        self._estimated_positions.append(estimated_position)
-        self._true_images.append(true_image)
-        self._estimated_images.append(estimated_image)
+        self._true_positions.append(true_position.clone().cpu())
         self._true_angles.append(true_angle)
-        self._estimated_angles.append(estimated_angle)
+        self._x_distributions.append(x_distribution.clone().cpu())
+        self._y_distributions.append(y_distribution.clone().cpu())
+        self._theta_distributions.append(theta_distribution.clone().cpu())
+        self._true_images.append(true_image.clone().cpu())
+        self._estimated_images.append(estimated_image.clone().cpu())
 
     def make_image_video(self):
-        fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(7.5, 4), dpi=250)
+        fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
+        gs = GridSpec(6, 6, figure=fig)
 
-        text = fig.suptitle("t=0")
-        ax1.set_title('true image')
-        ax2.set_title('predicted image')
-        a1 = ax1.imshow(self._true_images[0])
-        a2 = ax2.imshow(self._estimated_images[0])
+        text_artist = fig.suptitle("t=0")
+
+        im_true_ax = fig.add_subplot(gs[0:3, 0:3])
+        im_pred_ax = fig.add_subplot(gs[0:3, 3:6])
+        x_dist_ax = fig.add_subplot(gs[3, 0:4])
+        y_dist_ax = fig.add_subplot(gs[4, 0:4])
+        theta_dist_ax = fig.add_subplot(gs[5, 0:4])
+        im_true_ax.set_title("true image")
+        im_pred_ax.set_title("predicted image")
+        x_dist_ax.set_title("x dist")
+        y_dist_ax.set_title("y dist")
+        theta_dist_ax.set_title("θ dist")
+
+        x_dist_ax.set_xlim(0, len(self._x_distributions[0]))
+        y_dist_ax.set_xlim(0, len(self._y_distributions[0]))
+        theta_dist_ax.set_xlim(0, len(self._theta_distributions[0]))
+
+        im_true_artist = im_true_ax.imshow(self._true_images[0], vmin=0, vmax=1)
+        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0], vmin=0, vmax=1)
+        x_dist_artist = plot_probability_distribution_on_ax(
+            self._x_distributions[0], x_dist_ax
+        )
+        y_dist_artist = plot_probability_distribution_on_ax(
+            self._y_distributions[0], y_dist_ax
+        )
+        theta_dist_artist = plot_probability_distribution_on_ax(
+            self._theta_distributions[0], theta_dist_ax
+        )
+
+        x_true_pos_artist = x_dist_ax.plot([self._true_positions[0][0]], [1.0], "ro")
+        y_true_pos_artist = y_dist_ax.plot([self._true_positions[0][1]], [1.0], "ro")
+        theta_true_pos_artist = theta_dist_ax.plot([self._true_angles[0]], [1.0], "ro")
 
         def plot_func(frame):
-            true_img, estimated_img = self._true_images[frame], self._estimated_images[frame]
-            a1.set_data(true_img)
-            a2.set_data(estimated_img)
-            text.set_text(f"t={frame}")
-            return a1, a2, text
+            im_true_artist.set_data(self._true_images[frame])
+            im_pred_artist.set_data(self._estimated_images[frame])
 
-        self.ani = animation.FuncAnimation(fig, plot_func, len(self._estimated_images) - 1, blit=False)
+            x_dist_artist.set_data(values=self._x_distributions[frame], edges=None)
+            y_dist_artist.set_data(values=self._y_distributions[frame], edges=None)
+            theta_dist_artist.set_data(
+                values=self._theta_distributions[frame], edges=None
+            )
+
+            x_true_pos_artist[0].set_data([self._true_positions[frame][0]], [1.0])
+            y_true_pos_artist[0].set_data([self._true_positions[frame][1]], [1.0])
+            theta_true_pos_artist[0].set_data([self._true_angles[frame]], [1.0])
+
+            text_artist.set_text(f"t={frame}")
+            return (
+                im_true_artist,
+                im_pred_artist,
+                x_dist_artist,
+                y_dist_artist,
+                theta_dist_artist,
+                text_artist,
+                x_true_pos_artist,
+                y_true_pos_artist,
+                theta_true_pos_artist,
+            )
+
+        self.ani = animation.FuncAnimation(
+            fig, plot_func, len(self._estimated_images) - 1, blit=False
+        )
 
         return self.ani
 
     def reset(self):
         self.ani = None
         self._true_positions = []
-        self._estimated_positions = []
+        self._true_angles = []
+        self._x_distributions = []
+        self._y_distributions = []
+        self._theta_distributions = []
         self._true_images = []
         self._estimated_images = []
-        self._true_angles = []
-        self._estimated_angles = []
 
 
 class AnimalAIVectorhashAgent:
@@ -121,7 +178,7 @@ class AnimalAIVectorhashAgent:
         p, v = self.postprocess_health_pos_vel(obs[1])
         return image, p, v
 
-    def step(self, action):
+    def step(self, action, noise=[]):
         """
         0 - nothing
 
@@ -143,56 +200,93 @@ class AnimalAIVectorhashAgent:
         """
         obs, reward, done, info = self.env.step(action)
         image, p, v = self.postprocess_obs(obs)
-
+        if noise != []:
+            if noise[2] == "normal":
+                noise = torch.distributions.normal.Normal(loc=noise[0], scale=noise[1])
+        ### calculation of noisy input
         dtheta = 0
         if action == 1 or action == 4 or action == 4:
             dtheta = 6
         elif action == 2 or action == 7 or action == 8:
-            dtheta = 6
+            dtheta = -6
         noisy_dtheta = dtheta  # + random_noise
 
         dp = p - self.animal_ai_data["exact_position"]
         noisy_dp = dp  # + random noise
+        if noise != []:
+            # add gaussian noise to dtheta and dp
+            noisy_dtheta = dtheta + noise.sample().item()
+            noisy_dp = dp + noise.sample((2,)).tolist()
+        v = torch.tensor([noisy_dp[0], noisy_dp[1], noisy_dtheta], device=self.device)
 
-        self.vectorhash.scaffold.shift(
-            torch.tensor([noisy_dp[0], noisy_dp[1], noisy_dtheta], device=self.device)
+        ### aliases
+        scaffold = self.vectorhash.scaffold
+        hs_layer = self.vectorhash.hippocampal_sensory_layer
+
+        ### get previous position distribution
+        old_positions = scaffold.get_mean_positions()
+        print("old positions:", old_positions)
+
+        ### odometry update
+        scaffold.shift(v)
+        g_denoised = scaffold.denoise(scaffold.g)[0]
+        scaffold.modules = scaffold.modules_from_g(g_denoised)
+        odometry_certainty = scaffold.estimate_certainty(
+            limits=torch.Tensor([2, 2, 30])
         )
-        current_g_modules = self.vectorhash.scaffold.modules_from_g(self.vectorhash.scaffold.denoise(self.vectorhash.scaffold.g)[0])
-        print("AHHH", self.vectorhash.scaffold.modules[0].state)
-        print("AHHH",current_g_modules[0].state)
-        self.vectorhash.scaffold.modules = current_g_modules
-        self.vectorhash.scaffold._g()
-        current_g_certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
-        sensory_g_modules = self.vectorhash.scaffold.modules_from_g(self.vectorhash.scaffold.denoise(self.vectorhash.scaffold.grid_from_hippocampal(
-            self.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(
-                image.flatten().to(self.device)
+
+        ### get new position distribution
+        new_positions = scaffold.get_mean_positions()
+        print("new positions:", new_positions)
+        lims = torch.Tensor([2, 2, 30])
+        # new = False
+        # for i in range(len(scaffold.modules[0].shape)):
+        #     if torch.abs(new_positions[i]- old_positions[i]) > lims[i]:
+        #         new = True
+            
+        new = True
+        ## sensory update
+        if new:
+            sensory_g = scaffold.denoise(
+                scaffold.grid_from_hippocampal(
+                    hs_layer.hippocampal_from_sensory(image.flatten().to(self.device))[0]
+                )[0]
             )[0]
-        )[0])[0])
-        print("SAHHH",sensory_g_modules[0].state)
-        self.vectorhash.scaffold.modules = sensory_g_modules
-        self.vectorhash.scaffold._g()
-        certainty = self.vectorhash.scaffold.estimate_certainty(k=5)
-        print("CURRENT_G_CERTAINTY", current_g_certainty)
-        print("SENSORY_G_CERTAINTY", certainty)
-        if torch.sum(current_g_certainty) >= torch.sum(certainty):
-            self.vectorhash.scaffold.modules = current_g_modules
-            self.vectorhash.scaffold._g()
-            self.vectorhash.store_memory(image.flatten().to(self.device), hard=True)
-            # self.vectorhash.scaffold.g = self.vectorhash.scaffold.denoise(current_g)[0]
-        else:
-            print(
-                f"Certainty {certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
+            sensory_certainty = scaffold.estimate_certainty(limits=torch.Tensor([2,2,30]), g = sensory_g)
+
+            scaffold.additive_shift(new_g=sensory_g)
+
+            image_scaffold = [0] * len(scaffold.modules)
+            for i in range(len(scaffold.modules)):
+                if sensory_certainty[i] > odometry_certainty[i]:
+                    image_scaffold[i] = scaffold.modules_from_g(sensory_g)[i]
+                else:
+                    image_scaffold[i] = scaffold.modules_from_g(g_denoised)[i]
+            
+            self.vectorhash.store_memory(
+                image.flatten().to(self.device), hard=False
             )
-            # self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
-            self.vectorhash.scaffold.modules = sensory_g_modules
-            self.vectorhash.scaffold._g()
-        # obs (84x84x3), in [0,1]
-        print("HIII")
-        print(self.vectorhash.scaffold.g)
+        # if sensory_certainty > odometry_certainty:
+        #     self.vectorhash.modules = scaffold.modules_from_g(sensory_g)
+        #     self.vectorhash.scaffold._g()
+        #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
+        # else:
+            
+        #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
+        ### if we are more certain of odometry than sensory, then store a memory
+        # print(f"odometry certainty: {odometry_certainty}, sensory certainty: {sensory_certainty}")
+        # if torch.all(odometry_certainty > sensory_certainty):
+        #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=True)
+        # else:
+        #     print(
+        #         f"Certainty {sensory_certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
+        #     )
+
+        ### update AAI data
         self.animal_ai_data["exact_position"] = p
         self.animal_ai_data["exact_angle"] += dtheta
 
-        return image, p, self.animal_ai_data["exact_angle"]
+        return image, p, self.animal_ai_data["exact_angle"], v
 
     def calculate_position_err(self):
         x_dist, y_dist, theta_dist = [
@@ -224,66 +318,105 @@ class AnimalAIVectorhashAgent:
             categorical_crossentropy(theta_dist, theta_true_dist),
         )
 
-    def test_path(self, path):
+    def test_path(self, path, noise=[]):
         self.history.reset()
         state, info = self.env.reset()
         img = self.postprocess_image(state)
         p, v = self.postprocess_health_pos_vel(info)
 
+        if noise != []:
+            print("------------USING NOISED ODOMETRY INPUTS-----------")
+            print("Mean: ", noise[0])
+            print("Std: ", noise[1])
+            print("Noise type: ", noise[2])
+
         # self.vectorhash.reset()
         self.vectorhash.store_memory(img.flatten().to(self.device))
-        self.history.append(
-            true_image=torch.clone(img).cpu(),
-            estimated_image=torch.clone(
-                self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
-                    self.vectorhash.scaffold.hippocampal_from_grid(self.vectorhash.scaffold.denoise(
-                        self.vectorhash.scaffold.g)[0]
-                    )[0]
+
+        ## initial history store
+        estimated_image = (
+            self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
+                self.vectorhash.scaffold.hippocampal_from_grid(
+                    self.vectorhash.scaffold.denoise(self.vectorhash.scaffold.g)[0]
                 )[0]
-            )
-            .reshape(84, 84)
-            .cpu(),
-            true_position=torch.clone(p - self.animal_ai_data["start_position"]).cpu(),
-            estimated_position=torch.clone(
-                p - self.animal_ai_data["start_position"]
+            )[0].reshape(84, 84)
+        )
+        self.history.append(
+            true_image=img,
+            true_angle=(
+                (
+                    (
+                        self.animal_ai_data["exact_angle"]
+                        - self.animal_ai_data["start_angle"]
+                    )
+                    # * self.vectorhash.scaffold.scale_factor[2]
+                )
+                # % self.vectorhash.scaffold.grid_limits[2]
+            ), #.item()
+            estimated_image=estimated_image,
+            true_position=(
+                (
+                    (p - self.animal_ai_data["start_position"]).cpu()
+                #     * torch.tensor(
+                #         [
+                #             self.vectorhash.scaffold.scale_factor[0],
+                #             self.vectorhash.scaffold.scale_factor[1],
+                #         ]
+                #     )
+                # )
+                # % torch.tensor(
+                #     [
+                #         self.vectorhash.scaffold.grid_limits[0],
+                #         self.vectorhash.scaffold.grid_limits[1],
+                #     ]
+                )
             ).cpu(),
-            true_angle=self.animal_ai_data["exact_angle"]
-            - self.animal_ai_data["start_angle"],
-            estimated_angle=self.animal_ai_data["exact_angle"]
-            - self.animal_ai_data["start_angle"],
+            x_distribution=self.vectorhash.scaffold.expand_distribution(0),
+            y_distribution=self.vectorhash.scaffold.expand_distribution(1),
+            theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
         )
 
         errs = [self.calculate_position_err()]
         for i in range(len(path)):
             action = path[i]
-            true_img, true_p, true_ang = self.step(action)
+            true_img, true_p, true_ang, v = self.step(action, noise=noise)
             estimated_img = (
-                torch.clone(
-                    self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
-                        self.vectorhash.scaffold.hippocampal_from_grid(
-                            self.vectorhash.scaffold.g
-                        )[0]
+                self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
+                    self.vectorhash.scaffold.hippocampal_from_grid(
+                        self.vectorhash.scaffold.g
                     )[0]
-                )
-                .reshape(84, 84)
-                .cpu()
+                )[0].reshape(84, 84)
             )
-            estimated_coordinates = (
-                self.vectorhash.scaffold.cartesian_coordinates_from_grid_state(
-                    self.vectorhash.scaffold.get_onehot()
-                )
-            )
-            estimated_position = torch.Tensor(
-                [estimated_coordinates[0], estimated_coordinates[1]], device="cpu"
-            )
-            estimated_angle = estimated_coordinates[2].cpu().item()
             self.history.append(
-                true_image=torch.clone(true_img).cpu(),
+                true_image=true_img,
                 estimated_image=estimated_img,
-                true_position=torch.clone(true_p).cpu(),
-                estimated_position=estimated_position,
-                true_angle=true_ang,
-                estimated_angle=estimated_angle,
+                true_position=(
+                    (
+                        (true_p - self.animal_ai_data["start_position"]).cpu()
+                        # * torch.tensor(
+                        #     [
+                        #         self.vectorhash.scaffold.scale_factor[0],
+                        #         self.vectorhash.scaffold.scale_factor[1],
+                        #     ]
+                        # )
+                    )
+                    # % torch.tensor(
+                    #     [
+                    #         self.vectorhash.scaffold.grid_limits[0],
+                    #         self.vectorhash.scaffold.grid_limits[1],
+                    #     ]
+                    # )
+                ).cpu(),
+                true_angle=(
+                    (
+                        (true_ang - self.animal_ai_data["start_angle"])
+                        # * self.vectorhash.scaffold.scale_factor[2]
+                    )
+                    # % self.vectorhash.scaffold.grid_limits[2]
+                ), # .item()
+                x_distribution=self.vectorhash.scaffold.expand_distribution(0),
+                y_distribution=self.vectorhash.scaffold.expand_distribution(1),
+                theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
             )
             if i % 100 == 0:
                 print(f"Step {i}: {self.calculate_position_err()}")

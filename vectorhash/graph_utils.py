@@ -1,5 +1,6 @@
 import os
 import pathlib
+import matplotlib.axes
 import matplotlib.pyplot as plt
 from clean_scaffold import GridHippocampalScaffold
 
@@ -200,3 +201,12 @@ def plot_path(path, beliefs, out=None):
     else:
         plt.show()
     return fig, ax
+
+import matplotlib
+import numpy as np
+from matplotlib.patches import StepPatch
+
+def plot_probability_distribution_on_ax(distribution: np.ndarray, ax:matplotlib.axes.Axes):
+    patch = StepPatch(values=distribution, edges=np.arange(len(distribution) + 1))
+    ax.add_patch(patch)
+    return patch
