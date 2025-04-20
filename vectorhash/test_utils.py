@@ -215,3 +215,8 @@ def capacity1(
 
 def generate_animalai_path(path_length=100):
     return torch.randint(0, 9, (path_length,)).tolist()
+
+def kidnapped_paths():
+    path1 = []
+    path2 = []
+    path3 = []

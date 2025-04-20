@@ -127,15 +127,22 @@ class PolicyNetwork(nn.Module):
             if hasattr(layer, 'reset_parameters'):
                 layer.reset_parameters()
 
-    def learn(self, batch):
+    def learn(self, batch, linear=False):
         """
         Given a batch of experiences, update the network params
         :param batch: Batch of experiences Tuple of form(iteration_num, state, regret).
         """
         self.optimizer.zero_grad()
         outputs = self.forward(batch[1])
+        reshaped_iternum = batch[0].view(-1,1).detach()
         # optional : weight each loss by iteration num batch[0].unsqueeze(1) * 
-        loss = (((outputs - batch[2].detach()) ** 2)).mean()
+        if linear:
+            print("reshaped_iternum", reshaped_iternum.shape)
+            print("outputs-batch[2].detach()", (outputs - batch[2].detach()).shape)
+            print("((outputs - batch[2].detach()) ** 2)", ((outputs - batch[2].detach()) ** 2).shape)
+            loss = (reshaped_iternum * ((outputs - batch[2].detach()) ** 2)).mean()
+        else:
+            loss = (((outputs - batch[2].detach()) ** 2)).mean()
         loss.backward()
         self.optimizer.step()
         return loss.item()

@@ -267,6 +267,32 @@ class GridHippocampalScaffold:
         for i, module in enumerate(new_modules):
             module.state = module_states[i].to(self.device)
         return new_modules
+    
+    @torch.no_grad()
+    def additive_shift(self, new_g):
+        """
+        Adds the two distributions together and normalizes the result.
+        """
+        modules = self.modules_from_g(new_g)
+        for i, module in enumerate(modules):
+            module.state = module.state + self.modules[i].state
+        self.modules = modules
+        self._g()
+        self.g = self.denoise(G=self.g, onehot=True)[0]
+        self.modules= self.modules_from_g(self.g)
+
+    @torch.no_grad()
+    def multiplicative_shift(self, new_g):
+        """
+        Multiplies the two distributions together and normalizes the result.
+        """
+        modules = self.modules_from_g(new_g)
+        for i, module in enumerate(modules):
+            module.state = module.state * self.modules[i].state
+        self.modules = modules
+        self._g()
+        self.g = self.denoise(G=self.g, onehot=True)[0]
+        self.modules= self.modules_from_g(self.g)
 
     @torch.no_grad()
     def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
@@ -315,7 +341,7 @@ class GridHippocampalScaffold:
             module.zero()
 
     @torch.no_grad()
-    def denoise(self, G: torch.Tensor) -> torch.Tensor:
+    def denoise(self, G: torch.Tensor, onehot=True) -> torch.Tensor:
         """Denoise a batch of grid coding states.
 
         Input shape: `(B, N_g)`
@@ -335,7 +361,10 @@ class GridHippocampalScaffold:
             x = G[:, pos : pos + module.l]
             # for i in range(len(x)):
             #     print(x[i])
-            x_denoised = module.denoise_onehot(x)
+            if onehot:
+                x_denoised = module.denoise_onehot(x)
+            else:
+                x_denoised = module.denoise(x)
             # print(x)
             # print(x_denoised)
             G[:, pos : pos + module.l] = x_denoised
