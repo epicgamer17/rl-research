@@ -1,6 +1,7 @@
+from turtle import st
 from typing import Callable, Tuple
 
-from torch import nn, Tensor
+from torch import channels_last, nn, Tensor
 import torch.nn.functional as F
 import torch
 import numpy as np
@@ -22,50 +23,68 @@ class Encoder(nn.Module):
         input_shape: Tuple[int, ...],
         is_image: bool,
         embedding_dim: int,
-        norm: Callable = nn.RMSNorm,
-        activation: Callable = nn.SELU,
+        norm: Callable = nn.BatchNorm2d,  # nn.RMSNorm,
+        activation: Callable = nn.ReLU(),  # nn.SELU,
     ):
+        super(Encoder, self).__init__()
         self.activation = activation
         self.is_image = is_image
         self.embedding_dim = embedding_dim
         if is_image:
             assert len(input_shape) == 3
-            assert input_shape[1] == input_shape[2]
+            assert input_shape[0] == input_shape[1], input_shape
             num_layers = 0
-            width = input_shape[0]  # should be square image
+            width = input_shape[1]  # should be square image
             while width > 6:  # go to images of size 6x6 or 4x4
                 width = width // 2
                 num_layers += 1
 
-            filters = [embedding_dim // 4] * num_layers
-            filters[0] = embedding_dim // 16
-            filters[1] = embedding_dim // 8
+            filters = [32, 64, 128, 256]
+            # filters = [embedding_dim // 4] * num_layers
+            # filters[0] = embedding_dim // 16
+            # filters[1] = embedding_dim // 8
             # code uses embedding_dim // 16 * [2, 3, 4, 4]
             # paper says first layer has embedding_dim // 16 filters
 
             self.conv_layers = nn.ModuleList()
             self.norm_layers = nn.ModuleList()
-            for i in range(filters):
+            input_channels = input_shape[2]
+            for f in filters:
                 self.conv_layers.append(
                     nn.Conv2d(
-                        in_channels=3,
-                        out_channels=filters[i],
+                        in_channels=input_channels,
+                        out_channels=f,
                         kernel_size=5,  # param used in DreamerV3 code
                         stride=2,
-                        padding="same",
+                        padding=1,  # add functionality for padding same
+                        # padding="same",
                     )
                 )
 
-                self.norm_layers.append(norm(filters[i]))
+                # self.norm_layers.append(nn.BatchNorm2d(f))
+                self.norm_layers.append(norm(f))
+                # self.norm_layers.append(nn.RMSNorm(f))
+                input_channels = f
 
         else:
             raise NotImplementedError("Only image inputs are supported")
 
-        self.output_layer = nn.Linear(filters[-1], embedding_dim)
+        self.output_layer = nn.Linear(
+            self._compute_conv_output_shape(input_shape), embedding_dim
+        )
+
+    def _compute_conv_output_shape(self, input_shape):
+        with torch.no_grad():
+            x = torch.randn(1, input_shape[2], input_shape[0], input_shape[1])
+            for conv in self.conv_layers:
+                x = conv(x)
+            return x.shape[1] * x.shape[2] * x.shape[3]
 
     def forward(self, x: Tensor) -> Tensor:
         if self.is_image:
+            # go from channels last to channels first
             for conv, norm in zip(self.conv_layers, self.norm_layers):
+                # print(x.shape)
                 x = self.activation(norm(conv(x)))
             x = x.flatten(start_dim=1)
         else:
@@ -76,63 +95,87 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(
         self,
-        input_shape: Tuple[int, ...],
+        output_shape: Tuple[int, ...],
         is_image: bool,
         hidden_dim,
         state_dim,
         embedding_dim,
-        min_resolution: int = 4,
-        norm: Callable = nn.RMSNorm,
-        activation: Callable = nn.SELU,
-        output_activation: Callable = nn.Sigmoid,
+        min_resolution: int = 16,  # 4
+        norm: Callable = nn.BatchNorm2d,  # nn.RMSNorm,
+        activation: Callable = nn.SELU(),
+        output_activation: Callable = nn.Sigmoid(),
     ):
+        super(Decoder, self).__init__()
         self.activation = activation
         self.is_image = is_image
         self.hidden_dim = hidden_dim
         self.state_dim = state_dim
+        self.embedding_dim = embedding_dim
+        self.min_resolution = min_resolution
+        self.output_shape = output_shape
         if is_image:
             # (C, W, H)
-            assert len(input_shape) == 3
-            assert input_shape[1] == input_shape[2]
+            assert len(output_shape) == 3
+            assert output_shape[1] == output_shape[2], output_shape
 
-            assert 3 <= min_resolution[0] <= 16, min_resolution
-            assert 3 <= min_resolution[1] <= 16, min_resolution
-            num_layers = int(np.log2(input_shape[1] / min_resolution))
+            assert 3 <= min_resolution <= 16, min_resolution
+            self.num_layers = int(np.log2(output_shape[1] / min_resolution))
+            # min_resolution * 2^num_layers = output_shape[1]
 
             # embedding_dim is the formula below
             # output_size = min_resolution**2 * depth * 2 ** (num_layers - 1)
-
-            conv_transpose_input_size = min_resolution**2 * 3 * 2 ** (num_layers - 1)
+            # conv_transpose_input_size = (
+            #     min_resolution**2 * 3 * 2 ** (self.num_layers - 1)
+            # )
+            conv_transpose_input_size = 256
 
             self.input_layer = nn.Linear(hidden_dim + state_dim, embedding_dim)
-            self.linear_layer = nn.Linear(embedding_dim, conv_transpose_input_size)
+            self.linear_layer = nn.Linear(
+                embedding_dim, 256 * (output_shape[1] // 2**self.num_layers) ** 2
+            )
 
             self.conv_transpose_layers = nn.ModuleList()
             self.norm_layers = nn.ModuleList()
-            for i in range(num_layers):
+            for i in range(self.num_layers):
                 # (B, C_in, W, H) -> (B, C_out, W, H)
-                self.conv_transpose_layers.append(
-                    nn.ConvTranspose2d(
-                        in_channels=conv_transpose_input_size,
-                        out_channels=conv_transpose_input_size // 2,
-                        kernel_size=3,  # param used in DreamerV3 code
-                        stride=2,
-                        padding="same",
+                if i != self.num_layers - 1:
+                    self.conv_transpose_layers.append(
+                        nn.ConvTranspose2d(
+                            in_channels=conv_transpose_input_size,
+                            out_channels=conv_transpose_input_size // 2,
+                            kernel_size=3,  # param used in DreamerV3 code
+                            stride=2,
+                            # padding="same",
+                            padding=1,
+                            output_padding=1,  # to make sure output size is correct
+                        )
                     )
-                )
 
-                conv_transpose_input_size = conv_transpose_input_size // 2
+                    conv_transpose_input_size = conv_transpose_input_size // 2
 
-                self.norm_layers.append(norm(conv_transpose_input_size, eps=1e-6))
+                    self.norm_layers.append(norm(conv_transpose_input_size))
+                else:
+                    self.output_layer = nn.ConvTranspose2d(
+                        in_channels=conv_transpose_input_size,
+                        out_channels=output_shape[0],
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                        # padding="same",
+                        output_padding=1,  # to make sure output size is correct
+                    )
+                self.output_activation = output_activation
 
-            self.output_layer = nn.ConvTranspose2d(
-                in_channels=conv_transpose_input_size,
-                out_channels=3,
-                kernel_size=3,
-                stride=2,
-                padding="same",
-            )
-            self.output_activation = output_activation
+            # self.output_layer = nn.ConvTranspose2d(
+            #     in_channels=conv_transpose_input_size,
+            #     out_channels=output_shape[0],
+            #     kernel_size=3,
+            #     stride=2,
+            #     padding=1,
+            #     # padding="same",
+            #     output_padding=1,  # to make sure output size is correct
+            # )
+            # self.output_activation = output_activation
         else:
             raise NotImplementedError("Only image inputs are supported")
 
@@ -143,15 +186,16 @@ class Decoder(nn.Module):
             x = self.linear_layer(x)
 
             x = x.view(
-                x.size(0),
                 -1,
-                int(np.sqrt(self.embedding_dim)),
-                int(np.sqrt(self.embedding_dim)),
+                256,
+                self.output_shape[1] // 2**self.num_layers,
+                self.output_shape[2] // 2**self.num_layers,
             )
 
             for conv_transpose, norm in zip(
                 self.conv_transpose_layers, self.norm_layers
             ):
+                # print(x.shape)
                 x = self.activation(norm(conv_transpose(x)))
 
             x = self.output_layer(x)
@@ -170,11 +214,13 @@ class DynamicsPredictor(nn.Module):
         embedding_dim,
         action_dim,
         rnn_layers=1,
+        activation: Callable = nn.SiLU(),
     ):
-
+        super(DynamicsPredictor, self).__init__()
         self.rnn_layers = nn.ModuleList(
             [nn.GRUCell(hidden_dim, hidden_dim) for _ in range(rnn_layers)]
         )
+        self.activation = activation
 
         self.project_state_action = nn.Linear(action_dim + state_dim, hidden_dim)
 
@@ -188,6 +234,10 @@ class DynamicsPredictor(nn.Module):
 
     def forward(self, prev_hidden, prev_state, actions, observations, dones):
         # Batch size, time steps, action dim
+        # assert actions are one hot
+        assert actions.sum(dim=-1).max() == 1
+        assert len(actions.shape) == 3, f"actions shape: {actions.shape}"
+        print(actions.shape)
         B, T, _ = actions.size()  # not sure what this does
 
         hiddens_list = []
@@ -203,31 +253,36 @@ class DynamicsPredictor(nn.Module):
         prior_states_list.append(prev_state.unsqueeze(1))
         posterior_states_list.append(prev_state.unsqueeze(1))
 
-        for t in range(T):
+        for t in range(T - 1):
             action_t = actions[:, t, :]
             observation_t = (
                 observations[:, t, :]
                 if observations is not None
                 else torch.zeros((B, self.embedding_dim), device=actions.device)
             )
+            # print(observation_t.shape)
             state_t = (
                 posterior_states_list[-1][:, 0, :]
                 if observations is not None
                 else prior_states_list[-1][:, 0, :]
             )
-            state_t = state_t if dones is None else state_t * (1 - dones[:, t, :])
+            # print(state_t.shape)
+            # print(dones.shape)
+            state_t = (
+                state_t if dones is None else state_t * (~dones[:, t, :])
+            )  # was 1 - dones
             hidden_t = hiddens_list[-1][:, 0, :]
 
             state_action = torch.cat([state_t, action_t], dim=-1)
-            state_action = self.act_fn(self.project_state_action(state_action))
+            state_action = self.activation(self.project_state_action(state_action))
 
             ### Update the deterministic hidden state ###
-            for i in range(len(self.rnn)):
-                hidden_t = self.rnn[i](state_action, hidden_t)
+            for i in range(len(self.rnn_layers)):
+                hidden_t = self.rnn_layers[i](state_action, hidden_t)
 
             ### Determine the prior distribution ###
             hidden_action = torch.cat([hidden_t, action_t], dim=-1)
-            hidden_action = self.act_fn(self.project_hidden_action(hidden_action))
+            hidden_action = self.activation(self.project_hidden_action(hidden_action))
             prior_params = self.prior(hidden_action)
             prior_mean, prior_log_var = torch.chunk(prior_params, 2, dim=-1)
 
@@ -244,8 +299,8 @@ class DynamicsPredictor(nn.Module):
                 posterior_log_var = prior_log_var
             else:
                 hidden_observation = torch.cat([hidden_t, observation_t], dim=-1)
-                hidden_observation = self.act_fn(
-                    self.project_hidden_obs(hidden_observation)
+                hidden_observation = self.activation(
+                    self.project_hidden_observation(hidden_observation)
                 )
                 posterior_params = self.posterior(hidden_observation)
                 posterior_mean, posterior_log_var = torch.chunk(
@@ -296,14 +351,14 @@ class RewardPredictor(nn.Module):
         hidden_dim,
         state_dim,
         layers: int = 2,
-        activation: Callable = nn.SiLU,
+        activation: Callable = nn.ReLU(),
     ):
         super(RewardPredictor, self).__init__()
 
         self.dense_layers = DenseStack(
             initial_width=hidden_dim + state_dim,
             widths=[hidden_dim] * layers,
-            activation_final=activation,
+            activation=activation,
             noisy_sigma=0.0,
         )
 
@@ -312,6 +367,7 @@ class RewardPredictor(nn.Module):
 
     def forward(self, hidden, state):
         x = torch.cat((hidden, state), dim=-1)
+        # print(x.shape)
         x = self.dense_layers(x)
         x = self.output_layer(x)
         return x
@@ -323,7 +379,7 @@ class ContinuePredictor(nn.Module):
         hidden_dim,
         state_dim,
         layers: int = 2,
-        activation: Callable = nn.SiLU,
+        activation: Callable = nn.SiLU(),
     ):
         super(ContinuePredictor, self).__init__()
 
