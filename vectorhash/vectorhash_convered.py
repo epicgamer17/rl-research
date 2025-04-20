@@ -3,7 +3,6 @@ import torch
 from numpy.random import randn, randint
 from vectorhash_imported import *
 from scipy.linalg import norm
-from nd_scaffold import *
 from matrix_initializers import *
 from vectorhash import build_initializer, GridHippocampalScaffold
 
