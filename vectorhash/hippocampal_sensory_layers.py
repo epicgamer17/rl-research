@@ -245,8 +245,8 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
     def learn(self, h, s):
         indices = torch.nonzero(torch.all(self.hbook == h, dim=1)).flatten()
         assert len(indices) != 0, "h not found in hbook"
-        if len(indices > 1):
-            print("warning: h found in hbook multiple times")
+        if len(indices) > 1:
+            print(f"warning: h found in hbook multiple times: {indices}")
 
         i = indices[0]
         self.sbook[i] = s
