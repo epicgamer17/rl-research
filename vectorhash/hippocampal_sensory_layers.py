@@ -324,18 +324,13 @@ class HebbianHippocampalSensoryLayer(HippocampalSensoryLayer):
     def calculate_update_Wsh(
         self, input: torch.Tensor, output: torch.Tensor
     ) -> torch.Tensor:
-        if self.use_h_fix:
-            input_ = input - self.mean_h
-        else:
-            input_ = input
-
         if self.calculate_update_scaling_method == "norm":
-            scale = torch.linalg.norm(input_) ** 2
+            scale = torch.linalg.norm(input) ** 2
         elif self.calculate_update_scaling_method == "n_h":
             scale = self.N_h
 
         if self.scaling_updates:
-            output = output - self.sensory_from_hippocampal(input_)[0]
+            output = output - self.sensory_from_hippocampal(input)[0]
 
         ret = torch.einsum("j,i->ji", output, input) / (scale + 1e-10)
         return ret
@@ -357,15 +352,22 @@ class HebbianHippocampalSensoryLayer(HippocampalSensoryLayer):
 
     @torch.no_grad()
     def learn(self, h, s):
-        self.W_hs += self.calculate_update_Whs(s, h)
-        self.W_sh += self.calculate_update_Wsh(h, s)
+        if self.use_h_fix:
+            h_ = h - self.mean_h
+        else:
+            h_ = h
+        self.W_hs += self.calculate_update_Whs(s, h_)
+        self.W_sh += self.calculate_update_Wsh(h_, s)
 
     @torch.no_grad()
     def hippocampal_from_sensory(self, S):
         if S.ndim == 1:
             S = S.unsqueeze(0)
 
-        return torch.relu(S @ self.W_hs.T)
+        ret = S @ self.W_hs.T
+        if self.use_h_fix:
+            ret += self.mean_h
+        return torch.relu(ret)
 
     @torch.no_grad()
     def sensory_from_hippocampal(self, H):
