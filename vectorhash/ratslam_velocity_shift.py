@@ -4,29 +4,20 @@ import math
 import torch
 
 
-# grid cell to real world size scaling
-
-
 # for every pose cell, calculate the velocity shift
-def inject_activity(pose_cells, v, theta, omega, k_x=1, k_y=1, k_theta=1):
-    new_pose_cells = torch.clone(pose_cells)
-    for g_x in range(pose_cells.shape[0]):
-        for g_y in range(pose_cells.shape[1]):
-            for g_theta in range(pose_cells.shape[2]):
-                # new_pose_cells[g_x][g_y][g_theta] = pose_cells[g_x][g_y][
-                #     g_theta
-                # ] + calculate_velocity_shift(
-                #     pose_cells, g_x, g_y, g_theta, v, theta, omega
-                # )
-                # not keeping old beliefs
-                new_pose_cells[g_x][g_y][g_theta] = calculate_velocity_shift(
-                    pose_cells, g_x, g_y, g_theta, -v, theta, -omega, k_x, k_y, k_theta
+def inject_activity(P, v, theta, omega, k_x=1, k_y=1, k_theta=1):
+    updated_P = torch.clone(P)
+    for g_theta in range(P.shape[0]):
+        for g_x in range(P.shape[1]):
+            for g_y in range(P.shape[2]):
+                updated_P[g_theta][g_x][g_y] = calculate_velocity_shift(
+                    P, g_x, g_y, g_theta, -v, theta, -omega, k_x, k_y, k_theta
                 )  # -v for same functionality as ezra had implimented, and - omega same reason
 
-    return new_pose_cells
+    return updated_P
 
 
-def calculate_velocity_shift(pose_cells, l, m, n, v, theta, omega, k_x, k_y, k_theta):
+def calculate_velocity_shift(P, l, m, n, v, theta, omega, k_x, k_y, k_theta):
     change = 0
     delta_x, delta_y, delta_theta = calculate_deltas(
         v, theta, omega, k_x, k_y, k_theta
@@ -34,31 +25,23 @@ def calculate_velocity_shift(pose_cells, l, m, n, v, theta, omega, k_x, k_y, k_t
     delta_f_x, delta_f_y, delta_f_theta = calculate_delta_fs(
         delta_x, delta_y, delta_theta, v, theta, omega, k_x, k_y, k_theta
     )
-    alpha = calculate_alpha(delta_f_x, delta_f_y, delta_f_theta)
-    # print("deltas", delta_x, delta_y, delta_theta)
-    for x in range(delta_x, delta_x + 2):
-        for y in range(delta_y, delta_y + 2):
-            for theta in range(delta_theta, delta_theta + 2):
+    alpha = calculate_alpha(
+        delta_f_x,
+        delta_f_y,
+        delta_f_theta,
+        shape=(min(2, P.shape[0]), min(2, P.shape[1]), min(2, P.shape[2])),
+    )
+    for theta in range(delta_theta, delta_theta + len(alpha)):
+        for x in range(delta_x, delta_x + len(alpha[0])):
+            for y in range(delta_y, delta_y + len(alpha[0][0])):
                 change += (
-                    alpha[x - delta_x][y - delta_y][
-                        theta - delta_theta
+                    alpha[theta - delta_theta][x - delta_x][
+                        y - delta_y
                     ]  # paper does x y theta (but there alpha indices are weird)
-                    * pose_cells[(l + x) % len(pose_cells)][
-                        (m + y) % len(pose_cells[0])
-                    ][(n + theta) % len(pose_cells[0][0])]
+                    * P[(n + theta) % len(P)][(l + x) % len(P[0])][
+                        (m + y) % len(P[0][0])
+                    ]
                 )
-                # print(
-                #     "alpha cell value",
-                #     alpha[x - delta_x][y - delta_y][theta - delta_theta],
-                # )
-                # print(
-                #     "observed cell",
-                #     pose_cells[(l + x) % len(pose_cells)][(m + y) % len(pose_cells[0])][
-                #         (n + theta) % len(pose_cells[0][0])
-                #     ],
-                # )
-                # print("intermediate change", change)
-    # print("change", change)
     return change
 
 
@@ -85,12 +68,12 @@ def calculate_delta_fs(
 
 
 def calculate_alpha(
-    delta_f_x, delta_f_y, delta_f_theta
+    delta_f_x, delta_f_y, delta_f_theta, shape=(2, 2, 2)
 ):  # delta_x, delta_y, delta_theta
-    alpha = torch.zeros((2, 2, 2))
-    for i in range(0, 2):
-        for j in range(0, 2):
-            for k in range(0, 2):
+    alpha = torch.zeros(shape)
+    for i in range(0, shape[0]):
+        for j in range(0, shape[1]):
+            for k in range(0, shape[2]):
                 alpha[i][j][k] = (
                     g(
                         delta_f_x, i
@@ -98,7 +81,6 @@ def calculate_alpha(
                     * g(delta_f_y, j)
                     * g(delta_f_theta, k)
                 )
-    # print("alpha", alpha)
     return alpha
 
 

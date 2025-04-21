@@ -75,7 +75,7 @@ class ValueNetwork(nn.Module):
         :param batch: Batch of experiences Tuple of form(iteration_num, state, regret).
         """
         self.optimizer.zero_grad()
-        outputs = self.forward(batch[1])
+        outputs = self.forward(batch[1].to(dtype=(torch.float32)))
         # optional : weight each loss by iteration num batch[0].unsqueeze(1) * 
         loss = (((outputs - batch[2].detach()) ** 2)).mean()
         loss.backward()
@@ -133,7 +133,7 @@ class PolicyNetwork(nn.Module):
         :param batch: Batch of experiences Tuple of form(iteration_num, state, regret).
         """
         self.optimizer.zero_grad()
-        outputs = self.forward(batch[1])
+        outputs = self.forward(batch[1].to(dtype=(torch.float32)))
         reshaped_iternum = batch[0].view(-1,1).detach()
         # optional : weight each loss by iteration num batch[0].unsqueeze(1) * 
         if linear:
