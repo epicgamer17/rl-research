@@ -423,7 +423,7 @@ def build_scaffold(
     smoothing=SoftmaxSmoothing(T=1e-4),
     shift=ModularConvolutionalShift(),
     device=None,
-    relu=False,
+    relu=True,
     limits=None,
     sanity_check=False
 ):
