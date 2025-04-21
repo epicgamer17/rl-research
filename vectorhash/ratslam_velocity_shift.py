@@ -4,9 +4,6 @@ import math
 import torch
 
 
-# grid cell to real world size scaling
-
-
 # for every pose cell, calculate the velocity shift
 def inject_activity(P, v, theta, omega, k_x=1, k_y=1, k_theta=1):
     updated_P = torch.clone(P)
