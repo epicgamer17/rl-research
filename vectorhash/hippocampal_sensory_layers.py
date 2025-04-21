@@ -65,7 +65,7 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
         self.stationary = stationary
         self.epsilon_hs = epsilon_hs
         self.epsilon_sh = epsilon_sh
-        self.relu= relu
+        self.relu = relu
         hidden_size_sh = self.N_h * self.hidden_layer_factor
         if hidden_size_sh == 0:
             hidden_size_sh = self.N_h
@@ -214,22 +214,24 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
             if self.relu:
                 return torch.relu(hidden @ self.W_hs.T)
             else:
-                return (hidden @ self.W_hs.T)  # to relu or not to relu, that is the question.
+                # to relu or not to relu, that is the question.
+                return hidden @ self.W_hs.T
         else:
             if self.relu:
                 return torch.relu(S @ self.W_hs.T)
             else:
-                return (S @ self.W_hs.T)  # to relu or not to relu, that is the question.
+                return S @ self.W_hs.T  # to relu or not to relu, that is the question.
 
 
 class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
-    def __init__(self, input_size, N_h, N_patts, hbook: torch.Tensor, device=None):
+    def __init__(self, input_size, N_h, N_patts, device=None):
         super().__init__(input_size, N_h, device)
+        self.size = 0
 
         self.sbook = torch.zeros((N_patts, input_size), device=self.device)
         """Matrix of all previously seen sensory inputs. Shape: `(N_patts x input_size)`
         """
-        self.hbook = hbook
+        self.hbook = torch.zeros((N_patts, N_h), device=self.device)
         """Matrix of all possible hippocampal states. Shape: `(N_patts x N_h)`
         """
 
@@ -243,15 +245,13 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
 
     @torch.no_grad()
     def learn(self, h, s):
-        indices = torch.nonzero(torch.all(self.hbook == h, dim=1)).flatten()
-        assert len(indices) != 0, "h not found in hbook"
-        if len(indices) > 1:
-            print(f"warning: h found in hbook multiple times: {indices}")
-
-        i = indices[0]
-        self.sbook[i] = s
-        self.W_hs = self.hbook.T @ torch.linalg.pinv(self.sbook).T
-        self.W_sh = self.sbook.T @ torch.linalg.pinv(self.hbook).T
+        self.sbook[self.size] = s
+        self.hbook[self.size] = h
+        # self.W_hs = torch.linalg.lstsq(self.hbook, self.sbook).solution
+        # self.W_sh = torch.linalg.lstsq(self.sbook, self.hbook).solution
+        self.W_hs = self.hbook.T @ self.sbook.pinverse().T
+        self.W_sh = self.sbook.T @ self.hbook.pinverse().T
+        self.size += 1
 
     @torch.no_grad()
     def hippocampal_from_sensory(self, S):
@@ -266,21 +266,18 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
             H = H.unsqueeze(0)
 
         return H @ self.W_sh.T
-    
-    @torch.no_grad()
-    def learn_batch(self, sbook):
-        if len(sbook) > len(self.hbook):
-            print("error: sbook length cannot be greater than hbook length")
-            raise "too many patterns for given hbook size"
-        elif len(sbook) < len(self.hbook):
-            print("warning: reshaping local copy of hbook to match sbook size")
-            hbook_modified = self.hbook[:len(sbook)].clone()
-            self.hbook = hbook_modified
-        # assume sbook[:len(sbook)] corresponds with hbook[:len(sbook)]
-        self.sbook = sbook
-        self.W_hs = self.hbook.T @ torch.linalg.pinv(self.sbook).T
-        self.W_sh = self.sbook.T @ torch.linalg.pinv(self.hbook).T
 
+    @torch.no_grad()
+    def learn_batch(self, sbook: torch.Tensor, hbook: torch.Tensor):
+        assert len(sbook) == len(hbook), f"length of sbook must be identical to hbook, sbook_length={len(sbook)}, hbook_length={len(hbook)}"
+        self.size = len(sbook)
+        self.sbook = sbook.clone()
+        self.hbook = hbook.clone()
+        
+        # self.W_hs = torch.linalg.lstsq(hbook, sbook).solution
+        # self.W_sh = torch.linalg.lstsq(sbook, hbook).solution
+        self.W_hs = hbook.T @ sbook.pinverse().T
+        self.W_sh = sbook.T @ hbook.pinverse().T
 
 
 class HebbianHippocampalSensoryLayer(HippocampalSensoryLayer):
@@ -448,7 +445,6 @@ class HSPseudoInverseSHHebbieanHippocampalSensoryLayer(HippocampalSensoryLayer):
             H_ = H
 
         return H_ @ self.W_sh.T
-
 
     @torch.no_grad()
     def hippocampal_from_sensory(self, S):

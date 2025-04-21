@@ -1,14 +1,7 @@
 import torch
-from vectorhash import (
-    build_initializer,
-    GridHippocampalScaffold,
-    ExactPseudoInverseHippocampalSensoryLayer,
-    IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
-    VectorHaSH,
-    build_vectorhash_architecture,
-)
+from vectorhash import GridHippocampalScaffold, build_vectorhash_architecture
 from hippocampal_sensory_layers import *
-from smoothing import ArgmaxSmoothing, SoftmaxSmoothing, PolynomialSmoothing
+from smoothing import SoftmaxSmoothing
 from tqdm import tqdm
 
 UP = torch.tensor([0, 1])
@@ -96,14 +89,13 @@ def capacity_test(
     nruns,
     device,
     sign_output=False,
-    shapes=[(3,3), (5,5), (7,7)],
+    shapes=[(3, 3), (5, 5), (7, 7)],
     N_h=1000,
     input_size=784,
     initalization_method="by_scaling",
     W_gh_var=1,
     percent_nonzero_relu=0.7,
     sparse_initialization=0.1,
-    T=1e-6,
     hippocampal_sensory_layer_type="iterative_pseudoinverse",
     hidden_layer_factor=1,
     stationary=True,
@@ -112,7 +104,7 @@ def capacity_test(
     relu=False,
     smoothing_method=SoftmaxSmoothing(T=1e-6),
 ):
-    
+
     model = build_vectorhash_architecture(
         shapes=shapes,
         N_h=N_h,
@@ -121,7 +113,6 @@ def capacity_test(
         W_gh_var=W_gh_var,
         percent_nonzero_relu=percent_nonzero_relu,
         sparse_initialization=sparse_initialization,
-        T=T,
         device=device,
         hippocampal_sensory_layer_type=hippocampal_sensory_layer_type,
         hidden_layer_factor=hidden_layer_factor,
@@ -135,8 +126,6 @@ def capacity_test(
     err_h_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Npatts_list), nruns), device=device)
-
-
 
     for k in tqdm(range(len(Npatts_list))):
         Npatts = Npatts_list[k]
@@ -154,7 +143,6 @@ def capacity_test(
                 nruns,
                 Npatts,
                 sign_output=sign_output,
-                relu=relu,
             )
 
     return err_h_l2, err_s_l2, err_s_l1
@@ -181,7 +169,7 @@ def capacity1(
     sign_output=False,
     smoothing_method=SoftmaxSmoothing(T=1e-6),
 ):
-    
+
     err_h_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
@@ -197,11 +185,10 @@ def capacity1(
             device=device,
             sign_output=sign_output,
             shapes=shapes,
-            input_size=sbook_torch.shape[0],
+            input_size=sbook_torch.shape[1],
             initalization_method=init_method,
             W_gh_var=W_gh_var,
             percent_nonzero_relu=percent_nonzero_relu,
-            T=T,
             hippocampal_sensory_layer_type=hippocampal_sensory_layer_type,
             hidden_layer_factor=hidden_layer_factor,
             stationary=stationary,
@@ -213,8 +200,10 @@ def capacity1(
 
     return err_h_l2, err_s_l2, err_s_l1
 
+
 def generate_animalai_path(path_length=100):
     return torch.randint(0, 9, (path_length,)).tolist()
+
 
 def kidnapped_paths():
     path1 = []
