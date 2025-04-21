@@ -2,7 +2,7 @@ import sys
 import torch
 from cfr_network import CFRNetwork
 from agent_configs import CFRConfig
-
+import math
 from replay_buffers import nfsp_reservoir_buffer
 import datetime
 sys.path.append("../")
@@ -48,19 +48,19 @@ class CFRAgent(): # BaseAgent):
 
         self.value_buffer = [nfsp_reservoir_buffer.NFSPReservoirBuffer(
             observation_dimensions=self.observation_space,
-            observation_dtype=torch.float32,
+            observation_dtype=np.float32,
             max_size=config.replay_buffer_size,
             num_actions=self.action_space,
             batch_size=config.minibatch_size,
-            compressed_observations=True) for _ in range(self.players)]
+            compressed_observations=False) for _ in range(self.players)]
       
         self.policy_buffer = nfsp_reservoir_buffer.NFSPReservoirBuffer(
             observation_dimensions=self.observation_space,
-            observation_dtype=torch.float32,
+            observation_dtype=np.float32,
             max_size=config.replay_buffer_size,
             num_actions=self.action_space,
             batch_size=config.minibatch_size,
-            compressed_observations=True)
+            compressed_observations=False)
    
         self.traversals = config.traversals
         self.steps_per_epoch = config.steps_per_epoch
@@ -89,7 +89,7 @@ class CFRAgent(): # BaseAgent):
         regret_sum = positive_regret.sum(dim=-1)
         sample = None
         policy = None
-        if regret_sum == 0:
+        if math.isclose(regret_sum, 0.0):
             if mask_actions:
                 # if all regrets are zero, sample uniformly from action space
 
@@ -120,9 +120,9 @@ class CFRAgent(): # BaseAgent):
             # get num of obs
             num_samples = len(samples["observations"])
             # LOOP THROUGH FOR CONFIG NUMBER OF SGD ITERS
-            observations = torch.tensor(np.array([samples["observations"][sample]["observation"] for sample in range(num_samples)]))
-            target_policy = torch.tensor(np.array([samples["targets"][sample] for sample in range(num_samples)]))
-            iteration = torch.tensor([samples["infos"][sample]["iteration"] for sample in range(num_samples)])
+            observations = torch.from_numpy(samples["observations"])
+            target_policy = torch.from_numpy(samples["targets"])
+            iteration = torch.from_numpy(samples["infos"])
             loss = self.network.values[player_id].learn(batch=[iteration, observations, target_policy])
         
     def policy_learn(self, linear=False):
@@ -135,9 +135,9 @@ class CFRAgent(): # BaseAgent):
             # get num of obs
             num_samples = len(samples["observations"])
             # LOOP THROUGH FOR CONFIG NUMBER OF SGD ITERS
-            observations = torch.tensor(np.array([samples["observations"][sample]["observation"] for sample in range(num_samples)]))
-            target_policy = torch.tensor(np.array([samples["targets"][sample] for sample in range(num_samples)]))
-            iteration = torch.tensor([samples["infos"][sample]["iteration"] for sample in range(num_samples)])
+            observations = torch.from_numpy(samples["observations"])
+            target_policy = torch.from_numpy(samples["targets"])
+            iteration = torch.from_numpy(samples["infos"])
             loss = self.network.policy.learn(batch=[iteration, observations, target_policy], linear=linear)
             losses.append(loss)
 
@@ -225,6 +225,12 @@ class CFRAgent(): # BaseAgent):
         observation, reward, termination, truncation, info = game.last()
         if termination or truncation:
             # IF TERMINATED THEN PASS UP VALUE TO PARET (THIS IS A RECURSIVE CALL)
+            if info!="OPENSPIEL":
+                game.agent_selection = "player_" + str(traverser)
+                observation, reward, termination, truncation, info = game.last()
+            else: 
+                game.traverser = traverser
+                observation, reward, termination, truncation, info = game.last()
             return reward #IE PAYOFF only for activate player
         elif active_player == traverser_id:
             predictions = self.predict(observation["observation"], active_player)
@@ -248,7 +254,7 @@ class CFRAgent(): # BaseAgent):
                 for i in range(len(policy)):
                     reg[i] = v_policy[i] - torch.sum(torch.tensor(v_policy) * torch.tensor(policy)).item()
                 # ADD TO ACTIVE PLAYER'S VALUE BUFFER
-                self.value_buffer[active_player].store(observation, target_policy=reg, iteration=iteration_T, info={"iteration": iteration_T+1})
+                self.value_buffer[active_player].store(observation["observation"], target_policy=reg, info=iteration_T+1)
                 return torch.sum(torch.tensor(v_policy) * torch.tensor(policy)).item() # RETURN VALUE FOR ACTIVE PLAYER #### ALTERNATIVELY JUST RETURN REWARD OF SAMPLED ACTION
             else:
                 # sampling = MC
@@ -260,12 +266,12 @@ class CFRAgent(): # BaseAgent):
                         reg[i] = v_policy[i]/(policy[i].item())
                     else:
                         reg[i] = -v_policy[i]/(1-policy[i].item())
-                self.value_buffer[active_player].store(observation, target_policy=reg, iteration=iteration_T, info={"iteration": iteration_T+1})
+                self.value_buffer[active_player].store(observation["observation"], target_policy=reg, info=iteration_T+1)
                 return v_policy[sample]
         else:
             predictions = self.predict(observation["observation"], active_player)
             sample, policy = self.select_actions(predictions, info=torch.from_numpy(observation["action_mask"]), mask_actions=True, traverser=traverser_id) # MASKING NOT YET IMPLEMENTED
-            self.policy_buffer.store(observation, target_policy=policy, iteration=iteration_T, info={"iteration": iteration_T+1})
+            self.policy_buffer.store(observation["observation"], target_policy=policy, info=iteration_T+1)
             game.step(sample)
             history.append(sample)
             return self.traverse(copy.deepcopy(history), iteration_T, seed, game, self.active_player_obj.next(), traverser=traverser_id)        

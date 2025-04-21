@@ -23,12 +23,12 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             batch_size=batch_size,
             compressed_observations=compressed_observations,
         )
+        self.add_calls = 0
 
     def store(
         self,
         observation,
-        info: dict,
-        iteration: int,
+        info: int,
         target_policy: list[int],
         id=None,
     ):
@@ -38,8 +38,6 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         :param target_policy: the target policy for the current observation, in this case it is of type list[int] since it will be a one-hot encoded vector of the action selected by the best agent network
         :param id: the id of the transition
         """
-        if info==None:
-            info = iteration
         if self.size < self.max_size:
             self.observation_buffer[self.add_calls] = observation
             self.info_buffer[self.add_calls] = info
@@ -121,15 +119,13 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         if self.compressed_observations:
             self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
         else:
-            observation_buffer_shape = (self.max_size,) + self.observation_dimensions
-            print(observation_buffer_shape)
-            print(self.observation_dtype)
+            observation_buffer_shape = (self.max_size,self.observation_dimensions)
             self.observation_buffer = np.zeros(
                 observation_buffer_shape, dtype=self.observation_dtype
             )
-        self.info_buffer = np.zeros(self.max_size, dtype=np.object_)
+        self.info_buffer = np.zeros(self.max_size, dtype=int)
         self.target_policy_buffer = np.zeros(
-            (self.max_size, self.num_actions), dtype=np.float16
+            (self.max_size, self.num_actions), dtype=np.float64
         )
         self.size = 0
         self.add_calls = 0
