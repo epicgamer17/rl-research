@@ -424,7 +424,8 @@ def build_scaffold(
     shift=ModularConvolutionalShift(),
     device=None,
     relu=False,
-    limits=None
+    limits=None,
+    sanity_check=False
 ):
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
@@ -442,7 +443,7 @@ def build_scaffold(
         sparse_matrix_initializer=initializer,
         relu_theta=relu_theta,
         shift_method=shift,
-        sanity_check=False, # breaks with soft smoothing
+        sanity_check=sanity_check, # breaks with soft smoothing
         calculate_g_method="fast",
         smoothing=smoothing,
         device=device,
