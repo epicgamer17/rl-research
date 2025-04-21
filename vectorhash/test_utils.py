@@ -129,8 +129,15 @@ def capacity_test(
 
     for k in tqdm(range(len(Npatts_list))):
         Npatts = Npatts_list[k]
-        for j in tqdm(range(Npatts)):
-            model.hippocampal_sensory_layer.learn(model.scaffold.H[j], sbook[j])
+
+        
+        if hasattr(model.hippocampal_sensory_layer, "learn_batch"):
+            model.hippocampal_sensory_layer.learn_batch(
+                sbook[:Npatts], model.scaffold.H[:Npatts]
+            )
+        else:
+            for j in tqdm(range(Npatts)):
+                model.hippocampal_sensory_layer.learn(model.scaffold.H[j], sbook[j])
 
         for r in range(nruns):
             sbook_noisy = sbook  # corrupt_p_1(sbook)[:Npatts]
@@ -158,18 +165,15 @@ def capacity1(
     init_method="by_scaling",
     W_gh_var=1,
     percent_nonzero_relu=0.7,
-    sparse_initialization=0.1,
-    T=1e-6,
     hippocampal_sensory_layer_type="iterative_pseudoinverse",
     hidden_layer_factor=1,
     stationary=True,
     epsilon_hs=0.1,
     epsilon_sh=0.1,
-    relu=False,
+    relu=True,
     sign_output=False,
     smoothing_method=SoftmaxSmoothing(T=1e-6),
 ):
-
     err_h_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l2 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)
     err_s_l1 = -1 * torch.ones((len(Np_lst), len(Npatts_lst), nruns), device=device)

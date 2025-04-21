@@ -224,14 +224,20 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
 
 
 class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
-    def __init__(self, input_size, N_h, N_patts, device=None):
+    def __init__(self, input_size, N_h, N_patts, hbook, device=None):
         super().__init__(input_size, N_h, device)
+        assert (
+            len(hbook) == N_patts
+        ), f"length of hbook must be identical to N_patts, hbook_length={len(hbook)}, N_patts={N_patts}"
+        assert (
+            len(hbook[0]) == N_h
+        ), f"length of hbook must be identical to N_h, hbook_length={len(hbook)}, N_h={N_h}"
         self.size = 0
 
         self.sbook = torch.zeros((N_patts, input_size), device=self.device)
         """Matrix of all previously seen sensory inputs. Shape: `(N_patts x input_size)`
         """
-        self.hbook = torch.zeros((N_patts, N_h), device=self.device)
+        self.hbook = hbook
         """Matrix of all possible hippocampal states. Shape: `(N_patts x N_h)`
         """
 
@@ -269,11 +275,13 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
 
     @torch.no_grad()
     def learn_batch(self, sbook: torch.Tensor, hbook: torch.Tensor):
-        assert len(sbook) == len(hbook), f"length of sbook must be identical to hbook, sbook_length={len(sbook)}, hbook_length={len(hbook)}"
+        assert len(sbook) == len(
+            hbook
+        ), f"length of sbook must be identical to hbook, sbook_length={len(sbook)}, hbook_length={len(hbook)}"
         self.size = len(sbook)
         self.sbook = sbook.clone()
         self.hbook = hbook.clone()
-        
+
         # self.W_hs = torch.linalg.lstsq(hbook, sbook).solution
         # self.W_sh = torch.linalg.lstsq(sbook, hbook).solution
         self.W_hs = hbook.T @ sbook.pinverse().T

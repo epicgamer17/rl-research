@@ -502,6 +502,7 @@ def build_vectorhash_architecture(
             input_size=input_size,
             N_h=N_h,
             N_patts=scaffold.N_patts,
+            hbook = scaffold.H[:scaffold.N_patts],
             device=device,
         )
     elif hippocampal_sensory_layer_type == "hebbian":
