@@ -157,7 +157,7 @@ class CFRAgent(): # BaseAgent):
         iteration = torch.tensor(samples["infos"], device=self.device, dtype=torch.float32)
         if len(observations) <= self.config.minibatch_size:
             for i in range(self.config.steps_per_epoch):
-                loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
+                loss = self.network.policy.learn(iteration, observations, target_policy,linear=linear)
                 losses.append(loss)
         elif len(observations) < self.config.minibatch_size * self.config.steps_per_epoch:
             for i in range(len(observations)//self.config.minibatch_size):
@@ -213,10 +213,10 @@ class CFRAgent(): # BaseAgent):
             if self.max_nodes is not None:
                 if self.nodes_touched >= self.max_nodes*checkpoint_interval:
                     print(f"Checkpointing at {self.nodes_touched} nodes touched")
-                print(f"Checkpointing at {checkpoint_interval*100}% of training steps, i.e {i} iterations")
-                # CHECKPOINT EVERY 10% OF TRAINING STEPS
-                self.save_checkpoint(i)
-                checkpoint_interval += 0.1
+                    print(f"Checkpointing at {checkpoint_interval*100}% of training steps, i.e {i} iterations")
+                    # CHECKPOINT EVERY 10% OF TRAINING STEPS
+                    self.save_checkpoint(i)
+                    checkpoint_interval += 0.1
             else:
                 if i >= self.config.training_steps * checkpoint_interval:
                     print(f"Checkpointing at {self.nodes_touched} nodes touched")
