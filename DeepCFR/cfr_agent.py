@@ -209,6 +209,7 @@ class CFRAgent(): # BaseAgent):
                 # NOW LEARN FROM THE PLAYER'S VALUE BUFFER
                 self.learn(p)
             print(f"Iteration {i} done")
+            print(f"Nodes touched {self.nodes_touched}")
             if self.max_nodes is not None:
                 if self.nodes_touched >= self.max_nodes*checkpoint_interval:
                     print(f"Checkpointing at {self.nodes_touched} nodes touched")
