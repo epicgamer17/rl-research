@@ -56,8 +56,11 @@ class ValueNetwork(nn.Module):
         :return: Output tensor.
         """
         for i in range(len(self.layers)):
-            if i<=3:
-                x = torch.nn.functional.relu(self.layers[i](x))
+            if i<3:
+                if self.layers[i].in_features == self.layers[i].out_features:
+                    x = torch.nn.functional.relu(self.layers[i](x) + x)
+                else:
+                    x = torch.nn.functional.relu(self.layers[i](x))
             else:
                 x = self.layers[i](x)
         return x
@@ -113,7 +116,7 @@ class PolicyNetwork(nn.Module):
         :return: Output tensor.
         """
         for i in range(len(self.layers)):
-            if i<=3:
+            if i<3:
                 if self.layers[i].in_features == self.layers[i].out_features:
                     x = torch.nn.functional.relu(self.layers[i](x) + x)
                 else:

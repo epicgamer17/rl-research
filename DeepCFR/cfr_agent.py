@@ -36,6 +36,7 @@ class CFRAgent(): # BaseAgent):
         self.config = config
         self.players = config.num_players
         self.nodes_touched = 0
+        self.chunk_size = 1000
         self.max_nodes = max_nodes
         self.active_player_obj = config.active_player_obj
         self.network = CFRNetwork(
@@ -120,25 +121,25 @@ class CFRAgent(): # BaseAgent):
         # GET BATCHES FROM VALUE BUFFER
         self.network.values[player_id].reset()
         losses = []
-        
-        samples = self.value_buffer[player_id].sample(num_samples=self.config.steps_per_epoch)
-        observations = torch.tensor(samples["observations"], device=self.device, dtype=torch.float32)
-        target_policy = torch.tensor(samples["targets"], device=self.device, dtype=torch.float32)
-        iteration = torch.tensor(samples["infos"], device=self.device, dtype=torch.float32)
-        if len(observations) <= self.config.minibatch_size:
-            for i in range(self.config.steps_per_epoch):
-                loss = self.network.values[player_id].learn(iteration, observations, target_policy)
-                losses.append(loss)
-        elif len(observations) < self.config.minibatch_size * self.config.steps_per_epoch:
-            for i in range(len(observations)//self.config.minibatch_size):
-                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
-                loss = self.network.values[player_id].learn(iteration[index], observations[index], target_policy[index])
-                losses.append(loss)
-        else:
-            for i in range(self.config.steps_per_epoch):
-                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
-                loss = self.network.values[player_id].learn(iteration[index], observations[index], target_policy[index])
-                losses.append(loss)
+        for o in range(self.config.steps_per_epoch//self.chunk_size):
+            samples = self.value_buffer[player_id].sample(num_samples=self.chunk_size)
+            observations = torch.tensor(samples["observations"], device=self.device, dtype=torch.float32)
+            target_policy = torch.tensor(samples["targets"], device=self.device, dtype=torch.float32)
+            iteration = torch.tensor(samples["infos"], device=self.device, dtype=torch.float32)
+            if len(observations) <= self.config.minibatch_size:
+                for i in range(self.chunk_size):
+                    loss = self.network.values[player_id].learn(iteration, observations, target_policy)
+                    losses.append(loss)
+            elif len(observations) < self.config.minibatch_size * self.chunk_size:
+                for i in range(len(observations)//self.config.minibatch_size):
+                    index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                    loss = self.network.values[player_id].learn(iteration[index], observations[index], target_policy[index])
+                    losses.append(loss)
+            else:
+                for i in range(self.chunk_size):
+                    index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                    loss = self.network.values[player_id].learn(iteration[index], observations[index], target_policy[index])
+                    losses.append(loss)
         if self.stats["checkpoint_nodes"]==[]:
             self.stats["checkpoint_nodes"].append(self.nodes_touched)
         if self.stats["checkpoint_nodes"][-1]!= self.nodes_touched:
@@ -151,24 +152,25 @@ class CFRAgent(): # BaseAgent):
         Final training cycle, updating policy network on average strategy of players in past t iterations.
         """
         losses = []
-        samples = self.policy_buffer.sample(num_samples=self.config.steps_per_epoch)
-        observations = torch.tensor(samples["observations"], device=self.device, dtype=torch.float32)
-        target_policy = torch.tensor(samples["targets"], device=self.device, dtype=torch.float32)
-        iteration = torch.tensor(samples["infos"], device=self.device, dtype=torch.float32)
-        if len(observations) <= self.config.minibatch_size:
-            for i in range(self.config.steps_per_epoch):
-                loss = self.network.policy.learn(iteration, observations, target_policy,linear=linear)
-                losses.append(loss)
-        elif len(observations) < self.config.minibatch_size * self.config.steps_per_epoch:
-            for i in range(len(observations)//self.config.minibatch_size):
-                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
-                loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
-                losses.append(loss)
-        else:
-            for i in range(self.config.steps_per_epoch):
-                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
-                loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
-                losses.append(loss)
+        for o in range(self.config.steps_per_epoch//self.chunk_size):
+            samples = self.policy_buffer.sample(num_samples=self.chunk_size)
+            observations = torch.tensor(samples["observations"], device=self.device, dtype=torch.float32)
+            target_policy = torch.tensor(samples["targets"], device=self.device, dtype=torch.float32)
+            iteration = torch.tensor(samples["infos"], device=self.device, dtype=torch.float32)
+            if len(observations) <= self.config.minibatch_size:
+                for i in range(self.chunk_size):
+                    loss = self.network.policy.learn(iteration, observations, target_policy,linear=linear)
+                    losses.append(loss)
+            elif len(observations) < self.config.minibatch_size * self.chunk_size:
+                for i in range(len(observations)//self.config.minibatch_size):
+                    index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                    loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
+                    losses.append(loss)
+            else:
+                for i in range(self.chunk_size):
+                    index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                    loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
+                    losses.append(loss)
 
         if self.stats["checkpoint_nodes"]==[]:
             self.stats["checkpoint_nodes"].append(self.nodes_touched)
