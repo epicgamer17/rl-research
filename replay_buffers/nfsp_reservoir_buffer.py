@@ -54,7 +54,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
                 self.target_policy_buffer[idx] = target_policy
         self.add_calls += 1
 
-    def sample(self, type="random"):
+    def sample(self, type="random", num_samples=None):
         # http://erikerlandson.github.io/blog/2015/11/20/very-fast-reservoir-sampling/
         # assert len(self) >= self.batch_size
         if self.size < self.batch_size:
@@ -63,7 +63,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
                 infos=self.info_buffer[: self.size],
                 targets=self.target_policy_buffer[: self.size],
             )
-        indices = np.random.choice(len(self), self.batch_size, replace=False)
+        indices = np.random.choice(len(self), self.batch_size*num_samples, replace=True)
         if type=="random":
             return dict(
                 observations=self.observation_buffer[indices],
@@ -125,7 +125,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             )
         self.info_buffer = np.zeros(self.max_size, dtype=int)
         self.target_policy_buffer = np.zeros(
-            (self.max_size, self.num_actions), dtype=np.float64
+            (self.max_size, self.num_actions), dtype=np.float32
         )
         self.size = 0
         self.add_calls = 0

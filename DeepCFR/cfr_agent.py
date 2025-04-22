@@ -11,6 +11,7 @@ import time
 import numpy as np
 import copy
 import os
+import pandas as pd
 
 class CFRAgent(): # BaseAgent):
     def __init__(
@@ -21,13 +22,9 @@ class CFRAgent(): # BaseAgent):
             device: torch.device = (
             torch.device("cuda")
             if torch.cuda.is_available()
-            # MPS is sometimes useful for M2 instances, but only for large models/matrix multiplications otherwise CPU is faster
-            # else (
-            #     torch.device("mps")
-            #     if torch.backends.mps.is_available() and torch.backends.mps.is_built()
-            else torch.device("cpu")
+            else torch.device("cpu")),
+            max_nodes=None,
             # )
-        ),
         from_checkpoint=False
     ):
         # super(CFRAgent, self).__init__(env, config, name=name, device=device, from_checkpoint=from_checkpoint)
@@ -39,13 +36,14 @@ class CFRAgent(): # BaseAgent):
         self.config = config
         self.players = config.num_players
         self.nodes_touched = 0
+        self.max_nodes = max_nodes
         self.active_player_obj = config.active_player_obj
         self.network = CFRNetwork(
             config=config.network,
             input_shape=self.observation_space,
             output_shape=self.action_space,
+            device=self.device,
         )
-
         self.value_buffer = [nfsp_reservoir_buffer.NFSPReservoirBuffer(
             observation_dimensions=self.observation_space,
             observation_dtype=np.float32,
@@ -65,6 +63,13 @@ class CFRAgent(): # BaseAgent):
         self.traversals = config.traversals
         self.steps_per_epoch = config.steps_per_epoch
         self.training_steps = config.training_steps
+        self.stats = {
+            "value_loss": [[] for _ in range(self.players)],
+            "policy_loss_linear": [],
+            "policy_loss_nonlinear": [],
+            "checkpoint_nodes": [],
+
+        }
 
     def predict(self, state, player_id):
         """
@@ -73,7 +78,7 @@ class CFRAgent(): # BaseAgent):
         :return: Action probabilities.
         """
         with torch.no_grad():
-            state = torch.tensor(state, dtype=torch.float32).to(self.device)
+            state = state
             action_probs = self.network.values[player_id](state)
             return action_probs.cpu().numpy()
     
@@ -114,38 +119,76 @@ class CFRAgent(): # BaseAgent):
         """
         # GET BATCHES FROM VALUE BUFFER
         self.network.values[player_id].reset()
-
-        for i in range(self.config.steps_per_epoch):
-            samples = self.value_buffer[player_id].sample()
-            # get num of obs
-            num_samples = len(samples["observations"])
-            # LOOP THROUGH FOR CONFIG NUMBER OF SGD ITERS
-            observations = torch.from_numpy(samples["observations"])
-            target_policy = torch.from_numpy(samples["targets"])
-            iteration = torch.from_numpy(samples["infos"])
-            loss = self.network.values[player_id].learn(batch=[iteration, observations, target_policy])
+        losses = []
         
+        samples = self.value_buffer[player_id].sample(num_samples=self.config.steps_per_epoch)
+        observations = torch.tensor(samples["observations"], device=self.device, dtype=torch.float32)
+        target_policy = torch.tensor(samples["targets"], device=self.device, dtype=torch.float32)
+        iteration = torch.tensor(samples["infos"], device=self.device, dtype=torch.float32)
+        if len(observations) <= self.config.minibatch_size:
+            for i in range(self.config.steps_per_epoch):
+                loss = self.network.values[player_id].learn(iteration, observations, target_policy)
+                losses.append(loss)
+        elif len(observations) < self.config.minibatch_size * self.config.steps_per_epoch:
+            for i in range(len(observations)//self.config.minibatch_size):
+                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                loss = self.network.values[player_id].learn(iteration[index], observations[index], target_policy[index])
+                losses.append(loss)
+        else:
+            for i in range(self.config.steps_per_epoch):
+                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                loss = self.network.values[player_id].learn(iteration[index], observations[index], target_policy[index])
+                losses.append(loss)
+        if self.stats["checkpoint_nodes"]==[]:
+            self.stats["checkpoint_nodes"].append(self.nodes_touched)
+        if self.stats["checkpoint_nodes"][-1]!= self.nodes_touched:
+            self.stats["checkpoint_nodes"].append(self.nodes_touched)
+        self.stats["value_loss"][player_id].append(np.mean(losses))
+        
+
     def policy_learn(self, linear=False):
         """
         Final training cycle, updating policy network on average strategy of players in past t iterations.
         """
         losses = []
-        for i in range(self.config.steps_per_epoch):
-            samples = self.policy_buffer.sample()
-            # get num of obs
-            num_samples = len(samples["observations"])
-            # LOOP THROUGH FOR CONFIG NUMBER OF SGD ITERS
-            observations = torch.from_numpy(samples["observations"])
-            target_policy = torch.from_numpy(samples["targets"])
-            iteration = torch.from_numpy(samples["infos"])
-            loss = self.network.policy.learn(batch=[iteration, observations, target_policy], linear=linear)
-            losses.append(loss)
+        samples = self.policy_buffer.sample(num_samples=self.config.steps_per_epoch)
+        observations = torch.tensor(samples["observations"], device=self.device, dtype=torch.float32)
+        target_policy = torch.tensor(samples["targets"], device=self.device, dtype=torch.float32)
+        iteration = torch.tensor(samples["infos"], device=self.device, dtype=torch.float32)
+        if len(observations) <= self.config.minibatch_size:
+            for i in range(self.config.steps_per_epoch):
+                loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
+                losses.append(loss)
+        elif len(observations) < self.config.minibatch_size * self.config.steps_per_epoch:
+            for i in range(len(observations)//self.config.minibatch_size):
+                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
+                losses.append(loss)
+        else:
+            for i in range(self.config.steps_per_epoch):
+                index = [i * self.config.minibatch_size, ((i + 1) * self.config.minibatch_size)-1]
+                loss = self.network.policy.learn(iteration[index], observations[index], target_policy[index],linear=linear)
+                losses.append(loss)
+
+        if self.stats["checkpoint_nodes"]==[]:
+            self.stats["checkpoint_nodes"].append(self.nodes_touched)
+        if self.stats["checkpoint_nodes"][-1]!= self.nodes_touched:
+                self.stats["checkpoint_nodes"].append(self.nodes_touched)
+
+        if linear:
+            self.stats["policy_loss_linear"].append(np.mean(losses))
+        else:
+            self.stats["policy_loss_nonlinear"].append(np.mean(losses))
+
 
     def train(self, sampling="MC"):
         assert sampling in ["MC", "Full"], print("Pick a valid sampling method") # check if sampling methods work
         start_time = time.time()
         checkpoint_interval = 0.2
         for i in range(self.config.training_steps):
+            if self.max_nodes is not None and self.nodes_touched >= self.max_nodes:
+                print(f"Max nodes touched {self.max_nodes} reached, stopping training")
+                break
             # FOR training_steps CFR ITERATIONS         
             for p in range(self.players):
                 # FOR EACH PLAYER, DO T TRAVERSALS
@@ -166,46 +209,63 @@ class CFRAgent(): # BaseAgent):
                 # NOW LEARN FROM THE PLAYER'S VALUE BUFFER
                 self.learn(p)
             print(f"Iteration {i} done")
-            if i >= self.config.training_steps * checkpoint_interval:
-                print(f"Checkpointing at {self.nodes_touched} nodes touched")
+            if self.max_nodes is not None:
+                if self.nodes_touched >= self.max_nodes*checkpoint_interval:
+                    print(f"Checkpointing at {self.nodes_touched} nodes touched")
                 print(f"Checkpointing at {checkpoint_interval*100}% of training steps, i.e {i} iterations")
                 # CHECKPOINT EVERY 10% OF TRAINING STEPS
                 self.save_checkpoint(i)
                 checkpoint_interval += 0.1
+            else:
+                if i >= self.config.training_steps * checkpoint_interval:
+                    print(f"Checkpointing at {self.nodes_touched} nodes touched")
+                    print(f"Checkpointing at {checkpoint_interval*100}% of training steps, i.e {i} iterations")
+                    # CHECKPOINT EVERY 10% OF TRAINING STEPS
+                    self.save_checkpoint(i)
+                    checkpoint_interval += 0.1
 
 
         self.training_time = time.time() - start_time
         self.total_environment_steps = self.config.training_steps * self.config.steps_per_epoch
         self.save_checkpoint()
-        return self.network.policy
+        data = pd.DataFrame(self.stats)
+        data.to_csv(f"checkpoints/{self.name}/stats.csv", index=False)
+        return self.stats
+
+    def preprocess(self, obs):
+        if isinstance(obs, np.ndarray):
+            return torch.from_numpy(obs).to(dtype=torch.float32)
+        elif isinstance(obs, list):
+            return torch.tensor(obs, dtype=torch.float32)
+        return obs 
 
     def save_checkpoint(self, iteration=None):
         """
         Save the model checkpoint.
         """
-        if not os.path.exists("checkpoints/values"):
-            os.makedirs("checkpoints/values")
-        if not os.path.exists("checkpoints/policy/notlinear"):
-            os.makedirs("checkpoints/policy/notlinear")
-        if not os.path.exists("checkpoints/policy/linear"):
-            os.makedirs("checkpoints/policy/linear")
-        if not os.path.exists("checkpoints/values/"+str(self.nodes_touched)):
-            os.makedirs("checkpoints/values/"+str(self.nodes_touched))
-        if not os.path.exists("checkpoints/policy/notlinear/"+str(self.nodes_touched)):
-            os.makedirs("checkpoints/policy/notlinear/"+str(self.nodes_touched))
-        if not os.path.exists("checkpoints/policy/linear/"+str(self.nodes_touched)):
-            os.makedirs("checkpoints/policy/linear/"+str(self.nodes_touched))
+        if not os.path.exists("checkpoints/"+str(self.name)):
+            os.makedirs("checkpoints/"+str(self.name))
+        if not os.path.exists("checkpoints/"+str(self.name)+ "/values"):
+            os.makedirs("checkpoints/"+str(self.name)+ "/values")
+        if not os.path.exists("checkpoints/"+str(self.name)+ "/policy/notlinear"):
+            os.makedirs("checkpoints/"+str(self.name)+ "/policy/notlinear")
+        if not os.path.exists("checkpoints/"+str(self.name)+ "/policy/linear"):
+            os.makedirs("checkpoints/"+str(self.name)+ "/policy/linear")
+        if not os.path.exists("checkpoints/"+str(self.name)+ "/values/"+str(self.nodes_touched)):
+            os.makedirs("checkpoints/"+str(self.name)+ "/values/"+str(self.nodes_touched))
+        if not os.path.exists("checkpoints/"+str(self.name)+ "/policy/notlinear/"+str(self.nodes_touched)):
+            os.makedirs("checkpoints/"+str(self.name)+ "/policy/notlinear/"+str(self.nodes_touched))
+        if not os.path.exists("checkpoints/"+str(self.name)+ "/policy/linear/"+str(self.nodes_touched)):
+            os.makedirs("checkpoints/"+str(self.name)+ "/policy/linear/"+str(self.nodes_touched))
         if iteration is None:
             iteration = self.config.training_steps
-        # SAVE VALUE NETWORK
-        for i in range(self.players):
-            self.network.values[i].reset()
-            torch.save(self.network.values[i].state_dict(), f"checkpoints/values/{self.nodes_touched}/{self.name}_{i}_{iteration}.pt")
+        
+
         self.policy_learn(linear=False)
-        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/notlinear/{self.nodes_touched}/{self.name}_{iteration}.pt")
+        torch.save(self.network.policy.state_dict(), f"checkpoints/{self.name}/policy/notlinear/{self.nodes_touched}/{self.name}_{iteration}.pt")
         self.network.policy.reset()
         self.policy_learn(linear=True)
-        torch.save(self.network.policy.state_dict(), f"checkpoints/policy/linear/{self.nodes_touched}/{self.name}_{iteration}.pt")
+        torch.save(self.network.policy.state_dict(), f"checkpoints/{self.name}/policy/linear/{self.nodes_touched}/{self.name}_{iteration}.pt")
         self.network.policy.reset()
 
     @torch.no_grad()
@@ -233,7 +293,8 @@ class CFRAgent(): # BaseAgent):
                 observation, reward, termination, truncation, info = game.last()
             return reward #IE PAYOFF only for activate player
         elif active_player == traverser_id:
-            predictions = self.predict(observation["observation"], active_player)
+            obs = self.preprocess(observation["observation"])
+            predictions = self.predict(obs, active_player)
             sample, policy = self.select_actions(predictions, info=torch.from_numpy(observation["action_mask"]), mask_actions=True, traverser=traverser_id) # MASKING NOT YET IMPLEMENTED
             # if active player, branch off and traverse
             if sampling == "Full":
@@ -269,7 +330,8 @@ class CFRAgent(): # BaseAgent):
                 self.value_buffer[active_player].store(observation["observation"], target_policy=reg, info=iteration_T+1)
                 return v_policy[sample]
         else:
-            predictions = self.predict(observation["observation"], active_player)
+            obs = self.preprocess(observation["observation"])
+            predictions = self.predict(obs, active_player)
             sample, policy = self.select_actions(predictions, info=torch.from_numpy(observation["action_mask"]), mask_actions=True, traverser=traverser_id) # MASKING NOT YET IMPLEMENTED
             self.policy_buffer.store(observation["observation"], target_policy=policy, info=iteration_T+1)
             game.step(sample)
