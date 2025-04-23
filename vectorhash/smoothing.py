@@ -12,6 +12,9 @@ class Smoothing:
         """
         pass
 
+    def __str__(self):
+        return self.__class__.__name__
+
 
 class SoftmaxSmoothing(Smoothing):
     def __init__(self, T=1e-3):
@@ -26,6 +29,9 @@ class SoftmaxSmoothing(Smoothing):
         exp = torch.exp(y / self.T)
         out = (exp / torch.sum(exp, dim=0)).T
         return out.reshape(*x.shape)
+    
+    def __str__(self):
+        return super().__str__() + f" (T={self.T})"
 
 
 class PolynomialSmoothing(Smoothing):
@@ -40,6 +46,9 @@ class PolynomialSmoothing(Smoothing):
         y = y**self.k
         out = (y / torch.sum(y, dim=0)).T
         return out.reshape(*x.shape)
+    
+    def __str__(self):
+        return super().__str__() + f" (k={self.k})"
 
 
 class ArgmaxSmoothing(Smoothing):
@@ -52,3 +61,6 @@ class ArgmaxSmoothing(Smoothing):
         y = torch.where(y == maxes, torch.ones_like(y), torch.zeros_like(y))
         scaled = (y / torch.sum(y, dim=0, keepdim=True)).T
         return scaled
+    
+    def __str__(self):
+        return super().__str__() + " (argmax)"

@@ -44,6 +44,9 @@ class HippocampalSensoryLayer:
         """
         pass
 
+    def __str__(self):
+        return self.__class__.__name__ + f" (input_size={self.input_size}, N_h={self.N_h})"
+
 
 class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
     HippocampalSensoryLayer
@@ -221,6 +224,9 @@ class IterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
                 return torch.relu(S @ self.W_hs.T)
             else:
                 return S @ self.W_hs.T  # to relu or not to relu, that is the question.
+    
+    def __str__(self):
+        return super().__str__() + f" (hidden_layer_factor={self.hidden_layer_factor}, stationary={self.stationary}, epsilon_sh={self.epsilon_sh}, epsilon_hs={self.epsilon_hs})"
 
 
 class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
@@ -286,6 +292,9 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
         # self.W_sh = torch.linalg.lstsq(sbook, hbook).solution
         self.W_hs = hbook.T @ sbook.pinverse().T
         self.W_sh = sbook.T @ hbook.pinverse().T
+
+    def __str__(self):
+        return super().__str__() + f" (size={self.size})"
 
 
 class HebbianHippocampalSensoryLayer(HippocampalSensoryLayer):
@@ -385,6 +394,9 @@ class HebbianHippocampalSensoryLayer(HippocampalSensoryLayer):
             H_ = H
 
         return H_ @ self.W_sh.T
+    
+    def __str__(self):
+        return super().__str__() + f" (use_h_fix={self.use_h_fix}, scaling_updates={self.scaling_updates})"
 
 
 class HSPseudoInverseSHHebbieanHippocampalSensoryLayer(HippocampalSensoryLayer):
