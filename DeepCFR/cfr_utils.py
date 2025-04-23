@@ -129,7 +129,9 @@ def nfsptrain(agents, env, max_nodes, game_string):
         player0 = np.random.randint(0, 2)
         templist = [agents[player0], agents[1-player0]]
         templist[0].player_id = 0
+        templist[0]._rl_agent.player_id = 0
         templist[1].player_id = 1
+        templist[1]._rl_agent.player_id = 1
         while not env.last():
             current_player = env.current_player()
             action, probs = templist[current_player].step(copy.deepcopy(env))
