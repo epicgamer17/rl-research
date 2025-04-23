@@ -2,63 +2,51 @@ import torch
 import numpy as np
 
 class ModelEvaluator:
-
-    def __init__(model, type="HH", model2=None, env=None):
+    def __init__(self, model, type="HH", model2=None, env=None, blinds=None, num_episodes=50000):
         """
         Evaluate the model on the given environment.
         :param model: The model to evaluate.
         :param type: The type of evaluation to perform.
         :param env: The environment to evaluate the model on.
+        :param blinds: The blinds for the environment. [small blind, big blind]
+        :param num_episodes: The number of episodes to run.
         :return: The average reward and the number of episodes.
         """
-        # Set the model to evaluation mode
-        model.eval()
-        assert env is not None, "Environment must be provided for evaluation."
-        assert type in ["HH", "LBR"]
+        assert type in ["HH", "LBR"], "Invalid type. Must be Head to Head, Learned Best Response"
+        # TOTE is LBR for each player just run this a bunch
+        self.model = model
+        self.type = type
+        self.model2 = model2
+        self.env = env
+        self.blinds = blinds
+        self.num_episodes = num_episodes
+        if self.type == "HH":
+            self.model.eval()
+            self.model2.eval()
+        elif self.type == "LBR":
+            self.model.eval()
+        
     
-    def step(self):
-        """
-        Perform a step in the evaluation process.
-        :return: The average reward and the number of episodes.
-        """
-        action = self.model.act(self.env.last())
-        self.env.step(action)
-        return self.env, self.env.reward, self.env.done
-    
-    
-    def evaluate(self, num_episodes=10000):
-        """
-        Evaluate the model on the given environment.
-        :param num_episodes: The number of episodes to evaluate the model on.
-        :return: The average reward and the number of episodes.
-        """
-        rewards_p_1 = np.zeros(num_episodes)
-        rewards_p_0 = np.zeros(num_episodes)
-        for episode in range(num_episodes):
-            termination = False
-            while not termination or truncation:
-                observation, reward, termination, truncation, info = self.env.last()
-                if termination or truncation:
-                    # IF TERMINATED THEN PASS UP VALUE TO PARET (THIS IS A RECURSIVE CALL)
-                    return reward #IE PAYOFF only for activate player
+    def evaluate(self):
+        if self.type == "LBR":
+            self.model2.train(self.env)
+            self.model2.eval()
+        rewards = {"player_0": [], "player_1": []}
+        for i in range(self.num_episodes):
+            rew1 = 0
+            rew2 = 0
+            self.env.reset()
+            self.model2.eval()
+            while not self.env.done:
+                state, reward, terminated, truncated, info = self.env.last()
+                if self.env.current_player == 0:
+                    action = self.model.get_action(state)
                 else:
-                    if self.env.agent_selection[-1] == 0:
-                        action = self.model.select_actions(self.model.predict_policy(observation))
-                    else:
-                        action = self.model2.select_actions(self.model2.predict_policy(observation))
-                self.env.step(action)
-            
-            rewards_p_1.append(self.env.rewards["player_1"])  # dict of {agent_0: r0, agent_1: r1}
-            rewards_p_0.append(self.env.rewards["player_0"])
-        exploitability = self.exploitability(rewards_p_1, rewards_p_0)
-        return exploitability
-
-    def exploitability(self, rewards_p_1, rewards_p_0):
-        """
-        Calculate the exploitability of the model.
-        :param rewards_p_1: The rewards for player 1.
-        :param rewards_p_0: The rewards for player 0.
-        :return: The exploitability of the model.
-        """
-        exploitability = np.mean(rewards_p_1) - np.mean(rewards_p_0)
-        return exploitability
+                    action = self.model2.get_action(state)
+                next_state, reward, terminated, truncated, next_info= self.env.step(action)
+                rew1 += reward[0]
+                rew2 += reward[1]
+            rewards["player_0"].append(rew1/self.blinds[1])
+            rewards["player_1"].append(rew2/self.blinds[1])
+        
+        return rewards["player_0"], rewards["player_1"]
