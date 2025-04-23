@@ -186,7 +186,7 @@ class CFRAgent(): # BaseAgent):
     def train(self, sampling="MC"):
         assert sampling in ["MC", "Full"], print("Pick a valid sampling method") # check if sampling methods work
         start_time = time.time()
-        checkpoint_interval = 0.2
+        checkpoint_interval = 0.1
         for i in range(self.config.training_steps):
             if self.max_nodes is not None and self.nodes_touched >= self.max_nodes:
                 print(f"Max nodes touched {self.max_nodes} reached, stopping training")
@@ -198,8 +198,8 @@ class CFRAgent(): # BaseAgent):
                     # FOR EACH TRAVERSAL, RESET ENVIRONEMENT (DEBATABLE STEP) BUT RESET WITH SET SEED FOR RECREATION
                     random_seed = np.random.randint(0, 2**32 - 1)
                     self.env.reset(seed=random_seed)
-                    active_player = self.env.agent_selection[-1]
-                    self.active_player_obj.set_active_player(int(active_player))
+                    starting_player = np.random.randint(0, self.players)
+                    self.active_player_obj.set_active_player(starting_player)
                     observation, reward, termination, truncation, info = self.env.last()
                     if sampling=="Full":
                         traverse_history = [] # for recreation
@@ -231,8 +231,14 @@ class CFRAgent(): # BaseAgent):
         self.training_time = time.time() - start_time
         self.total_environment_steps = self.config.training_steps * self.config.steps_per_epoch
         self.save_checkpoint()
-        data = pd.DataFrame(self.stats)
-        data.to_csv(f"checkpoints/{self.name}/stats.csv", index=False)
+        values = pd.DataFrame(self.stats["value_loss"])
+        values.to_csv(f"checkpoints/{self.name}/values.csv", index=False)
+        policies = pd.DataFrame(self.stats["policy_loss_linear"])
+        policies.to_csv(f"checkpoints/{self.name}/policies.csv", index=False)
+        policies = pd.DataFrame(self.stats["policy_loss_nonlinear"])
+        policies.to_csv(f"checkpoints/{self.name}/policies_nonlinear.csv", index=False)
+        data = pd.DataFrame(self.stats["checkpoint_nodes"])
+        data.to_csv(f"checkpoints/{self.name}/checkpoints.csv", index=False)
         return self.stats
 
     def preprocess(self, obs):
