@@ -11,7 +11,6 @@ import copy
 def evaluatebots(agent1, agent2, num_of_eval_games, mini_env, config, in_size):
     modelselect = CFRAgent(env=mini_env, config=config)
     eval_games = num_of_eval_games
-    import numpy as np
     rewards_player_1 = []
     rewards_player_2  = []
     for i in range(eval_games):
