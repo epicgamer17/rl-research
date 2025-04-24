@@ -26,7 +26,7 @@ defaults:
   action_repeat: 2
   time_limit: 1000
   grayscale: False
-  prefill: 0
+  prefill: 2500
   reward_EMA: True
 
   # Model
