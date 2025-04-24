@@ -6,7 +6,7 @@ from cfr_network import CFRNetwork
 import numpy as np
 import os
 import copy
-
+import tensorflow as tf
 
 def evaluatebots(agent1, agent2, num_of_eval_games, mini_env, config, in_size):
     modelselect = CFRAgent(env=mini_env, config=config)
@@ -351,7 +351,7 @@ class NFSPEvalWrapper():
         else:
             construct = copy.deepcopy(self.game) # can't fold as player 1 during cards delt must fix, must give players an id.
 
-            action, probs = self.agent.step(construct)
+            action, probs = self.agent.step(construct, is_evaluation=True)
             obs_mask, rew, terminal, truncated, info = self.game.step(action)
             if self.game.state.is_terminal():
                 legal_moves = [0,1,2,3]
@@ -376,7 +376,7 @@ class NFSPEvalWrapper():
         if not self.game.state.is_terminal() and not terminal:
             if self.game.state.current_player() == self.agent.player_id:
                     construct = copy.deepcopy(self.game)
-                    action, probs = self.agent.step(construct)
+                    action, probs = self.agent.step(construct, is_evaluation=True)
                     obs_mask, rew, terminal, truncated, info = self.game.step(action)
             else:
                 return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
@@ -408,3 +408,30 @@ class ActionSpaceSample2():
         action = np.random.choice(self.game.state.legal_actions())
         return action
     
+
+def LoadNFSPAgent(path, agent, pid):
+    q_network_path = path + "q_network_pid" + str(pid)
+    avg_network_path = path + "avg_network_pid" + str(pid)
+    Qvars = tf.train.list_variables(q_network_path)
+    Avars = tf.train.list_variables(avg_network_path)
+
+    for v in Qvars:
+        print(v)
+    qvar_dict = {}
+    for v in Qvars:
+        name = v[0]
+        shape = v[1]
+        var = tf.Variable(tf.zeros(shape), name=name)
+        qvar_dict[name] = var
+    Qsaver = tf.compat.v1.train.Saver(qvar_dict)
+
+    avar_dict = {}
+    for v in Avars:
+        name = v[0]
+        shape = v[1]
+        var = tf.Variable(tf.zeros(shape), name=name)
+        avar_dict[name] = var
+    Asaver = tf.compat.v1.train.Saver(avar_dict)
+
+    agent._savers[0] = ("q_network", Qsaver)
+    agent._savers[1] = ("avg_network", Asaver)
