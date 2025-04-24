@@ -269,7 +269,7 @@ class BaseAgent:
         if self.config.save_intermediate_weights:
             weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
             os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
-            checkpoint = self.make_checkpoint_dict(checkpoint)
+            checkpoint = self.make_checkpoint_dict()
             torch.save(checkpoint, weights_path)
 
         if self.env.render_mode == "rgb_array":

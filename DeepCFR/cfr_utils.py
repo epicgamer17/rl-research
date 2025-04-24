@@ -372,7 +372,10 @@ class NFSPEvalWrapper():
         if self.game.state.is_terminal():
             return self.game.state.observation_tensor(0), reward, self.game.state.is_terminal(), False, {"legal_moves":self.game.state.legal_actions()} 
         obs_mask, rew, terminal, truncated, info = self.game.step(action)
-        reward = 0
+        if self.starting_player == 0:
+            reward = self.game.state.player_reward(0)
+        else:
+            reward = self.game.state.player_reward(1)
         if not self.game.state.is_terminal() and not terminal:
             if self.game.state.current_player() == self.agent.player_id:
                     construct = copy.deepcopy(self.game)
@@ -380,7 +383,10 @@ class NFSPEvalWrapper():
                     obs_mask, rew, terminal, truncated, info = self.game.step(action)
             else:
                 return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
-        
+        if self.starting_player == 0:
+            reward = self.game.state.player_reward(0)
+        else:
+            reward = self.game.state.player_reward(1)
         return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
         
 
