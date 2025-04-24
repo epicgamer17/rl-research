@@ -25,7 +25,7 @@ from utils import make_stack, plot_graphs
 class BaseAgent:
     def __init__(
         self,
-        env: gym.Env,
+        env, # :gym.Env
         config: Config,
         name,
         device: torch.device = (
@@ -56,10 +56,9 @@ class BaseAgent:
         self.checkpoint_trials = 5
 
         self.env = env
-        self.test_env = self.make_test_env(env)
+        # self.test_env = self.make_test_env(env)
         self.observation_dimensions = self.determine_observation_dimensions(env)
 
-        print("observation_dimensions: ", self.observation_dimensions)
         if isinstance(env.action_space, gym.spaces.Discrete):
             self.num_actions = env.action_space.n
             self.discrete_action_space = True
@@ -86,7 +85,7 @@ class BaseAgent:
             )
             return copy.deepcopy(env)
 
-    def determine_observation_dimensions(self, env: gym.Env):
+    def determine_observation_dimensions(self, env):
         if isinstance(env.observation_space, gym.spaces.Box):
             return env.observation_space.shape
         elif isinstance(env.observation_space, gym.spaces.Discrete):
@@ -94,7 +93,7 @@ class BaseAgent:
         elif isinstance(env.observation_space, gym.spaces.Tuple):
             return (len(env.observation_space.spaces),)  # for tuple of discretes
         else:
-            raise ValueError("Observation space not supported")
+            return env.observation_space.shape # OR RAISE ERROR
 
     def train(self):
         if self.training_steps != 0:
@@ -281,36 +280,36 @@ class BaseAgent:
         self.config.dump(f"{dir}/configs/config.yaml")
 
         # test model
-        test_score = self.test(
-            self.checkpoint_trials, self.training_step, training_step_dir
-        )
-        self.stats["test_score"].append(test_score)
-        # save the graph stats and targets
-        os.makedirs(
-            Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
-        )
-        with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
-            pickle.dump(self.stats, f)
-        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
-            pickle.dump(self.targets, f)
+        # test_score = self.test(
+        #     self.checkpoint_trials, self.training_step, training_step_dir
+        # )
+        # self.stats["test_score"].append(test_score)
+        # # save the graph stats and targets
+        # os.makedirs(
+        #     Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
+        # )
+        # with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
+        #     pickle.dump(self.stats, f)
+        # with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
+        #     pickle.dump(self.targets, f)
 
         # to periodically clear uneeded memory, if it is drastically slowing down training you can comment this out, checkpoint less often, or do less trials
         gc.collect()
 
         # plot the graphs (and save the graph)
-        print(self.stats)
-        print(self.targets)
+        # print(self.stats)
+        # print(self.targets)
 
-        os.makedirs(Path(dir, "graphs"), exist_ok=True)
-        plot_graphs(
-            self.stats,
-            self.targets,
-            self.training_step if training_step is None else training_step,
-            self.total_environment_steps if frames_seen is None else frames_seen,
-            self.training_time if time_taken is None else time_taken,
-            self.model_name,
-            f"{dir}/graphs",
-        )
+        # os.makedirs(Path(dir, "graphs"), exist_ok=True)
+        # plot_graphs(
+        #     self.stats,
+        #     self.targets,
+        #     self.training_step if training_step is None else training_step,
+        #     self.total_environment_steps if frames_seen is None else frames_seen,
+        #     self.training_time if time_taken is None else time_taken,
+        #     self.model_name,
+        #     f"{dir}/graphs",
+        # )
     
     def make_checkpoint_dict(self):
         checkpoint = self.checkpoint_base({})

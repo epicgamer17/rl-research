@@ -482,8 +482,10 @@ class RainbowAgent(BaseAgent):
                 self.update_target_model()
 
             if self.training_step % self.checkpoint_interval == 0:
-                # print(self.stats["score"])
-                # print(len(self.replay_buffer))
+                scores = [ s["score"] for s in self.stats["score"]]
+                print(
+                    f"Checkpointing at {self.training_step} with score {np.mean(scores)}"
+                )
                 self.training_time = time() - start_time
                 self.total_environment_steps = (
                     self.training_step * self.config.replay_interval

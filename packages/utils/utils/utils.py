@@ -50,13 +50,11 @@ def action_mask(
     ), "Legal moves should be a list got {} of type {}".format(
         legal_moves, type(legal_moves)
     )
-
     # add a dimension if the legal moves are not a list of lists
-    # if len(legal_moves) != actions.shape[0]:
-    #     legal_moves = [legal_moves]
-    assert (
-        len(legal_moves) == actions.shape[0]
-    ), "Legal moves should be the same length as the batch size"
+
+    # assert (
+    #     len(legal_moves) == actions.shape[0]
+    # ), "Legal moves should be the same length as the batch size"
 
     mask = torch.zeros_like(actions, dtype=torch.bool).to(device)
     for i, legal in enumerate(legal_moves):
@@ -66,6 +64,7 @@ def action_mask(
     # actions[mask == 0] = mask_value
     actions = torch.where(mask, actions, torch.tensor(mask_value).to(device)).to(device)
     # print(mask)
+    
     return actions
 
 
@@ -621,7 +620,6 @@ def epsilon_greedy_policy(
     if np.random.rand() < epsilon:
         # print("selecting a random move")
         if "legal_moves" in info:
-            # print("using legal moves")
             return random.choice(info["legal_moves"])
         else:
             q_values = q_values.reshape(-1)

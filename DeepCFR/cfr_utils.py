@@ -18,7 +18,6 @@ def evaluatebots(agent1, agent2, num_of_eval_games, mini_env, config, in_size):
 
         modelselect.env.reset()
         observation, reward, termination, truncation, infos =  modelselect.env.last()
-        active_player =  modelselect.env.agent_selection[-1]
         init_starting_player = np.random.randint(0, 2)
         modelselect.active_player_obj.set_active_player(init_starting_player)
         while not termination and not truncation:
@@ -67,7 +66,7 @@ class NFSPWrapper:
     def __init__(self,env):
         self.game = env
         self.state = self.game.new_initial_state()
-        self.observations = {"info_state":[0 for _ in range(self.state.num_players())], "legal_actions":[0 for _ in range(self.state.num_players())]}
+        self.observations = {"info_state":[self.state.observation_tensor(_) for _ in range(self.state.num_players())], "legal_actions":[self.state.legal_actions(_) for _ in range(self.state.num_players())]}
         self.agent_selection = str(self.state.current_player())
         self.traverser = None
         self.rewards = [0 for _ in range(self.state.num_players())]
@@ -86,7 +85,6 @@ class NFSPWrapper:
         if self.state.is_chance_node():
             while self.state.is_chance_node():
                 self.state.apply_action(np.random.choice(self.state.legal_actions()))
-
         else:
             self.state.apply_action(action)
             if self.state.is_chance_node():
@@ -98,7 +96,7 @@ class NFSPWrapper:
                 self.state.apply_action(np.random.choice(self.state.legal_actions()))
             self.agent_selection =  str(self.state.current_player())
 
-            return self.obs()
+        return self.obs()
     
     def reset(self, seed=None):
         self.state = self.game.new_initial_state()
@@ -113,11 +111,18 @@ class NFSPWrapper:
         if not self.state.is_terminal():
             self.observations["info_state"][self.state.current_player()] = self.state.observation_tensor(self.state.current_player())
             self.observations["legal_actions"][self.state.current_player()] = np.stack(self.state.legal_actions(self.state.current_player()))
+            # not_current_player = 1 - self.state.current_player()
+            # self.observations["info_state"][not_current_player] = self.state.observation_tensor(not_current_player)
+            # self.observations["legal_actions"][not_current_player] = np.stack(self.state.legal_actions_mask(not_current_player))
+
         if not self.state.is_chance_node():
             self.rewards = self.state.rewards()
         else:
             self.rewards = [0 for _ in range(self.state.num_players())]
-        return {"observation":self.state.observation_tensor(int(self.agent_selection)), "action_mask":np.stack(self.state.legal_actions(int(self.agent_selection)))}, self.state.player_reward(self.traverser) if self.traverser is not None else self.state.player_return(int(self.agent_selection)), self.state.is_terminal(), False, "OPENSPIEL"
+
+        if self.state.is_terminal():
+            return {"observation":self.state.observation_tensor(int(self.agent_selection)), "action_mask":np.stack([0,1,2,3])}, self.state.player_reward(self.traverser) if self.traverser is not None else self.state.player_return(int(self.agent_selection)), self.state.is_terminal(), False, "OPENSPIEL"
+        return {"observation":self.state.observation_tensor(self.state.current_player()), "action_mask":np.stack(self.state.legal_actions(self.state.current_player()))}, self.state.player_reward(self.traverser) if self.traverser is not None else self.state.player_return(self.state.current_player()), self.state.is_terminal(), False, "OPENSPIEL"
     
 
 
@@ -229,3 +234,177 @@ def load_agents(path1, path2, p_v_networks, num_players):
     agent1.policy.eval()
     agent2.policy.eval()
     return agent1, agent2
+
+
+class EvalWrapper():
+    def __init__(self, game, agent, in_size, out_size, select_model):
+        """
+        game : assume game already wrapper for evaled agent either wrapper or nfsp    
+        """
+        self.game = game
+        self.render_mode = None
+        self.action_space = ActionSpaceSample(game, out_size)
+        self.agent = agent
+        self.select_model = select_model
+        self.observation_shape = np.array([i for i in range(in_size)], dtype=np.float32) # shape[0] with be in_size for agent checking
+        self.observation_space = np.array([i for i in range(in_size)], dtype=np.float32)  # shape[0] with be in_size for agent checking
+        self.insize= in_size
+        self.starting_player = np.random.randint(0, 2)
+        self.spec = EmptySpec()
+        # 1 is agent, 0 is evaluator
+    
+    def reset(self,seed=None):
+        # should reset, and return state and info
+        self.starting_player = np.random.randint(0, 2)
+        obs_mask, rew, terminal, truncated, info = self.game.reset()
+        if self.starting_player == 0:
+            return obs_mask["observation"], {"legal_moves":self.game.state.legal_actions()}
+        else:
+            obs_mask["action_mask"][0] = 0 # can't fold as player 1 during cards delt must fix, must give players an id.
+            preds = self.agent.policy(torch.tensor(obs_mask['observation'], dtype=torch.float32).reshape(1,self.insize)).detach().numpy()[0]
+            action, policy = self.select_model.select_actions(preds, info=torch.from_numpy(obs_mask["action_mask"]).type(torch.float), mask_actions=True)
+            obs_mask, rew, terminal, truncated, info = self.game.step(action)
+            return obs_mask["observation"], {"legal_moves":self.game.state.legal_actions()}
+    
+    def step(self,action):
+        """
+        action : action to take
+        """
+        # apply action to game
+        # return obs, reward, done, info
+        obs_mask, rew, terminal, truncated, info = self.game.step(action)
+        reward = 0
+        if not self.game.state.is_terminal():
+            preds = self.agent.policy(torch.tensor(obs_mask['observation'], dtype=torch.float32).reshape(1,self.insize)).detach().numpy()[0]
+            action, policy = self.select_model.select_actions(preds, info=torch.from_numpy(obs_mask["action_mask"]).type(torch.float), mask_actions=True)
+            obs_mask, rew, terminal, truncated, info = self.game.step(action)
+        
+        if self.starting_player == 0:
+            reward = self.game.state.player_reward(0)
+        else:
+            reward = self.game.state.player_reward(1)
+        return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
+        
+
+class EmptyConf():
+    def __init__(self):
+        self.num_players = 1
+        self.has_legal_moves = True
+        self.is_discrete = True
+        self.min_score = -1200
+        self.max_score = 1200
+
+class EmptySpec():
+    def __init__(self):
+        self.reward_threshold = 1200
+
+
+class ActionSpaceSample():
+    def __init__(self, game, out_size):
+        self.game = game
+        self.shape = torch.tensor([i for i in range(out_size)]).shape # shape[0] with be out_size for agent checking
+    
+    def sample(self):
+        print(self.game.state.legal_actions())
+        return np.random.choice(self.game.state.legal_actions())
+    
+
+
+
+class NFSPEvalWrapper():
+    def __init__(self, game, agent, in_size, out_size):
+        """
+        game : assume game already wrapper for evaled agent either wrapper or nfsp    
+        """
+        self.game = game
+        self.render_mode = None
+        self.action_space = ActionSpaceSample2(game, out_size)
+        self.agent = agent
+        self.observation_shape = np.array([i for i in range(in_size)], dtype=np.float32) # shape[0] with be in_size for agent checking
+        self.observation_space = np.array([i for i in range(in_size)], dtype=np.float32)  # shape[0] with be in_size for agent checking
+        self.insize= in_size
+        self.starting_player = np.random.randint(0, 2)
+        self.spec = EmptySpec()
+
+        if self.starting_player == 0:
+            self.agent.player_id = 1
+            self.agent._rl_agent.player_id = 1
+        else:
+            self.agent.player_id = 0
+            self.agent._rl_agent.player_id = 0
+        # 1 is agent, 0 is evaluator
+    
+    def reset(self,seed=None):
+        # should reset, and return state and info
+        self.starting_player = np.random.randint(0, 2)
+        if self.starting_player == 0:
+            self.agent.player_id = 1
+            self.agent._rl_agent.player_id = 1
+        else:
+            self.agent.player_id = 0
+            self.agent._rl_agent.player_id = 0
+            
+
+        obs_mask, rew, terminal, truncated, info = self.game.reset()
+        if self.starting_player == 0:
+            return obs_mask["observation"], {"legal_moves":self.game.state.legal_actions()}
+        else:
+            construct = copy.deepcopy(self.game) # can't fold as player 1 during cards delt must fix, must give players an id.
+
+            action, probs = self.agent.step(construct)
+            obs_mask, rew, terminal, truncated, info = self.game.step(action)
+            if self.game.state.is_terminal():
+                legal_moves = [0,1,2,3]
+            else:
+                legal_moves = self.game.state.legal_actions()
+            return obs_mask["observation"], {"legal_moves":legal_moves}
+    
+    def step(self,action):
+        """
+        action : action to take
+        """
+        # apply action to game
+        # return obs, reward, done, info
+        if self.starting_player == 0:
+            reward = self.game.state.player_reward(0)
+        else:
+            reward = self.game.state.player_reward(1)
+        if self.game.state.is_terminal():
+            return self.game.state.observation_tensor(0), reward, self.game.state.is_terminal(), False, {"legal_moves":self.game.state.legal_actions()} 
+        obs_mask, rew, terminal, truncated, info = self.game.step(action)
+        reward = 0
+        if not self.game.state.is_terminal() and not terminal:
+            if self.game.state.current_player() == self.agent.player_id:
+                    construct = copy.deepcopy(self.game)
+                    action, probs = self.agent.step(construct)
+                    obs_mask, rew, terminal, truncated, info = self.game.step(action)
+            else:
+                return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
+        
+        return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
+        
+
+class EmptyConf():
+    def __init__(self):
+        self.num_players = 1
+        self.has_legal_moves = True
+        self.is_discrete = True
+        self.min_score = -1200
+        self.max_score = 1200
+
+class EmptySpec():
+    def __init__(self):
+        self.reward_threshold = 1200
+
+
+class ActionSpaceSample2():
+    def __init__(self, game, out_size):
+        self.game = game
+        self.shape = torch.tensor([i for i in range(out_size)]).shape # shape[0] with be out_size for agent checking
+    
+    def sample(self):
+        if self.game.state.legal_actions() == []:
+            return 0
+        action = np.random.choice(self.game.state.legal_actions())
+        return action
+    
