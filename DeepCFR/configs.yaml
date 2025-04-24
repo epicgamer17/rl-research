@@ -20,13 +20,13 @@ defaults:
   video_pred_log: False
 
   # Environment
-  task: 'cartpole_CartPole-v1'
+  task: 'poker_universal_poker'
   size: [64, 64]
   envs: 1
   action_repeat: 2
   time_limit: 1000
   grayscale: False
-  prefill: 2500
+  prefill: 0
   reward_EMA: True
 
   # Model
