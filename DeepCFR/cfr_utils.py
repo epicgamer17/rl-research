@@ -383,10 +383,13 @@ class NFSPEvalWrapper():
                     obs_mask, rew, terminal, truncated, info = self.game.step(action)
             else:
                 return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
-        if self.starting_player == 0:
-            reward = self.game.state.player_reward(0)
+        if self.game.state.is_terminal():
+            if self.starting_player == 0:
+                reward = self.game.state.player_reward(0)
+            else:
+                reward = self.game.state.player_reward(1)
         else:
-            reward = self.game.state.player_reward(1)
+            reward = 0
         return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
         
 

@@ -278,7 +278,8 @@ class BaseAgent:
         # save config
         os.makedirs(Path(dir, "configs"), exist_ok=True)
         self.config.dump(f"{dir}/configs/config.yaml")
-
+        os.makedirs(Path(dir, "stats"), exist_ok=True)
+        pickle.dump(self.stats, open(f"{dir}/stats/stats.pkl", "wb"))
         # test model
         # test_score = self.test(
         #     self.checkpoint_trials, self.training_step, training_step_dir
