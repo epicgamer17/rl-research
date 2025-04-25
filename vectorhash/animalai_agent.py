@@ -134,11 +134,18 @@ class VectorhashAgentHistory:
 
 
 class AnimalAIVectorhashAgent:
-    def __init__(self, vectorhash: VectorHaSH, env: Env, hard_store: bool = True):
+    def __init__(
+        self,
+        vectorhash: VectorHaSH,
+        env: Env,
+        world_size: torch.Tensor = torch.Tensor([40, 40, 360]),
+        hard_store: bool = True,
+    ):
         self.env = env
         self.vectorhash = vectorhash
         self.device = self.vectorhash.scaffold.device
         self.hard = hard_store
+        self.world_size = world_size
         obs, info = self.env.reset()
         image = self.postprocess_image(obs)
         p, v = self.postprocess_health_pos_vel(info)
@@ -229,7 +236,7 @@ class AnimalAIVectorhashAgent:
 
         ### odometry update
         scaffold.shift(v)
-        g_denoised = scaffold.denoise(scaffold.g)[0]
+        g_denoised = scaffold.denoise(scaffold.g, onehot=False)[0]
         scaffold.modules = scaffold.modules_from_g(g_denoised)
         odometry_certainty = scaffold.estimate_certainty(
             limits=torch.Tensor([2, 2, 30])
@@ -243,16 +250,20 @@ class AnimalAIVectorhashAgent:
         # for i in range(len(scaffold.modules[0].shape)):
         #     if torch.abs(new_positions[i]- old_positions[i]) > lims[i]:
         #         new = True
-            
+
         new = True
         ## sensory update
         if new:
             sensory_g = scaffold.denoise(
                 scaffold.grid_from_hippocampal(
-                    hs_layer.hippocampal_from_sensory(image.flatten().to(self.device))[0]
+                    hs_layer.hippocampal_from_sensory(image.flatten().to(self.device))[
+                        0
+                    ]
                 )[0]
             )[0]
-            sensory_certainty = scaffold.estimate_certainty(limits=torch.Tensor([2,2,30]), g = sensory_g)
+            sensory_certainty = scaffold.estimate_certainty(
+                limits=torch.Tensor([2, 2, 30]), g=sensory_g
+            )
 
             scaffold.additive_shift(new_g=sensory_g)
 
@@ -262,16 +273,14 @@ class AnimalAIVectorhashAgent:
                     image_scaffold[i] = scaffold.modules_from_g(sensory_g)[i]
                 else:
                     image_scaffold[i] = scaffold.modules_from_g(g_denoised)[i]
-            
-            self.vectorhash.store_memory(
-                image.flatten().to(self.device), hard=False
-            )
+
+            self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
         # if sensory_certainty > odometry_certainty:
         #     self.vectorhash.modules = scaffold.modules_from_g(sensory_g)
         #     self.vectorhash.scaffold._g()
         #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
         # else:
-            
+
         #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
         ### if we are more certain of odometry than sensory, then store a memory
         # print(f"odometry certainty: {odometry_certainty}, sensory certainty: {sensory_certainty}")
@@ -289,10 +298,35 @@ class AnimalAIVectorhashAgent:
         return image, p, self.animal_ai_data["exact_angle"], v
 
     def calculate_position_err(self):
-        x_dist, y_dist, theta_dist = [
-            self.vectorhash.scaffold.expand_distribution(i) for i in [0, 1, 2]
-        ]
+        # x_dist, y_dist, theta_dist = [
+        #     self.vectorhash.scaffold.expand_distribution(i) for i in [0, 1, 2]
+        # ]
 
+        # coordinates = torch.zeros(3, device=self.vectorhash.scaffold.device)
+        # coordinates[0] = (
+        #     self.animal_ai_data["exact_position"][0]
+        #     - self.animal_ai_data["start_position"][0]
+        # )
+        # coordinates[1] = (
+        #     self.animal_ai_data["exact_position"][1]
+        #     - self.animal_ai_data["start_position"][1]
+        # )
+        # coordinates[2] = (
+        #     self.animal_ai_data["exact_angle"] + self.animal_ai_data["start_angle"]
+        # )
+
+        # g = self.vectorhash.scaffold.grid_state_from_cartesian_coordinates(coordinates)
+        # x_true_dist, y_true_dist, theta_true_dist = [
+        #     get_dim_distribution_from_g(self.vectorhash.scaffold, g, dim)
+        #     for dim in [0, 1, 2]
+        # ]
+
+        # return (
+        #     categorical_crossentropy(x_dist, x_true_dist),
+        #     categorical_crossentropy(y_dist, y_true_dist),
+        #     categorical_crossentropy(theta_dist, theta_true_dist),
+        # )
+        true_positions = self.vectorhash.scaffold.get_mean_positions()
         coordinates = torch.zeros(3, device=self.vectorhash.scaffold.device)
         coordinates[0] = (
             self.animal_ai_data["exact_position"][0]
@@ -303,19 +337,14 @@ class AnimalAIVectorhashAgent:
             - self.animal_ai_data["start_position"][1]
         )
         coordinates[2] = (
-            self.animal_ai_data["exact_angle"] + self.animal_ai_data["start_angle"]
+            self.animal_ai_data["exact_angle"] - self.animal_ai_data["start_angle"]
         )
 
-        g = self.vectorhash.scaffold.grid_state_from_cartesian_coordinates(coordinates)
-        x_true_dist, y_true_dist, theta_true_dist = [
-            get_dim_distribution_from_g(self.vectorhash.scaffold, g, dim)
-            for dim in [0, 1, 2]
-        ]
-
-        return (
-            categorical_crossentropy(x_dist, x_true_dist),
-            categorical_crossentropy(y_dist, y_true_dist),
-            categorical_crossentropy(theta_dist, theta_true_dist),
+        d = torch.abs(true_positions - coordinates)
+        return torch.where(
+            d < self.world_size / 2,
+            d,
+            self.world_size - d,
         )
 
     def test_path(self, path, noise=[]):
@@ -352,23 +381,23 @@ class AnimalAIVectorhashAgent:
                     # * self.vectorhash.scaffold.scale_factor[2]
                 )
                 # % self.vectorhash.scaffold.grid_limits[2]
-            ), #.item()
+            ),  # .item()
             estimated_image=estimated_image,
             true_position=(
                 (
                     (p - self.animal_ai_data["start_position"]).cpu()
-                #     * torch.tensor(
-                #         [
-                #             self.vectorhash.scaffold.scale_factor[0],
-                #             self.vectorhash.scaffold.scale_factor[1],
-                #         ]
-                #     )
-                # )
-                # % torch.tensor(
-                #     [
-                #         self.vectorhash.scaffold.grid_limits[0],
-                #         self.vectorhash.scaffold.grid_limits[1],
-                #     ]
+                    #     * torch.tensor(
+                    #         [
+                    #             self.vectorhash.scaffold.scale_factor[0],
+                    #             self.vectorhash.scaffold.scale_factor[1],
+                    #         ]
+                    #     )
+                    # )
+                    # % torch.tensor(
+                    #     [
+                    #         self.vectorhash.scaffold.grid_limits[0],
+                    #         self.vectorhash.scaffold.grid_limits[1],
+                    #     ]
                 )
             ).cpu(),
             x_distribution=self.vectorhash.scaffold.expand_distribution(0),
@@ -413,7 +442,7 @@ class AnimalAIVectorhashAgent:
                         # * self.vectorhash.scaffold.scale_factor[2]
                     )
                     # % self.vectorhash.scaffold.grid_limits[2]
-                ), # .item()
+                ),  # .item()
                 x_distribution=self.vectorhash.scaffold.expand_distribution(0),
                 y_distribution=self.vectorhash.scaffold.expand_distribution(1),
                 theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
