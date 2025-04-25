@@ -9,6 +9,13 @@ from vectorhash_functions import (
     condense_distribution,
     calculate_shift_kernel,
 )
+from competetive_attractor_dynamics import (
+    generate_epsilon,
+    update_internal_P_jk,
+    generate_delta,
+    update_inter_layer_P_ijk,
+    global_inhibition,
+)
 
 
 class Shift:
@@ -46,6 +53,37 @@ class RatShift(Shift):
             module.state = inject_activity(
                 module.state, speed, theta, velocity[2].item()
             )
+
+
+class RatShiftWithCompetitiveAttractorDynamics(RatShift):
+    def __init__(
+        self, sigma_xy=0.3, sigma_theta=0.3, inhibition_constant=0.004, device=None
+    ):
+        super().__init__(device)
+
+        self.sigma_xy = sigma_xy
+        self.sigma_theta = sigma_theta
+        self.inhibition_constant = inhibition_constant
+
+    def __call__(self, modules: list[GridModule], velocity: torch.Tensor):
+        super()(modules, velocity)
+
+        for module in modules:
+            eps = generate_epsilon(
+                module.shape[0],
+                module.shape[1],
+                sigma=self.sigma_xy,
+                device=self.device,
+            )
+            P_ = update_internal_P_jk(module.state, eps)
+            delta = generate_delta(
+                module.shape[2], sigma=self.sigma_theta, device=self.device
+            )
+            P_ = update_inter_layer_P_ijk(P_, delta)
+            P_ = global_inhibition(P_, inhibition_constant=self.inhibition_constant)
+            P_ = P_ / P_.sum()
+            module.state = P_
+        # competitive attractor dynamics
 
 
 class ConvolutionalShift(Shift):
@@ -121,9 +159,7 @@ class ModularConvolutionalShift(Shift):
                 calculate_shift_kernel(
                     radius=(shape[i] - 1) // 2,
                     shift=-(velocity[i] % module.shape[i]),
-                    std=(
-                        self.position_filter_std if i < 2 else self.angle_filter_std
-                    ),
+                    std=(self.position_filter_std if i < 2 else self.angle_filter_std),
                     device=self.device,
                 )
             )
