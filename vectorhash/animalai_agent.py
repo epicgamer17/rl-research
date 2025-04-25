@@ -378,26 +378,26 @@ class AnimalAIVectorhashAgent:
                         self.animal_ai_data["exact_angle"]
                         - self.animal_ai_data["start_angle"]
                     )
-                    # * self.vectorhash.scaffold.scale_factor[2]
+                    * self.vectorhash.scaffold.scale_factor[2]
                 )
-                # % self.vectorhash.scaffold.grid_limits[2]
-            ),  # .item()
+                % self.vectorhash.scaffold.grid_limits[2]
+            ).item(),
             estimated_image=estimated_image,
             true_position=(
                 (
                     (p - self.animal_ai_data["start_position"]).cpu()
-                    #     * torch.tensor(
-                    #         [
-                    #             self.vectorhash.scaffold.scale_factor[0],
-                    #             self.vectorhash.scaffold.scale_factor[1],
-                    #         ]
-                    #     )
-                    # )
-                    # % torch.tensor(
-                    #     [
-                    #         self.vectorhash.scaffold.grid_limits[0],
-                    #         self.vectorhash.scaffold.grid_limits[1],
-                    #     ]
+                    * torch.tensor(
+                        [
+                            self.vectorhash.scaffold.scale_factor[0],
+                            self.vectorhash.scaffold.scale_factor[1],
+                        ]
+                    )
+                )
+                % torch.tensor(
+                    [
+                        self.vectorhash.scaffold.grid_limits[0],
+                        self.vectorhash.scaffold.grid_limits[1],
+                    ]
                 )
             ).cpu(),
             x_distribution=self.vectorhash.scaffold.expand_distribution(0),
@@ -422,27 +422,27 @@ class AnimalAIVectorhashAgent:
                 true_position=(
                     (
                         (true_p - self.animal_ai_data["start_position"]).cpu()
-                        # * torch.tensor(
-                        #     [
-                        #         self.vectorhash.scaffold.scale_factor[0],
-                        #         self.vectorhash.scaffold.scale_factor[1],
-                        #     ]
-                        # )
+                        * torch.tensor(
+                            [
+                                self.vectorhash.scaffold.scale_factor[0],
+                                self.vectorhash.scaffold.scale_factor[1],
+                            ]
+                        )
                     )
-                    # % torch.tensor(
-                    #     [
-                    #         self.vectorhash.scaffold.grid_limits[0],
-                    #         self.vectorhash.scaffold.grid_limits[1],
-                    #     ]
-                    # )
+                    % torch.tensor(
+                        [
+                            self.vectorhash.scaffold.grid_limits[0],
+                            self.vectorhash.scaffold.grid_limits[1],
+                        ]
+                    )
                 ).cpu(),
                 true_angle=(
                     (
                         (true_ang - self.animal_ai_data["start_angle"])
-                        # * self.vectorhash.scaffold.scale_factor[2]
+                        * self.vectorhash.scaffold.scale_factor[2]
                     )
-                    # % self.vectorhash.scaffold.grid_limits[2]
-                ),  # .item()
+                    % self.vectorhash.scaffold.grid_limits[2]
+                ).item(),
                 x_distribution=self.vectorhash.scaffold.expand_distribution(0),
                 y_distribution=self.vectorhash.scaffold.expand_distribution(1),
                 theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
