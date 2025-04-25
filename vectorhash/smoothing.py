@@ -63,4 +63,14 @@ class ArgmaxSmoothing(Smoothing):
         return scaled
     
     def __str__(self):
-        return super().__str__() + " (argmax)"
+        return super().__str__()
+
+class IdentitySmoothing(Smoothing):
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, x):
+        return x.detach().clone()
+    
+    def __str__(self):
+        return super().__str__()
