@@ -57,32 +57,38 @@ class RatShift(Shift):
 
 class RatShiftWithCompetitiveAttractorDynamics(RatShift):
     def __init__(
-        self, sigma_xy=0.3, sigma_theta=0.3, inhibition_constant=0.004, device=None
+        self,
+        sigma_xy=0.3,
+        sigma_theta=0.3,
+        inhibition_constant=0.004,
+        delta_gamma=1,
+        device=None,
     ):
         super().__init__(device)
 
         self.sigma_xy = sigma_xy
         self.sigma_theta = sigma_theta
         self.inhibition_constant = inhibition_constant
+        self.delta_gamma = delta_gamma
 
     def __call__(self, modules: list[GridModule], velocity: torch.Tensor):
         super().__call__(modules, velocity)
 
         for module in modules:
-            eps = generate_epsilon(
-                module.shape[0],
-                module.shape[1],
-                sigma=self.sigma_xy,
+            N_x, N_y, N_theta = module.shape
+            eps = generate_epsilon(N_x, N_y, sigma=self.sigma_xy, device=self.device)
+            P = torch.permute(module.state, (2, 0, 1))
+            P = update_internal_P_jk(P, eps)
+            delta = generate_delta(
+                N_theta,
+                sigma=self.sigma_theta,
+                gamma=self.delta_gamma,
                 device=self.device,
             )
-            P_ = update_internal_P_jk(module.state, eps)
-            delta = generate_delta(
-                module.shape[2], sigma=self.sigma_theta, device=self.device
-            )
-            P_ = update_inter_layer_P_ijk(P_, delta)
-            P_ = global_inhibition(P_, inhibition_constant=self.inhibition_constant)
-            P_ = P_ / P_.sum()
-            module.state = P_
+            P = update_inter_layer_P_ijk(P, delta)
+            P = global_inhibition(P, inhibition_constant=self.inhibition_constant)
+            P = P / P.sum()
+            module.state = torch.permute(P, (1, 2, 0))
 
 
 class ConvolutionalShift(Shift):
