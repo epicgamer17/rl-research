@@ -23,8 +23,10 @@ class Encoder(nn.Module):
         input_shape: Tuple[int, ...],
         is_image: bool,
         embedding_dim: int,
+        layers: int = 3,  # for vector
+        units: int = 1024,  # for vector
         norm: Callable = nn.BatchNorm2d,  # nn.RMSNorm,
-        activation: Callable = nn.ReLU(),  # nn.SELU,
+        activation: Callable = nn.SiLU(),  #
     ):
         super(Encoder, self).__init__()
         self.activation = activation
@@ -65,13 +67,20 @@ class Encoder(nn.Module):
                 self.norm_layers.append(norm(f))
                 # self.norm_layers.append(nn.RMSNorm(f))
                 input_channels = f
-
+            self.output_layer = nn.Linear(
+                self._compute_conv_output_shape(input_shape), embedding_dim
+            )
         else:
-            raise NotImplementedError("Only image inputs are supported")
+            self.layers = nn.ModuleList()
+            self.norm_layers = nn.ModuleList()
+            for i in range(layers):
+                if i == 0:
+                    self.layers.append(nn.Linear(input_shape[0], units))
+                else:
+                    self.layers.append(nn.Linear(units, units))
+                self.norm_layers.append(norm(units))
 
-        self.output_layer = nn.Linear(
-            self._compute_conv_output_shape(input_shape), embedding_dim
-        )
+            self.output_layer = nn.Linear(units, embedding_dim)
 
     def _compute_conv_output_shape(self, input_shape):
         with torch.no_grad():
@@ -88,7 +97,8 @@ class Encoder(nn.Module):
                 x = self.activation(norm(conv(x)))
             x = x.flatten(start_dim=1)
         else:
-            raise NotImplementedError("Only image inputs are supported")
+            for layer, norm in zip(self.layers, self.norm_layers):
+                x = self.activation(norm(layer(x)))
         return self.activation(self.output_layer(x))
 
 
@@ -101,9 +111,11 @@ class Decoder(nn.Module):
         state_dim,
         embedding_dim,
         min_resolution: int = 16,  # 4
+        layers: int = 3,  # for vector encoder
+        units: int = 1024,  # for vector encoder
         norm: Callable = nn.BatchNorm2d,  # nn.RMSNorm,
-        activation: Callable = nn.SELU(),
-        output_activation: Callable = nn.Sigmoid(),
+        activation: Callable = nn.SiLU(),
+        output_activation: Callable = nn.Sigmoid(),  # None,  #
     ):
         super(Decoder, self).__init__()
         self.activation = activation
@@ -177,7 +189,17 @@ class Decoder(nn.Module):
             # )
             # self.output_activation = output_activation
         else:
-            raise NotImplementedError("Only image inputs are supported")
+            self.layers = nn.ModuleList()
+            self.norm_layers = nn.ModuleList()
+            for i in range(layers):
+                if i == 0:
+                    self.layers.append(nn.Linear(hidden_dim + state_dim, units))
+                else:
+                    self.layers.append(nn.Linear(units, units))
+                self.norm_layers.append(norm(units))
+
+            self.output_layer = nn.Linear(units, output_shape[0])
+            self.output_activation = output_activation
 
     def forward(self, hidden: Tensor, state: Tensor) -> Tensor:
         if self.is_image:
@@ -202,7 +224,12 @@ class Decoder(nn.Module):
             if self.output_activation is not None:
                 x = self.output_activation(x)
         else:
-            raise NotImplementedError("Only image inputs are supported")
+            x = torch.cat((hidden, state), dim=-1)
+            for layer, norm in zip(self.layers, self.norm_layers):
+                x = self.activation(norm(layer(x)))
+            x = self.output_layer(x)
+            if self.output_activation is not None:
+                x = self.output_activation(x)
         return x
 
 
@@ -214,6 +241,7 @@ class DynamicsPredictor(nn.Module):
         embedding_dim,
         action_dim,
         rnn_layers=1,
+        norm: Callable = nn.BatchNorm1d,
         activation: Callable = nn.SiLU(),
     ):
         super(DynamicsPredictor, self).__init__()
@@ -274,7 +302,10 @@ class DynamicsPredictor(nn.Module):
             hidden_t = hiddens_list[-1][:, 0, :]
 
             state_action = torch.cat([state_t, action_t], dim=-1)
-            state_action = self.activation(self.project_state_action(state_action))
+            state_action = self.activation(
+                # self.norm(self.project_state_action(state_action))
+                self.project_state_action(state_action)
+            )
 
             ### Update the deterministic hidden state ###
             for i in range(len(self.rnn_layers)):
@@ -351,7 +382,8 @@ class RewardPredictor(nn.Module):
         hidden_dim,
         state_dim,
         layers: int = 2,
-        activation: Callable = nn.ReLU(),
+        activation: Callable = nn.SiLU(),
+        norm: Callable = nn.BatchNorm1d,
     ):
         super(RewardPredictor, self).__init__()
 
