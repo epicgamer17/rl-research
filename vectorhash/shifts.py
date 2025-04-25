@@ -66,7 +66,7 @@ class RatShiftWithCompetitiveAttractorDynamics(RatShift):
         self.inhibition_constant = inhibition_constant
 
     def __call__(self, modules: list[GridModule], velocity: torch.Tensor):
-        super()(modules, velocity)
+        super().__call__(modules, velocity)
 
         for module in modules:
             eps = generate_epsilon(
@@ -83,7 +83,6 @@ class RatShiftWithCompetitiveAttractorDynamics(RatShift):
             P_ = global_inhibition(P_, inhibition_constant=self.inhibition_constant)
             P_ = P_ / P_.sum()
             module.state = P_
-        # competitive attractor dynamics
 
 
 class ConvolutionalShift(Shift):
