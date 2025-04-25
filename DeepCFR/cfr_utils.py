@@ -427,13 +427,11 @@ class EvalWrapper:
             reward = self.game.state.player_reward(0)
         else:
             reward = self.game.state.player_reward(1)
-        return (
-            obs_mask["observation"],
-            reward,
-            terminal,
-            truncated,
-            {"legal_moves": self.game.state.legal_actions()},
-        )
+        return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
+        
+    def close(self):
+        pass
+
 
 
 class EmptyConf:
@@ -560,13 +558,10 @@ class NFSPEvalWrapper:
                 reward = self.game.state.player_reward(1)
         else:
             reward = 0
-        return (
-            obs_mask["observation"],
-            reward,
-            terminal,
-            truncated,
-            {"legal_moves": self.game.state.legal_actions()},
-        )
+        return obs_mask["observation"], reward, terminal, truncated, {"legal_moves":self.game.state.legal_actions()}
+
+    def close(self):
+        pass
 
 
 class EmptyConf:
