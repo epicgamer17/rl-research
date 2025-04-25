@@ -484,7 +484,7 @@ class RainbowAgent(BaseAgent):
             if self.training_step % self.checkpoint_interval == 0:
                 scores = [s["score"] for s in self.stats["score"]]
                 print(
-                    f"Checkpointing at {self.training_step} with score {np.mean(scores)}"
+                    f"Checkpointing at {self.training_step} with score {np.mean(scores[-100:])} and loss {np.mean([s['loss'] for s in self.stats['loss'][-10:]])}"
                 )
                 self.training_time = time() - start_time
                 self.total_environment_steps = (
@@ -497,4 +497,4 @@ class RainbowAgent(BaseAgent):
         self.training_time = time() - start_time
         self.total_environment_steps = self.training_step * self.config.replay_interval
         self.save_checkpoint()
-        self.env.close()
+        # self.env.close()

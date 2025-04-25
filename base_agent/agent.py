@@ -56,7 +56,7 @@ class BaseAgent:
         self.checkpoint_trials = 5
 
         self.env = env
-        self.test_env = self.make_test_env(env)
+        # self.test_env = self.make_test_env(env)
         self.observation_dimensions = self.determine_observation_dimensions(env)
 
         if isinstance(env.action_space, gym.spaces.Discrete):
@@ -69,11 +69,11 @@ class BaseAgent:
         print("num_actions: ", self.num_actions)
 
     def make_test_env(self, env: gym.Env):
-        self.test_env = copy.deepcopy(env)
+        # self.test_env = copy.deepcopy(env)
         if hasattr(env, "render_mode") and env.render_mode == "rgb_array":
-            assert (
-                self.env.render_mode == "rgb_array"
-            ), "Video recording for test_env requires render_mode to be 'rgb_array'"
+            # assert (
+            #     self.env.render_mode == "rgb_array"
+            # ), "Video recording for test_env requires render_mode to be 'rgb_array'"
             return gym.wrappers.RecordVideo(
                 copy.deepcopy(env),
                 ".",
@@ -279,38 +279,38 @@ class BaseAgent:
         os.makedirs(Path(dir, "configs"), exist_ok=True)
         self.config.dump(f"{dir}/configs/config.yaml")
         os.makedirs(Path(dir, "stats"), exist_ok=True)
-        # pickle.dump(self.stats, open(f"{dir}/stats/stats.pkl", "wb"))
+        pickle.dump(self.stats, open(f"{dir}/stats/stats.pkl", "wb"))
         # test model
-        test_score = self.test(
-            self.checkpoint_trials, self.training_step, training_step_dir
-        )
-        self.stats["test_score"].append(test_score)
-        # save the graph stats and targets
-        os.makedirs(
-            Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
-        )
-        with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
-            pickle.dump(self.stats, f)
-        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
-            pickle.dump(self.targets, f)
+        # test_score = self.test(
+        #     self.checkpoint_trials, self.training_step, training_step_dir
+        # )
+        # self.stats["test_score"].append(test_score)
+        # # save the graph stats and targets
+        # os.makedirs(
+        #     Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
+        # )
+        # with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
+        #     pickle.dump(self.stats, f)
+        # with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
+        #     pickle.dump(self.targets, f)
 
         # to periodically clear uneeded memory, if it is drastically slowing down training you can comment this out, checkpoint less often, or do less trials
         gc.collect()
 
         # plot the graphs (and save the graph)
-        print(self.stats)
-        print(self.targets)
+        # print(self.stats)
+        # print(self.targets)
 
-        os.makedirs(Path(dir, "graphs"), exist_ok=True)
-        plot_graphs(
-            self.stats,
-            self.targets,
-            self.training_step if training_step is None else training_step,
-            self.total_environment_steps if frames_seen is None else frames_seen,
-            self.training_time if time_taken is None else time_taken,
-            self.model_name,
-            f"{dir}/graphs",
-        )
+        # os.makedirs(Path(dir, "graphs"), exist_ok=True)
+        # plot_graphs(
+        #     self.stats,
+        #     self.targets,
+        #     self.training_step if training_step is None else training_step,
+        #     self.total_environment_steps if frames_seen is None else frames_seen,
+        #     self.training_time if time_taken is None else time_taken,
+        #     self.model_name,
+        #     f"{dir}/graphs",
+        # )
 
     def make_checkpoint_dict(self):
         checkpoint = self.checkpoint_base({})
