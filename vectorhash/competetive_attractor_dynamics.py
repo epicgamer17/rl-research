@@ -3,9 +3,9 @@ import torch
 import math
 
 
-def generate_epsilon(N_x, N_y, sigma, device=None):
+def generate_epsilon(N_x, N_y, sigma):
     """
-    Generate epsilon matrix of size (N_x, N_y)
+    Generate a 2D Gaussian kernel (epsilon) for the given dimensions and standard deviation.
     """
     kernel = torch.zeros((N_x, N_y))
     for i in range(N_x):
@@ -13,20 +13,12 @@ def generate_epsilon(N_x, N_y, sigma, device=None):
             x = i - N_x // 2
             y = j - N_y // 2
             kernel[i, j] = math.exp(-(x**2 + y**2) / (2 * sigma**2))
-
-    kernel = kernel / kernel.sum()
     return kernel
 
 
 def update_internal_P_jk(P, epsilon):
-    """
-    Input shape for P: (N_theta, N_x, N_y, N_theta)
-
-    Input shape for epsilon: (N_x, N_y)
-    """
     assert len(P.shape) == 3, "P should be a 3D matrix. (x, y, theta)"
     updated_P = torch.clone(P)
-
     # for every layer
     p_x = (
         ((len(P[0])) // 2, (len(P[0]) - 1) // 2)
@@ -59,16 +51,15 @@ def update_internal_P_jk(P, epsilon):
     return P + updated_P
 
 
-def generate_delta(N_theta, sigma, gamma=2, device=None):
-    """
-    Generate delta matrix of size (N_theta)
-    """
-    assert gamma <= N_theta // 2, f"N_theta={N_theta}, gamma={gamma}"
-    xs = torch.arange(-N_theta // 2, N_theta // 2 + 1, device=device)
-    delta = torch.exp(-(xs**2) / (2 * sigma**2))
-    delta = delta / torch.sum(delta)
+def generate_delta(N_theta, sigma, gamma=2):
+    delta = torch.zeros(N_theta)
+    for i in range(N_theta):
+        x = i - N_theta // 2
+        delta[i] = math.exp(-(x**2) / (2 * sigma**2))
 
-    return delta[(N_theta // 2) - gamma : (N_theta // 2) + gamma + 1]
+    return delta[
+        (N_theta // 2) - gamma : (N_theta // 2) + gamma + 1
+    ]  # cut off the first and last gamma values
 
 
 def update_inter_layer_P_ijk(P, delta):
@@ -82,7 +73,7 @@ def update_inter_layer_P_ijk(P, delta):
         mode="circular",
     )
     print(f"padded shape: {padded.shape}")
-    padded = padded.reshape(padded.shape[1] * padded.shape[2], 1, -1)
+    padded = padded.reshape(P.shape[0] * P.shape[1], 1, -1)
     # print(padded[0])
     updated_P = torch.nn.functional.conv1d(
         padded,
