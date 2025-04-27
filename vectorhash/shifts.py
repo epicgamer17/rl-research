@@ -50,8 +50,10 @@ class RatShift(Shift):
         for module in modules:
             speed = (velocity[0].item() ** 2 + velocity[1].item() ** 2) ** 0.5
             theta = math.atan2(velocity[1].item(), velocity[0].item())
-            module.state = inject_activity(
-                module.state, speed, theta, velocity[2].item()
+
+            P = module.state.permute(2, 0, 1)
+            module.state = inject_activity(P, speed, theta, velocity[2].item()).permute(
+                1, 2, 0
             )
 
 
