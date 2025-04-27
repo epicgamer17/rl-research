@@ -1,5 +1,3 @@
-from calendar import c
-from hmac import new
 import math
 import torch
 
@@ -8,36 +6,44 @@ import torch
 def inject_activity(P, v, theta, omega, k_x=1, k_y=1, k_theta=1):
     updated_P = torch.clone(P)
 
-    v_x = -v * math.cos(theta) * k_x
-    v_y = -v * math.sin(theta) * k_y
-    v_theta = k_theta * -omega
+    v_x = v * math.cos(theta) * k_x
+    v_y = v * math.sin(theta) * k_y
+    v_theta = k_theta * omega
     delta_f_x, delta_x = math.modf(v_x)
     delta_f_y, delta_y = math.modf(v_y)
     delta_f_theta, delta_theta = math.modf(v_theta)
+    delta_f_x, delta_x = abs(delta_f_x), int(delta_x)
+    delta_f_y, delta_y = abs(delta_f_y), int(delta_y)
+    delta_f_theta, delta_theta = abs(delta_f_theta), int(delta_theta)
+
+    kD, kH, kW = min(2, P.shape[0]), min(2, P.shape[1]), min(2, P.shape[2])
 
     alpha = calculate_alpha(
         delta_f_x,
         delta_f_y,
         delta_f_theta,
-        shape=(min(2, P.shape[0]), min(2, P.shape[1]), min(2, P.shape[2])),
+        shape=(kD, kH, kW),
     )
 
-    for g_theta in range(P.shape[0]):
-        for g_x in range(P.shape[1]):
-            for g_y in range(P.shape[2]):
-                print("updating pose cell", g_theta, g_x, g_y)
-                updated_P[g_theta][g_x][g_y] = calculate_velocity_shift(
-                    P,
-                    g_x,
-                    g_y,
-                    g_theta,
-                    int(delta_x),
-                    int(delta_y),
-                    int(delta_theta),
-                    alpha,
-                )  # -v for same functionality as ezra had implimented, and - omega same reason
-
-    return updated_P
+    shifted = torch.roll(P, shifts=(delta_theta, delta_x, delta_y), dims=(0, 1, 2))
+    padded = torch.nn.functional.pad(
+        shifted.unsqueeze(0).unsqueeze(0),
+        (kW // 2, 0, kH // 2, 0, kD // 2, 0),
+        mode="circular",
+    )  # pad with circular padding
+    # apply the convulution in the flipped directions
+    flipped = torch.flip(padded, dims=(0, 1, 2, 3, 4))
+    updated_P = (
+        torch.nn.functional.conv3d(
+            flipped,
+            alpha.unsqueeze(0).unsqueeze(0),
+            stride=1,
+            padding=0,
+        )
+        .squeeze(0)
+        .squeeze(0)
+    )
+    return updated_P.flip(0, 1, 2)  # flip back to original orientation
 
 
 def calculate_velocity_shift(P, l, m, n, delta_x, delta_y, delta_theta, alpha):
@@ -52,6 +58,7 @@ def calculate_velocity_shift(P, l, m, n, delta_x, delta_y, delta_theta, alpha):
                     ]  # paper does x y theta (but there alpha indices are weird)
                     * P[(n + t) % len(P)][(l + x) % len(P[0])][(m + y) % len(P[0][0])]
                 )
+
     print("change", change)
     return change
 
@@ -63,13 +70,8 @@ def calculate_alpha(
     for i in range(0, shape[0]):
         for j in range(0, shape[1]):
             for k in range(0, shape[2]):
-                alpha[i][j][k] = (
-                    g(
-                        delta_f_x, i
-                    )  # paper has i - delta_x, but its really just saying floored value gets 1 - a, and the other gets a
-                    * g(delta_f_y, j)
-                    * g(delta_f_theta, k)
-                )
+                alpha[i][j][k] = g(delta_f_theta, i) * g(delta_f_x, j) * g(delta_f_y, k)
+    print("alpha", alpha)
     return alpha
 
 
