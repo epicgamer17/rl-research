@@ -48,6 +48,7 @@ class RatShift(Shift):
         assert len(velocity) == 3  # x, y, angular velocity
 
         for module in modules:
+            # module.state is in x, y, theta form
             speed = (velocity[0].item() ** 2 + velocity[1].item() ** 2) ** 0.5
             theta = math.atan2(velocity[1].item(), velocity[0].item())
 
@@ -57,7 +58,7 @@ class RatShift(Shift):
             )
 
 
-class RatShiftWithCompetitiveAttractorDynamics(RatShift):
+class RatShiftWithCompetitiveAttractorDynamics(Shift):
     def __init__(
         self,
         sigma_xy=0.3,
@@ -74,19 +75,23 @@ class RatShiftWithCompetitiveAttractorDynamics(RatShift):
         self.delta_gamma = delta_gamma
 
     def __call__(self, modules: list[GridModule], velocity: torch.Tensor):
-        super().__call__(modules, velocity)
-
         for module in modules:
             N_x, N_y, N_theta = module.shape
-            eps = generate_epsilon(N_x, N_y, sigma=self.sigma_xy, device=self.device)
-            P = torch.permute(module.state, (2, 0, 1))
-            P = update_internal_P_jk(P, eps)
+            speed = (velocity[0].item() ** 2 + velocity[1].item() ** 2) ** 0.5
+            theta = math.atan2(velocity[1].item(), velocity[0].item())
+            eps = generate_epsilon(
+                N_x, N_y, sigma=self.sigma_xy
+            )  # , device=self.device)
             delta = generate_delta(
                 N_theta,
                 sigma=self.sigma_theta,
                 gamma=self.delta_gamma,
-                device=self.device,
+                # device=self.device,
             )
+
+            P = module.state.permute(2, 0, 1)
+            P = inject_activity(P, speed, theta, velocity[2].item())
+            P = update_internal_P_jk(P, eps)
             P = update_inter_layer_P_ijk(P, delta)
             P = global_inhibition(P, inhibition_constant=self.inhibition_constant)
             P = P / P.sum()
