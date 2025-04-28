@@ -598,23 +598,94 @@ def kidnapping_test(
     for action, noise, visible in zip(path, noise_list, visible):
         if visible:
             true_img, true_p, true_ang, v = agent.step(action, noise=noise)
+
+            estimated_img = (
+                agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
+                    agent.vectorhash.scaffold.hippocampal_from_grid(
+                        agent.vectorhash.scaffold.g
+                    )[0]
+                )[0].reshape(84, 84)
+            )
+            history.append(
+                true_image=true_img,
+                estimated_image=estimated_img,
+                true_position=(
+                    (
+                        (true_p - agent.animal_ai_data["start_position"]).cpu()
+                        * torch.tensor(
+                            [
+                                agent.vectorhash.scaffold.scale_factor[0],
+                                agent.vectorhash.scaffold.scale_factor[1],
+                            ]
+                        )
+                    )
+                    % torch.tensor(
+                        [
+                            agent.vectorhash.scaffold.grid_limits[0],
+                            agent.vectorhash.scaffold.grid_limits[1],
+                        ]
+                    )
+                ).cpu(),
+                true_angle=(
+                    (
+                        (true_ang - agent.animal_ai_data["start_angle"])
+                        * agent.vectorhash.scaffold.scale_factor[2]
+                    )
+                    % agent.vectorhash.scaffold.grid_limits[2]
+                ).item(),
+                x_distribution=agent.vectorhash.scaffold.expand_distribution(0),
+                y_distribution=agent.vectorhash.scaffold.expand_distribution(1),
+                theta_distribution=agent.vectorhash.scaffold.expand_distribution(2),
+                seen=True,
+            )
+
         else:
             obs, reward, done, info = agent.env.step(action)
             image, p, v = agent.postprocess_obs(obs)
-            if noise != []:
-                if noise[2] == "normal":
-                    noise = torch.distributions.normal.Normal(
-                        loc=noise[0], scale=noise[1]
-                    )
-            ### calculation of noisy input
+
+            ### update AAI data
             dtheta = 0
             if action == 1 or action == 4 or action == 4:
                 dtheta = 6
             elif action == 2 or action == 7 or action == 8:
                 dtheta = -6
-            noisy_dtheta = dtheta  # + random_noise
 
-            dp = p - agent.animal_ai_data["exact_position"]
-            ### update AAI data
             agent.animal_ai_data["exact_position"] = p
             agent.animal_ai_data["exact_angle"] += dtheta
+
+            ### history
+            history.append(
+                true_image=image,
+                estimated_image=None,
+                true_position=(
+                    (
+                        (p - agent.animal_ai_data["start_position"]).cpu()
+                        * torch.tensor(
+                            [
+                                agent.vectorhash.scaffold.scale_factor[0],
+                                agent.vectorhash.scaffold.scale_factor[1],
+                            ]
+                        )
+                    )
+                    % torch.tensor(
+                        [
+                            agent.vectorhash.scaffold.grid_limits[0],
+                            agent.vectorhash.scaffold.grid_limits[1],
+                        ]
+                    )
+                ).cpu(),
+                true_angle=(
+                    (
+                        (
+                            agent.animal_ai_data["exact_angle"]
+                            - agent.animal_ai_data["start_angle"]
+                        )
+                        * agent.vectorhash.scaffold.scale_factor[2]
+                    )
+                    % agent.vectorhash.scaffold.grid_limits[2]
+                ).item(),
+                x_distribution=None,
+                y_distribution=None,
+                theta_distribution=None,
+                seen=False,
+            )
