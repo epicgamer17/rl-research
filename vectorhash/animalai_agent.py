@@ -689,3 +689,5 @@ def kidnapping_test(
                 theta_distribution=None,
                 seen=False,
             )
+    
+    return history
