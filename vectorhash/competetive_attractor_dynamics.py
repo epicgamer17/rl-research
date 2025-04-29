@@ -3,11 +3,11 @@ import torch
 import math
 
 
-def generate_epsilon(N_x, N_y, sigma):
+def generate_epsilon(N_x, N_y, sigma, device=None):
     """
     Generate a 2D Gaussian kernel (epsilon) for the given dimensions and standard deviation.
     """
-    kernel = torch.zeros((N_x, N_y))
+    kernel = torch.zeros((N_x, N_y), device=device)
     for i in range(N_x):
         for j in range(N_y):
             x = i - N_x // 2
@@ -51,8 +51,8 @@ def update_internal_P_jk(P, epsilon):
     return P + updated_P
 
 
-def generate_delta(N_theta, sigma, gamma=2):
-    delta = torch.zeros(N_theta)
+def generate_delta(N_theta, sigma, gamma=2, device=None):
+    delta = torch.zeros(N_theta, device=device)
     for i in range(N_theta):
         x = i - N_theta // 2
         delta[i] = math.exp(-(x**2) / (2 * sigma**2))

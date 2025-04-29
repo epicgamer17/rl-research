@@ -455,7 +455,7 @@ class AnimalAIVectorhashAgent:
         #     categorical_crossentropy(theta_dist, theta_true_dist),
         # )
         true_positions = self.vectorhash.scaffold.get_mean_positions()
-        coordinates = torch.zeros(3, device=self.vectorhash.scaffold.device)
+        coordinates = torch.zeros(3)
         coordinates[0] = (
             self.animal_ai_data["exact_position"][0]
             - self.animal_ai_data["start_position"][0]
@@ -689,5 +689,5 @@ def kidnapping_test(
                 theta_distribution=None,
                 seen=False,
             )
-    
+
     return history

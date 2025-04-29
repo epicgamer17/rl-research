@@ -79,14 +79,12 @@ class RatShiftWithCompetitiveAttractorDynamics(Shift):
             N_x, N_y, N_theta = module.shape
             speed = (velocity[0].item() ** 2 + velocity[1].item() ** 2) ** 0.5
             theta = math.atan2(velocity[1].item(), velocity[0].item())
-            eps = generate_epsilon(
-                N_x, N_y, sigma=self.sigma_xy
-            )  # , device=self.device)
+            eps = generate_epsilon(N_x, N_y, sigma=self.sigma_xy, device=self.device)
             delta = generate_delta(
                 N_theta,
                 sigma=self.sigma_theta,
                 gamma=self.delta_gamma,
-                # device=self.device,
+                device=self.device,
             )
 
             P = module.state.permute(2, 0, 1)
