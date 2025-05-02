@@ -156,6 +156,134 @@ class VectorhashAgentHistory:
         self._estimated_images = []
 
 
+class VectorhashAgentKidnappedHistory:
+    def __init__(self):
+        self._true_positions = []
+        self._true_angles = []
+        self._x_distributions = []
+        self._y_distributions = []
+        self._theta_distributions = []
+        self._true_images = []
+        self._estimated_images = []
+        self._seen = []
+
+    def append(
+        self,
+        true_position,
+        true_angle,
+        x_distribution,
+        y_distribution,
+        theta_distribution,
+        true_image,
+        estimated_image,
+        seen,
+    ):
+        self._true_positions.append(true_position.clone().cpu())
+        self._true_angles.append(true_angle)
+        self._true_images.append(true_image.clone().cpu())
+        self._seen.append(seen)
+        self._estimated_images.append(
+            estimated_image.clone().cpu() if estimated_image is not None else None
+        )
+        self._x_distributions.append(
+            x_distribution.clone().cpu() if x_distribution is not None else None
+        )
+        self._y_distributions.append(
+            y_distribution.clone().cpu() if y_distribution is not None else None
+        )
+        self._theta_distributions.append(
+            theta_distribution.clone().cpu() if theta_distribution is not None else None
+        )
+
+    def make_image_video(self):
+        fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
+        gs = GridSpec(6, 6, figure=fig)
+
+        text_artist = fig.suptitle("t=0, seen=True")
+
+        im_true_ax = fig.add_subplot(gs[0:3, 0:3])
+        im_pred_ax = fig.add_subplot(gs[0:3, 3:6])
+        x_dist_ax = fig.add_subplot(gs[3, 0:4])
+        y_dist_ax = fig.add_subplot(gs[4, 0:4])
+        theta_dist_ax = fig.add_subplot(gs[5, 0:4])
+        im_true_ax.set_title("true image")
+        im_pred_ax.set_title("predicted image")
+        x_dist_ax.set_title("x dist")
+        y_dist_ax.set_title("y dist")
+        theta_dist_ax.set_title("θ dist")
+
+        x_dist_ax.set_xlim(0, len(self._x_distributions[0]))
+        y_dist_ax.set_xlim(0, len(self._y_distributions[0]))
+        theta_dist_ax.set_xlim(0, len(self._theta_distributions[0]))
+
+        im_true_artist = im_true_ax.imshow(self._true_images[0], vmin=0, vmax=1)
+        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0], vmin=0, vmax=1)
+        x_dist_artist = plot_probability_distribution_on_ax(
+            self._x_distributions[0], x_dist_ax
+        )
+        y_dist_artist = plot_probability_distribution_on_ax(
+            self._y_distributions[0], y_dist_ax
+        )
+        theta_dist_artist = plot_probability_distribution_on_ax(
+            self._theta_distributions[0], theta_dist_ax
+        )
+
+        x_true_pos_artist = x_dist_ax.plot([self._true_positions[0][0]], [1.0], "ro")
+        y_true_pos_artist = y_dist_ax.plot([self._true_positions[0][1]], [1.0], "ro")
+        theta_true_pos_artist = theta_dist_ax.plot([self._true_angles[0]], [1.0], "ro")
+
+        def plot_func(frame):
+            artists = []
+            im_true_artist.set_data(self._true_images[frame])
+            artists.append(im_true_artist)
+
+            if self._estimated_images[frame] is not None:
+                im_pred_artist.set_data(self._estimated_images[frame])
+                artists.append(im_pred_artist)
+
+            if self._x_distributions[frame] is not None:
+                x_dist_artist.set_data(values=self._x_distributions[frame], edges=None)
+                artists.append(x_dist_artist)
+
+            if self._y_distributions[frame] is not None:
+                y_dist_artist.set_data(values=self._y_distributions[frame], edges=None)
+                artists.append(y_dist_artist)
+
+            if self._theta_distributions[frame] is not None:
+                theta_dist_artist.set_data(
+                    values=self._theta_distributions[frame], edges=None
+                )
+                artists.append(theta_dist_artist)
+
+            x_true_pos_artist[0].set_data([self._true_positions[frame][0]], [1.0])
+            y_true_pos_artist[0].set_data([self._true_positions[frame][1]], [1.0])
+            theta_true_pos_artist[0].set_data([self._true_angles[frame]], [1.0])
+
+            artists.append(x_true_pos_artist)
+            artists.append(y_true_pos_artist)
+            artists.append(theta_true_pos_artist)
+
+            text_artist.set_text(f"t={frame}, seen={self._seen[frame]}")
+            return artists
+
+        self.ani = animation.FuncAnimation(
+            fig, plot_func, len(self._estimated_images) - 1, blit=False
+        )
+
+        return self.ani
+
+    def reset(self):
+        self.ani = None
+        self._true_positions = []
+        self._true_angles = []
+        self._x_distributions = []
+        self._y_distributions = []
+        self._theta_distributions = []
+        self._true_images = []
+        self._estimated_images = []
+        self._seen = []
+
+
 class AnimalAIVectorhashAgent:
     def __init__(
         self,
@@ -350,7 +478,7 @@ class AnimalAIVectorhashAgent:
         #     categorical_crossentropy(theta_dist, theta_true_dist),
         # )
         true_positions = self.vectorhash.scaffold.get_mean_positions()
-        coordinates = torch.zeros(3, device=self.vectorhash.scaffold.device)
+        coordinates = torch.zeros(3)
         coordinates[0] = (
             self.animal_ai_data["exact_position"][0]
             - self.animal_ai_data["start_position"][0]
@@ -480,3 +608,109 @@ class AnimalAIVectorhashAgent:
 
     def close(self):
         self.env.close()
+
+
+def kidnapping_test(
+    agent: AnimalAIVectorhashAgent,
+    path: torch.Tensor,
+    noise_list,
+    visible: torch.Tensor,
+):
+    history = VectorhashAgentKidnappedHistory()
+
+    for action, noise, visible in zip(path, noise_list, visible):
+        if visible:
+            true_img, true_p, true_ang, v = agent.step(action, noise=noise)
+
+            estimated_img = (
+                agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
+                    agent.vectorhash.scaffold.hippocampal_from_grid(
+                        agent.vectorhash.scaffold.g
+                    )[0]
+                )[0].reshape(84, 84)
+            )
+            history.append(
+                true_image=true_img,
+                estimated_image=estimated_img,
+                true_position=(
+                    (
+                        (true_p - agent.animal_ai_data["start_position"]).cpu()
+                        * torch.tensor(
+                            [
+                                agent.vectorhash.scaffold.scale_factor[0],
+                                agent.vectorhash.scaffold.scale_factor[1],
+                            ]
+                        )
+                    )
+                    % torch.tensor(
+                        [
+                            agent.vectorhash.scaffold.grid_limits[0],
+                            agent.vectorhash.scaffold.grid_limits[1],
+                        ]
+                    )
+                ).cpu(),
+                true_angle=(
+                    (
+                        (true_ang - agent.animal_ai_data["start_angle"])
+                        * agent.vectorhash.scaffold.scale_factor[2]
+                    )
+                    % agent.vectorhash.scaffold.grid_limits[2]
+                ).item(),
+                x_distribution=agent.vectorhash.scaffold.expand_distribution(0),
+                y_distribution=agent.vectorhash.scaffold.expand_distribution(1),
+                theta_distribution=agent.vectorhash.scaffold.expand_distribution(2),
+                seen=True,
+            )
+
+        else:
+            obs, reward, done, info = agent.env.step(action)
+            image, p, v = agent.postprocess_obs(obs)
+
+            ### update AAI data
+            dtheta = 0
+            if action == 1 or action == 4 or action == 4:
+                dtheta = 6
+            elif action == 2 or action == 7 or action == 8:
+                dtheta = -6
+
+            agent.animal_ai_data["exact_position"] = p
+            agent.animal_ai_data["exact_angle"] += dtheta
+
+            ### history
+            history.append(
+                true_image=image,
+                estimated_image=None,
+                true_position=(
+                    (
+                        (p - agent.animal_ai_data["start_position"]).cpu()
+                        * torch.tensor(
+                            [
+                                agent.vectorhash.scaffold.scale_factor[0],
+                                agent.vectorhash.scaffold.scale_factor[1],
+                            ]
+                        )
+                    )
+                    % torch.tensor(
+                        [
+                            agent.vectorhash.scaffold.grid_limits[0],
+                            agent.vectorhash.scaffold.grid_limits[1],
+                        ]
+                    )
+                ).cpu(),
+                true_angle=(
+                    (
+                        (
+                            agent.animal_ai_data["exact_angle"]
+                            - agent.animal_ai_data["start_angle"]
+                        )
+                        * agent.vectorhash.scaffold.scale_factor[2]
+                    )
+                    % agent.vectorhash.scaffold.grid_limits[2]
+                ).item(),
+                x_distribution=None,
+                y_distribution=None,
+                theta_distribution=None,
+                seen=False,
+            )
+
+    return history
