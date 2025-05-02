@@ -2,7 +2,6 @@ import torch
 from gymnasium import Env
 from vectorhash import VectorHaSH
 from skimage import color
-from graph_utils import plot_path
 from animalai_agent_history import VectorhashAgentHistory, VectorhashAgentKidnappedHistory
 _epsilon = 1e-8
 
@@ -344,9 +343,6 @@ class AnimalAIVectorhashAgent:
                 print(f"Step {i}: {self.calculate_position_err()}")
         print("Final position error: ", self.calculate_position_err())
         return errs, path
-
-    def agent_plot_path(self, path, beliefs):
-        plot_path(path, beliefs, out="animalai_path.png", title="AnimalAI Path")
 
     def close(self):
         self.env.close()
