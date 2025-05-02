@@ -210,3 +210,91 @@ def plot_probability_distribution_on_ax(distribution: np.ndarray, ax:matplotlib.
     patch = StepPatch(values=distribution, edges=np.arange(len(distribution) + 1))
     ax.add_patch(patch)
     return patch
+
+def plot_error_over_time(
+        beliefs: np.ndarray,
+        true_positions: np.ndarray,
+        time_steps: np.ndarray,
+        out: str = None,):
+    print("beliefs", beliefs.shape)
+    print("true_positions", true_positions.shape)
+    errors = np.linalg.norm(beliefs - true_positions, axis=1)
+    fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=600)
+    ax.plot(time_steps, errors, label="Error")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Error")
+    ax.set_title("Error over time")
+    ax.legend()
+    ax.grid()
+    if out is not None:
+        plt.savefig(out)
+        plt.close(fig)
+    else:
+        plt.show()
+    return fig, ax
+
+
+def turn_to_dist(true_pos, true_theta, mods):
+    dists = []
+    for i in range(len(true_pos)):
+        floor_1 = int(true_pos[i] // mods[i])
+        err = true_pos[i] - floor_1
+        dist = torch.tensor([0]*mods[i])
+        dist[floor_1] = 1 - err
+        if floor_1 + 1 < mods[i]:
+            dist[floor_1 + 1] = err
+        else:
+            dist[0] = err
+        dists.append(dist)
+
+    floor_theta = int(true_theta // mods[2])
+    err_theta = true_theta - floor_theta
+    dist_theta = torch.tensor([0]*mods[2])
+    dist_theta[floor_theta] = 1 - err_theta
+    if floor_theta + 1 < mods[2]:
+        dist_theta[floor_theta + 1] = err_theta
+    else:
+        dist_theta[0] = err_theta
+    dists.append(dist_theta)
+    return dists[0], dists[1], dists[2]
+
+def error_test(true, belief):
+    loss = 0
+    for i in range(len(belief)):
+        diff = abs(i-true)
+        loss += belief[i] * min(diff, len(belief)-diff)
+    return loss
+
+
+def get_errors(history, mods, out=None, visible=None, method="None"):
+    true_pos = history._true_positions
+    theta_pos = history._true_angles
+    b_x_pos_dists = history._x_distributions
+    b_y_pos_dists = history._y_distributions
+    b_theta_pos_dists = history._theta_distributions
+    x_errors = []
+    y_errors = []
+    theta_errors = []
+    for i in range(len(b_x_pos_dists)):
+        if visible is not None:
+            if visible[i] == False:
+                continue
+        x_error = error_test(true_pos[i][0], b_x_pos_dists[i])
+        y_error = error_test(true_pos[i][1], b_y_pos_dists[i])
+        theta_error = error_test(theta_pos[i], b_theta_pos_dists[i])
+        x_errors.append(x_error)
+        y_errors.append(y_error)
+        theta_errors.append(theta_error)
+    xplot = plt.plot(x_errors)
+    yplot = plt.plot(y_errors)
+    thetaplot = plt.plot(theta_errors)
+    plt.title(f"Error over time, using a {method[1]} shift. Storing: {method[0]}")
+    plt.xlabel("Time")
+    plt.ylabel("Error")
+    plt.legend(["x error", "y error", "theta error"])
+    if out is not None:
+        plt.savefig(out)
+        plt.close()
+    else:
+        plt.show()
+    return x_errors, y_errors, theta_errors

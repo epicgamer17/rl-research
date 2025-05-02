@@ -268,6 +268,8 @@ class AnimalAIVectorhashAgent:
         env: Env,
         world_size: torch.Tensor = torch.Tensor([40, 40, 360]),
         hard_store: bool = True,
+        store_new: bool = True,
+        additive_shift: bool = True,
     ):
         self.env = env
         self.vectorhash = vectorhash
@@ -277,6 +279,8 @@ class AnimalAIVectorhashAgent:
         obs, info = self.env.reset()
         image = self.postprocess_image(obs)
         p, v = self.postprocess_health_pos_vel(info)
+        self.store_new = store_new
+        self.additive_shift = additive_shift
 
         self.animal_ai_data = {
             "exact_angle": 0,
@@ -374,12 +378,14 @@ class AnimalAIVectorhashAgent:
         new_positions = scaffold.get_mean_positions()
         print("new positions:", new_positions)
         lims = torch.Tensor([2, 2, 30])
-        # new = False
-        # for i in range(len(scaffold.modules[0].shape)):
-        #     if torch.abs(new_positions[i]- old_positions[i]) > lims[i]:
-        #         new = True
+        if self.store_new:
+            new = False
+            for i in range(len(scaffold.modules[0].shape)):
+                if torch.abs(new_positions[i]- old_positions[i]) > lims[i]:
+                    new = True
+        else:
+            new = True
 
-        new = True
         ## sensory update
         if new:
             sensory_g = scaffold.denoise(
@@ -392,8 +398,10 @@ class AnimalAIVectorhashAgent:
             sensory_certainty = scaffold.estimate_certainty(
                 limits=torch.Tensor([2, 2, 30]), g=sensory_g
             )
-
-            scaffold.additive_shift(new_g=sensory_g)
+            if self.additive_shift:
+                scaffold.additive_shift(new_g=sensory_g)
+            else:
+                scaffold.multiplicative_shift(new_g=sensory_g)
 
             image_scaffold = [0] * len(scaffold.modules)
             for i in range(len(scaffold.modules)):
