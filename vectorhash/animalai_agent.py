@@ -9,7 +9,7 @@ from matplotlib.gridspec import GridSpec
 
 from graph_utils import plot_path, plot_probability_distribution_on_ax
 from vectorhash_functions import circular_mean
-
+import math
 _epsilon = 1e-8
 
 
@@ -115,6 +115,29 @@ class VectorhashAgentHistory:
                 y_true_pos_artist,
                 theta_true_pos_artist,
             )
+
+        self.ani = animation.FuncAnimation(
+            fig, plot_func, len(self._estimated_images) - 1, blit=False
+        )
+
+        return self.ani
+    
+    def plot_vector_position(self):
+        fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
+        ax = fig.add_subplot(1,1,1)
+        ax.set_title("Vector Position")
+        ax.set_xlim(-20, 20)
+        ax.set_ylim(-20, 20)
+        ax.set_aspect('equal')
+        
+        def plot_func(frame):
+            x = self._true_positions[frame][0]
+            y = self._true_positions[frame][1]
+            theta = self._true_angles[frame]
+            dx = math.cos(theta) * 2
+            dy = math.sin(theta) * 2
+            ax.quiver(x, y, dx, dy, angles='xy', scale_units='xy', scale=1, color='r')
+            ax.plot(x, y, 'ro')
 
         self.ani = animation.FuncAnimation(
             fig, plot_func, len(self._estimated_images) - 1, blit=False
