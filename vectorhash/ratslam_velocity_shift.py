@@ -25,6 +25,7 @@ def inject_activity(P, v, theta, omega, k_x=1, k_y=1, k_theta=1):
         delta_f_y,
         delta_f_theta,
         shape=(kD, kH, kW),
+        device=P.device
     )
 
     shifted = torch.roll(P, shifts=(delta_theta, delta_x, delta_y), dims=(0, 1, 2))
