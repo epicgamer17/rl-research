@@ -18,12 +18,17 @@ from torch.optim.adam import Adam
 
 # from packages.utils.utils.utils import KLDivergenceLoss
 from replay_buffers.rssm_replay_buffer import RSSMReplayBuffer
+from torch.nn.utils import clip_grad_norm_
+import gc
 
 
 class RSSM(nn.Module):
-    def __init__(self, env, config):
+    def __init__(
+        self, env, config, device="cude" if torch.cuda.is_available() else "cpu"
+    ):
         super(RSSM, self).__init__()
         self.env = env
+        self.device = device
         self.config = config
         self.state_dim = self.config.state_dim
         # self.action_dim = self.config.action_dim
@@ -34,7 +39,7 @@ class RSSM(nn.Module):
         # Define the encoder, decoder, dynamics predictor, reward predictor, and continue predictor
         self.encoder = Encoder(
             input_shape=env.observation_space.shape,
-            is_image=True,
+            is_image=self.config.is_image,
             embedding_dim=self.embedding_dim,
             norm=self.config.norm,
             activation=self.config.activation,
@@ -43,7 +48,7 @@ class RSSM(nn.Module):
         output_shape = tuple(reversed(env.observation_space.shape))
         self.decoder = Decoder(
             output_shape=output_shape,
-            is_image=True,
+            is_image=self.config.is_image,
             hidden_dim=self.hidden_dim,
             state_dim=self.state_dim,
             embedding_dim=self.embedding_dim,
@@ -62,6 +67,10 @@ class RSSM(nn.Module):
             hidden_dim=self.hidden_dim,
             activation=self.config.activation,
         )
+
+        self.encoder.to(self.device)
+        self.decoder.to(self.device)
+        self.dynamics_predictor.to(self.device)
 
         if self.config.optimizer == Adam:
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
@@ -97,15 +106,17 @@ class RSSM(nn.Module):
         self, actions, hiddens=None, states=None, observations=None, dones=None
     ):
         if hiddens is None:
-            hiddens = torch.zeros((actions.size(0), self.hidden_dim))
+            hiddens = torch.zeros((actions.size(0), self.hidden_dim)).to(self.device)
         if states is None:
-            states = torch.zeros((actions.size(0), self.state_dim))
+            states = torch.zeros((actions.size(0), self.state_dim)).to(self.device)
 
         return self.dynamics_predictor(hiddens, states, actions, observations, dones)
 
     def preprocess(self, observation):
         # if self.config.game.is_image:
-        observation = observation.float() / 255.0
+        observation = (
+            observation.float() / 255.0 if self.config.is_image else observation
+        )
         # else:
         #     observation = observation.astype(np.float32)
         # return observation
@@ -116,6 +127,8 @@ class RSSM(nn.Module):
     ):
         observation, info = self.env.reset()
         for step in range(self.config.training_steps):
+            gc.collect()
+            torch.cuda.empty_cache()
             print(f"Training step: {step}/{self.config.training_steps}")
             for i in range(self.config.batch_size):
                 for j in range(self.config.batch_length):
@@ -135,10 +148,12 @@ class RSSM(nn.Module):
                         observation, info = self.env.reset()
 
             sample = self.replay_buffer.sample()
-            observations = torch.from_numpy(sample["observations"]).float()
-            actions = torch.from_numpy(sample["actions"]).long()
-            rewards = torch.from_numpy(sample["rewards"]).float()
-            dones = torch.from_numpy(sample["dones"])
+            observations = (
+                torch.from_numpy(sample["observations"]).float().to(self.device)
+            )
+            actions = torch.from_numpy(sample["actions"]).long().to(self.device)
+            rewards = torch.from_numpy(sample["rewards"]).float().to(self.device)
+            dones = torch.from_numpy(sample["dones"]).to(self.device)
 
             actions = torch.tensor(actions).long()
             actions = F.one_hot(actions, num_classes=self.action_dim).float()
@@ -147,6 +162,8 @@ class RSSM(nn.Module):
                 # self.preprocess(
                 observations.reshape(-1, *observations.shape[2:]).permute(0, 3, 1, 2)
                 / 255.0
+                if self.config.is_image
+                else observations.reshape(-1, *observations.shape[2:])
                 # )
             )
             encoded_observations = encoded_observations.reshape(
@@ -169,10 +186,10 @@ class RSSM(nn.Module):
 
             hiddens = hiddens.reshape(
                 self.config.batch_size * self.config.batch_length, -1
-            )
+            ).to(self.device)
             posterior_states = posterior_states.reshape(
                 self.config.batch_size * self.config.batch_length, self.state_dim
-            )
+            ).to(self.device)
 
             decoded_observations = self.decoder(hiddens, posterior_states)
             decoded_observations = decoded_observations.reshape(
@@ -195,7 +212,7 @@ class RSSM(nn.Module):
                 batch_idx = np.random.randint(0, self.config.batch_size)
                 seq_idx = np.random.randint(0, self.config.batch_length - 3)
                 fig = self._visualize(
-                    observations,
+                    observations / 255.0 if self.config.is_image else observations,
                     decoded_observations,
                     rewards,
                     predicted_rewards,
@@ -227,7 +244,7 @@ class RSSM(nn.Module):
                 F.softplus(posterior_log_vars),
             )
             print(
-                f"Prediction Loss: {prediction_loss.item()}, Dynamics Loss: {dynamics_loss.item()}, Representation Loss: {representation_loss.item()}"
+                f"Prediction Loss: {prediction_loss.mean()}, Dynamics Loss: {dynamics_loss.mean()}, Representation Loss: {representation_loss.mean()}"
             )
             # loss = reconstruction_loss + dynamics_loss + reward_loss
             loss = (
@@ -236,7 +253,16 @@ class RSSM(nn.Module):
                 + self.config.representation_loss_coeff * representation_loss
             )
             self.optimizer.zero_grad()
-            loss.backward()
+            loss.mean().backward()
+            if self.config.clipnorm > 0:
+                # print("clipnorm", self.config.clipnorm)
+                clip_grad_norm_(
+                    list(self.encoder.parameters())
+                    + list(self.decoder.parameters())
+                    + list(self.dynamics_predictor.parameters())
+                    + list(self.reward_predictor.parameters()),
+                    self.config.clipnorm,
+                )
             self.optimizer.step()
 
     # not currently same as dreamer paper
@@ -248,9 +274,11 @@ class RSSM(nn.Module):
         predicted_reward,
         reward,  # continue_pred, done
     ):
-        # return F.mse_loss(decoded_obs, obs)
         return (
-            F.mse_loss(decoded_obs, obs / 255.0)
+            F.mse_loss(
+                decoded_obs,
+                obs / 255.0 if self.config.is_image else obs,
+            )
             # -decoded_obs.log_prob(obs).mean()
             + F.mse_loss(predicted_reward, reward)
             # + -predicted_reward.log_prob(
@@ -261,28 +289,61 @@ class RSSM(nn.Module):
 
     # not currently same as dreamer paper
     def _dynamics_loss(
-        self, prior_means, prior_logvars, posterior_means, posterior_logvars
+        self,
+        prior_means,
+        prior_logvars,
+        posterior_means,
+        posterior_logvars,
+        clip=1.0,
+        uniform=0.01,
     ):
         prior_dist = Normal(prior_means, torch.exp(prior_logvars))
         posterior_dist = Normal(
             posterior_means.detach(), torch.exp(posterior_logvars.detach())
         )
-        # apply stop gradient on posterior
+        # print(prior_dist.batch_shape)
+        # print(prior_dist.event_shape)
+        # prior_dist = prior_dist * (1 - uniform) + uniform / prior_dist.event_shape
+        # posterior_dist = (
+        #     posterior_dist * (1 - uniform) + uniform / posterior_dist.event_shape
+        # )
 
-        return kl_divergence(posterior_dist, prior_dist).mean()
+        # return torch.max(
+        #     torch.ones(posterior_dist.batch_shape[:2]) * clip,
+        #     kl_divergence(posterior_dist, prior_dist).sum(dim=-1),
+        # )
+        return torch.clip(
+            kl_divergence(posterior_dist, prior_dist),
+            min=clip,
+        ).mean()
 
     # not currently same as dreamer paper
     # def _representation_loss(self, rewards, predicted_rewards):
     def _representation_loss(
-        self, prior_means, prior_logvars, posterior_means, posterior_logvars
+        self,
+        prior_means,
+        prior_logvars,
+        posterior_means,
+        posterior_logvars,
+        clip=1.0,
+        uniform=0.01,
     ):
         prior_dist = Normal(prior_means.detach(), torch.exp(prior_logvars.detach()))
         posterior_dist = Normal(posterior_means, torch.exp(posterior_logvars))
-        # apply stop gradient on posterior
-
-        return kl_divergence(posterior_dist, prior_dist).mean()
-
-        # return F.mse_loss(predicted_rewards, rewards)
+        # print(prior_dist.batch_shape)
+        # print(prior_dist.event_shape)
+        # prior_dist = prior_dist * (1 - uniform) + uniform / prior_dist.event_shape
+        # posterior_dist = (
+        #     posterior_dist * (1 - uniform) + uniform / posterior_dist.event_shape
+        # )
+        # return torch.max(
+        #     torch.ones(posterior_dist.batch_shape[:2]) * clip,
+        #     kl_divergence(posterior_dist, prior_dist).sum(dim=-1),
+        # )
+        return torch.clip(
+            kl_divergence(posterior_dist, prior_dist),
+            min=clip,
+        ).mean()
 
     def _visualize(
         self,
@@ -297,34 +358,35 @@ class RSSM(nn.Module):
     ):
         obs = obs[batch_idx, seq_idx : seq_idx + 3]
         decoded_obs = decoded_obs[batch_idx, seq_idx : seq_idx + 3]
-        print(obs.shape)
-        print(decoded_obs.shape)
-        print("shapes should be 96 x 96 x 3 x 3")
         rewards = rewards[batch_idx, seq_idx : seq_idx + 3]
         predicted_rewards = predicted_rewards[batch_idx][seq_idx : seq_idx + 3]
 
         obs = obs.cpu().detach().numpy()
         decoded_obs = decoded_obs.cpu().detach().numpy()
 
+        print(obs[0].shape)
+        print(decoded_obs[0].shape)
+        print("shapes should be 96 x 96 x 3")
+
         fig, axs = plt.subplots(3, 2)
-        axs[0][0].imshow(obs[0, ..., 0], cmap="gray" if grayscale else None)
+        axs[0][0].imshow(obs[0], cmap="gray" if grayscale else None)
         axs[0][0].set_title(f"Iteration: {iterations} -- Reward: {rewards[0, 0]:.4f}")
         axs[0][0].axis("off")
-        axs[0][1].imshow(decoded_obs[0, ..., 0], cmap="gray" if grayscale else None)
+        axs[0][1].imshow(decoded_obs[0], cmap="gray" if grayscale else None)
         axs[0][1].set_title(f"Pred. Reward: {predicted_rewards[0, 0]:.4f}")
         axs[0][1].axis("off")
 
-        axs[1][0].imshow(obs[1, ..., 0], cmap="gray" if grayscale else None)
+        axs[1][0].imshow(obs[1], cmap="gray" if grayscale else None)
         axs[1][0].axis("off")
         axs[1][0].set_title(f"Reward: {rewards[1, 0]:.4f} ")
-        axs[1][1].imshow(decoded_obs[1, ..., 0], cmap="gray" if grayscale else None)
+        axs[1][1].imshow(decoded_obs[1], cmap="gray" if grayscale else None)
         axs[1][1].set_title(f"Pred. Reward: {predicted_rewards[1, 0]:.4f}")
         axs[1][1].axis("off")
 
-        axs[2][0].imshow(obs[2, ..., 0], cmap="gray" if grayscale else None)
+        axs[2][0].imshow(obs[2], cmap="gray" if grayscale else None)
         axs[2][0].axis("off")
         axs[2][0].set_title(f"Reward: {rewards[2, 0]:.4f}")
-        axs[2][1].imshow(decoded_obs[2, ..., 0], cmap="gray" if grayscale else None)
+        axs[2][1].imshow(decoded_obs[2], cmap="gray" if grayscale else None)
         axs[2][1].set_title(f"Pred. Reward: {predicted_rewards[2, 0]:.4f}")
         axs[2][1].axis("off")
 

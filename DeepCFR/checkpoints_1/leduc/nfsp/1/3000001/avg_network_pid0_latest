@@ -1,0 +1,4 @@
+model_checkpoint_path: "avg_network_pid0"
+all_model_checkpoint_paths: "../1000003/avg_network_pid1"
+all_model_checkpoint_paths: "../2000003/avg_network_pid1"
+all_model_checkpoint_paths: "avg_network_pid0"
