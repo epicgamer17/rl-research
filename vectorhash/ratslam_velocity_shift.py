@@ -25,6 +25,7 @@ def inject_activity(P, v, theta, omega, k_x=1, k_y=1, k_theta=1):
         delta_f_y,
         delta_f_theta,
         shape=(kD, kH, kW),
+        device=P.device
     )
 
     shifted = torch.roll(P, shifts=(delta_theta, delta_x, delta_y), dims=(0, 1, 2))
@@ -70,9 +71,9 @@ def calculate_velocity_shift(P, l, m, n, delta_x, delta_y, delta_theta, alpha):
 
 
 def calculate_alpha(
-    delta_f_x, delta_f_y, delta_f_theta, shape=(2, 2, 2)
+    delta_f_x, delta_f_y, delta_f_theta, shape=(2, 2, 2), device=None
 ):  # delta_x, delta_y, delta_theta
-    alpha = torch.zeros(shape)
+    alpha = torch.zeros(shape, device=device)
     for i in range(0, shape[0]):
         for j in range(0, shape[1]):
             for k in range(0, shape[2]):
