@@ -133,7 +133,7 @@ class AnimalAIVectorhashAgent:
         ### get new position distribution
         new_positions = scaffold.get_mean_positions()
         print("new positions:", new_positions)
-        lims = torch.Tensor([2, 2, 30])
+        lims = torch.Tensor([2, 2, 10])
         if self.store_new:
             new = False
             for i in range(len(scaffold.modules[0].shape)):

@@ -286,6 +286,8 @@ def plot_errors_on_axes(
     history,
     axis: matplotlib.axes.Axes,
     visible=None,
+    method=None,
+    out=None,
 ):
     true_pos = history._true_positions
     theta_pos = history._true_angles
@@ -295,6 +297,7 @@ def plot_errors_on_axes(
     x_errors = []
     y_errors = []
     theta_errors = []
+    fig = plt.figure(figsize=(8, 4), dpi=600)
     for i in range(len(b_x_pos_dists)):
         if visible is not None:
             if visible[i] == False:
@@ -305,12 +308,18 @@ def plot_errors_on_axes(
         x_errors.append(x_error)
         y_errors.append(y_error)
         theta_errors.append(theta_error)
-
-    axis.plot(x_errors, label="x error")
-    axis.plot(y_errors, label="y error")
-    axis.plot(theta_errors, label="theta error")
-
-    axis.set_xlabel("Time")
-    axis.set_ylabel("Error")
-
-    return axis
+    fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=600)
+    ax.plot(x_errors, label="x error")
+    ax.plot(y_errors, label="y error")
+    ax.plot(theta_errors, label="theta error")
+    ax.set_title(f"Error over time, using a {method[1]} shift. Storing: {method[0]}")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Error")
+    ax.legend(["x error", "y error", "theta error"])
+    ax.grid()
+    if out is not None:
+        plt.savefig(out)
+        plt.close(fig)
+    else:
+        plt.show(fig)
+    return x_errors, y_errors, theta_errors
