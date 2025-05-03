@@ -3,6 +3,7 @@ import pathlib
 import matplotlib.axes
 import matplotlib.pyplot as plt
 from clean_scaffold import GridHippocampalScaffold
+# from animalai_agent_history import VectorhashAgentKidnappedHistory
 
 
 def graph_scaffold(g: GridHippocampalScaffold, dir=None):
@@ -10,8 +11,8 @@ def graph_scaffold(g: GridHippocampalScaffold, dir=None):
         os.makedirs(dir, exist_ok=True)
         base_path = dir
     else:
-        base_path = '.'
-    
+        base_path = "."
+
     g_path = pathlib.Path(base_path, "G.png")
     h_path = pathlib.Path(base_path, "H.png")
     W_hg_path = pathlib.Path(base_path, "W_hg.png")
@@ -22,7 +23,7 @@ def graph_scaffold(g: GridHippocampalScaffold, dir=None):
     ax.set_title("G")
     ax.set_ylabel("N_patts")
     ax.set_xlabel("N_g")
-    ax.set_aspect('equal', adjustable='box')
+    ax.set_aspect("equal", adjustable="box")
     fig.savefig(g_path)
     # H
     fig, ax = plt.subplots(1, 1, figsize=(12, 4), dpi=600)
@@ -65,6 +66,7 @@ if __name__ == "__main__":
     )
     graph_scaffold(GS)
 
+
 def print_imgs_side_by_side(*imgs, out="mnist.png", captions=None, title=None):
     if captions is not None:
         assert len(captions) == len(imgs)
@@ -78,7 +80,7 @@ def print_imgs_side_by_side(*imgs, out="mnist.png", captions=None, title=None):
 
     if title is not None:
         fig.suptitle(title)
-    
+
     if out is not None:
         plt.savefig(out)
         plt.close(fig)
@@ -99,7 +101,7 @@ def plot_recall_info(info):
     ax[1].set_ylabel("N_patts")
     ax[1].title.set_text("G_denoised")
 
-    fig, ax = plt.subplots(2, 1, dpi=400, figsize=(5,3))
+    fig, ax = plt.subplots(2, 1, dpi=400, figsize=(5, 3))
 
     ax[0].imshow(info["H"].cpu().numpy(), cmap="gray")
     ax[0].set_xlabel("N_h")
@@ -113,25 +115,26 @@ def plot_recall_info(info):
 
     fig, ax = plt.subplots(2, 2, dpi=400, figsize=(5, 8))
 
-    ax[0][0].imshow(info["H"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[0][0].imshow(info["H"][:50, :50].cpu().numpy(), cmap="gray")
     ax[0][0].set_xlabel("N_patts")
     ax[0][0].set_ylabel("N_h")
     ax[0][0].title.set_text("H, first 50")
 
-    ax[1][0].imshow(info["H_denoised"][:50,:50].cpu().numpy(), cmap="gray")
+    ax[1][0].imshow(info["H_denoised"][:50, :50].cpu().numpy(), cmap="gray")
     ax[1][0].set_xlabel("N_patts")
     ax[1][0].set_ylabel("N_h")
     ax[1][0].title.set_text("H_denoised, first 50")
 
-    ax[0][1].imshow(info["H"][:50,:50].cpu().numpy() == 0, cmap="gray")
+    ax[0][1].imshow(info["H"][:50, :50].cpu().numpy() == 0, cmap="gray")
     ax[0][1].set_xlabel("N_patts")
     ax[0][1].set_ylabel("N_h")
     ax[0][1].title.set_text("H, first 50, zero locations")
 
-    ax[1][1].imshow(1 - (info["H_denoised"][:50,:50].cpu().numpy() == 0), cmap="gray")
+    ax[1][1].imshow(1 - (info["H_denoised"][:50, :50].cpu().numpy() == 0), cmap="gray")
     ax[1][1].set_xlabel("N_patts")
     ax[1][1].set_ylabel("N_h")
     ax[1][1].title.set_text("H_denoised, first 50, zero locations")
+
 
 def graphing_recall(array):
     """
@@ -141,7 +144,7 @@ def graphing_recall(array):
     x is % of max patterns used
     then those graphs for each combination of Nh, ratio active/not
 
-    
+
     input :
     array is an array with n entries, one for each combination of Nh, ratio active/not
     first entry is Nh, second is ratio active/not, third is mnist scores fourth is the x values
@@ -149,17 +152,20 @@ def graphing_recall(array):
     # make input of the x values to be log scales so that we can see the differences better and the inputs are percentages
     fig, ax = plt.subplots(1, 1, dpi=200, figsize=(5, 5))
     for i in range(len(array)):
-        
+
         plt.plot(array[i][3], array[i][2], label="CIFAR")
         plt.xlabel("% of max patterns used")
         plt.ylabel("cosine similarity")
-        plt.title("Nh = " + str(array[i][0]) + " ratio active/not = " + str(array[i][1]))
+        plt.title(
+            "Nh = " + str(array[i][0]) + " ratio active/not = " + str(array[i][1])
+        )
         plt.legend()
-        ax.set_xscale('log')
+        ax.set_xscale("log")
         plt.show()
 
+
 def print_imgs_side_by_side_on_top(imgs, out="mnist.png", captions=None, title=None):
-    fig, ax = plt.subplots(len(imgs), 2, figsize=(4 * 2, 4*len(imgs)), dpi=900)
+    fig, ax = plt.subplots(len(imgs), 2, figsize=(4 * 2, 4 * len(imgs)), dpi=900)
     for i in range(len(imgs)):
         ax[i][0].imshow(imgs[i][0], cmap="gray")
         ax[i][0].axis("off")
@@ -171,7 +177,7 @@ def print_imgs_side_by_side_on_top(imgs, out="mnist.png", captions=None, title=N
 
     if title is not None:
         fig.suptitle(title)
-    
+
     if out is not None:
         plt.savefig(out)
         plt.close(fig)
@@ -187,14 +193,14 @@ def plot_path(path, beliefs, out=None):
     ax[0].set_title("Path")
     ax[0].set_xlabel("X")
     ax[0].set_ylabel("Y")
-    ax[0].set_aspect('equal', adjustable='box')
+    ax[0].set_aspect("equal", adjustable="box")
 
     # plot beliefs as a scatter plot
     ax[1].scatter(beliefs[:, 0], beliefs[:, 1], c="red", s=1)
     ax[1].set_title("Beliefs")
     ax[1].set_xlabel("X")
     ax[1].set_ylabel("Y")
-    ax[1].set_aspect('equal', adjustable='box')
+    ax[1].set_aspect("equal", adjustable="box")
     if out is not None:
         plt.savefig(out)
         plt.close(fig)
@@ -202,20 +208,26 @@ def plot_path(path, beliefs, out=None):
         plt.show()
     return fig, ax
 
+
 import matplotlib
 import numpy as np
 from matplotlib.patches import StepPatch
 
-def plot_probability_distribution_on_ax(distribution: np.ndarray, ax:matplotlib.axes.Axes):
+
+def plot_probability_distribution_on_ax(
+    distribution: np.ndarray, ax: matplotlib.axes.Axes
+):
     patch = StepPatch(values=distribution, edges=np.arange(len(distribution) + 1))
     ax.add_patch(patch)
     return patch
 
+
 def plot_error_over_time(
-        beliefs: np.ndarray,
-        true_positions: np.ndarray,
-        time_steps: np.ndarray,
-        out: str = None,):
+    beliefs: np.ndarray,
+    true_positions: np.ndarray,
+    time_steps: np.ndarray,
+    out: str = None,
+):
     print("beliefs", beliefs.shape)
     print("true_positions", true_positions.shape)
     errors = np.linalg.norm(beliefs - true_positions, axis=1)
@@ -234,12 +246,15 @@ def plot_error_over_time(
     return fig, ax
 
 
+import torch
+
+
 def turn_to_dist(true_pos, true_theta, mods):
     dists = []
     for i in range(len(true_pos)):
         floor_1 = int(true_pos[i] // mods[i])
         err = true_pos[i] - floor_1
-        dist = torch.tensor([0]*mods[i])
+        dist = torch.tensor([0] * mods[i])
         dist[floor_1] = 1 - err
         if floor_1 + 1 < mods[i]:
             dist[floor_1 + 1] = err
@@ -249,7 +264,7 @@ def turn_to_dist(true_pos, true_theta, mods):
 
     floor_theta = int(true_theta // mods[2])
     err_theta = true_theta - floor_theta
-    dist_theta = torch.tensor([0]*mods[2])
+    dist_theta = torch.tensor([0] * mods[2])
     dist_theta[floor_theta] = 1 - err_theta
     if floor_theta + 1 < mods[2]:
         dist_theta[floor_theta + 1] = err_theta
@@ -258,15 +273,20 @@ def turn_to_dist(true_pos, true_theta, mods):
     dists.append(dist_theta)
     return dists[0], dists[1], dists[2]
 
+
 def error_test(true, belief):
     loss = 0
     for i in range(len(belief)):
-        diff = abs(i-true)
-        loss += belief[i] * min(diff, len(belief)-diff)
+        diff = abs(i - true)
+        loss += belief[i] * min(diff, len(belief) - diff)
     return loss
 
 
-def get_errors(history, mods, out=None, visible=None, method="None"):
+def plot_errors_on_axes(
+    history,
+    axis: matplotlib.axes.Axes,
+    visible=None,
+):
     true_pos = history._true_positions
     theta_pos = history._true_angles
     b_x_pos_dists = history._x_distributions
@@ -285,16 +305,12 @@ def get_errors(history, mods, out=None, visible=None, method="None"):
         x_errors.append(x_error)
         y_errors.append(y_error)
         theta_errors.append(theta_error)
-    xplot = plt.plot(x_errors)
-    yplot = plt.plot(y_errors)
-    thetaplot = plt.plot(theta_errors)
-    plt.title(f"Error over time, using a {method[1]} shift. Storing: {method[0]}")
-    plt.xlabel("Time")
-    plt.ylabel("Error")
-    plt.legend(["x error", "y error", "theta error"])
-    if out is not None:
-        plt.savefig(out)
-        plt.close()
-    else:
-        plt.show()
-    return x_errors, y_errors, theta_errors
+
+    axis.plot(x_errors, label="x error")
+    axis.plot(y_errors, label="y error")
+    axis.plot(theta_errors, label="theta error")
+
+    axis.set_xlabel("Time")
+    axis.set_ylabel("Error")
+
+    return axis
