@@ -3,6 +3,7 @@ import pathlib
 import matplotlib.axes
 import matplotlib.pyplot as plt
 from clean_scaffold import GridHippocampalScaffold
+
 # from animalai_agent_history import VectorhashAgentKidnappedHistory
 
 
@@ -245,35 +246,6 @@ def plot_error_over_time(
         plt.show()
     return fig, ax
 
-
-import torch
-
-
-def turn_to_dist(true_pos, true_theta, mods):
-    dists = []
-    for i in range(len(true_pos)):
-        floor_1 = int(true_pos[i] // mods[i])
-        err = true_pos[i] - floor_1
-        dist = torch.tensor([0] * mods[i])
-        dist[floor_1] = 1 - err
-        if floor_1 + 1 < mods[i]:
-            dist[floor_1 + 1] = err
-        else:
-            dist[0] = err
-        dists.append(dist)
-
-    floor_theta = int(true_theta // mods[2])
-    err_theta = true_theta - floor_theta
-    dist_theta = torch.tensor([0] * mods[2])
-    dist_theta[floor_theta] = 1 - err_theta
-    if floor_theta + 1 < mods[2]:
-        dist_theta[floor_theta + 1] = err_theta
-    else:
-        dist_theta[0] = err_theta
-    dists.append(dist_theta)
-    return dists[0], dists[1], dists[2]
-
-
 def error_test(true, belief):
     loss = 0
     for i in range(len(belief)):
@@ -302,6 +274,7 @@ def plot_errors_on_axes(
         if visible is not None:
             if visible[i] == False:
                 continue
+
         x_error = error_test(true_pos[i][0], b_x_pos_dists[i])
         y_error = error_test(true_pos[i][1], b_y_pos_dists[i])
         theta_error = error_test(theta_pos[i], b_theta_pos_dists[i])

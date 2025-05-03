@@ -3,18 +3,6 @@ from gymnasium import Env
 from vectorhash import VectorHaSH
 from skimage import color
 from animalai_agent_history import VectorhashAgentHistory, VectorhashAgentKidnappedHistory
-_epsilon = 1e-8
-
-
-def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
-    # print(predicted)
-    predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
-    # print(predicted)
-    predicted = torch.clamp(predicted, _epsilon, 1.0 - _epsilon)
-    # print(predicted)
-    log_prob = torch.log(predicted)
-    return -torch.sum(log_prob * target, axis=axis)
-
 
 
 class AnimalAIVectorhashAgent:

@@ -77,6 +77,34 @@ def circular_mean(points: torch.Tensor, grid_size: int):
     return Arg * grid_size / (2 * torch.pi)
 
 
+def circular_mean_weighted(points: torch.Tensor, weights: torch.Tensor, grid_size: int):
+    """
+    Computes the mean of a set of N points that "wrap around" on a d-dimensional toroidal grid
+
+    :param points: torch.Tensor, N x d tensor of points
+    :param grid_size: int, length of the grid
+
+    :return: torch.Tensor, mean of the points
+    """
+
+    # rescale points to [-pi, pi) to be viewed as angles
+    rescaled = (points * 2 * torch.pi / grid_size) - torch.pi  # (N x d)
+
+    # transform to complex numbers
+    Im = torch.sin(rescaled) * weights  # (N x d)
+    Re = torch.cos(rescaled) * weights  # (N x d)
+
+    # compute the mean
+    mean_Im = torch.mean(Im, dim=0)
+    mean_Re = torch.mean(Re, dim=0)
+
+    # compute the angle of the mean and rescale to [0, 2 * pi)
+    Arg = torch.atan2(mean_Im, mean_Re) + torch.pi
+
+    # rescale to [0, grid_size)
+    return Arg * grid_size / (2 * torch.pi)
+
+
 def softmax_2d(x: torch.Tensor):
     """
     Computes the softmax of a 2d tensor
@@ -483,11 +511,11 @@ def generate_1d_gaussian_kernel(radius, mu=0, sigma=1, device=None):
 
 
 def calculate_shift_kernel(radius, shift, std, device=None):
-    k=3
-    x = torch.arange(-radius*k, (radius + 1)*k, k, device=device) 
+    k = 3
+    x = torch.arange(-radius * k, (radius + 1) * k, k, device=device)
     x = x - (shift / std)
-    low = x - 0.5*k
-    high = x + 0.5*k
+    low = x - 0.5 * k
+    high = x + 0.5 * k
     w = 0.5 * (
         scipy.special.erf(high.cpu() / (2**0.5))
         - scipy.special.erf(low.cpu() / (2**0.5))
@@ -533,3 +561,31 @@ def condense_distribution(marginal_lengths: list[int], p: torch.Tensor):
         recovered_marginals.append(recovered)
 
     return recovered_marginals
+
+
+_epsilon = 1e-8
+
+
+def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    # print(predicted)
+    predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
+    # print(predicted)
+    predicted = torch.clamp(predicted, _epsilon, 1.0 - _epsilon)
+    # print(predicted)
+    log_prob = torch.log(predicted)
+    return -torch.sum(log_prob * target, axis=axis)
+
+
+def to_dist(x, n):
+    dist = torch.zeros(n)
+    x_dec, x_int = math.modf(x)
+    x_int = int(x_int)
+    dist[x_int] = 1 - x_dec
+    dist[(x_int + 1) % n] = x_dec
+
+    return dist
+
+
+def calculate_err_crossentropy(pos, pred_dist):
+    true_dist = to_dist(pos, len(pred_dist))
+    return categorical_crossentropy(true_dist, pred_dist).item()
