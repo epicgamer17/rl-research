@@ -154,7 +154,7 @@ class AnimalAIVectorhashAgent:
                 else:
                     image_scaffold[i] = scaffold.modules_from_g(g_denoised)[i]
 
-            self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
+            self.vectorhash.store_memory(image.flatten().to(self.device), hard=self.hard)
         # if sensory_certainty > odometry_certainty:
         #     self.vectorhash.modules = scaffold.modules_from_g(sensory_g)
         #     self.vectorhash.scaffold._g()
