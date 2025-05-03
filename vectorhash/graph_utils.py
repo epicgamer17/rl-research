@@ -3,7 +3,7 @@ import pathlib
 import matplotlib.axes
 import matplotlib.pyplot as plt
 from clean_scaffold import GridHippocampalScaffold
-from animalai_agent_history import VectorhashAgentKidnappedHistory
+# from animalai_agent_history import VectorhashAgentKidnappedHistory
 
 
 def graph_scaffold(g: GridHippocampalScaffold, dir=None):
@@ -283,7 +283,7 @@ def error_test(true, belief):
 
 
 def plot_errors_on_axes(
-    history: VectorhashAgentKidnappedHistory,
+    history,
     axis: matplotlib.axes.Axes,
     visible=None,
 ):
