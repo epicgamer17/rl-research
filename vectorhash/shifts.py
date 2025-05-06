@@ -12,18 +12,26 @@ from vectorhash_functions import (
 
 
 class Shift:
+    """Velocity shift mechanism for a grid-hippocampal scaffold."""
+
     def __init__(self, device=None):
         self.device = device
 
     def __call__(self, modules: list[GridModule], velocity: torch.Tensor):
+        """Shift the modules of a grid-hippocampal scaffold with a given velocity"""
         pass
 
 
 class RollShift(Shift):
+    """Velocity shift mechanism for a grid-hippocampal scaffold that uses torch.roll.
+    The shift only works for integer velocities.
+    """
+
     def __init__(self, device=None):
         super().__init__(device)
 
     def __call__(self, modules, velocity):
+        """Shift the modules of a grid-hippocampal scaffold with a given velocity using torch.roll."""
         v_ = velocity.int()
         for module in modules:
             module.state = torch.roll(
@@ -34,21 +42,22 @@ class RollShift(Shift):
 
 
 class RatShift(Shift):
+    """Velocity shift mechanism for a grid-hippocampal scaffold based on RatSLAM.
+    Grid modules must be 3 dimensional (x, y, theta) for this to work.
+    """
+
     def __init__(self, device=None):
         super().__init__(device)
 
     def __call__(self, modules, velocity):
+        """Shift the modules of a grid-hippocampal scaffold with a given velocity using the method described in RatSLAM."""
         assert len(velocity) == 3  # x, y, angular velocity
 
         for module in modules:
             # module.state is in x, y, theta form
-            speed = (velocity[0].item() ** 2 + velocity[1].item() ** 2) ** 0.5
-            theta = math.atan2(velocity[1].item(), velocity[0].item())
 
             P = module.state.permute(2, 0, 1)
-            module.state = inject_activity(P, speed, theta, velocity[2].item()).permute(
-                1, 2, 0
-            )
+            module.state = inject_activity(P, velocity).permute(1, 2, 0)
 
 
 class ConvolutionalShift(Shift):
