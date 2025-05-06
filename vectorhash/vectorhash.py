@@ -1,8 +1,24 @@
-from clean_scaffold import GridHippocampalScaffold, SoftmaxSmoothing
-from hippocampal_sensory_layers import *
-from shifts import *
-from tqdm import tqdm
+import math
 import copy
+import torch
+from scipy.stats import norm
+from tqdm import tqdm
+from matrix_initializers import (
+    SparseMatrixByScalingInitializer,
+    SparseMatrixBySparsityInitializer,
+    SparseMatrixInitializer,
+)
+from shifts import Shift, RollShift, RatShift, ConvolutionalShift
+from hippocampal_sensory_layers import (
+    HippocampalSensoryLayer,
+    HebbianHippocampalSensoryLayer,
+    ExactPseudoInverseHippocampalSensoryLayer,
+    IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
+)
+from vectorhash_functions import expectation_of_relu_normal
+from shifts import ModularConvolutionalShift
+from clean_scaffold import GridHippocampalScaffold, SoftmaxSmoothing
+
 
 class VectorHaSH:
     def __init__(
@@ -24,7 +40,9 @@ class VectorHaSH:
     @torch.no_grad()
     def reset(self):
         self.scaffold = copy.deepcopy(self.init_scaffold)
-        self.hippocampal_sensory_layer = copy.deepcopy(self.init_hippocampal_sensory_layer)
+        self.hippocampal_sensory_layer = copy.deepcopy(
+            self.init_hippocampal_sensory_layer
+        )
 
     @torch.no_grad()
     def store_memory(self, s: torch.Tensor, debug=True, hard=False):
@@ -32,7 +50,9 @@ class VectorHaSH:
         Input shape: `(input_size)`
         """
         if hard:
-            h= self.scaffold.hippocampal_from_grid(self.scaffold.denoise(self.scaffold.g))[0]
+            h = self.scaffold.hippocampal_from_grid(
+                self.scaffold.denoise(self.scaffold.g)
+            )[0]
         else:
             h = self.scaffold.hippocampal_from_grid(self.scaffold.g)[0]
         # print("current h we are learning", h)
@@ -140,27 +160,6 @@ class VectorHaSH:
             pos += module.l
 
         return onehotted_list
-
-    @torch.no_grad()
-    def dream(self, seen_gss: set):
-        i = 0
-        # print("seen_gs", seen_gss)
-        # reverse the order of seen_gs
-        seen_gs = list(seen_gss)
-        seen_gs.reverse()
-
-        for g in seen_gs:
-            # if i<self.dream_fix:
-            self.scaffold.g = g
-            h = self.scaffold.hippocampal_from_grid(g)[0]
-            s = self.hippocampal_sensory_layer.sensory_from_hippocampal(h)[0]
-            h_ = self.hippocampal_sensory_layer.hippocampal_from_sensory(s)[0]
-            dh = h_ - h
-            if dh.norm() > self.zero_tol:
-                self.hippocampal_sensory_layer.W_hs += (
-                    self.hippocampal_sensory_layer.calculate_update_Whs(s, h)
-                )
-            # i+=1
 
     @torch.no_grad()
     def learn_path(self, observations, velocities):
@@ -346,32 +345,28 @@ class VectorHaSH:
         # }
         # plot_recall_info(info)
         return S_
-    
-    @torch.no_grad()
-    def main_loop(self, time_step_length, odometry, observation, k=1):
-        dx, dy, dtheta = odometry
-        self.scaffold.shift(self.scaffold.modules, (dx,dy,dtheta)) # integrate time_step_length in ratshift
-        certainty = self.scaffold.estimate_certainty(k=k)
-        if certainty >= self.certainty:
-            self.store_memory(observation)
-        else:
-            print("Certainty not high enough, not storing memory.")
 
-
-import math
-from scipy.stats import norm
-from matrix_initializers import *
-from vectorhash_functions import expectation_of_relu_normal
-from shifts import ModularConvolutionalShift
 
 def build_initializer(
-    shapes,
+    shapes: list[list[int]],
     initalization_method="by_sparsity",
-    W_gh_var=1,
     percent_nonzero_relu=0.9,
+    W_gh_var=1,
     sparse_initialization=0.1,
     device=None,
-):
+) -> tuple[SparseMatrixInitializer, float, float]:
+    """Build the initializer that initializes W_hg for the grid-hippocampal scaffold.
+
+    Returns a tuple of the initializer, the relu threshold to pass in to helper function build_scaffold, and the mean of the distribition of h (relevant for Hebbian hippocampal-sensory layers)
+
+    Args:
+        shapes (_type_): list of shapes of grid modules.
+        initalization_method (str): either "by_scaling" or "by_sparsity".
+        percent_nonzero_relu (float): The target percentage of hippocampal neurons that are active (non-zero) when ReLU(W_hg g) is calculated.
+        W_gh_var (int, optional): Variance of the normal distribution of W_hg. Only used when initalization_method is "by_scaling".
+        sparse_initialization (float): The sparsity of the W_hg matrix, i.e. what percentage of entries in the matrix should be set to zero. Only used when initalization_method is "by_sparsity".
+
+    """
     if initalization_method == "by_scaling":
         W_hg_std = math.sqrt(W_gh_var)
         W_hg_mean = (
@@ -400,7 +395,14 @@ def build_initializer(
         expectation_of_relu_normal(h_normal_mean, h_normal_std),
     )
 
-def build_shift(shift, device=None):
+
+def build_shift(shift: str, device=None) -> Shift:
+    """Build the velocity shift method for the scaffold. The only ones that are really used are "roll" and "rat", with the other ones buggy or broken.
+
+    Possible shifts:
+        - "roll": RollShift
+        - "rat": RatShift
+    """
     shifts = ["roll", "rat", "conv", "conv_expanded"]
     assert shift in shifts, f"invalid shift: {shift}, expected one of {shifts}"
 
@@ -413,9 +415,10 @@ def build_shift(shift, device=None):
     elif shift == "conv_expanded":
         return ConvolutionalShift(device=device)
 
+
 def build_scaffold(
-    shapes,
-    N_h,
+    shapes: list[list[int]],
+    N_h: int,
     initalization_method="by_sparsity",
     W_gh_var=1,
     percent_nonzero_relu=0.9,
@@ -425,13 +428,13 @@ def build_scaffold(
     device=None,
     relu=True,
     limits=None,
-    sanity_check=False
+    sanity_check=False,
 ):
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
         initalization_method=initalization_method,
-        W_gh_var=W_gh_var,
         percent_nonzero_relu=percent_nonzero_relu,
+        W_gh_var=W_gh_var,
         sparse_initialization=sparse_initialization,
         device=device,
     )
@@ -443,12 +446,12 @@ def build_scaffold(
         sparse_matrix_initializer=initializer,
         relu_theta=relu_theta,
         shift_method=shift,
-        sanity_check=sanity_check, # breaks with soft smoothing
+        sanity_check=sanity_check,  # breaks with soft smoothing
         calculate_g_method="fast",
         smoothing=smoothing,
         device=device,
         relu=relu,
-        limits=limits
+        limits=limits,
     )
 
     return scaffold, mean_h
@@ -493,7 +496,7 @@ def build_vectorhash_architecture(
         relu=relu,
         smoothing=smoothing,
         shift=shift,
-        limits=limits
+        limits=limits,
     )
     shift.device = device
 
@@ -502,7 +505,7 @@ def build_vectorhash_architecture(
             input_size=input_size,
             N_h=N_h,
             N_patts=scaffold.N_patts,
-            hbook = scaffold.H[:scaffold.N_patts],
+            hbook=scaffold.H[: scaffold.N_patts],
             device=device,
         )
     elif hippocampal_sensory_layer_type == "hebbian":
@@ -538,13 +541,12 @@ def build_vectorhash_architecture(
                 relu=relu,
             )
         )
-    
+
     architecture = VectorHaSH(
         scaffold=scaffold,
         hippocampal_sensory_layer=hippocampal_sensory_layer,
         zero_tol=1e-2,
         dream_fix=None,
-
     )
 
     return architecture

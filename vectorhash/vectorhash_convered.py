@@ -34,8 +34,8 @@ def capacity_gcpc_vectorized(
         k = 0
         for Npatts in tqdm(Npatts_lst):
             initializer, _, _ = build_initializer(
-                shapes,
-                "by_sparsity",
+                shapes=shapes,
+                initalization_method="by_sparsity",
                 device=device,
             )
             gs = GridHippocampalScaffold(
