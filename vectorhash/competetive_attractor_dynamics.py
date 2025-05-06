@@ -155,6 +155,7 @@ def global_inhibition(P, inhibition_constant=0.004):
 
 
 def global_inhibition_batched(P, inhibition_constant=0.004):
+    """P shape: (B, x, y, theta)"""
     assert len(P.shape) == 4, "P should be a 4D matrix. (B, x, y, theta)"
     B, N_x, N_y, N_theta = P.shape
 

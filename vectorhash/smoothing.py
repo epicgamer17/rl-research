@@ -1,5 +1,15 @@
 import torch
 
+from competetive_attractor_dynamics import (
+    generate_epsilon,
+    update_internal_P_jk_batched,
+    generate_delta,
+    update_inter_layer_P_ijk_batched,
+    global_inhibition_batched,
+    batch_rescale,
+)
+
+
 class Smoothing:
     def __init__(self):
         pass
@@ -29,7 +39,7 @@ class SoftmaxSmoothing(Smoothing):
         exp = torch.exp(y / self.T)
         out = (exp / torch.sum(exp, dim=0)).T
         return out.reshape(*x.shape)
-    
+
     def __str__(self):
         return super().__str__() + f" (T={self.T})"
 
@@ -46,7 +56,7 @@ class PolynomialSmoothing(Smoothing):
         y = y**self.k
         out = (y / torch.sum(y, dim=0)).T
         return out.reshape(*x.shape)
-    
+
     def __str__(self):
         return super().__str__() + f" (k={self.k})"
 
@@ -61,9 +71,10 @@ class ArgmaxSmoothing(Smoothing):
         y = torch.where(y == maxes, torch.ones_like(y), torch.zeros_like(y))
         scaled = (y / torch.sum(y, dim=0, keepdim=True)).T
         return scaled
-    
+
     def __str__(self):
         return super().__str__()
+
 
 class IdentitySmoothing(Smoothing):
     def __init__(self):
@@ -71,6 +82,47 @@ class IdentitySmoothing(Smoothing):
 
     def __call__(self, x):
         return x.detach().clone()
-    
+
     def __str__(self):
         return super().__str__()
+
+
+class RatSLAMSmoothing(Smoothing):
+    def __init__(
+        self,
+        sigma_xy=0.3,
+        sigma_theta=0.3,
+        inhibition_constant=0.004,
+        delta_gamma=1,
+        device=None,
+    ):
+        super().__init__()
+        self.sigma_xy = sigma_xy
+        self.sigma_theta = sigma_theta
+        self.inhibition_constant = inhibition_constant
+        self.delta_gamma = delta_gamma
+        self.device = device
+
+    def __call__(self, x):
+        assert len(x.shape) == 4, "x should be a 4D tensor (B, x, y, theta)"
+        B, N_x, N_y, N_theta = x.shape
+        # Implement the RatSLAM smoothing logic here
+        eps = generate_epsilon(N_x, N_y, sigma=self.sigma_xy, device=self.device)
+        delta = generate_delta(
+            N_theta,
+            sigma=self.sigma_theta,
+            gamma=self.delta_gamma,
+            device=self.device,
+        )
+
+        P = update_internal_P_jk_batched(P, eps)
+        P = update_inter_layer_P_ijk_batched(P, delta)
+        P = global_inhibition_batched(P, inhibition_constant=self.inhibition_constant)
+        P = batch_rescale(P)
+        return P
+
+    def __str__(self):
+        return (
+            super().__str__()
+            + f" (sigma_xy={self.sigma_xy}, sigma_theta={self.sigma_theta}, inhibition_constant={self.inhibition_constant}, delta_gamma={self.delta_gamma})"
+        )
