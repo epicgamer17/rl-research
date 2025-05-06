@@ -55,9 +55,7 @@ class RatShift(Shift):
 
         for module in modules:
             # module.state is in x, y, theta form
-
-            P = module.state.permute(2, 0, 1)
-            module.state = inject_activity(P, velocity).permute(1, 2, 0)
+            module.state = inject_activity(module.state, velocity)
 
 
 class ConvolutionalShift(Shift):
