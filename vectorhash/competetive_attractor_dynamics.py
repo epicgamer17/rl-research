@@ -102,7 +102,9 @@ def calculate_padding(i: int, k: int, s: int) -> Tuple[int, int]:
 
 def update_internal_P_jk_batched(P, epsilon):
     """P shape: (B, x, y, theta)"""
-    assert len(P.shape) == 4, "P should be a 4D matrix. (B, x, y, theta)"
+    assert (
+        len(P.shape) == 4
+    ), f"P should be a 4D tensor (B, x, y, theta), instead got {P.shape}"
 
     B, N_x, N_y, N_theta = P.shape
     x_padding = calculate_padding(N_x, epsilon.shape[0], 1)
@@ -127,7 +129,9 @@ def update_internal_P_jk_batched(P, epsilon):
 
 def update_inter_layer_P_ijk_batched(P, delta):
     """P shape: (B, x, y, theta)"""
-    assert len(P.shape) == 4, "P should be a 4D matrix. (B, x, y, theta)"
+    assert (
+        len(P.shape) == 4
+    ), f"P should be a 4D tensor (B, x, y, theta), instead got {P.shape}"
 
     B, N_x, N_y, N_theta = P.shape
     theta_padding = calculate_padding(N_theta, delta.shape[0], 1)
@@ -156,7 +160,9 @@ def global_inhibition(P, inhibition_constant=0.004):
 
 def global_inhibition_batched(P, inhibition_constant=0.004):
     """P shape: (B, x, y, theta)"""
-    assert len(P.shape) == 4, "P should be a 4D matrix. (B, x, y, theta)"
+    assert (
+        len(P.shape) == 4
+    ), f"P should be a 4D tensor (B, x, y, theta), instead got {P.shape}"
     B, N_x, N_y, N_theta = P.shape
 
     y = P.flatten(1).T  # to (B, x*y*theta)

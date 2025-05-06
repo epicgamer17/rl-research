@@ -104,7 +104,7 @@ class RatSLAMSmoothing(Smoothing):
         self.device = device
 
     def __call__(self, x):
-        assert len(x.shape) == 4, "x should be a 4D tensor (B, x, y, theta)"
+        assert len(x.shape) == 4, f"x should be a 4D tensor (B, x, y, theta), instead got {x.shape}"
         B, N_x, N_y, N_theta = x.shape
         # Implement the RatSLAM smoothing logic here
         eps = generate_epsilon(N_x, N_y, sigma=self.sigma_xy, device=self.device)
@@ -115,7 +115,7 @@ class RatSLAMSmoothing(Smoothing):
             device=self.device,
         )
 
-        P = update_internal_P_jk_batched(P, eps)
+        P = update_internal_P_jk_batched(x, eps)
         P = update_inter_layer_P_ijk_batched(P, delta)
         P = global_inhibition_batched(P, inhibition_constant=self.inhibition_constant)
         P = batch_rescale(P)
