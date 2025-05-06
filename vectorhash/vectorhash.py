@@ -15,9 +15,10 @@ from hippocampal_sensory_layers import (
     ExactPseudoInverseHippocampalSensoryLayer,
     IterativeBidirectionalPseudoInverseHippocampalSensoryLayer,
 )
+from smoothing import Smoothing, SoftmaxSmoothing
 from vectorhash_functions import expectation_of_relu_normal
 from shifts import ModularConvolutionalShift
-from clean_scaffold import GridHippocampalScaffold, SoftmaxSmoothing
+from clean_scaffold import GridHippocampalScaffold
 
 
 class VectorHaSH:
@@ -420,16 +421,34 @@ def build_scaffold(
     shapes: list[list[int]],
     N_h: int,
     initalization_method="by_sparsity",
-    W_gh_var=1,
     percent_nonzero_relu=0.9,
+    W_gh_var=1,
     sparse_initialization=0.1,
-    smoothing=SoftmaxSmoothing(T=1e-4),
-    shift=ModularConvolutionalShift(),
+    smoothing: Smoothing = SoftmaxSmoothing(T=1e-4),
+    shift=RatShift(),
     device=None,
     relu=True,
     limits=None,
     sanity_check=False,
 ):
+    """Build a grid-hippocampal scaffold.
+
+    Returns a tuple of (scaffold, mean_h), where scaffold is the grid-hippocampal scaffold and mean_h is the mean of the distribution of h (relevant for Hebbian hippocampal-sensory layers).
+
+    Args:
+        shapes (list[list[int]]): List of module sizes. For example, for a scaffold with 2 modules with sizes (3,3,4) and (4,4,5) respectively, shapes = [[3,3,4],[4,4,5]].
+        N_h (int): Number of hippocampal neurons.
+        initialization_method: Parameters for the initializer. See build_initializer for more details.
+        percent_nonzero_relu: Parameters for the initializer. See build_initializer for more details.
+        W_gh_var: Parameters for the initializer. See build_initializer for more details.
+        sparse_initialization: Parameters for the initializer. See build_initializer for more details.
+        smoothing (_Smoothing_): Smoothing method to use
+        shift (_type_, optional): Velocity shift method to use.
+        device (_type_, optional): _description_. Defaults to None.
+        relu (bool, optional): _description_. Whether or not to ReLU the output of W_hg g. The effect of setting this to False has not really been explored.
+        limits (_type_, optional): _description_. Defaults to None.
+        sanity_check (bool, optional): _description_. Whether or not to run a sanity check on the scaffold once it is built. The sanity check ensures that denoise(W_gh W_hg g) = g for all onehot fixed points g.
+    """
     initializer, relu_theta, mean_h = build_initializer(
         shapes,
         initalization_method=initalization_method,
@@ -438,8 +457,7 @@ def build_scaffold(
         sparse_initialization=sparse_initialization,
         device=device,
     )
-    smoothing = smoothing
-    # shift = build_shift(shift, device)
+
     scaffold = GridHippocampalScaffold(
         shapes=shapes,
         N_h=N_h,
@@ -453,6 +471,9 @@ def build_scaffold(
         relu=relu,
         limits=limits,
     )
+
+    if relu == False:
+        mean_h = 0
 
     return scaffold, mean_h
 
@@ -489,8 +510,8 @@ def build_vectorhash_architecture(
         shapes,
         N_h,
         initalization_method=initalization_method,
-        W_gh_var=W_gh_var,
         percent_nonzero_relu=percent_nonzero_relu,
+        W_gh_var=W_gh_var,
         sparse_initialization=sparse_initialization,
         device=device,
         relu=relu,
