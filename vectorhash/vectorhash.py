@@ -57,7 +57,7 @@ class VectorHaSH:
         else:
             h = self.scaffold.hippocampal_from_grid(self.scaffold.g)[0]
         # print("current h we are learning", h)
-        # print("is h in the h_book", torch.allclose(h, self.H[self.H.nonzero()[-1][0]]))
+        # print("is h in the h_book", torch.allclose(h, self.scaffold.H[self.scaffold.H.nonzero()[-1][0]]))
 
         self.hippocampal_sensory_layer.learn(h, s)
         if debug:
@@ -252,8 +252,10 @@ class VectorHaSH:
 
     def learn_direct(self, observations, offset=0):
         for i in tqdm(range(len(observations))):
-            self.g = self.G[i + offset]
-            self.store_memory(observations[i], debug=False)
+            self.scaffold.modules = self.scaffold.modules_from_g(
+                self.scaffold.G[i + offset]
+            )
+            self.store_memory(observations[i], debug=True, hard=True)
 
     @torch.no_grad()
     def learn(self, observation, velocity=None):
@@ -490,12 +492,13 @@ def build_vectorhash_architecture(
     hippocampal_sensory_layer_type="iterative_pseudoinverse",
     hidden_layer_factor=1,
     stationary=True,
-    epsilon_hs=1,
-    epsilon_sh=1,
-    relu=False,
+    epsilon_hs=0.1,
+    epsilon_sh=0.1,
+    relu=True,
     shift=ModularConvolutionalShift(),
     smoothing=SoftmaxSmoothing(T=1e-6),
     limits=None,
+    sanity_check=False,
 ):
     assert initalization_method in ["by_scaling", "by_sparsity"]
     assert hippocampal_sensory_layer_type in [
@@ -518,6 +521,7 @@ def build_vectorhash_architecture(
         smoothing=smoothing,
         shift=shift,
         limits=limits,
+        sanity_check=sanity_check,
     )
     shift.device = device
 

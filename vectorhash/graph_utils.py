@@ -1,6 +1,7 @@
 import os
 import pathlib
 import matplotlib.axes
+import matplotlib.figure
 import matplotlib.pyplot as plt
 from clean_scaffold import GridHippocampalScaffold
 
@@ -307,3 +308,12 @@ def plot_certainty_on_ax(
             certainty_sensory[2],
         ],
     ).patches
+
+
+def plot_imgs_side_by_side(
+    imgs: list[list[int]], axs: list[matplotlib.axes.Axes], titles: list[str], fig: matplotlib.figure.Figure
+):
+    for img, ax, title in zip(imgs, axs, titles):
+        ax.set_title(title)
+        im = ax.imshow(img)
+        cbar = fig.colorbar(im, ax=ax)
