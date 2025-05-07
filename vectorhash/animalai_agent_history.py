@@ -299,8 +299,8 @@ class VectorhashAgentHistoryWithCertainty:
         self._theta_distributions.append(theta_distribution.clone().cpu())
         self._true_images.append(true_image.clone().cpu())
         self._estimated_images.append(estimated_image.clone().cpu())
-        self._certainty_odometry.append(certainty_odometry)
-        self._certainty_sensory.append(certainty_sensory)
+        self._certainty_odometry.append(certainty_odometry.clone().cpu())
+        self._certainty_sensory.append(certainty_sensory.clone().cpu())
 
     def make_image_video(self):
         fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
@@ -465,8 +465,12 @@ class VectorhashAgentKidnappedHistoryWithCertainty:
         self._theta_distributions.append(
             theta_distribution.clone().cpu() if theta_distribution is not None else None
         )
-        self._certainty_odometry.append(certainty_odometry)
-        self._certainty_sensory.append(certainty_sensory)
+        self._certainty_odometry.append(
+            certainty_odometry.clone().cpu() if certainty_odometry is not None else None
+        )
+        self._certainty_sensory.append(
+            certainty_sensory.clone().cpu() if certainty_sensory is not None else None
+        )
 
     def make_image_video(self):
         fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
