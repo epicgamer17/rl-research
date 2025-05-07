@@ -2,7 +2,10 @@ import torch
 from gymnasium import Env
 from vectorhash import VectorHaSH
 from skimage import color
-from animalai_agent_history import VectorhashAgentHistory, VectorhashAgentKidnappedHistory
+from animalai_agent_history import (
+    VectorhashAgentHistoryWithCertainty,
+    VectorhashAgentKidnappedHistoryWithCertainty,
+)
 
 
 class AnimalAIVectorhashAgent:
@@ -37,7 +40,7 @@ class AnimalAIVectorhashAgent:
         print(image.flatten().shape)
 
         self.vectorhash.store_memory(image.flatten().to(self.device))
-        self.history = VectorhashAgentHistory()
+        self.history = VectorhashAgentHistoryWithCertainty()
 
     def postprocess_image(self, image):
         grayscale_img = color.rgb2gray(image)
@@ -110,12 +113,22 @@ class AnimalAIVectorhashAgent:
         old_positions = scaffold.get_mean_positions()
         print("old positions:", old_positions)
 
-        ### odometry update
+        ### odometry update and estimate certainty
         scaffold.shift(v)
-        g_denoised = scaffold.denoise(scaffold.g, onehot=False)[0]
-        scaffold.modules = scaffold.modules_from_g(g_denoised)
+        g_o = scaffold.denoise(scaffold.g, onehot=False)[0]
         odometry_certainty = scaffold.estimate_certainty(
-            limits=torch.Tensor([2, 2, 30])
+            limits=torch.Tensor([2, 2, 30]), g=g_o
+        )
+        scaffold.modules = scaffold.modules_from_g(g_o)
+
+        ### estimate sensory certainty
+        g_s = scaffold.denoise(
+            scaffold.grid_from_hippocampal(
+                hs_layer.hippocampal_from_sensory(image.flatten().to(self.device))[0]
+            )[0]
+        )[0]
+        sensory_certainty = scaffold.estimate_certainty(
+            limits=torch.Tensor([2, 2, 30]), g=g_s
         )
 
         ### get new position distribution
@@ -125,57 +138,40 @@ class AnimalAIVectorhashAgent:
         if self.store_new:
             new = False
             for i in range(len(scaffold.modules[0].shape)):
-                if torch.abs(new_positions[i]- old_positions[i]) > lims[i]:
+                if torch.abs(new_positions[i] - old_positions[i]) > lims[i]:
                     new = True
         else:
             new = True
 
         ## sensory update
         if new:
-            sensory_g = scaffold.denoise(
-                scaffold.grid_from_hippocampal(
-                    hs_layer.hippocampal_from_sensory(image.flatten().to(self.device))[
-                        0
-                    ]
-                )[0]
-            )[0]
-            sensory_certainty = scaffold.estimate_certainty(
-                limits=torch.Tensor([2, 2, 30]), g=sensory_g
-            )
             if self.additive_shift:
-                scaffold.additive_shift(new_g=sensory_g)
+                scaffold.additive_shift(new_g=g_s)
             else:
-                scaffold.multiplicative_shift(new_g=sensory_g)
+                scaffold.multiplicative_shift(new_g=g_s)
 
             image_scaffold = [0] * len(scaffold.modules)
             for i in range(len(scaffold.modules)):
                 if sensory_certainty[i] > odometry_certainty[i]:
-                    image_scaffold[i] = scaffold.modules_from_g(sensory_g)[i]
+                    image_scaffold[i] = scaffold.modules_from_g(g_s)[i]
                 else:
-                    image_scaffold[i] = scaffold.modules_from_g(g_denoised)[i]
+                    image_scaffold[i] = scaffold.modules_from_g(g_o)[i]
 
-            self.vectorhash.store_memory(image.flatten().to(self.device), hard=self.hard)
-        # if sensory_certainty > odometry_certainty:
-        #     self.vectorhash.modules = scaffold.modules_from_g(sensory_g)
-        #     self.vectorhash.scaffold._g()
-        #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
-        # else:
+            self.vectorhash.store_memory(
+                image.flatten().to(self.device), hard=self.hard
+            )
 
-        #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=False)
-        ### if we are more certain of odometry than sensory, then store a memory
-        # print(f"odometry certainty: {odometry_certainty}, sensory certainty: {sensory_certainty}")
-        # if torch.all(odometry_certainty > sensory_certainty):
-        #     self.vectorhash.store_memory(image.flatten().to(self.device), hard=True)
-        # else:
-        #     print(
-        #         f"Certainty {sensory_certainty.round(decimals=2)}<{self.vectorhash.certainty}, not storing memory."
-        #     )
-
-        ### update AAI data
         self.animal_ai_data["exact_position"] = p
         self.animal_ai_data["exact_angle"] += dtheta
 
-        return image, p, self.animal_ai_data["exact_angle"], v
+        return (
+            image,
+            p,
+            self.animal_ai_data["exact_angle"],
+            v,
+            odometry_certainty,
+            sensory_certainty,
+        )
 
     def calculate_position_err(self):
         # x_dist, y_dist, theta_dist = [
@@ -250,6 +246,20 @@ class AnimalAIVectorhashAgent:
                 )[0]
             )[0].reshape(84, 84)
         )
+        limits = torch.Tensor([2, 2, 30])
+        certainty_o = self.vectorhash.scaffold.estimate_certainty(
+            limits, g=self.vectorhash.scaffold.g
+        )
+        certainty_s = self.vectorhash.scaffold.estimate_certainty(
+            limits,
+            g=self.vectorhash.scaffold.denoise(
+                self.vectorhash.scaffold.grid_from_hippocampal(
+                    self.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(
+                        img.flatten().to(self.device)
+                    )
+                ),
+            ),
+        )
         self.history.append(
             true_image=img,
             true_angle=(
@@ -283,12 +293,16 @@ class AnimalAIVectorhashAgent:
             x_distribution=self.vectorhash.scaffold.expand_distribution(0),
             y_distribution=self.vectorhash.scaffold.expand_distribution(1),
             theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
+            certainty_odometry=certainty_o,
+            certainty_s=certainty_s,
         )
 
         errs = [self.calculate_position_err()]
         for i in range(len(path)):
             action = path[i]
-            true_img, true_p, true_ang, v = self.step(action, noise=noise)
+            true_img, true_p, true_ang, v, certainty_o, certainty_s = self.step(
+                action, noise=noise
+            )
             estimated_img = (
                 self.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
                     self.vectorhash.scaffold.hippocampal_from_grid(
@@ -326,6 +340,8 @@ class AnimalAIVectorhashAgent:
                 x_distribution=self.vectorhash.scaffold.expand_distribution(0),
                 y_distribution=self.vectorhash.scaffold.expand_distribution(1),
                 theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
+                certainty_odometry=certainty_o,
+                certainty_s=certainty_s,
             )
             if i % 100 == 0:
                 print(f"Step {i}: {self.calculate_position_err()}")
@@ -346,7 +362,9 @@ def kidnapping_test(
 
     for action, noise, visible in zip(path, noise_list, visible):
         if visible:
-            true_img, true_p, true_ang, v = agent.step(action, noise=noise)
+            true_img, true_p, true_ang, v, certainty_o, certainty_s = agent.step(
+                action, noise=noise
+            )
 
             estimated_img = (
                 agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
