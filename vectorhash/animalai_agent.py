@@ -258,7 +258,7 @@ class AnimalAIVectorhashAgent:
                         img.flatten().to(self.device)
                     )
                 ),
-            ),
+            )[0],
         )
         self.history.append(
             true_image=img,
@@ -294,7 +294,7 @@ class AnimalAIVectorhashAgent:
             y_distribution=self.vectorhash.scaffold.expand_distribution(1),
             theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
             certainty_odometry=certainty_o,
-            certainty_s=certainty_s,
+            certainty_sensory=certainty_s,
         )
 
         errs = [self.calculate_position_err()]
@@ -341,7 +341,7 @@ class AnimalAIVectorhashAgent:
                 y_distribution=self.vectorhash.scaffold.expand_distribution(1),
                 theta_distribution=self.vectorhash.scaffold.expand_distribution(2),
                 certainty_odometry=certainty_o,
-                certainty_s=certainty_s,
+                certainty_sensory=certainty_s,
             )
             if i % 100 == 0:
                 print(f"Step {i}: {self.calculate_position_err()}")

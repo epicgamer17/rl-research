@@ -361,12 +361,12 @@ class VectorhashAgentHistoryWithCertainty:
             y_true_pos_artist[0].set_data([self._true_positions[frame][1]], [1.0])
             theta_true_pos_artist[0].set_data([self._true_angles[frame]], [1.0])
 
-            certainty_artists[0].set_height([self._certainty_odometry[frame][0]])
-            certainty_artists[1].set_height([self._certainty_odometry[frame][1]])
-            certainty_artists[2].set_height([self._certainty_odometry[frame][2]])
-            certainty_artists[3].set_height([self._certainty_sensory[frame][0]])
-            certainty_artists[4].set_height([self._certainty_sensory[frame][1]])
-            certainty_artists[5].set_height([self._certainty_sensory[frame][2]])
+            certainty_artists[0].set_height(self._certainty_odometry[frame][0])
+            certainty_artists[1].set_height(self._certainty_odometry[frame][1])
+            certainty_artists[2].set_height(self._certainty_odometry[frame][2])
+            certainty_artists[3].set_height(self._certainty_sensory[frame][0])
+            certainty_artists[4].set_height(self._certainty_sensory[frame][1])
+            certainty_artists[5].set_height(self._certainty_sensory[frame][2])
 
             text_artist.set_text(f"t={frame}")
             return (
@@ -379,7 +379,7 @@ class VectorhashAgentHistoryWithCertainty:
                 x_true_pos_artist,
                 y_true_pos_artist,
                 theta_true_pos_artist,
-            ) + certainty_artists
+            ) + tuple(certainty_artists)
 
         self.ani = animation.FuncAnimation(
             fig, plot_func, len(self._estimated_images) - 1, blit=False
@@ -540,12 +540,12 @@ class VectorhashAgentKidnappedHistoryWithCertainty:
                 artists.append(theta_dist_artist)
 
             if self._certainty_odometry[frame] is not None:
-                certainty_artists[0].set_height([self._certainty_odometry[frame][0]])
-                certainty_artists[1].set_height([self._certainty_odometry[frame][1]])
-                certainty_artists[2].set_height([self._certainty_odometry[frame][2]])
-                certainty_artists[3].set_height([self._certainty_sensory[frame][0]])
-                certainty_artists[4].set_height([self._certainty_sensory[frame][1]])
-                certainty_artists[5].set_height([self._certainty_sensory[frame][2]])
+                certainty_artists[0].set_height(self._certainty_odometry[frame][0])
+                certainty_artists[1].set_height(self._certainty_odometry[frame][1])
+                certainty_artists[2].set_height(self._certainty_odometry[frame][2])
+                certainty_artists[3].set_height(self._certainty_sensory[frame][0])
+                certainty_artists[4].set_height(self._certainty_sensory[frame][1])
+                certainty_artists[5].set_height(self._certainty_sensory[frame][2])
 
                 artists += certainty_artists
 
