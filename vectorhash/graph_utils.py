@@ -292,9 +292,25 @@ def plot_errors_on_axes(
 
 
 def plot_certainty_on_ax(
-    certainty_odometry, certainty_sensory, ax: matplotlib.axes.Axes
+    certainty_odometry,
+    certainty_sensory,
+    ax: matplotlib.axes.Axes,
 ):
     return ax.bar(
-        ["Odometry certainty", "Sensory certainty"],
-        [certainty_odometry, certainty_sensory],
+        [
+            "Odometry certainty x",
+            "Odometry certainty y",
+            "Odometry certainty theta",
+            "Sensory certainty x",
+            "Sensory certainty y",
+            "Sensory certainty theta",
+        ],
+        [
+            certainty_odometry[0],
+            certainty_odometry[1],
+            certainty_odometry[2],
+            certainty_sensory[0],
+            certainty_sensory[1],
+            certainty_sensory[2],
+        ],
     ).patches
