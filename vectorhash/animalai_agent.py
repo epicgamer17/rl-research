@@ -134,7 +134,7 @@ class AnimalAIVectorhashAgent:
         ### get new position distribution
         new_positions = scaffold.get_mean_positions()
         print("new positions:", new_positions)
-        lims = torch.Tensor([2, 2, 10])
+        lims = torch.Tensor([0.5, 0.5, 6])
         if self.store_new:
             new = False
             for i in range(len(scaffold.modules[0].shape)):
@@ -358,7 +358,7 @@ def kidnapping_test(
     noise_list,
     visible: torch.Tensor,
 ):
-    history = VectorhashAgentKidnappedHistory()
+    history = VectorhashAgentKidnappedHistoryWithCertainty()
 
     for action, noise, visible in zip(path, noise_list, visible):
         if visible:
@@ -404,6 +404,8 @@ def kidnapping_test(
                 y_distribution=agent.vectorhash.scaffold.expand_distribution(1),
                 theta_distribution=agent.vectorhash.scaffold.expand_distribution(2),
                 seen=True,
+                certainty_odometry=certainty_o,
+                certainty_sensory=certainty_s,
             )
 
         else:
@@ -455,6 +457,8 @@ def kidnapping_test(
                 y_distribution=None,
                 theta_distribution=None,
                 seen=False,
+                certainty_odometry=None,
+                certainty_sensory=None,
             )
 
     return history

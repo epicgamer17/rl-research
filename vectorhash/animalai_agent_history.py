@@ -303,7 +303,7 @@ class VectorhashAgentHistoryWithCertainty:
         self._certainty_sensory.append(certainty_sensory.clone().cpu())
 
     def make_image_video(self):
-        fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
+        fig = plt.figure(layout="constrained", figsize=(7, 7), dpi=100)
         gs = GridSpec(6, 6, figure=fig)
 
         text_artist = fig.suptitle("t=0")
@@ -388,7 +388,7 @@ class VectorhashAgentHistoryWithCertainty:
         return self.ani
 
     def plot_vector_position(self):
-        fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
+        fig = plt.figure(layout="constrained", figsize=(7, 7), dpi=100)
         ax = fig.add_subplot(1, 1, 1)
         ax.set_title("Vector Position")
         ax.set_xlim(-20, 20)
@@ -473,7 +473,7 @@ class VectorhashAgentKidnappedHistoryWithCertainty:
         )
 
     def make_image_video(self):
-        fig = plt.figure(layout="constrained", figsize=(6, 6), dpi=100)
+        fig = plt.figure(layout="constrained", figsize=(7, 7), dpi=100)
         gs = GridSpec(6, 6, figure=fig)
 
         text_artist = fig.suptitle("t=0, seen=True")

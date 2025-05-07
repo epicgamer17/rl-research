@@ -297,14 +297,7 @@ def plot_certainty_on_ax(
     ax: matplotlib.axes.Axes,
 ):
     return ax.bar(
-        [
-            "Odometry certainty x",
-            "Odometry certainty y",
-            "Odometry certainty theta",
-            "Sensory certainty x",
-            "Sensory certainty y",
-            "Sensory certainty theta",
-        ],
+        ["o. x", "o. y", "o. θ", "s. x", "s. y", "s. θ"],
         [
             certainty_odometry[0],
             certainty_odometry[1],
