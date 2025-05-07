@@ -40,6 +40,7 @@ class AnimalAIVectorhashAgent:
         print(image.flatten().shape)
 
         self.vectorhash.store_memory(image.flatten().to(self.device))
+        self.previous_stored_postition = self.vectorhash.scaffold.get_mean_positions()
         self.history = VectorhashAgentHistoryWithCertainty()
 
     def postprocess_image(self, image):
@@ -109,10 +110,6 @@ class AnimalAIVectorhashAgent:
         scaffold = self.vectorhash.scaffold
         hs_layer = self.vectorhash.hippocampal_sensory_layer
 
-        ### get previous position distribution
-        old_positions = scaffold.get_mean_positions()
-        print("old positions:", old_positions)
-
         ### odometry update and estimate certainty
         scaffold.shift(v)
         g_o = scaffold.denoise(scaffold.g, onehot=False)[0]
@@ -138,8 +135,9 @@ class AnimalAIVectorhashAgent:
         if self.store_new:
             new = False
             for i in range(len(scaffold.modules[0].shape)):
-                if torch.abs(new_positions[i] - old_positions[i]) > lims[i]:
+                if torch.abs(new_positions[i] - self.previous_stored_postition[i]) > lims[i]:
                     new = True
+
         else:
             new = True
 
@@ -160,6 +158,7 @@ class AnimalAIVectorhashAgent:
             self.vectorhash.store_memory(
                 image.flatten().to(self.device), hard=self.hard
             )
+            self.previous_stored_postition = scaffold.get_mean_positions()
 
         self.animal_ai_data["exact_position"] = p
         self.animal_ai_data["exact_angle"] += dtheta
