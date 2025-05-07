@@ -6,7 +6,7 @@ import copy
 from shifts import *
 from vectorhash_functions import (
     chinese_remainder_theorem,
-    circular_mean,
+    circular_mean_weighted,
     expand_distribution,
 )
 from tqdm import tqdm
@@ -396,8 +396,8 @@ class GridHippocampalScaffold:
         for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in modules]
             v = expand_distribution(marginals)
-            mean = circular_mean(
-                v * torch.arange(0, len(v), device=self.device), len(v)
+            mean = circular_mean_weighted(
+                torch.arange(0, len(v), device=self.device), v, len(v)
             )
             if mean > len(v) // 2:
                 mean -= len(v)
@@ -421,7 +421,9 @@ class GridHippocampalScaffold:
         for d in range(len(self.shapes[0])):
             v = self.expand_distribution(d)
             mean = (
-                circular_mean(v * torch.arange(0, len(v), device=self.device), len(v))
+                circular_mean_weighted(
+                    torch.arange(0, len(v), device=self.device), v, len(v)
+                )
                 / self.scale_factor[d]
             )
             means[d] = mean
