@@ -9,6 +9,8 @@ from competetive_attractor_dynamics import (
     batch_rescale,
 )
 
+_epsilon = 1e-8
+
 
 class Smoothing:
     def __init__(self):
@@ -37,7 +39,8 @@ class SoftmaxSmoothing(Smoothing):
         maxes = torch.max(y, dim=0).values
         y = y - maxes
         exp = torch.exp(y / self.T)
-        out = (exp / torch.sum(exp, dim=0)).T
+        sums = torch.sum(exp, dim=0) + _epsilon
+        out = (exp / sums).T
         return out.reshape(*x.shape)
 
     def __str__(self):
@@ -54,7 +57,8 @@ class PolynomialSmoothing(Smoothing):
     def __call__(self, x):
         y = x.flatten(1).T
         y = y**self.k
-        out = (y / torch.sum(y, dim=0)).T
+        sums = torch.sum(y, dim=0) + _epsilon
+        out = (y / sums).T
         return out.reshape(*x.shape)
 
     def __str__(self):
@@ -104,7 +108,9 @@ class RatSLAMSmoothing(Smoothing):
         self.device = device
 
     def __call__(self, x):
-        assert len(x.shape) == 4, f"x should be a 4D tensor (B, x, y, theta), instead got {x.shape}"
+        assert (
+            len(x.shape) == 4
+        ), f"x should be a 4D tensor (B, x, y, theta), instead got {x.shape}"
         B, N_x, N_y, N_theta = x.shape
         # Implement the RatSLAM smoothing logic here
         eps = generate_epsilon(N_x, N_y, sigma=self.sigma_xy, device=self.device)
