@@ -246,6 +246,7 @@ def plot_error_over_time(
         plt.show()
     return fig, ax
 
+
 def error_test(true, belief):
     loss = 0
     for i in range(len(belief)):
@@ -288,3 +289,12 @@ def plot_errors_on_axes(
     axis.set_ylabel("Error")
 
     return axis
+
+
+def plot_certainty_on_ax(
+    certainty_odometry, certainty_sensory, ax: matplotlib.axes.Axes
+):
+    return ax.bar(
+        ["Odometry certainty", "Sensory certainty"],
+        [certainty_odometry, certainty_sensory],
+    ).patches
