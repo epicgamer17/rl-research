@@ -132,3 +132,14 @@ class RatSLAMSmoothing(Smoothing):
             super().__str__()
             + f" (sigma_xy={self.sigma_xy}, sigma_theta={self.sigma_theta}, inhibition_constant={self.inhibition_constant}, delta_gamma={self.delta_gamma})"
         )
+
+
+class SequentialSmoothing(Smoothing):
+    def __init__(self, methods: list[Smoothing]):
+        self.methods = methods
+
+    def __call__(self, x):
+        for method in self.methods:
+            x = method(x)
+
+        return x
