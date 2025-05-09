@@ -3,8 +3,8 @@ from gymnasium import Env
 from vectorhash import VectorHaSH
 from skimage import color
 from animalai_agent_history import (
-    VectorhashAgentHistoryWithCertainty,
-    VectorhashAgentKidnappedHistoryWithCertainty,
+    VectorhashAgentHistory,
+    VectorhashAgentKidnappedHistory,
 )
 
 
@@ -41,7 +41,7 @@ class AnimalAIVectorhashAgent:
 
         self.vectorhash.store_memory(image.flatten().to(self.device))
         self.previous_stored_postition = self.vectorhash.scaffold.get_mean_positions()
-        self.history = VectorhashAgentHistoryWithCertainty()
+        self.history = VectorhashAgentHistory()
 
     def postprocess_image(self, image):
         grayscale_img = color.rgb2gray(image)
@@ -357,7 +357,7 @@ def kidnapping_test(
     noise_list,
     visible: torch.Tensor,
 ):
-    history = VectorhashAgentKidnappedHistoryWithCertainty()
+    history = VectorhashAgentKidnappedHistory()
 
     for action, noise, visible in zip(path, noise_list, visible):
         if visible:
