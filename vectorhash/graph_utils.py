@@ -311,9 +311,17 @@ def plot_certainty_on_ax(
 
 
 def plot_imgs_side_by_side(
-    imgs: list[list[int]], axs: list[matplotlib.axes.Axes], titles: list[str], fig: matplotlib.figure.Figure
+    imgs: list[list[int]],
+    axs: list[matplotlib.axes.Axes],
+    titles: list[str],
+    fig: matplotlib.figure.Figure,
 ):
+    first = True
     for img, ax, title in zip(imgs, axs, titles):
         ax.set_title(title)
-        im = ax.imshow(img)
+        if first:
+            im = ax.imshow(img)
+            first = False
+        else:
+            ax.imshow(img)
         cbar = fig.colorbar(im, ax=ax)
