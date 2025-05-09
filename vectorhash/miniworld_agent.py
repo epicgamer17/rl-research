@@ -31,7 +31,7 @@ class MiniworldVectorhashAgent(VectorhashAgent):
         p = self.get_true_pos()
         return img, p
 
-    def _obs_postpreprocess(self, step_tuple):
+    def _obs_postpreprocess(self, step_tuple, action):
         obs, reward, terminated, truncated, info = step_tuple
         img = self.postprocess_img(obs)
         p = self.get_true_pos()

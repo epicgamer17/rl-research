@@ -13,7 +13,7 @@ class TrueData:
         self.true_position = pos
 
     def get_relative_true_pos(self):
-        return self.true_position - self.true_position
+        return self.true_position - self.start_position
 
 
 class VectorhashAgent:
@@ -57,7 +57,7 @@ class VectorhashAgent:
         """
         pass
 
-    def _obs_postpreprocess(self, step_tuple) -> tuple[torch.Tensor, torch.Tensor]:
+    def _obs_postpreprocess(self, step_tuple, action) -> tuple[torch.Tensor, torch.Tensor]:
         """Do environment-specific work to postprocess the tuple returned by env.step()
 
         Returns a tuple `(new_image, new_position)`
@@ -71,11 +71,11 @@ class VectorhashAgent:
         """
         ### env-specific observation processing
         step_tuple = self.env.step(action)
-        new_img, new_p = self._obs_postpreprocess(step_tuple)
-        self.true_data.true_position = new_p
+        new_img, new_p = self._obs_postpreprocess(step_tuple, action)
 
         ### calculation of noisy input
         dp = new_p - self.true_data.true_position
+        self.true_data.true_position = new_p
         noisy_dp = new_p
         if noise_dist != None:
             noisy_dp += noise_dist.sample(3)
@@ -113,7 +113,7 @@ class VectorhashAgent:
             new = False
             for i in range(len(scaffold.modules[0].shape)):
                 if (
-                    torch.abs(new_positions[i] - self.previous_stored_postition[i])
+                    torch.abs(new_positions[i] - self.previous_stored_position[i])
                     > lims[i]
                 ):
                     new = True
@@ -138,7 +138,7 @@ class VectorhashAgent:
             self.vectorhash.store_memory(
                 new_img.flatten().to(self.device), hard=self.hard_store
             )
-            self.previous_stored_postition = scaffold.get_mean_positions()
+            self.previous_stored_position = scaffold.get_mean_positions()
 
         return new_img, odometry_certainty, sensory_certainty
 
@@ -164,7 +164,7 @@ def path_test(
 
     ## store initial observations
     start_img, start_pos = agent._env_reset(agent.env)
-    agent.vectorhash.store_memory(start_img.to(agent.device))
+    agent.vectorhash.store_memory(start_img.flatten().to(agent.device))
     agent.true_data = TrueData(start_pos)
 
     ## aliases
@@ -244,7 +244,7 @@ def kidnapping_test(
 
     ## store initial observations
     start_img, start_pos = agent._env_reset(agent.env)
-    agent.vectorhash.store_memory(start_img.to(agent.device))
+    agent.vectorhash.store_memory(start_img.flatten().to(agent.device))
     agent.true_data = TrueData(start_pos)
 
     ## aliases
@@ -304,10 +304,11 @@ def kidnapping_test(
                 x_distribution=agent.vectorhash.scaffold.expand_distribution(0),
                 y_distribution=agent.vectorhash.scaffold.expand_distribution(1),
                 theta_distribution=agent.vectorhash.scaffold.expand_distribution(2),
+                seen=True
             )
         else:
             step_tuple = agent.env.step(action)
-            new_img, new_p = agent._obs_postpreprocess(step_tuple)
+            new_img, new_p = agent._obs_postpreprocess(step_tuple, action)
             agent.true_data.true_position = new_p
 
             history.append(
@@ -319,8 +320,8 @@ def kidnapping_test(
                 x_distribution=None,
                 y_distribution=None,
                 theta_distribution=None,
-                seen=False,
                 certainty_odometry=None,
                 certainty_sensory=None,
+                seen=False,
             )
     return history
