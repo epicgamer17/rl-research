@@ -5,16 +5,25 @@ from skimage import color
 
 
 class MiniworldVectorhashAgent(VectorhashAgent):
+    """
+    Actions:
+    - 0: turn left
+    - 1: turn right
+    - 2: forward
+    - 3: back
+    - 4-7: object interaction, not used
+    """
+
     def postprocess_img(self, image):
         rescaled = image / 255
         grayscale_img = color.rgb2gray(rescaled)
         torch_img = torch.from_numpy(grayscale_img)
-        return torch_img
+        return torch_img.float()
 
-    def get_true_pos(env):
+    def get_true_pos(self, env):
         p_x, p_y, p_z = env.get_wrapper_attr("agent").pos
         angle = env.get_wrapper_attr("agent").dir
-        p = torch.tensor([p_x, p_z, angle])
+        p = torch.tensor([p_x, p_z, angle]).float().to(self.device)
         return p
 
     def _get_world_size(self, env):
@@ -23,16 +32,16 @@ class MiniworldVectorhashAgent(VectorhashAgent):
         min_z = env.get_wrapper_attr("min_z")
         max_z = env.get_wrapper_attr("max_z")
 
-        return torch.tensor([max_x - min_x, max_z - min_z, 2 * math.pi])
+        return torch.tensor([max_x - min_x, max_z - min_z, 2 * math.pi]).float()
 
     def _env_reset(self, env):
         obs, info = env.reset()
         img = self.postprocess_img(obs)
-        p = self.get_true_pos()
+        p = self.get_true_pos(env)
         return img, p
 
     def _obs_postpreprocess(self, step_tuple, action):
         obs, reward, terminated, truncated, info = step_tuple
         img = self.postprocess_img(obs)
-        p = self.get_true_pos()
+        p = self.get_true_pos(self.env)
         return img, p

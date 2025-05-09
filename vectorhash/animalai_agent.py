@@ -6,23 +6,15 @@ from agent import VectorhashAgent
 class AnimalAIVectorhashAgent(VectorhashAgent):
     """
     Actions:
-        0 - nothing
-
-        1 - rotate right by 6 degrees
-
-        2 - rotate left by 6 degrees
-
-        3 - accelerate forward
-
-        4 - accelerate forward and rotate CW by 6 degrees
-
-        5 - accelerate forward and rotate CCW by 6 degrees
-
-        6 - accelerate backward
-
-        7 - accelerate backward and rotate CW by 6 degrees
-
-        8 - accelerate backward and rotate CCW by 6 degrees
+    - 0: nothing
+    - 1: rotate right by 6 degrees
+    - 2: rotate left by 6 degrees
+    - 3: accelerate forward
+    - 4: accelerate forward and rotate CW by 6 degrees
+    - 5: accelerate forward and rotate CCW by 6 degrees
+    - 6: accelerate backward
+    - 7: accelerate backward and rotate CW by 6 degrees
+    - 8: accelerate backward and rotate CCW by 6 degrees
     """
 
     def postprocess_image(self, image):
@@ -42,7 +34,7 @@ class AnimalAIVectorhashAgent(VectorhashAgent):
         return p
 
     def _get_world_size(self, env):
-        return torch.Tensor(40, 40, 360)
+        return torch.tensor([40, 40, 360])
 
     def _env_reset(self, env):
         obs, info = env.reset()

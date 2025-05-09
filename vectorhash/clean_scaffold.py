@@ -417,7 +417,7 @@ class GridHippocampalScaffold:
 
         Returns torch.Tensor (x,y,θ)
         """
-        means = torch.zeros(len(self.shapes[0]))
+        means = torch.zeros(len(self.shapes[0]), device=self.device)
         for d in range(len(self.shapes[0])):
             v = self.expand_distribution(d)
             mean = (

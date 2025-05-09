@@ -46,8 +46,7 @@ class VectorhashAgent:
         pass
 
     def _get_world_size(self, env: Env):
-        """Get the world size of the environment
-        """
+        """Get the world size of the environment"""
         pass
 
     def _env_reset(self, env: Env) -> tuple[torch.Tensor, torch.Tensor]:
@@ -57,14 +56,16 @@ class VectorhashAgent:
         """
         pass
 
-    def _obs_postpreprocess(self, step_tuple, action) -> tuple[torch.Tensor, torch.Tensor]:
+    def _obs_postpreprocess(
+        self, step_tuple, action
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Do environment-specific work to postprocess the tuple returned by env.step()
 
         Returns a tuple `(new_image, new_position)`
         """
         pass
 
-    def step(self, action: int, noise_dist: torch.distributions.Distribution = None):
+    def step(self, action: int, limits, noise_dist: torch.distributions.Distribution = None):
         """Take an environment step and apply the SLAM algorithm accordingly. Also updates internal true position attribute.
 
         Returns a tuple `(new_img, odometry_certainty, sensory_certainty)`
@@ -90,9 +91,7 @@ class VectorhashAgent:
         ### odometry update and estimate certainty
         scaffold.shift(v)
         g_o = scaffold.denoise(scaffold.g, onehot=False)[0]
-        odometry_certainty = scaffold.estimate_certainty(
-            limits=torch.Tensor([2, 2, 30]), g=g_o
-        )
+        odometry_certainty = scaffold.estimate_certainty(limits=limits, g=g_o)
         scaffold.modules = scaffold.modules_from_g(g_o)
 
         ### estimate sensory certainty
@@ -101,9 +100,7 @@ class VectorhashAgent:
                 hs_layer.hippocampal_from_sensory(new_img.flatten().to(self.device))[0]
             )[0]
         )[0]
-        sensory_certainty = scaffold.estimate_certainty(
-            limits=torch.Tensor([2, 2, 30]), g=g_s
-        )
+        sensory_certainty = scaffold.estimate_certainty(limits=limits, g=g_s)
 
         ### get new position distribution
         new_positions = scaffold.get_mean_positions()
@@ -143,8 +140,10 @@ class VectorhashAgent:
         return new_img, odometry_certainty, sensory_certainty
 
     def calculate_position_err(self):
-        estimated_relative_pos = self.vectorhash.scaffold.get_mean_positions()
-        d = torch.abs(estimated_relative_pos - self.true_data.get_relative_true_pos())
+        estimated_relative_pos = self.vectorhash.scaffold.get_mean_positions().to("cpu")
+        d = torch.abs(
+            estimated_relative_pos - self.true_data.get_relative_true_pos().to("cpu")
+        )
         return torch.where(d < self.world_size / 2, d, self.world_size - d)
 
     def close(self):
@@ -212,7 +211,7 @@ def path_test(
     errs = [agent.calculate_position_err()]
 
     for i, action in enumerate(path):
-        new_img, odometry_certainty, sensory_certainty = agent.step(action, noise_dist)
+        new_img, odometry_certainty, sensory_certainty = agent.step(action, limits, noise_dist)
         est_img = s_from_h_from_g(agent.vectorhash.scaffold.g)
         history.append(
             true_image=new_img,
@@ -291,7 +290,7 @@ def kidnapping_test(
 
     for i, [action, visible] in enumerate(zip(path, visibles)):
         if visible:
-            true_img, c_o, c_s = agent.step(action, noise_dist)
+            true_img, c_o, c_s = agent.step(action, limits, noise_dist)
             est_img = s_from_h_from_g(agent.vectorhash.scaffold.g)
             history.append(
                 true_image=true_img,
@@ -304,7 +303,7 @@ def kidnapping_test(
                 x_distribution=agent.vectorhash.scaffold.expand_distribution(0),
                 y_distribution=agent.vectorhash.scaffold.expand_distribution(1),
                 theta_distribution=agent.vectorhash.scaffold.expand_distribution(2),
-                seen=True
+                seen=True,
             )
         else:
             step_tuple = agent.env.step(action)
