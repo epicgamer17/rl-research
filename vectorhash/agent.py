@@ -46,9 +46,15 @@ class VectorhashAgent:
         pass
 
     def _get_world_size(self, env: Env):
+        """Get the world size of the environment
+        """
         pass
 
     def _env_reset(self, env: Env) -> tuple[torch.Tensor, torch.Tensor]:
+        """Do environment-specific work to reset the environment
+
+        Returns a tuple `(initial_image, initial_position)`
+        """
         pass
 
     def _obs_postpreprocess(self, step_tuple) -> tuple[torch.Tensor, torch.Tensor]:
