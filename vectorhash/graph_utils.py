@@ -315,13 +315,17 @@ def plot_imgs_side_by_side(
     axs: list[matplotlib.axes.Axes],
     titles: list[str],
     fig: matplotlib.figure.Figure,
+    use_first_img_scale=True,
 ):
     first = True
     for img, ax, title in zip(imgs, axs, titles):
         ax.set_title(title)
-        if first:
-            im = ax.imshow(img)
-            first = False
+        if use_first_img_scale:
+            if first:
+                im = ax.imshow(img)
+                first = False
+            else:
+                ax.imshow(img)
         else:
-            ax.imshow(img)
+            im = ax.imshow(img)
         cbar = fig.colorbar(im, ax=ax)

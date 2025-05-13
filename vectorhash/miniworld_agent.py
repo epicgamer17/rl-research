@@ -1,7 +1,10 @@
+import numpy as np
 import math
 import torch
 from agent import VectorhashAgent
 from skimage import color
+from miniworld.entity import Agent
+import copy
 
 
 class MiniworldVectorhashAgent(VectorhashAgent):
@@ -25,6 +28,13 @@ class MiniworldVectorhashAgent(VectorhashAgent):
         angle = env.get_wrapper_attr("agent").dir
         p = torch.tensor([p_x, p_z, angle]).float().to(self.device)
         return p
+
+    def set_agent_pos(self, pos):
+        agent: Agent = self.env.get_wrapper_attr("agent")
+        agent_copy = copy.deepcopy(agent)
+        agent_copy.pos = np.array([pos[0], 0, pos[1]])
+        agent_copy.dir = pos[2]
+        self.env.set_wrapper_attr("agent", agent_copy)
 
     def _get_world_size(self, env):
         min_x = env.get_wrapper_attr("min_x")
