@@ -1,0 +1,114 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class CNNCoder(nn.Module):
+    """
+    A simple convolutional encoder that expects inputs of size
+    (batch, in_channels, target_h, target_w) and outputs a latent
+    vector of size `latent_dim`.
+    """
+    def __init__(
+        self,
+        input_channels: int = 3,
+        latent_dim: int = 128,
+        target_h: int = 84,
+        target_w: int = 84,
+    ):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            # 1) 3×84×84 → 16×42×42
+            nn.Conv2d(input_channels, 16, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            # 2) 16×42×42 → 32×21×21
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            # 3) 32×21×21 → 64×11×11  (21→11 with stride2+ceil)
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+
+            nn.Flatten(),  
+            # flatten size = 64 × ceil(84/8) × ceil(84/8)
+            #           = 64 × 11 × 11 = 7744
+            nn.Linear(64 * ((target_h + 7)//8) * ((target_w + 7)//8), latent_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encoder(x)
+
+
+class PreprocessingCNN:
+    """
+    Wrapper around CNNCoder that:
+     1) Resizes any incoming (H,W,C) or (C,H,W) image to (target_h, target_w)
+     2) Normalizes uint8→[0,1]
+     3) Runs through the encoder to produce a latent vector
+    """
+    def __init__(
+        self,
+        device: torch.device,
+        latent_dim: int = 128,
+        input_channels: int = 3,
+        target_size: tuple[int,int] = (84, 84),
+        model_path: str = None,
+    ):
+        """
+        Args:
+            device:      torch.device("cpu") or torch.device("cuda")
+            latent_dim:  length of output vector
+            input_channels: usually 3 for RGB
+            target_size: (height, width) to resize EVERY image to
+            model_path:  optional path to pretrained encoder weights
+        """
+        self.device = device
+        self.target_h, self.target_w = target_size
+
+        # build encoder expecting exactly (B, C, target_h, target_w)
+        self.encoder = CNNCoder(
+            input_channels=input_channels,
+            latent_dim=latent_dim,
+            target_h=self.target_h,
+            target_w=self.target_w,
+        ).to(device)
+
+        # optional load pretrained weights
+        if model_path is not None:
+            ckpt = torch.load(model_path, map_location=device)
+            self.encoder.load_state_dict(ckpt)
+
+        self.encoder.eval()
+
+    @torch.no_grad()
+    def encode(self, image) -> torch.Tensor:
+        """
+        image: np.ndarray or torch.Tensor, shape (H,W,C) or (C,H,W), dtype uint8 or float
+        returns: FloatTensor of shape (latent_dim,) on self.device
+        """
+        # 1) to torch.Tensor
+        if not isinstance(image, torch.Tensor):
+            image = torch.from_numpy(image)
+        image = image.float()
+
+        # 2) permute if needed → (C,H,W)
+        if image.ndim == 3 and image.shape[-1] in {1, 3}:
+            image = image.permute(2, 0, 1)
+
+        # 3) normalize 0–255 → [0,1]
+        image = image.div(255.0)
+
+        # 4) resize to (target_h, target_w)
+        #    expects input shape (C, H, W) → add batch dim → (1,C,H,W)
+        image = image.unsqueeze(0)
+        image = F.interpolate(
+            image,
+            size=(self.target_h, self.target_w),
+            mode="bilinear",
+            align_corners=False
+        )
+        image = image.squeeze(0) # back to (C, H, W)
+
+        # 5) run through encoder → (1, latent_dim) → squeeze → (latent_dim,)
+        x = image.unsqueeze(0).to(self.device)
+        z = self.encoder(x).squeeze(0)
+
+        return z

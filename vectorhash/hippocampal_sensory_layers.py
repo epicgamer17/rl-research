@@ -20,6 +20,9 @@ class HippocampalSensoryLayer:
 
         Args:
             S (torch.Tensor): Sensory input tensor.
+            
+            B is the batch size for eg to get some concerete num the input size is 64 and B is 100 
+            then hippocampal from sensory will give u 100 N_h vectors  
 
         """
         pass

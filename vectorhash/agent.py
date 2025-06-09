@@ -5,6 +5,7 @@ from agent_history import (
     VectorhashAgentHistory,
     VectorhashAgentKidnappedHistory,
 )
+from preprocessing_cnn import PreprocessingCNN
 
 
 class TrueData:
@@ -24,6 +25,7 @@ class VectorhashAgent:
         hard_store: bool = True,
         store_new: bool = True,
         shift_method="additive",
+        preprocessor: PreprocessingCNN = None
     ):
         assert shift_method in [
             "additive",
@@ -36,10 +38,18 @@ class VectorhashAgent:
         self.hard_store = hard_store
         self.store_new = store_new
         self.shift_method = shift_method
+        if preprocessor == None:
+            self.preprocessor = PreprocessingCNN(
+                device=self.device,
+                latent_dim=128,
+                input_channels=3,
+                target_size=(84, 84),
+                model_path=None
+                )
 
         self.world_size = self._get_world_size(env)
         start_img, start_pos = self._env_reset(env)
-        self.vectorhash.store_memory(start_img.flatten().to(self.device))
+        self.vectorhash.store_memory(self.preprocessor.encode(start_img))
         self.previous_stored_position = self.vectorhash.scaffold.get_mean_positions()
 
         self.true_data = TrueData(start_pos)
@@ -72,6 +82,8 @@ class VectorhashAgent:
         """
         ### env-specific observation processing
         step_tuple = self.env.step(action)
+        
+        ### this is the sensory input not flattened yet 
         new_img, new_p = self._obs_postpreprocess(step_tuple, action)
 
         ### calculation of noisy input
@@ -95,9 +107,11 @@ class VectorhashAgent:
         scaffold.modules = scaffold.modules_from_g(g_o)
 
         ### estimate sensory certainty
+        
+        ### the reason why we take the first element because the hippocampal from sensory fucntion takes a batch of input B and outputs a batch in this case there is no batch so the function will add a batch dimension which is 1
         g_s = scaffold.denoise(
             scaffold.grid_from_hippocampal(
-                hs_layer.hippocampal_from_sensory(new_img.flatten().to(self.device))[0]
+                hs_layer.hippocampal_from_sensory(self.preprocessor.encode(new_img))
             )[0]
         )[0]
         sensory_certainty = scaffold.estimate_certainty(limits=limits, g=g_s)
@@ -133,7 +147,7 @@ class VectorhashAgent:
                     image_scaffold[i] = scaffold.modules_from_g(g_o)[i]
 
             self.vectorhash.store_memory(
-                new_img.flatten().to(self.device), hard=self.hard_store
+                self.preprocessor.encode(new_img), hard=self.hard_store
             )
             self.previous_stored_position = scaffold.get_mean_positions()
 
@@ -163,7 +177,7 @@ def path_test(
 
     ## store initial observations
     start_img, start_pos = agent._env_reset(agent.env)
-    agent.vectorhash.store_memory(start_img.flatten().to(agent.device))
+    agent.vectorhash.store_memory(agent.preprocessor.encode(start_img))
     agent.true_data = TrueData(start_pos)
 
     ## aliases
@@ -172,7 +186,7 @@ def path_test(
             agent.vectorhash.scaffold.hippocampal_from_grid(
                 agent.vectorhash.scaffold.denoise(g)[0]
             )[0]
-        )[0].reshape(start_img.shape)
+        )[0].reshape(16,8)
 
     def g_from_h_from_s(s):
         agent.vectorhash.scaffold.denoise(
@@ -192,11 +206,11 @@ def path_test(
         limits, g=agent.vectorhash.scaffold.g
     )
     certainty_s = agent.vectorhash.scaffold.estimate_certainty(
-        limits, g=g_from_h_from_s(start_img.flatten().to(agent.device))
+        limits, g=g_from_h_from_s(agent.preprocessor.encode(start_img))
     )
 
     history.append(
-        true_image=start_img,
+        true_image=agent.preprocessor.encode(start_img).reshape(16,8),
         estimated_image=est_img,
         certainty_odometry=certainty_o,
         certainty_sensory=certainty_s,
@@ -214,7 +228,7 @@ def path_test(
         new_img, odometry_certainty, sensory_certainty = agent.step(action, limits, noise_dist)
         est_img = s_from_h_from_g(agent.vectorhash.scaffold.g)
         history.append(
-            true_image=new_img,
+            true_image=agent.preprocessor.encode(new_img).reshape(16,8),
             estimated_image=est_img,
             certainty_odometry=odometry_certainty,
             certainty_sensory=sensory_certainty,
@@ -243,7 +257,7 @@ def kidnapping_test(
 
     ## store initial observations
     start_img, start_pos = agent._env_reset(agent.env)
-    agent.vectorhash.store_memory(start_img.flatten().to(agent.device))
+    agent.vectorhash.store_memory(agent.preprocessor.encode(start_img))
     agent.true_data = TrueData(start_pos)
 
     ## aliases
@@ -272,7 +286,7 @@ def kidnapping_test(
         limits, g=agent.vectorhash.scaffold.g
     )
     certainty_s = agent.vectorhash.scaffold.estimate_certainty(
-        limits, g=g_from_h_from_s(start_img.flatten().to(agent.device))
+        limits, g=g_from_h_from_s(agent.preprocessor.encode(start_img))
     )
     history.append(
         true_image=start_img,

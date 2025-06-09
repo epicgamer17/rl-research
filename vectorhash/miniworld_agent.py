@@ -18,10 +18,11 @@ class MiniworldVectorhashAgent(VectorhashAgent):
     """
 
     def postprocess_img(self, image):
-        rescaled = image / 255
-        grayscale_img = color.rgb2gray(rescaled)
-        torch_img = torch.from_numpy(grayscale_img)
-        return torch_img.float()
+        # rescaled = image / 255
+        # grayscale_img = color.rgb2gray(rescaled)
+        # torch_img = torch.from_numpy(grayscale_img)
+        return image
+        # return torch_img.float()
 
     def get_true_pos(self, env):
         p_x, p_y, p_z = env.get_wrapper_attr("agent").pos
