@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pretrainedmodels
 
 class CNNCoder(nn.Module):
     """
@@ -63,18 +64,45 @@ class PreprocessingCNN:
         self.device = device
         self.target_h, self.target_w = target_size
 
-        # build encoder expecting exactly (B, C, target_h, target_w)
-        self.encoder = CNNCoder(
-            input_channels=input_channels,
-            latent_dim=latent_dim,
-            target_h=self.target_h,
-            target_w=self.target_w,
-        ).to(device)
-
-        # optional load pretrained weights
-        if model_path is not None:
+        if model_path is None:
+            # Default: use custom CNNCoder
+            self.encoder = CNNCoder(
+                input_channels=input_channels,
+                latent_dim=latent_dim,
+                target_h=self.target_h,
+                target_w=self.target_w,
+            ).to(device)
+        else:
+            # Load checkpoint
             ckpt = torch.load(model_path, map_location=device)
-            self.encoder.load_state_dict(ckpt)
+            # If checkpoint specifies a Cadene model and state_dict
+            if isinstance(ckpt, dict) and 'model_name' in ckpt and 'state_dict' in ckpt:
+                name = ckpt['model_name']
+                # Instantiate Cadene pretrained model
+                model = pretrainedmodels.__dict__[name](num_classes=1000, pretrained='imagenet')
+                # Strip off final classification layer
+                modules = list(model.children())[:-1]
+                feat = nn.Sequential(*modules)
+                # Build projection head
+                in_features = model.last_linear.in_features
+                proj = nn.Sequential(
+                    nn.AdaptiveAvgPool2d((1,1)),
+                    nn.Flatten(),
+                    nn.Linear(in_features, latent_dim)
+                )
+                # Full encoder pipeline
+                self.encoder = nn.Sequential(feat, proj).to(device)
+                # Load adapter weights
+                self.encoder.load_state_dict(ckpt['state_dict'])
+            else:
+                # Fallback: assume ckpt is CNNCoder state_dict
+                self.encoder = CNNCoder(
+                    input_channels=input_channels,
+                    latent_dim=latent_dim,
+                    target_h=self.target_h,
+                    target_w=self.target_w,
+                ).to(device)
+                self.encoder.load_state_dict(ckpt)
 
         self.encoder.eval()
 

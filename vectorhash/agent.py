@@ -44,7 +44,7 @@ class VectorhashAgent:
                 latent_dim=128,
                 input_channels=3,
                 target_size=(84, 84),
-                model_path=None
+                model_path="resnet18_adapter.pth"
                 )
 
         self.world_size = self._get_world_size(env)
