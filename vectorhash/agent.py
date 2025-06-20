@@ -46,6 +46,8 @@ class VectorhashAgent:
                 target_size=(84, 84),
                 model_path="resnet18_adapter.pth"
                 )
+        else:
+            self.preprocessor = preprocessor
 
         self.world_size = self._get_world_size(env)
         start_img, start_pos = self._env_reset(env)
