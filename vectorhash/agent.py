@@ -268,7 +268,7 @@ def kidnapping_test(
             agent.vectorhash.scaffold.hippocampal_from_grid(
                 agent.vectorhash.scaffold.denoise(g)[0]
             )[0]
-        )[0].reshape(start_img.shape)
+        )[0].reshape(16,8)
 
     def g_from_h_from_s(s):
         agent.vectorhash.scaffold.denoise(
