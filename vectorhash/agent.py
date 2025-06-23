@@ -295,7 +295,7 @@ def kidnapping_test(
         limits, g=g_from_h_from_s(agent.preprocessor.encode(start_img))
     )
     history.append(
-        true_image=start_img,
+        true_image=agent.preprocessor.encode(start_img).reshape(16, 8),
         estimated_image=est_img,
         certainty_odometry=certainty_o,
         certainty_sensory=certainty_s,
@@ -313,7 +313,7 @@ def kidnapping_test(
             true_img, c_o, c_s = agent.step(action, limits, noise_dist)
             est_img = s_from_h_from_g(agent.vectorhash.scaffold.g)
             history.append(
-                true_image=true_img,
+                true_image=agent.preprocessor.encode(true_img).reshape(16, 8),
                 estimated_image=est_img,
                 certainty_odometry=c_o,
                 certainty_sensory=c_s,
@@ -331,7 +331,7 @@ def kidnapping_test(
             agent.true_data.true_position = new_p
 
             history.append(
-                true_image=new_img,
+                true_image=agent.preprocessor.encode(new_img).reshape(16, 8),
                 estimated_image=None,
                 true_position=translate_world_to_grid_pos(
                     agent.true_data.get_relative_true_pos()
