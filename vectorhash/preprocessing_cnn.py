@@ -3,12 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pretrainedmodels
 
+
 class CNNCoder(nn.Module):
     """
     A simple convolutional encoder that expects inputs of size
     (batch, in_channels, target_h, target_w) and outputs a latent
     vector of size `latent_dim`.
     """
+
     def __init__(
         self,
         input_channels: int = 3,
@@ -27,30 +29,35 @@ class CNNCoder(nn.Module):
             # 3) 32×21×21 → 64×11×11  (21→11 with stride2+ceil)
             nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
             nn.ReLU(inplace=True),
-
-            nn.Flatten(),  
+            nn.Flatten(),
             # flatten size = 64 × ceil(84/8) × ceil(84/8)
             #           = 64 × 11 × 11 = 7744
-            nn.Linear(64 * ((target_h + 7)//8) * ((target_w + 7)//8), latent_dim),
+            nn.Linear(64 * ((target_h + 7) // 8) * ((target_w + 7) // 8), latent_dim),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.encoder(x)
 
 
-class PreprocessingCNN:
+class Preprocessor:
+    def encode(self, image) -> torch.Tensor:
+        return image
+
+
+class PreprocessingCNN(Preprocessor):
     """
     Wrapper around CNNCoder that:
      1) Resizes any incoming (H,W,C) or (C,H,W) image to (target_h, target_w)
      2) Normalizes uint8→[0,1]
      3) Runs through the encoder to produce a latent vector
     """
+
     def __init__(
         self,
         device: torch.device,
         latent_dim: int = 128,
         input_channels: int = 3,
-        target_size: tuple[int,int] = (84, 84),
+        target_size: tuple[int, int] = (84, 84),
         model_path: str = None,
     ):
         """
@@ -76,24 +83,26 @@ class PreprocessingCNN:
             # Load checkpoint
             ckpt = torch.load(model_path, map_location=device)
             # If checkpoint specifies a Cadene model and state_dict
-            if isinstance(ckpt, dict) and 'model_name' in ckpt and 'state_dict' in ckpt:
-                name = ckpt['model_name']
+            if isinstance(ckpt, dict) and "model_name" in ckpt and "state_dict" in ckpt:
+                name = ckpt["model_name"]
                 # Instantiate Cadene pretrained model
-                model = pretrainedmodels.__dict__[name](num_classes=1000, pretrained='imagenet')
+                model = pretrainedmodels.__dict__[name](
+                    num_classes=1000, pretrained="imagenet"
+                )
                 # Strip off final classification layer
                 modules = list(model.children())[:-1]
                 feat = nn.Sequential(*modules)
                 # Build projection head
                 in_features = model.last_linear.in_features
                 proj = nn.Sequential(
-                    nn.AdaptiveAvgPool2d((1,1)),
+                    nn.AdaptiveAvgPool2d((1, 1)),
                     nn.Flatten(),
-                    nn.Linear(in_features, latent_dim)
+                    nn.Linear(in_features, latent_dim),
                 )
                 # Full encoder pipeline
                 self.encoder = nn.Sequential(feat, proj).to(device)
                 # Load adapter weights
-                self.encoder.load_state_dict(ckpt['state_dict'])
+                self.encoder.load_state_dict(ckpt["state_dict"])
             else:
                 # Fallback: assume ckpt is CNNCoder state_dict
                 self.encoder = CNNCoder(
@@ -131,12 +140,27 @@ class PreprocessingCNN:
             image,
             size=(self.target_h, self.target_w),
             mode="bilinear",
-            align_corners=False
+            align_corners=False,
         )
-        image = image.squeeze(0) # back to (C, H, W)
+        image = image.squeeze(0)  # back to (C, H, W)
 
         # 5) run through encoder → (1, latent_dim) → squeeze → (latent_dim,)
         x = image.unsqueeze(0).to(self.device)
         z = self.encoder(x).squeeze(0)
 
         return z
+
+
+from skimage import color
+
+
+class GrayscaleAndFlattenPreprocessing(Preprocessor):
+    def __init__(self, device):
+        self.device = device
+        pass
+
+    def encode(self, image) -> torch.Tensor:
+        rescaled = image / 255
+        grayscale_img = color.rgb2gray(rescaled)
+        torch_img = torch.from_numpy(grayscale_img)
+        return torch_img.flatten().float().to(self.device)

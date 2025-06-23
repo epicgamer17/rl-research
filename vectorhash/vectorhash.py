@@ -495,8 +495,8 @@ def build_vectorhash_architecture(
     epsilon_hs=0.1,
     epsilon_sh=0.1,
     relu=True,
-    shift=ModularConvolutionalShift(),
-    smoothing=SoftmaxSmoothing(T=1e-6),
+    shift: Shift = ModularConvolutionalShift(),
+    smoothing: Smoothing = SoftmaxSmoothing(T=1e-6),
     limits=None,
     sanity_check=False,
 ):
