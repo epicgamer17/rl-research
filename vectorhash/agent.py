@@ -5,7 +5,7 @@ from agent_history import (
     VectorhashAgentHistory,
     VectorhashAgentKidnappedHistory,
 )
-from preprocessing_cnn import PreprocessingCNN
+from preprocessing_cnn import PreprocessingCNN, Preprocessor
 
 
 class TrueData:
@@ -25,7 +25,7 @@ class VectorhashAgent:
         hard_store: bool = True,
         store_new: bool = True,
         shift_method="additive",
-        preprocessor: PreprocessingCNN = None
+        preprocessor: Preprocessor = None,
     ):
         assert shift_method in [
             "additive",
@@ -44,8 +44,8 @@ class VectorhashAgent:
                 latent_dim=128,
                 input_channels=3,
                 target_size=(84, 84),
-                model_path="resnet18_adapter.pth"
-                )
+                model_path="resnet18_adapter.pth",
+            )
         else:
             self.preprocessor = preprocessor
 
@@ -77,15 +77,17 @@ class VectorhashAgent:
         """
         pass
 
-    def step(self, action: int, limits, noise_dist: torch.distributions.Distribution = None):
+    def step(
+        self, action: int, limits, noise_dist: torch.distributions.Distribution = None
+    ):
         """Take an environment step and apply the SLAM algorithm accordingly. Also updates internal true position attribute.
 
         Returns a tuple `(new_img, odometry_certainty, sensory_certainty)`
         """
         ### env-specific observation processing
         step_tuple = self.env.step(action)
-        
-        ### this is the sensory input not flattened yet 
+
+        ### this is the sensory input not flattened yet
         new_img, new_p = self._obs_postpreprocess(step_tuple, action)
 
         ### calculation of noisy input
@@ -109,7 +111,7 @@ class VectorhashAgent:
         scaffold.modules = scaffold.modules_from_g(g_o)
 
         ### estimate sensory certainty
-        
+
         ### the reason why we take the first element because the hippocampal from sensory fucntion takes a batch of input B and outputs a batch in this case there is no batch so the function will add a batch dimension which is 1
         g_s = scaffold.denoise(
             scaffold.grid_from_hippocampal(
@@ -188,7 +190,7 @@ def path_test(
             agent.vectorhash.scaffold.hippocampal_from_grid(
                 agent.vectorhash.scaffold.denoise(g)[0]
             )[0]
-        )[0].reshape(16,8)
+        )[0].reshape(16, 8)
 
     def g_from_h_from_s(s):
         agent.vectorhash.scaffold.denoise(
@@ -212,7 +214,7 @@ def path_test(
     )
 
     history.append(
-        true_image=agent.preprocessor.encode(start_img).reshape(16,8),
+        true_image=agent.preprocessor.encode(start_img).reshape(16, 8),
         estimated_image=est_img,
         certainty_odometry=certainty_o,
         certainty_sensory=certainty_s,
@@ -227,10 +229,12 @@ def path_test(
     errs = [agent.calculate_position_err()]
 
     for i, action in enumerate(path):
-        new_img, odometry_certainty, sensory_certainty = agent.step(action, limits, noise_dist)
+        new_img, odometry_certainty, sensory_certainty = agent.step(
+            action, limits, noise_dist
+        )
         est_img = s_from_h_from_g(agent.vectorhash.scaffold.g)
         history.append(
-            true_image=agent.preprocessor.encode(new_img).reshape(16,8),
+            true_image=agent.preprocessor.encode(new_img).reshape(16, 8),
             estimated_image=est_img,
             certainty_odometry=odometry_certainty,
             certainty_sensory=sensory_certainty,
@@ -268,7 +272,7 @@ def kidnapping_test(
             agent.vectorhash.scaffold.hippocampal_from_grid(
                 agent.vectorhash.scaffold.denoise(g)[0]
             )[0]
-        )[0].reshape(16,8)
+        )[0].reshape(16, 8)
 
     def g_from_h_from_s(s):
         agent.vectorhash.scaffold.denoise(
