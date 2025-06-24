@@ -99,6 +99,7 @@ class FourierScaffold:
     @torch.no_grad()
     def _K(self) -> torch.Tensor:
         kernel_radii = [10] * self.d
+        length = torch.tensor(kernel_radii).int().to(self.device)
         kernel_sigmas = [0.4] * self.d
 
         kernels = []
@@ -122,9 +123,10 @@ class FourierScaffold:
                 for dim in range(self.d)
             ]
         ):
-            K += (self.features ** torch.tensor(k, device=self.device)).prod(1).prod(
-                1
-            ) * kernel[tuple(k)]
+            kernel_index = torch.tensor(k, device=self.device) + length
+            K += kernel[tuple(kernel_index)] * (
+                self.features ** -torch.tensor(k, device=self.device)
+            ).prod(1).prod(1)
         return K
 
     def shift(self, v: torch.Tensor):
@@ -135,12 +137,11 @@ class FourierScaffold:
         # self.shapes   (M, d)
         #           v   (d)
         # self.features (D, M, d)
-        V = (self.features ** v.to(self.device)).prod(1).prod(1)
+        V = (self.features ** -v.to(self.device)).prod(1).prod(1)
         self.g *= V
 
     def smooth(self):
-        # self.g *= self.K
-        self.g = 0.9 * self.g + 0.1 * self.g * self.K
+        self.g *= self.K
 
     def sharpen(self):
         pass
@@ -155,4 +156,3 @@ class FourierScaffold:
         """
         Pk = (self.features**k).prod(1).prod(1)
         return Pk.T @ self.g
-
