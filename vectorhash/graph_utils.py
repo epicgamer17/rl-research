@@ -1,9 +1,13 @@
 import os
 import pathlib
 import matplotlib.axes
+from matplotlib.axes import Axes
 import matplotlib.figure
 import matplotlib.pyplot as plt
 from clean_scaffold import GridHippocampalScaffold
+from fourier_scaffold import FourierScaffold
+import torch
+import itertools
 
 # from animalai_agent_history import VectorhashAgentKidnappedHistory
 
@@ -329,3 +333,20 @@ def plot_imgs_side_by_side(
         else:
             im = ax.imshow(img)
         cbar = fig.colorbar(im, ax=ax)
+
+
+
+def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes):
+    data = torch.zeros(scaffold.N_patts, dtype=torch.complex64)
+    for i, k in enumerate(
+        itertools.product(
+            *[list(range(scaffold.shapes[:, i].prod())) for i in range(scaffold.d)]
+        )
+    ):
+        p = scaffold.get_probability(torch.tensor(k, device=scaffold.device))
+        if p.abs() > 0.01:
+            print(i, k, p.abs(), p.angle())
+        data[i] = p
+
+    ax.scatter(data.angle().cpu(), data.abs().cpu())
+    return ax
