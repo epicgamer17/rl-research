@@ -586,6 +586,28 @@ def to_dist(x, n):
     return dist
 
 
+def to_dist_vectorized(x: torch.Tensor, s: torch.Tensor):
+    """
+
+    Input shapes:
+    - x: `(B, n)`
+    - s: `(s1, ..., sn)`
+
+    Output shape: list of tensors (B, s1), ..., (B, sn)
+    """
+    ret = []
+    B = len(x)
+    for i in range(len(s)):
+        dist = torch.zeros(B, s[i], device=x.device)
+        x_i = x[:, i]
+        x_i_int = torch.floor(x_i).long()
+        x_i_dec = x_i - x_i_int
+        dist.index_add_(1, x_i_int, torch.diag(1 - x_i_dec))
+        dist.index_add_(1, (x_i_int + 1) % s[i], torch.diag(x_i_dec))
+        ret.append(dist)
+    return ret
+
+
 def calculate_err_crossentropy(pos, pred_dist):
     true_dist = to_dist(pos, len(pred_dist))
     return categorical_crossentropy(true_dist, pred_dist).item()

@@ -4,41 +4,6 @@ from hippocampal_sensory_layers import *
 from smoothing import SoftmaxSmoothing
 from tqdm import tqdm
 
-UP = torch.tensor([0, 1])
-DOWN = torch.tensor([0, -1])
-LEFT = torch.tensor([-1, 0])
-RIGHT = torch.tensor([1, 0])
-# ROTATE_LEFT = torch.tensor([0, 0, 1])
-# ROTATE_RIGHT = torch.tensor([0, 0, -1])
-
-
-def get_action():
-    a = None
-    while a is None:
-        action = input(
-            "Enter 'w' to move up, 's' to move down, "
-            "'a' to move left, 'd' to move right, 'q' to move forward, "
-            "'q' to rotate left, 'e' to rotate right, 'quit' to quit: "
-        )
-        if action == "quit":
-            return None
-        elif action == "w":
-            a = UP
-        elif action == "s":
-            a = DOWN
-        elif action == "a":
-            a = LEFT
-        elif action == "d":
-            a = RIGHT
-        # elif action == 'q':
-        #   a = ROTATE_LEFT
-        # elif action == 'e':
-        #   a = ROTATE_RIGHT
-        else:
-            print("Invalid action, type quit to exit")
-
-    return a
-
 
 def corrupt_p_1(codebook, p=0.1):
     if p == 0.0:
@@ -130,7 +95,6 @@ def capacity_test(
     for k in tqdm(range(len(Npatts_list))):
         Npatts = Npatts_list[k]
 
-        
         if hasattr(model.hippocampal_sensory_layer, "learn_batch"):
             model.hippocampal_sensory_layer.learn_batch(
                 sbook[:Npatts], model.scaffold.H[:Npatts]
@@ -207,9 +171,3 @@ def capacity1(
 
 def generate_animalai_path(path_length=100):
     return torch.randint(0, 9, (path_length,)).tolist()
-
-
-def kidnapped_paths():
-    path1 = []
-    path2 = []
-    path3 = []

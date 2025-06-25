@@ -6,7 +6,7 @@ import copy
 from shifts import *
 from vectorhash_functions import (
     chinese_remainder_theorem,
-    circular_mean,
+    circular_mean_weighted,
     expand_distribution,
 )
 from tqdm import tqdm
@@ -267,7 +267,7 @@ class GridHippocampalScaffold:
         for i, module in enumerate(new_modules):
             module.state = module_states[i].to(self.device)
         return new_modules
-    
+
     @torch.no_grad()
     def additive_shift(self, new_g):
         """
@@ -279,7 +279,7 @@ class GridHippocampalScaffold:
         self.modules = modules
         self._g()
         self.g = self.denoise(G=self.g, onehot=True)[0]
-        self.modules= self.modules_from_g(self.g)
+        self.modules = self.modules_from_g(self.g)
 
     @torch.no_grad()
     def multiplicative_shift(self, new_g):
@@ -292,7 +292,7 @@ class GridHippocampalScaffold:
         self.modules = modules
         self._g()
         self.g = self.denoise(G=self.g, onehot=True)[0]
-        self.modules= self.modules_from_g(self.g)
+        self.modules = self.modules_from_g(self.g)
 
     @torch.no_grad()
     def grid_from_hippocampal(self, H: torch.Tensor) -> torch.Tensor:
@@ -364,10 +364,10 @@ class GridHippocampalScaffold:
             if onehot:
                 x_denoised = module.denoise_onehot(x)
             else:
-                x_denoised = module.denoise(x)
+                x_denoised = module.denoise(x.reshape(module.shape))
             # print(x)
             # print(x_denoised)
-            G[:, pos : pos + module.l] = x_denoised
+            G[:, pos : pos + module.l] = x_denoised.flatten(1)
             pos += module.l
 
         return G
@@ -396,8 +396,8 @@ class GridHippocampalScaffold:
         for dim in range(len(self.shapes[0])):
             marginals = [module.get_marginal(dim) for module in modules]
             v = expand_distribution(marginals)
-            mean = circular_mean(
-                v * torch.arange(0, len(v), device=self.device), len(v)
+            mean = circular_mean_weighted(
+                torch.arange(0, len(v), device=self.device), v, len(v)
             )
             if mean > len(v) // 2:
                 mean -= len(v)
@@ -417,11 +417,13 @@ class GridHippocampalScaffold:
 
         Returns torch.Tensor (x,y,θ)
         """
-        means = torch.zeros(len(self.shapes[0]))
+        means = torch.zeros(len(self.shapes[0]), device=self.device)
         for d in range(len(self.shapes[0])):
             v = self.expand_distribution(d)
             mean = (
-                circular_mean(v * torch.arange(0, len(v), device=self.device), len(v))
+                circular_mean_weighted(
+                    torch.arange(0, len(v), device=self.device), v, len(v)
+                )
                 / self.scale_factor[d]
             )
             means[d] = mean

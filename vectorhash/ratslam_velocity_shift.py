@@ -3,54 +3,49 @@ import torch
 
 
 # for every pose cell, calculate the velocity shift
-def inject_activity(P, v, theta, omega, k_x=1, k_y=1, k_theta=1):
-    updated_P = torch.clone(P)
-    v_x = v * math.cos(theta) * k_x
-    v_y = v * math.sin(theta) * k_y
-    v_theta = k_theta * omega
-    print(f"v_x: {v_x}, v_y: {v_y}, v_theta: {v_theta}")
-    delta_x = math.floor(v_x)
-    delta_f_x = v_x - delta_x
-    delta_y = math.floor(v_y)
-    delta_f_y = v_y - delta_y
-    delta_theta = math.floor(v_theta)
-    delta_f_theta = v_theta - delta_theta
-    print(
-        f"delta_f_x: {delta_f_x}, delta_x: {delta_x}, delta_f_y: {delta_f_y}, delta_y: {delta_y}, delta_f_theta: {delta_f_theta}, delta_theta: {delta_theta}"
+def inject_activity(P, v, k_x=1, k_y=1, k_theta=1):
+    """P shape: (x, y, theta)"""
+    v_x, v_y, v_theta = k_x * v[0], k_y * v[1], k_theta * v[2]
+    delta_x, delta_y, delta_theta = (
+        math.floor(v_x),
+        math.floor(v_y),
+        math.floor(v_theta),
     )
-    kD, kH, kW = min(2, P.shape[0]), min(2, P.shape[1]), min(2, P.shape[2])
-
+    delta_f_x, delta_f_y, delta_f_theta = (
+        v_x - delta_x,
+        v_y - delta_y,
+        v_theta - delta_theta,
+    )
+    alpha_x_length, alpha_y_length, alpha_theta_length = (
+        min(2, P.shape[0]),
+        min(2, P.shape[1]),
+        min(2, P.shape[2]),
+    )
+    x_padding, y_padding, theta_padding = (
+        (alpha_x_length // 2, 0),
+        (alpha_y_length // 2, 0),
+        (alpha_theta_length // 2, 0),
+    )
     alpha = calculate_alpha(
         delta_f_x,
         delta_f_y,
         delta_f_theta,
-        shape=(kD, kH, kW),
-        device=P.device
+        shape=(alpha_x_length, alpha_y_length, alpha_theta_length),
+        device=P.device,
     )
-
-    shifted = torch.roll(P, shifts=(delta_theta, delta_x, delta_y), dims=(0, 1, 2))
-    print("shifted", shifted)
+    alpha_flipped = torch.flip(alpha, (0, 1, 2))
+    shifted = torch.roll(P, shifts=(delta_x, delta_y, delta_theta), dims=(0, 1, 2))
     padded = torch.nn.functional.pad(
         shifted.unsqueeze(0).unsqueeze(0),
-        (kW // 2, 0, kH // 2, 0, kD // 2, 0),
+        theta_padding + y_padding + x_padding,
         mode="circular",
-    )  # pad with circular padding
-    # apply the convulution in the flipped directions
-    print("padded", padded)
-    flipped = torch.flip(padded, dims=(0, 1, 2, 3, 4))
-    print("flipped", flipped)
-    updated_P = (
-        torch.nn.functional.conv3d(
-            flipped,
-            alpha.unsqueeze(0).unsqueeze(0),
-            stride=1,
-            padding=0,
-        )
-        .squeeze(0)
-        .squeeze(0)
     )
-    print("updated_P", updated_P)
-    return updated_P.flip(0, 1, 2)  # flip back to original orientation
+    updated_P = torch.nn.functional.conv3d(
+        padded,
+        alpha_flipped.unsqueeze(0).unsqueeze(0),
+        padding=0,
+    )
+    return updated_P.squeeze(0).squeeze(0)
 
 
 def calculate_velocity_shift(P, l, m, n, delta_x, delta_y, delta_theta, alpha):
@@ -70,15 +65,12 @@ def calculate_velocity_shift(P, l, m, n, delta_x, delta_y, delta_theta, alpha):
     return change
 
 
-def calculate_alpha(
-    delta_f_x, delta_f_y, delta_f_theta, shape=(2, 2, 2), device=None
-):  # delta_x, delta_y, delta_theta
+def calculate_alpha(delta_f_x, delta_f_y, delta_f_theta, shape=(2, 2, 2), device=None):
     alpha = torch.zeros(shape, device=device)
     for i in range(0, shape[0]):
         for j in range(0, shape[1]):
             for k in range(0, shape[2]):
-                alpha[i][j][k] = g(delta_f_theta, i) * g(delta_f_x, j) * g(delta_f_y, k)
-    print("alpha", alpha)
+                alpha[i][j][k] = g(delta_f_x, i) * g(delta_f_y, j) * g(delta_f_theta, k)
     return alpha
 
 

@@ -1,8 +1,13 @@
 import os
 import pathlib
 import matplotlib.axes
+from matplotlib.axes import Axes
+import matplotlib.figure
 import matplotlib.pyplot as plt
 from clean_scaffold import GridHippocampalScaffold
+from fourier_scaffold import FourierScaffold
+import torch
+import itertools
 
 # from animalai_agent_history import VectorhashAgentKidnappedHistory
 
@@ -246,6 +251,7 @@ def plot_error_over_time(
         plt.show()
     return fig, ax
 
+
 def error_test(true, belief):
     loss = 0
     for i in range(len(belief)):
@@ -288,3 +294,59 @@ def plot_errors_on_axes(
     axis.set_ylabel("Error")
 
     return axis
+
+
+def plot_certainty_on_ax(
+    certainty_odometry,
+    certainty_sensory,
+    ax: matplotlib.axes.Axes,
+):
+    return ax.bar(
+        ["o. x", "o. y", "o. θ", "s. x", "s. y", "s. θ"],
+        [
+            certainty_odometry[0],
+            certainty_odometry[1],
+            certainty_odometry[2],
+            certainty_sensory[0],
+            certainty_sensory[1],
+            certainty_sensory[2],
+        ],
+    ).patches
+
+
+def plot_imgs_side_by_side(
+    imgs: list[list[int]],
+    axs: list[matplotlib.axes.Axes],
+    titles: list[str],
+    fig: matplotlib.figure.Figure,
+    use_first_img_scale=True,
+):
+    first = True
+    for img, ax, title in zip(imgs, axs, titles):
+        ax.set_title(title)
+        if use_first_img_scale:
+            if first:
+                im = ax.imshow(img)
+                first = False
+            else:
+                ax.imshow(img)
+        else:
+            im = ax.imshow(img)
+        cbar = fig.colorbar(im, ax=ax)
+
+
+
+def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes):
+    data = torch.zeros(scaffold.N_patts, dtype=torch.complex64)
+    for i, k in enumerate(
+        itertools.product(
+            *[list(range(scaffold.shapes[:, i].prod())) for i in range(scaffold.d)]
+        )
+    ):
+        p = scaffold.get_probability(torch.tensor(k, device=scaffold.device))
+        if p.abs() > 0.01:
+            print(i, k, p.abs(), p.angle())
+        data[i] = p
+
+    ax.scatter(data.angle().cpu(), data.abs().cpu())
+    return ax

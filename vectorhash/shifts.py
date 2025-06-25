@@ -9,28 +9,29 @@ from vectorhash_functions import (
     condense_distribution,
     calculate_shift_kernel,
 )
-from competetive_attractor_dynamics import (
-    generate_epsilon,
-    update_internal_P_jk,
-    generate_delta,
-    update_inter_layer_P_ijk,
-    global_inhibition,
-)
 
 
 class Shift:
+    """Velocity shift mechanism for a grid-hippocampal scaffold."""
+
     def __init__(self, device=None):
         self.device = device
 
     def __call__(self, modules: list[GridModule], velocity: torch.Tensor):
+        """Shift the modules of a grid-hippocampal scaffold with a given velocity"""
         pass
 
 
 class RollShift(Shift):
+    """Velocity shift mechanism for a grid-hippocampal scaffold that uses torch.roll.
+    The shift only works for integer velocities.
+    """
+
     def __init__(self, device=None):
         super().__init__(device)
 
     def __call__(self, modules, velocity):
+        """Shift the modules of a grid-hippocampal scaffold with a given velocity using torch.roll."""
         v_ = velocity.int()
         for module in modules:
             module.state = torch.roll(
@@ -41,59 +42,20 @@ class RollShift(Shift):
 
 
 class RatShift(Shift):
+    """Velocity shift mechanism for a grid-hippocampal scaffold based on RatSLAM.
+    Grid modules must be 3 dimensional (x, y, theta) for this to work.
+    """
+
     def __init__(self, device=None):
         super().__init__(device)
 
     def __call__(self, modules, velocity):
+        """Shift the modules of a grid-hippocampal scaffold with a given velocity using the method described in RatSLAM."""
         assert len(velocity) == 3  # x, y, angular velocity
 
         for module in modules:
             # module.state is in x, y, theta form
-            speed = (velocity[0].item() ** 2 + velocity[1].item() ** 2) ** 0.5
-            theta = math.atan2(velocity[1].item(), velocity[0].item())
-
-            P = module.state.permute(2, 0, 1)
-            module.state = inject_activity(P, speed, theta, velocity[2].item()).permute(
-                1, 2, 0
-            )
-
-
-class RatShiftWithCompetitiveAttractorDynamics(Shift):
-    def __init__(
-        self,
-        sigma_xy=0.3,
-        sigma_theta=0.3,
-        inhibition_constant=0.004,
-        delta_gamma=1,
-        device=None,
-    ):
-        super().__init__(device)
-
-        self.sigma_xy = sigma_xy
-        self.sigma_theta = sigma_theta
-        self.inhibition_constant = inhibition_constant
-        self.delta_gamma = delta_gamma
-
-    def __call__(self, modules: list[GridModule], velocity: torch.Tensor):
-        for module in modules:
-            N_x, N_y, N_theta = module.shape
-            speed = (velocity[0].item() ** 2 + velocity[1].item() ** 2) ** 0.5
-            theta = math.atan2(velocity[1].item(), velocity[0].item())
-            eps = generate_epsilon(N_x, N_y, sigma=self.sigma_xy, device=self.device)
-            delta = generate_delta(
-                N_theta,
-                sigma=self.sigma_theta,
-                gamma=self.delta_gamma,
-                device=self.device,
-            )
-
-            P = module.state.permute(2, 0, 1)
-            P = inject_activity(P, speed, theta, velocity[2].item())
-            P = update_internal_P_jk(P, eps)
-            P = update_inter_layer_P_ijk(P, delta)
-            P = global_inhibition(P, inhibition_constant=self.inhibition_constant)
-            P = P / P.sum()
-            module.state = torch.permute(P, (1, 2, 0))
+            module.state = inject_activity(module.state, velocity)
 
 
 class ConvolutionalShift(Shift):
