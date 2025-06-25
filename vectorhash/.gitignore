@@ -1,3 +1,5 @@
 data/
 *.pt
-launch.json
+launch.jsonvenv/
+
+/venv/

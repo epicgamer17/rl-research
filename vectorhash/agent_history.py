@@ -2,7 +2,12 @@ import matplotlib.pyplot as plt
 from matplotlib import animation
 from matplotlib.gridspec import GridSpec
 import math
-from graph_utils import plot_probability_distribution_on_ax, plot_certainty_on_ax
+from graph_utils import (
+    plot_probability_distribution_on_ax,
+    plot_certainty_on_ax,
+    error_test,
+)
+import torch
 
 
 class VectorhashAgentHistory:
@@ -157,6 +162,21 @@ class VectorhashAgentHistory:
         self._certainty_odometry = []
         self._certainty_sensory = []
 
+    def calculate_errors(self):
+        errors = torch.zeros(3, len(self._true_positions))  # (x/y/theta, N)
+
+        for i in range(len(self._true_positions)):
+            x_err = error_test(self._true_positions[i][0], self._x_distributions[i])
+            y_err = error_test(self._true_positions[i][1], self._y_distributions[i])
+            theta_err = error_test(
+                self._true_positions[i][2], self._theta_distributions[i]
+            )
+            errors[0, i] = x_err
+            errors[1, i] = y_err
+            errors[2, i] = theta_err
+
+        return errors
+
 
 class VectorhashAgentKidnappedHistory:
     def __init__(self):
@@ -309,3 +329,18 @@ class VectorhashAgentKidnappedHistory:
         self._seen = []
         self._certainty_odometry = []
         self._certainty_sensory = []
+
+    def calculate_errors(self):
+        errors = torch.zeros(3, len(self._true_positions))  # (x/y/theta, N)
+
+        for i in range(len(self._true_positions)):
+            x_err = error_test(self._true_positions[i][0], self._x_distributions[i])
+            y_err = error_test(self._true_positions[i][1], self._y_distributions[i])
+            theta_err = error_test(
+                self._true_positions[i][2], self._theta_distributions[i]
+            )
+            errors[0, i] = x_err
+            errors[1, i] = y_err
+            errors[2, i] = theta_err
+
+        return errors
