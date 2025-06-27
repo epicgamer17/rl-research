@@ -1,6 +1,5 @@
 import torch
 import math
-import itertools
 from vectorhash_functions import generate_1d_gaussian_kernel, outer
 
 
@@ -38,7 +37,7 @@ class HammardSharpening(FourierSharpening):
             * torch.exp(
                 torch.complex(torch.zeros(len(P), device=P.device), self.a * P.angle())
             )
-            * D
+            * math.sqrt(D)
         )
 
 
@@ -50,8 +49,9 @@ class ContractionSharpening(FourierSharpening):
         """P must be a matrix, not a vector"""
         assert len(P.shape) == 2, "P must be a matrix"
         D, M, d = features.shape
+
         sharpened_P = P @ P.T
-        return sharpened_P * D
+        return sharpened_P
 
 
 class FourierShift:
@@ -141,7 +141,7 @@ class GaussianFourierSmoothing(FourierSmoothing):
             torch.zeros(D, device=features.device),
         )
 
-        for k in itertools.product(
+        for k in torch.cartesian_prod(
             *[
                 torch.arange(
                     -self.kernel_radii[dim],
@@ -151,8 +151,8 @@ class GaussianFourierSmoothing(FourierSmoothing):
                 for dim in range(d)
             ]
         ):
-            kernel_index = torch.tensor(k, device=features.device) + length
-            g = (features ** -torch.tensor(k, device=features.device)).prod(1).prod(1)
+            kernel_index = k + length
+            g = (features**-k).prod(1).prod(1)
 
             K += kernel[tuple(kernel_index)] * g
 
@@ -196,7 +196,7 @@ class GuassianFourierSmoothingMatrix(FourierSmoothing):
             torch.zeros(D, D, device=features.device),
         )
 
-        for k in itertools.product(
+        for k in torch.cartesian_prod(
             *[
                 torch.arange(
                     -self.kernel_radii[dim],
@@ -206,8 +206,8 @@ class GuassianFourierSmoothingMatrix(FourierSmoothing):
                 for dim in range(d)
             ]
         ):
-            kernel_index = torch.tensor(k, device=features.device) + length
-            g1 = (features ** -torch.tensor(k, device=features.device)).prod(1).prod(1)
+            kernel_index = k + length
+            g1 = (features**-k).prod(1).prod(1)
             g = torch.einsum("i,j->ij", g1, g1)
 
             K += kernel[tuple(kernel_index)] * g
@@ -254,7 +254,7 @@ class FourierScaffold:
         """N_g = D"""
 
         self.D = D
-        self.C = D ** (-1 / (self.M * self.d))
+        self.C = D ** (-1 / (2 * self.M * self.d))
         """The scale factor when geneerating features"""
 
         self.features = torch.zeros(
@@ -270,6 +270,18 @@ class FourierScaffold:
                     n=self.shapes[module, dim], D=self.D, device=self.device
                 )
 
+        self.g = self.zero()
+        """The current grid coding state tensor. Shape: `(N_g)`"""
+
+        self.psum_feature = torch.zeros_like(self.g)
+        for k in torch.cartesian_prod(
+            *[
+                torch.arange(0, self.shapes[:, i].prod().item(), device=self.device)
+                for i in range(self.d)
+            ]
+        ):
+            self.psum_feature += self.encode(k)
+
         print("module shapes: ", shapes)
         print("N_g (D) : ", self.N_g)
         print("M       : ", self.M)
@@ -281,9 +293,6 @@ class FourierScaffold:
 
         self.smoothing.build_K(self.features)
         """Gaussian smoothing kernel"""
-
-        self.g = self.zero()
-        """The current grid coding state tensor. Shape: `(N_g)`"""
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
         """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
@@ -302,18 +311,22 @@ class FourierScaffold:
         return torch.zeros(1)
 
     @torch.no_grad()
+    def encode(self, k: torch.Tensor) -> torch.Tensor:
+        """Generate encoding of position k.
+        Shape of k: (d)
+        """
+
+        base = self.C ** (self.M * self.d) * (self.features**k).prod(1).prod(1)
+
+        if self.representation == "vector":
+            return base
+        else:
+            return torch.einsum("i,j->ij", base, base)
+
+    @torch.no_grad()
     def zero(self) -> torch.Tensor:
         """Reset the grid coding state tensor to the 'zero' position. Shape: `(N_g) = (D)`"""
-        if self.representation == "vector":
-            return torch.complex(
-                torch.ones(self.D, device=self.device),
-                torch.zeros(self.D, device=self.device),
-            ) * (self.C ** (self.M * self.d))
-        elif self.representation == "matrix":
-            return torch.complex(
-                torch.ones(self.D, self.D, device=self.device),
-                torch.zeros(self.D, self.D, device=self.device),
-            ) * (self.C ** (2 * self.M * self.d))
+        return self.encode(torch.zeros(self.d, device=self.device))
 
     def smooth(self):
         self.g = self.smoothing(self.g)
@@ -323,6 +336,9 @@ class FourierScaffold:
 
     def sharpen(self):
         self.g = self.sharpening(self.g, self.features)
+        if isinstance(self.sharpening, ContractionSharpening):
+            scaling = (self.g * self.psum_feature).sum().real
+            self.g /= scaling
 
     def get_probability(self, k: torch.Tensor):
         """Obtain the probability mass located in cell k
@@ -332,10 +348,4 @@ class FourierScaffold:
         Args:
             k (_type_): _description_
         """
-        if self.representation == "vector":
-            Pk = (self.features**k).prod(1).prod(1)
-            return Pk.T @ self.g
-        elif self.representation == "matrix":
-            Pk = (self.features**k).prod(1).prod(1)
-            Pk = torch.einsum("i,j->ij", Pk, Pk)
-            return (Pk * self.g).sum()
+        return (self.encode(k) * self.g).sum()
