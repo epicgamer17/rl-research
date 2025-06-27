@@ -165,8 +165,9 @@ class GaussianFourierSmoothing(FourierSmoothing):
 
 class GuassianFourierSmoothingMatrix(FourierSmoothing):
     def __init__(self, kernel_radii: list, kernel_sigmas: list) -> None:
-        # kernel_radii = [10] * d
-        # kernel_sigmas = [0.4] * d
+
+        # ex.  kernel_radii = [10] * d
+        #      kernel_sigmas = [0.4] * d
         self.kernel_radii = kernel_radii
         self.kernel_sigmas = kernel_sigmas
         pass
@@ -267,7 +268,7 @@ class FourierScaffold:
         for module in range(self.M):
             for dim in range(self.d):
                 self.features[:, module, dim] = random_fourier_features(
-                    n=self.shapes[module, dim], D=self.D, device=self.device
+                    n=self.shapes[module, dim].item(), D=self.D, device=self.device
                 )
 
         self.g = self.zero()
@@ -324,6 +325,17 @@ class FourierScaffold:
             return torch.einsum("i,j->ij", base, base)
 
     @torch.no_grad()
+    def encode_probability(self, distribution) -> torch.Tensor:
+        """Generate encoding of probability distribution distribution"""
+        encoding = torch.zeros_like(self.g)
+        for k in torch.cartesian_prod(
+            *[torch.arange(int(self.shapes[:, i].prod().item())) for i in range(self.d)]
+        ):
+            encoding += distribution[tuple(k)] * self.encode(k.to(self.device))
+
+        return encoding
+
+    @torch.no_grad()
     def zero(self) -> torch.Tensor:
         """Reset the grid coding state tensor to the 'zero' position. Shape: `(N_g) = (D)`"""
         return self.encode(torch.zeros(self.d, device=self.device))
@@ -349,3 +361,113 @@ class FourierScaffold:
             k (_type_): _description_
         """
         return (self.encode(k) * self.g).sum()
+
+    def get_all_probabilities(self):
+        dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
+        ptensor = torch.zeros(*dim_sizes, device=self.device)
+        for k in torch.cartesian_prod(
+            *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
+        ):
+            p = self.get_probability(k.clone().to(self.device))
+            ptensor[tuple(k)] = p
+        return ptensor
+
+
+def calculate_alpha(delta_f_x, delta_f_y, device=None):
+    alpha = torch.zeros(2, 2, device=device)
+    for i in range(0, 2):
+        for j in range(0, 2):
+            alpha[i][j] = g(delta_f_x, i) * g(delta_f_y, j)
+    return alpha
+
+
+def g(a, b):
+    if b == 0:
+        return 1 - a
+    else:
+        return a
+
+
+def calculate_padding(i: int, k: int, s: int):
+    """Calculate both padding sizes along 1 dimension for a given input length, kernel length, and stride
+
+    Args:
+        i (int): input length
+        k (int): kernel length
+        s (int): stride
+
+    Returns:
+        (p_1, p_2): where p_1 = p_2 - 1 for uneven padding and p_1 == p_2 for even padding
+    """
+
+    p = (i - 1) * s - i + k
+    p_1 = p // 2
+    p_2 = (p + 1) // 2
+    return (p_1, p_2)
+
+
+class FourierScaffoldDebug:
+    def __init__(self, shapes: torch.Tensor, device=None):
+        self.shapes = torch.tensor(shapes).int()
+        self.device = device
+        self.M, self.d = self.shapes.shape
+
+        dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
+        self.ptensor = torch.zeros(*dim_sizes, device=self.device)
+        self.ptensor[tuple([0] * self.d)] = 1
+
+    def velocity_shift2d(self, v):
+        # ratslam-style velocity shift
+        v_x, v_y = v[0], v[1]
+        delta_x, delta_y = math.floor(v_x), math.floor(v_y)
+        delta_f_x, delta_f_y = v_x - delta_x, v_y - delta_y
+        alpha_x_length, alpha_y_length = 2, 2
+
+        x_padding, y_padding = ((alpha_x_length // 2, 0), (alpha_y_length // 2, 0))
+        alpha = calculate_alpha(
+            delta_f_x,
+            delta_f_y,
+            device=self.ptensor.device,
+        )
+        alpha_flipped = torch.flip(alpha, (0, 1))
+        shifted = torch.roll(self.ptensor, shifts=(delta_x, delta_y), dims=(0, 1))
+        padded = torch.nn.functional.pad(
+            shifted.unsqueeze(0).unsqueeze(0),
+            y_padding + x_padding,
+            mode="circular",
+        )
+        updated_P = torch.nn.functional.conv2d(
+            padded,
+            alpha_flipped.unsqueeze(0).unsqueeze(0),
+            padding=0,
+        )
+        self.ptensor = updated_P.squeeze(0).squeeze(0)
+
+    def smooth2d(self):
+        kernel_size = 9
+        sigma = 0.4
+        x = torch.arange(kernel_size, device=self.device) - kernel_size // 2
+        y = torch.arange(kernel_size, device=self.device) - kernel_size // 2
+        x, y = torch.meshgrid(x, y)
+        kernel = torch.exp(-(x**2 + y**2) / (2 * sigma**2))
+        kernel = kernel / kernel.sum()
+
+        x_padding = calculate_padding(kernel_size, kernel.shape[0], 1)
+        y_padding = calculate_padding(kernel_size, kernel.shape[1], 1)
+
+        padded = torch.nn.functional.pad(
+            self.ptensor.unsqueeze(0).unsqueeze(0),
+            y_padding + x_padding,
+            mode="circular",
+        )
+
+        convoluted = torch.nn.functional.conv2d(
+            input=padded, weight=kernel.unsqueeze(0).unsqueeze(0)
+        )
+
+        self.ptensor = convoluted.squeeze(0).squeeze(0)
+
+    def sharpen(self):
+        sharpened = self.ptensor**2
+        scaling = sharpened.sum()
+        self.ptensor = sharpened / scaling
