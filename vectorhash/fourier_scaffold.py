@@ -13,7 +13,7 @@ def random_fourier_features(n: int, D: int, device=None):
     w = 2 * math.pi / n
     k = -w * torch.randint(0, n, (D,), device=device)
     x = torch.exp(k * torch.complex(torch.zeros_like(k), torch.ones_like(k)))
-    return x
+    return x / x.abs()
 
 
 class FourierSharpening:
@@ -75,7 +75,7 @@ class HammardShift(FourierShift):
     def __call__(
         self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
-        V = (features ** -v.to(features.device)).prod(1).prod(1)
+        V = (features ** v.to(features.device)).prod(1).prod(1)
         return P * V
 
 
@@ -86,8 +86,9 @@ class HammardShiftMatrix(FourierShift):
     def __call__(
         self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
-        V1 = (features ** -v.to(features.device)).prod(1).prod(1)
-        V = torch.einsum("i,j->ij", V1, V1)
+        V1 = (features ** v.to(features.device)).prod(1).prod(1)
+        V2 = V1.conj()
+        V = torch.einsum("i,j->ij", V1, V2)
         return P * V
 
 
@@ -152,7 +153,7 @@ class GaussianFourierSmoothing(FourierSmoothing):
             ]
         ):
             kernel_index = k + length
-            g = (features**-k).prod(1).prod(1)
+            g = (features**k).prod(1).prod(1)
 
             K += kernel[tuple(kernel_index)] * g
 
@@ -208,8 +209,9 @@ class GuassianFourierSmoothingMatrix(FourierSmoothing):
             ]
         ):
             kernel_index = k + length
-            g1 = (features**-k).prod(1).prod(1)
-            g = torch.einsum("i,j->ij", g1, g1)
+            g1 = (features**k).prod(1).prod(1)
+            g2 = g1.conj()
+            g = torch.einsum("i,j->ij", g1, g2)
 
             K += kernel[tuple(kernel_index)] * g
 
@@ -235,6 +237,7 @@ class FourierScaffold:
         device=None,
         limits=None,
         debug=False,
+        rescaling=True,
     ):
         assert representation in ["matrix", "vector"]
         self.representation = representation
@@ -305,6 +308,8 @@ class FourierScaffold:
         if limits != None:
             for dim in range(self.d):
                 self.scale_factor[dim] = self.grid_limits[dim] / limits[dim]
+        
+        self.rescaling = rescaling
 
     @torch.no_grad()
     def _G(self, method) -> torch.Tensor:
@@ -322,7 +327,23 @@ class FourierScaffold:
         if self.representation == "vector":
             return base
         else:
-            return torch.einsum("i,j->ij", base, base)
+            base2 = base.conj()
+            return torch.einsum("i,j->ij", base, base2)
+
+    def encode_batch(self, ks: torch.Tensor) -> torch.Tensor:
+        """Generate encoding of position k.
+        Shape of k: (d, B)
+        """
+        d, B = ks.shape
+        base = self.C ** (self.M * self.d) * (
+            self.features.unsqueeze(-1).tile(B) ** ks
+        ).prod(1).prod(1)
+
+        if self.representation == "vector":
+            return base
+        else:
+            base2 = base.conj()
+            return torch.einsum("ib,jb->ijb", base, base2)
 
     @torch.no_grad()
     def encode_probability(self, distribution) -> torch.Tensor:
@@ -348,8 +369,8 @@ class FourierScaffold:
 
     def sharpen(self):
         self.g = self.sharpening(self.g, self.features)
-        if isinstance(self.sharpening, ContractionSharpening):
-            scaling = (self.g * self.psum_feature).sum().real
+        if self.rescaling and isinstance(self.sharpening, ContractionSharpening):
+            scaling = (self.g * self.psum_feature.conj()).sum()
             self.g /= scaling
 
     def get_probability(self, k: torch.Tensor):
@@ -360,7 +381,7 @@ class FourierScaffold:
         Args:
             k (_type_): _description_
         """
-        return (self.encode(k) * self.g).sum()
+        return (self.g * self.encode(k).conj()).sum()
 
     def get_all_probabilities(self):
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
