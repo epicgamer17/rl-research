@@ -24,7 +24,7 @@ class FourierSharpening:
         pass
 
 
-class HammardSharpening(FourierSharpening):
+class HadamardSharpening(FourierSharpening):
     def __init__(self, a):
         super().__init__()
         self.a = a
@@ -50,7 +50,7 @@ class ContractionSharpening(FourierSharpening):
         assert len(P.shape) == 2, "P must be a matrix"
         D, M, d = features.shape
 
-        sharpened_P = P @ P.T
+        sharpened_P = P @ P.conj().T
         return sharpened_P
 
 
@@ -68,7 +68,7 @@ class FourierShift:
         pass
 
 
-class HammardShift(FourierShift):
+class HadamardShift(FourierShift):
     def __init__(self):
         super().__init__()
 
@@ -79,7 +79,7 @@ class HammardShift(FourierShift):
         return P * V
 
 
-class HammardShiftMatrix(FourierShift):
+class HadamardShiftMatrix(FourierShift):
     def __init__(self):
         super().__init__()
 
@@ -228,16 +228,19 @@ class FourierScaffold:
         shapes: torch.Tensor,
         D: int,
         calculate_g_method="fast",
-        shift: FourierShift = HammardShift(),
+        shift: FourierShift = HadamardShift(),
         smoothing: FourierSmoothing = GaussianFourierSmoothing(
             kernel_radii=[10] * 3, kernel_sigmas=[0.4] * 3
         ),
-        sharpening: FourierSharpening = HammardSharpening(2),
+        sharpening: FourierSharpening = HadamardSharpening(2),
         representation="vector",
         device=None,
         limits=None,
         debug=False,
         rescaling=True,
+        _skip_K_calc=False,
+        _skip_psum_calc=False,
+        features: None | torch.Tensor = None,
     ):
         assert representation in ["matrix", "vector"]
         self.representation = representation
@@ -268,23 +271,27 @@ class FourierScaffold:
         )
         """The tensor of base features in the scaffold. It has shape (D, M, d)"""
 
-        for module in range(self.M):
-            for dim in range(self.d):
-                self.features[:, module, dim] = random_fourier_features(
-                    n=self.shapes[module, dim].item(), D=self.D, device=self.device
-                )
+        if features == None:
+            for module in range(self.M):
+                for dim in range(self.d):
+                    self.features[:, module, dim] = random_fourier_features(
+                        n=self.shapes[module, dim].item(), D=self.D, device=self.device
+                    )
+        else:
+            self.features = features
 
         self.g = self.zero()
         """The current grid coding state tensor. Shape: `(N_g)`"""
 
-        self.psum_feature = torch.zeros_like(self.g)
-        for k in torch.cartesian_prod(
-            *[
-                torch.arange(0, self.shapes[:, i].prod().item(), device=self.device)
-                for i in range(self.d)
-            ]
-        ):
-            self.psum_feature += self.encode(k)
+        if not _skip_K_calc:
+            self.psum_feature = torch.zeros_like(self.g)
+            for k in torch.cartesian_prod(
+                *[
+                    torch.arange(0, self.shapes[:, i].prod().item(), device=self.device)
+                    for i in range(self.d)
+                ]
+            ):
+                self.psum_feature += self.encode(k)
 
         print("module shapes: ", shapes)
         print("N_g (D) : ", self.N_g)
@@ -295,8 +302,8 @@ class FourierScaffold:
         self.G = self._G(method=calculate_g_method)
         """The matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
 
-        self.smoothing.build_K(self.features)
-        """Gaussian smoothing kernel"""
+        if not _skip_psum_calc:
+            self.smoothing.build_K(self.features)
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
         """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
@@ -308,7 +315,7 @@ class FourierScaffold:
         if limits != None:
             for dim in range(self.d):
                 self.scale_factor[dim] = self.grid_limits[dim] / limits[dim]
-        
+
         self.rescaling = rescaling
 
     @torch.no_grad()
@@ -332,7 +339,7 @@ class FourierScaffold:
 
     def encode_batch(self, ks: torch.Tensor) -> torch.Tensor:
         """Generate encoding of position k.
-        Shape of k: (d, B)
+        Shape of k: (d, ...)
         """
         d, B = ks.shape
         base = self.C ** (self.M * self.d) * (
@@ -343,11 +350,11 @@ class FourierScaffold:
             return base
         else:
             base2 = base.conj()
-            return torch.einsum("ib,jb->ijb", base, base2)
+            return torch.einsum("i...,j...->ij...", base, base2)
 
     @torch.no_grad()
     def encode_probability(self, distribution) -> torch.Tensor:
-        """Generate encoding of probability distribution distribution"""
+        """Generate encoding of probability distribution"""
         encoding = torch.zeros_like(self.g)
         for k in torch.cartesian_prod(
             *[torch.arange(int(self.shapes[:, i].prod().item())) for i in range(self.d)]
@@ -428,7 +435,7 @@ def calculate_padding(i: int, k: int, s: int):
 
 
 class FourierScaffoldDebug:
-    def __init__(self, shapes: torch.Tensor, device=None):
+    def __init__(self, shapes: torch.Tensor, device=None, rescale=True):
         self.shapes = torch.tensor(shapes).int()
         self.device = device
         self.M, self.d = self.shapes.shape
@@ -436,6 +443,7 @@ class FourierScaffoldDebug:
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
         self.ptensor = torch.zeros(*dim_sizes, device=self.device)
         self.ptensor[tuple([0] * self.d)] = 1
+        self.rescale = rescale
 
     def velocity_shift2d(self, v):
         # ratslam-style velocity shift
@@ -490,5 +498,8 @@ class FourierScaffoldDebug:
 
     def sharpen(self):
         sharpened = self.ptensor**2
-        scaling = sharpened.sum()
-        self.ptensor = sharpened / scaling
+        if self.rescale:
+            scaling = sharpened.sum()
+            self.ptensor = sharpened / scaling
+        else:
+            self.ptensor = sharpened
