@@ -304,6 +304,72 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
     def __str__(self):
         return super().__str__() + f" (size={self.size})"
 
+class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
+    def __init__(self, input_size, N_h, N_patts, hbook, device=None):
+        super().__init__(input_size, N_h, device)
+        assert (
+            len(hbook) == N_patts
+        ), f"length of hbook must be identical to N_patts, hbook_length={len(hbook)}, N_patts={N_patts}"
+        assert (
+            len(hbook[0]) == N_h
+        ), f"length of hbook must be identical to N_h, hbook_length={len(hbook)}, N_h={N_h}"
+        self.size = 0
+
+        self.sbook = torch.zeros((N_patts, input_size), device=self.device, dtype=torch.complex64)
+        """Matrix of all previously seen sensory inputs. Shape: `(N_patts x input_size)`
+        """
+        self.hbook = hbook
+        """Matrix of all possible hippocampal states. Shape: `(N_patts x N_h)`
+        """
+
+        self.W_hs = torch.zeros((N_h, input_size), device=self.device, dtype=torch.complex64)
+        """Sensory to hippocampal weight matrix. Shape: `(N_h x input_size)`
+        """
+
+        self.W_sh = torch.zeros((input_size, N_h), device=self.device, dtype=torch.complex64)
+        """Hippocampal to sensory weight matrix. Shape: `(input_size x N_h)`
+        """
+
+    @torch.no_grad()
+    def learn(self, h, s):
+        self.sbook[self.size] = s
+        self.hbook[self.size] = h
+        # self.W_hs = torch.linalg.lstsq(self.hbook, self.sbook).solution
+        # self.W_sh = torch.linalg.lstsq(self.sbook, self.hbook).solution
+        self.W_hs = self.hbook.T @ self.sbook.pinverse().T
+        self.W_sh = self.sbook.T @ self.hbook.pinverse().T
+        self.size += 1
+
+    @torch.no_grad()
+    def hippocampal_from_sensory(self, S):
+        if S.ndim == 1:
+            S = S.unsqueeze(0)
+
+        return S @ self.W_hs.T
+
+    @torch.no_grad()
+    def sensory_from_hippocampal(self, H):
+        if H.ndim == 1:
+            H = H.unsqueeze(0)
+
+        return H @ self.W_sh.T
+
+    @torch.no_grad()
+    def learn_batch(self, sbook: torch.Tensor, hbook: torch.Tensor):
+        assert len(sbook) == len(
+            hbook
+        ), f"length of sbook must be identical to hbook, sbook_length={len(sbook)}, hbook_length={len(hbook)}"
+        self.size = len(sbook)
+        self.sbook = sbook.clone()
+        self.hbook = hbook.clone()
+
+        # self.W_hs = torch.linalg.lstsq(hbook, sbook).solution
+        # self.W_sh = torch.linalg.lstsq(sbook, hbook).solution
+        self.W_hs = hbook.T @ sbook.pinverse().T
+        self.W_sh = sbook.T @ hbook.pinverse().T
+
+    def __str__(self):
+        return super().__str__() + f" (size={self.size})"
 
 class HebbianHippocampalSensoryLayer(HippocampalSensoryLayer):
     def __init__(
