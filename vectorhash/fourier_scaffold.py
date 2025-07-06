@@ -228,12 +228,12 @@ class FourierScaffold:
         shapes: torch.Tensor,
         D: int,
         calculate_g_method="fast",
-        shift: FourierShift = HadamardShift(),
-        smoothing: FourierSmoothing = GaussianFourierSmoothing(
+        shift: FourierShift = HadamardShiftMatrix(),
+        smoothing: FourierSmoothing = GuassianFourierSmoothingMatrix(
             kernel_radii=[10] * 3, kernel_sigmas=[0.4] * 3
         ),
-        sharpening: FourierSharpening = HadamardSharpening(2),
-        representation="vector",
+        sharpening: FourierSharpening = ContractionSharpening(2),
+        representation="matrix",
         device=None,
         limits=None,
         debug=False,
@@ -326,20 +326,37 @@ class FourierScaffold:
             base2 = base.conj()
             return torch.einsum("i,j->ij", base, base2)
 
-    def encode_batch(self, ks: torch.Tensor) -> torch.Tensor:
+    @torch.no_grad()
+    def encode_batch(
+        self, ks: torch.Tensor, representation: str | None = None
+    ) -> torch.Tensor:
         """Generate encoding of position k.
         Shape of k: (d, ...)
         """
-        d, B = ks.shape
+        d = ks.shape[0]
+        B = ks.shape[1:]
         base = self.C ** (self.M * self.d) * (
             self.features.unsqueeze(-1).tile(B) ** ks
         ).prod(1).prod(1)
 
-        if self.representation == "vector":
+        if representation == None:
+            representation = self.representation
+
+        if representation == "vector":
             return base
         else:
             base2 = base.conj()
             return torch.einsum("i...,j...->ij...", base, base2)
+
+    @torch.no_grad()
+    def gbook(self) -> torch.Tensor:
+        dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
+        return self.encode_batch(
+            torch.cartesian_prod(
+                *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
+            ).T,
+            representation='vector'
+        )
 
     @torch.no_grad()
     def encode_probability(self, distribution) -> torch.Tensor:
