@@ -304,7 +304,7 @@ class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
     def __str__(self):
         return super().__str__() + f" (size={self.size})"
 
-class ExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
+class ComplexExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
     def __init__(self, input_size, N_h, N_patts, hbook, device=None):
         super().__init__(input_size, N_h, device)
         assert (
