@@ -239,7 +239,6 @@ class FourierScaffold:
         debug=False,
         rescaling=True,
         _skip_K_calc=False,
-        _skip_psum_calc=False,
         features: None | torch.Tensor = None,
     ):
         assert representation in ["matrix", "vector"]
@@ -283,16 +282,6 @@ class FourierScaffold:
         self.g = self.zero()
         """The current grid coding state tensor. Shape: `(N_g)`"""
 
-        if not _skip_K_calc:
-            self.psum_feature = torch.zeros_like(self.g)
-            for k in torch.cartesian_prod(
-                *[
-                    torch.arange(0, self.shapes[:, i].prod().item(), device=self.device)
-                    for i in range(self.d)
-                ]
-            ):
-                self.psum_feature += self.encode(k)
-
         print("module shapes: ", shapes)
         print("N_g (D) : ", self.N_g)
         print("M       : ", self.M)
@@ -302,7 +291,7 @@ class FourierScaffold:
         self.G = self._G(method=calculate_g_method)
         """The matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
 
-        if not _skip_psum_calc:
+        if not _skip_K_calc:
             self.smoothing.build_K(self.features)
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
@@ -375,10 +364,11 @@ class FourierScaffold:
         self.g = self.shift(self.g, self.features, v)
 
     def sharpen(self):
-        self.g = self.sharpening(self.g, self.features)
         if self.rescaling and isinstance(self.sharpening, ContractionSharpening):
-            scaling = (self.g * self.psum_feature.conj()).sum()
-            self.g /= scaling
+            scaling = self.g.norm() ** 2
+        else:
+            scaling = 1
+        self.g = self.sharpening(self.g, self.features) / scaling
 
     def get_probability(self, k: torch.Tensor):
         """Obtain the probability mass located in cell k
