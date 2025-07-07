@@ -317,7 +317,7 @@ class FourierScaffold:
         else:
             self.features = features
 
-        self.g = self.zero()
+        self.P = self.zero()
         """The current grid coding state tensor. Shape: `(N_g)`"""
 
         print("module shapes: ", shapes)
@@ -326,13 +326,10 @@ class FourierScaffold:
         print("d       : ", self.d)
         print("N_patts : ", self.N_patts)
 
-        self.G = self._G(method=calculate_g_method)
-        """The matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
-
         if not _skip_K_calc:
             self.smoothing.build_K(self.features)
 
-        self._gbook=None
+        self._gbook = None
         if not _skip_gs_calc:
             self.g_s = torch.sum(self.gbook().sum(dim=1))
 
@@ -348,11 +345,6 @@ class FourierScaffold:
                 self.scale_factor[dim] = self.grid_limits[dim] / limits[dim]
 
         self.rescaling = rescaling
-
-    @torch.no_grad()
-    def _G(self, method) -> torch.Tensor:
-        """Calculates the matrix of all possible grid states. Shape: `(N_patts, N_g)`"""
-        return torch.zeros(1)
 
     @torch.no_grad()
     def encode(self, k: torch.Tensor) -> torch.Tensor:
@@ -411,7 +403,7 @@ class FourierScaffold:
     @torch.no_grad()
     def encode_probability(self, distribution) -> torch.Tensor:
         """Generate encoding of probability distribution"""
-        encoding = torch.zeros_like(self.g)
+        encoding = torch.zeros_like(self.P)
         for k in torch.cartesian_prod(
             *[torch.arange(int(self.shapes[:, i].prod().item())) for i in range(self.d)]
         ):
@@ -425,17 +417,13 @@ class FourierScaffold:
         return self.encode(torch.zeros(self.d, device=self.device))
 
     def smooth(self):
-        self.g = self.smoothing(self.g)
+        self.P = self.smoothing(self.P)
 
     def velocity_shift(self, v: torch.Tensor):
-        self.g = self.shift(self.g, self.features, v)
+        self.P = self.shift(self.P, self.features, v)
 
     def sharpen(self):
-        if self.rescaling and isinstance(self.sharpening, ContractionSharpening):
-            scaling = self.g.norm() ** 2
-        else:
-            scaling = 1
-        self.g = self.sharpening(self.g, self.features) / scaling
+        self.P = self.sharpening(self.P, self.features)
 
     def get_probability(self, k: torch.Tensor):
         """Obtain the probability mass located in cell k
@@ -445,7 +433,7 @@ class FourierScaffold:
         Args:
             k (_type_): _description_
         """
-        return (self.g * self.encode(k).conj()).sum()
+        return (self.P * self.encode(k).conj()).sum()
 
     def get_all_probabilities(self):
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
@@ -456,6 +444,16 @@ class FourierScaffold:
             p = self.get_probability(k.clone().to(self.device))
             ptensor[tuple(k)] = p
         return ptensor
+
+    def g_avg(self):
+        return self.P @ self.g_s
+
+    def g_avg_batch(self, P: torch.Tensor):
+        """P shape: (B, D, D)
+
+        Output shape: (B, D)
+        """
+        return torch.einsum("bij,j->bi", P, self.g_s)
 
 
 def calculate_alpha(delta_f_x, delta_f_y, device=None):
