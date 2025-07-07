@@ -104,15 +104,40 @@ class HadamardShift(FourierShift):
 
 
 class HadamardShiftRat(FourierShift):
-    def __init__(self):
+    def __init__(self, shapes: torch.Tensor):
+        self.shapes = shapes
         super().__init__()
 
     def __call__(
         self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
         D, M, d = features.shape
-        # v % 
-        V = (features ** v.to(features.device)).prod(1).prod(1)
+        # v %
+
+        # features: (D, M, d) -> (D, M, d, M, d)
+        #  shapes:     (M, d)
+        #       v:        (d)
+
+        remainders = torch.remainder(v, self.shapes)  # (M,d)
+
+        delta_v = remainders.floor()  # (M,d)
+        delta_f_v = remainders - remainders.floor()  # (M,d)
+
+        encoded_delta_v_left = features.reshape(D, M, d, 1, 1).tile(
+            M, d
+        ) ** delta_v.prod(1).prod(
+            1
+        )  # (D,M,d) with (M,d) as batch dimensions
+        encoded_delta_v_right = features.reshape(D, M, d, 1, 1).tile(M, d) ** (
+            delta_v + 1
+        ).prod(1).prod(
+            1
+        )  # (D,M,d) with (M,d) as batch dimensions
+
+        # broadcasts over D
+        V = (1 - delta_f_v) * encoded_delta_v_left + (delta_f_v) * encoded_delta_v_right
+
+        V = V.sum(1).sum(1)  # (D, M, d) -> (D)
         return P * V
 
 
@@ -126,6 +151,51 @@ class HadamardShiftMatrix(FourierShift):
         V1 = (features ** v.to(features.device)).prod(1).prod(1)
         V2 = V1.conj()
         V = torch.einsum("i,j->ij", V1, V2)
+        return P * V
+
+
+class HadamardShiftMatrixRat(FourierShift):
+    def __init__(self, shapes: torch.Tensor):
+        self.shapes = shapes
+        super().__init__()
+
+    def __call__(
+        self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
+    ) -> torch.Tensor:
+        D, M, d = features.shape
+        # v %
+
+        # features: (D, M, d) -> (D, M, d, M, d)
+        #  shapes:     (M, d)
+        #       v:        (d)
+
+        remainders = torch.remainder(v, self.shapes)  # (M,d)
+
+        delta_v = remainders.floor()  # (M,d)
+        delta_f_v = remainders - remainders.floor()  # (M,d)
+
+        # (D,M,d) with (M,d) as batch dimensions
+        encoded_delta_v_left_base = features.reshape(D, M, d, 1, 1).tile(
+            M, d
+        ) ** delta_v.prod(1).prod(1)
+        encoded_delta_v_right_base = features.reshape(D, M, d, 1, 1).tile(M, d) ** (
+            delta_v + 1
+        ).prod(1).prod(1)
+
+        # (D,D,M,d) with (M,d) as batch dimensions
+        encoded_delta_v_left = torch.einsum(
+            "iab,jab->ijab", encoded_delta_v_left_base, encoded_delta_v_left_base.conj()
+        )
+        encoded_delta_v_right = torch.einsum(
+            "iab,jab->ijab",
+            encoded_delta_v_right_base,
+            encoded_delta_v_right_base.conj(),
+        )
+
+        # broadcasts over (D,D)
+        V = (1 - delta_f_v) * encoded_delta_v_left + (delta_f_v) * encoded_delta_v_right
+
+        V = V.sum(2).sum(2)  # (D,D, M, d) -> (D,d)
         return P * V
 
 
@@ -264,7 +334,6 @@ class FourierScaffold:
         self,
         shapes: torch.Tensor,
         D: int,
-        calculate_g_method="fast",
         shift: FourierShift = HadamardShiftMatrix(),
         smoothing: FourierSmoothing = GuassianFourierSmoothingMatrix(
             kernel_radii=[10] * 3, kernel_sigmas=[0.4] * 3
