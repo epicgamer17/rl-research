@@ -120,9 +120,6 @@ class HadamardShiftRat(FourierShift):
         alpha = outer([stacked[i] for i in range(len(stacked))])
         return alpha
 
-    def g(self, x: torch.Tensor, i: torch.Tensor):
-        return torch.where(i == 0, x, x + 1)
-
     def __call__(
         self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
@@ -139,7 +136,7 @@ class HadamardShiftRat(FourierShift):
             *[torch.arange(2, device=features.device)] * len(v)
         ):
             kernel_index = k
-            shift = self.g(delta_v, k)
+            shift = delta_v + k
             g = (features**shift).prod(1).prod(1)
             V += alpha[tuple(kernel_index)] * g
 
@@ -176,9 +173,6 @@ class HadamardShiftMatrixRat(FourierShift):
         alpha = outer([stacked[i] for i in range(len(stacked))])
         return alpha
 
-    def g(self, x: torch.Tensor, i: torch.Tensor):
-        return torch.where(i == 0, x, x + 1)
-
     def __call__(
         self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
@@ -195,7 +189,7 @@ class HadamardShiftMatrixRat(FourierShift):
             *[torch.arange(2, device=features.device)] * len(v)
         ):
             kernel_index = k
-            shift = self.g(delta_v, k)
+            shift = delta_v + k
             g1 = (features**shift).prod(1).prod(1)
             g = torch.einsum("i,j->ij", g1, g1.conj())
             V += alpha[tuple(kernel_index)] * g
