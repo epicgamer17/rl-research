@@ -79,6 +79,19 @@ class HadamardShift(FourierShift):
         return P * V
 
 
+class HadamardShiftRat(FourierShift):
+    def __init__(self):
+        super().__init__()
+
+    def __call__(
+        self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
+    ) -> torch.Tensor:
+        D, M, d = features.shape
+        # v % 
+        V = (features ** v.to(features.device)).prod(1).prod(1)
+        return P * V
+
+
 class HadamardShiftMatrix(FourierShift):
     def __init__(self):
         super().__init__()
@@ -239,6 +252,7 @@ class FourierScaffold:
         debug=False,
         rescaling=True,
         _skip_K_calc=False,
+        _skip_gs_calc=False,
         features: None | torch.Tensor = None,
     ):
         assert representation in ["matrix", "vector"]
@@ -293,6 +307,10 @@ class FourierScaffold:
 
         if not _skip_K_calc:
             self.smoothing.build_K(self.features)
+
+        self._gbook=None
+        if not _skip_gs_calc:
+            self.g_s = torch.sum(self.gbook().sum(dim=1))
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
         """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
@@ -350,13 +368,21 @@ class FourierScaffold:
 
     @torch.no_grad()
     def gbook(self) -> torch.Tensor:
+        """Get the tensor of all possible grid states
+
+        Output shape: (D, N_patts)
+        """
+        # Get the tensor of all possible states
+        #
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
-        return self.encode_batch(
-            torch.cartesian_prod(
-                *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
-            ).T,
-            representation='vector'
-        )
+        if self._gbook == None:
+            self._gbook = self.encode_batch(
+                torch.cartesian_prod(
+                    *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
+                ).T,
+                representation="vector",
+            )
+        return self._gbook
 
     @torch.no_grad()
     def encode_probability(self, distribution) -> torch.Tensor:
