@@ -108,36 +108,41 @@ class HadamardShiftRat(FourierShift):
         self.shapes = shapes
         super().__init__()
 
+    def calculate_alpha(self, v: torch.Tensor):
+        # (D, 1)
+        delta_v = v.floor().unsqueeze(-1)
+        delta_f_v = v.unsqueeze(-1) - delta_v
+
+        # (D, 2)
+        stacked = torch.concat([1 - delta_f_v, delta_f_v], dim=1)
+
+        # (2 x 2 x ... x 2) (D times)
+        alpha = outer([stacked[i] for i in range(len(stacked))])
+        return alpha
+
+    def g(self, x: torch.Tensor, i: torch.Tensor):
+        return torch.where(i == 0, x, x + 1)
+
     def __call__(
         self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
         D, M, d = features.shape
-        # v %
 
-        # features: (D, M, d) -> (D, M, d, M, d)
-        #  shapes:     (M, d)
-        #       v:        (d)
+        delta_v = v.floor()
+        alpha = self.calculate_alpha(v)
+        V = torch.complex(
+            torch.zeros(D, device=features.device),
+            torch.zeros(D, device=features.device),
+        )
 
-        remainders = torch.remainder(v, self.shapes)  # (M,d)
+        for k in torch.cartesian_prod(
+            *[torch.arange(2, device=features.device)] * len(v)
+        ):
+            kernel_index = k
+            shift = self.g(delta_v, k)
+            g = (features**shift).prod(1).prod(1)
+            V += alpha[tuple(kernel_index)] * g
 
-        delta_v = remainders.floor()  # (M,d)
-        delta_f_v = remainders - remainders.floor()  # (M,d)
-
-        encoded_delta_v_left = features.reshape(D, M, d, 1, 1).tile(
-            M, d
-        ) ** delta_v.prod(1).prod(
-            1
-        )  # (D,M,d) with (M,d) as batch dimensions
-        encoded_delta_v_right = features.reshape(D, M, d, 1, 1).tile(M, d) ** (
-            delta_v + 1
-        ).prod(1).prod(
-            1
-        )  # (D,M,d) with (M,d) as batch dimensions
-
-        # broadcasts over D
-        V = (1 - delta_f_v) * encoded_delta_v_left + (delta_f_v) * encoded_delta_v_right
-
-        V = V.sum(1).sum(1)  # (D, M, d) -> (D)
         return P * V
 
 
@@ -159,43 +164,42 @@ class HadamardShiftMatrixRat(FourierShift):
         self.shapes = shapes
         super().__init__()
 
+    def calculate_alpha(self, v: torch.Tensor):
+        # (D, 1)
+        delta_v = v.floor().unsqueeze(-1)
+        delta_f_v = v.unsqueeze(-1) - delta_v
+
+        # (D, 2)
+        stacked = torch.concat([1 - delta_f_v, delta_f_v], dim=1)
+
+        # (2 x 2 x ... x @) (D times)
+        alpha = outer([stacked[i] for i in range(len(stacked))])
+        return alpha
+
+    def g(self, x: torch.Tensor, i: torch.Tensor):
+        return torch.where(i == 0, x, x + 1)
+
     def __call__(
         self, P: torch.Tensor, features: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
         D, M, d = features.shape
-        # v %
 
-        # features: (D, M, d) -> (D, M, d, M, d)
-        #  shapes:     (M, d)
-        #       v:        (d)
-
-        remainders = torch.remainder(v, self.shapes)  # (M,d)
-
-        delta_v = remainders.floor()  # (M,d)
-        delta_f_v = remainders - remainders.floor()  # (M,d)
-
-        # (D,M,d) with (M,d) as batch dimensions
-        encoded_delta_v_left_base = features.reshape(D, M, d, 1, 1).tile(
-            M, d
-        ) ** delta_v.prod(1).prod(1)
-        encoded_delta_v_right_base = features.reshape(D, M, d, 1, 1).tile(M, d) ** (
-            delta_v + 1
-        ).prod(1).prod(1)
-
-        # (D,D,M,d) with (M,d) as batch dimensions
-        encoded_delta_v_left = torch.einsum(
-            "iab,jab->ijab", encoded_delta_v_left_base, encoded_delta_v_left_base.conj()
-        )
-        encoded_delta_v_right = torch.einsum(
-            "iab,jab->ijab",
-            encoded_delta_v_right_base,
-            encoded_delta_v_right_base.conj(),
+        delta_v = v.floor()
+        alpha = self.calculate_alpha(v)
+        V = torch.complex(
+            torch.zeros(D, D, device=features.device),
+            torch.zeros(D, D, device=features.device),
         )
 
-        # broadcasts over (D,D)
-        V = (1 - delta_f_v) * encoded_delta_v_left + (delta_f_v) * encoded_delta_v_right
+        for k in torch.cartesian_prod(
+            *[torch.arange(2, device=features.device)] * len(v)
+        ):
+            kernel_index = k
+            shift = self.g(delta_v, k)
+            g1 = (features**shift).prod(1).prod(1)
+            g = torch.einsum("i,j->ij", g1, g1.conj())
+            V += alpha[tuple(kernel_index)] * g
 
-        V = V.sum(2).sum(2)  # (D,D, M, d) -> (D,d)
         return P * V
 
 
