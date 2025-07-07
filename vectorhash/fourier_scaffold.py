@@ -1,4 +1,5 @@
 import torch
+import torch.linalg
 import math
 from vectorhash_functions import generate_1d_gaussian_kernel, outer
 
@@ -23,6 +24,15 @@ class FourierSharpening:
     def __call__(self, P: torch.Tensor, features: torch.Tensor) -> torch.Tensor:  # type: ignore
         pass
 
+    def sharpen_batch(
+        self, P: torch.Tensor, features: torch.Tensor
+    ) -> torch.Tensor:  # type:ignore
+        """Input shape of P: (B, D, D)
+
+        Output shape: (B, D, D)
+        """
+        pass
+
 
 class HadamardSharpening(FourierSharpening):
     def __init__(self, a):
@@ -40,6 +50,9 @@ class HadamardSharpening(FourierSharpening):
             * math.sqrt(D)
         )
 
+    def sharpen_batch(self, P: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError()
+
 
 class ContractionSharpening(FourierSharpening):
     def __init__(self, a):
@@ -50,8 +63,19 @@ class ContractionSharpening(FourierSharpening):
         assert len(P.shape) == 2, "P must be a matrix"
         D, M, d = features.shape
 
-        sharpened_P = P @ P.conj().T
+        scaling = P.norm() ** 2
+        sharpened_P = P @ P.conj().T / scaling
         return sharpened_P
+
+    def sharpen_batch(self, P: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
+        """Input shape of P: (B, D, D)
+
+        Output shape: (B, D, D)
+
+        """
+        scaling = torch.linalg.vector_norm(P, dim=(1, 2)) ** 2
+        sharpened_P = torch.einsum("bij,bjk->bik", P, P.conj().T)
+        return sharpened_P / scaling
 
 
 class FourierShift:
