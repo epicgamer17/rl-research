@@ -218,12 +218,20 @@ def plot_path(path, beliefs, out=None):
 import matplotlib
 import numpy as np
 from matplotlib.patches import StepPatch
+from typing import Literal
 
 
 def plot_probability_distribution_on_ax(
-    distribution: np.ndarray, ax: matplotlib.axes.Axes
+    distribution: np.ndarray,
+    ax: matplotlib.axes.Axes,
+    orientation: Literal["horizontal", "vertical"] = "horizontal",
+    start=0,
 ):
-    patch = StepPatch(values=distribution, edges=np.arange(len(distribution) + 1))
+    patch = StepPatch(
+        values=distribution,
+        edges=np.arange(start, start + len(distribution) + 1, 1),
+        orientation=orientation,
+    )
     ax.add_patch(patch)
     return patch
 
@@ -335,8 +343,7 @@ def plot_imgs_side_by_side(
         cbar = fig.colorbar(im, ax=ax)
 
 
-
-def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes):
+def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes, t=0.01):
     data = torch.zeros(scaffold.N_patts, dtype=torch.complex64)
     for i, k in enumerate(
         itertools.product(
@@ -344,7 +351,7 @@ def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes):
         )
     ):
         p = scaffold.get_probability(torch.tensor(k, device=scaffold.device))
-        if p.abs() > 0.01:
+        if p.abs() > t:
             print(i, k, p.abs(), p.angle())
         data[i] = p
 
