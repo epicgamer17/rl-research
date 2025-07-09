@@ -338,7 +338,7 @@ class FourierScaffold:
         ),
         sharpening: FourierSharpening = ContractionSharpening(2),
         representation="matrix",
-        device=None,
+        device: torch.device | str | None = None,
         limits=None,
         debug=False,
         rescaling=True,
@@ -379,7 +379,7 @@ class FourierScaffold:
             for module in range(self.M):
                 for dim in range(self.d):
                     self.features[:, module, dim] = random_fourier_features(
-                        n=self.shapes[module, dim].item(), D=self.D, device=self.device
+                        n=self.shapes[module, dim].item(), D=self.D, device=self.device  # type: ignore
                     )
         else:
             self.features = features
@@ -461,7 +461,10 @@ class FourierScaffold:
         if self._gbook == None:
             self._gbook = self.encode_batch(
                 torch.cartesian_prod(
-                    *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
+                    *[
+                        torch.arange(dim_sizes[dim], device=self.device)
+                        for dim in range(self.d)
+                    ]
                 ).T,
                 representation="vector",
             )
@@ -492,7 +495,7 @@ class FourierScaffold:
     def sharpen(self):
         self.P = self.sharpening(self.P, self.features)
 
-    def get_probability(self, k: torch.Tensor):
+    def get_probability(self, k: torch.Tensor, P: torch.Tensor | None = None):
         """Obtain the probability mass located in cell k
 
         Shape of k: (d)
@@ -500,15 +503,18 @@ class FourierScaffold:
         Args:
             k (_type_): _description_
         """
-        return (self.P * self.encode(k).conj()).sum()
+        if P == None:
+            return (self.P * self.encode(k).conj()).sum()
+        else:
+            return (P * self.encode(k).conj()).sum()
 
-    def get_all_probabilities(self):
+    def get_all_probabilities(self, P: torch.Tensor | None = None):
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
         ptensor = torch.zeros(*dim_sizes, device=self.device)
         for k in torch.cartesian_prod(
             *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
         ):
-            p = self.get_probability(k.clone().to(self.device))
+            p = self.get_probability(k.clone().to(self.device), P)
             ptensor[tuple(k)] = p
         return ptensor
 
@@ -521,6 +527,9 @@ class FourierScaffold:
         Output shape: (B, D)
         """
         return torch.einsum("bij,j->bi", P, self.g_s)
+
+    def entropy(self, P: torch.Tensor):
+        return P.norm() ** 2
 
 
 def calculate_alpha(delta_f_x, delta_f_y, device=None):
