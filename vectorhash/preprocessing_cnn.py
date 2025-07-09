@@ -54,7 +54,7 @@ class PreprocessingCNN(Preprocessor):
 
     def __init__(
         self,
-        device: torch.device,
+        device: torch.device | str | None = None,
         latent_dim: int = 128,
         input_channels: int = 3,
         target_size: tuple[int, int] = (84, 84),
