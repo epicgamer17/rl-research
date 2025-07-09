@@ -433,6 +433,7 @@ class FourierScaffold:
     ) -> torch.Tensor:
         """Generate encoding of position k.
         Shape of k: (d, ...)
+        Output shape: (D, ...) or (D,D, ...)
         """
         d = ks.shape[0]
         B = ks.shape[1:]
