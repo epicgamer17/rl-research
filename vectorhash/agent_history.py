@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from matplotlib import animation
 from matplotlib.gridspec import GridSpec
 import math
+from fourier_scaffold import FourierScaffold
 from graph_utils import (
     plot_probability_distribution_on_ax,
     plot_certainty_on_ax,
@@ -344,3 +345,182 @@ class VectorhashAgentKidnappedHistory:
             errors[2, i] = theta_err
 
         return errors
+
+
+class FourierVectorhashAgentHistory:
+    def __init__(self) -> None:
+        self._true_images = []
+        self._estimated_images = []
+        self._Hs_odometry = []
+        self._Hs_sensory = []
+        self._true_positions = []
+
+        self._xy_distributions = []
+        self._th_distributions = []
+
+        self.r_x = 10
+        self.r_y = 10
+        self.r_theta = 10
+        self.ani = None
+
+    def append(
+        self,
+        P: torch.Tensor | None,
+        true_image: torch.Tensor,
+        estimated_image: torch.Tensor | None,
+        entropy_odometry: float | None,
+        entropy_sensory: float | None,
+        true_position: torch.Tensor,
+        scaffold: FourierScaffold,
+    ):
+        self._true_images.append(true_image.clone().cpu())
+        self._true_positions.append(true_position.clone().cpu())
+
+        if P and estimated_image and entropy_odometry and entropy_sensory:
+            self._estimated_images.append(estimated_image.clone().cpu())
+            self._Hs_odometry.append(entropy_odometry)
+            self._Hs_sensory.append(entropy_sensory)
+
+            x, y, theta = true_position[0], true_position[1], true_position[2]
+            xs = torch.arange(start=x - self.r_x, end=x + self.r_x + 1)  # type: ignore
+            ys = torch.arange(start=y - self.r_y, end=y + self.r_y + 1)  # type: ignore
+            thetas = torch.arange(start=theta - self.r_theta, end=theta + self.r_theta + 1)  # type: ignore
+
+            # (N,d)
+            omega = torch.cartesian_prod(xs, ys, thetas)
+
+            # (D,M,d)**(d,N)->(D,M,N)->(D,N)->(D,D,N)
+            encodings = scaffold.encode_batch(omega.T)
+
+            # (D,D) x (D,D,N) -> (N)
+            probabilities = torch.einsum("ij,ijb->b", P, encodings.conj())
+
+            # (N) -> (N_x, N_y, N_theta)
+            probabilities = probabilities.reshape(len(xs), len(ys), len(thetas))
+
+            # (N_x, N_y, N_theta) -> (N_x, N_y)
+            probabilities_xy = probabilities.sum(2)
+
+            # (N_x, N_y, N_theta) -> (N_theta)
+            probabilities_theta = probabilities.sum(0).sum(0)
+
+            self._xy_distributions.append(probabilities_xy.cpu())
+            self._th_distributions.append(probabilities_theta.cpu())
+        else:
+            self._estimated_images.append(None)
+            self._Hs_odometry.append(None)
+            self._Hs_sensory.append(None)
+            self._xy_distributions.append(None)
+            self._th_distributions.append(None)
+
+    def reset(self):
+        self.ani = None
+        self._true_images = []
+        self._estimated_images = []
+        self._true_positions = []
+        self._xy_distributions = []
+        self._th_distributions = []
+        self._Hs_odometry = []
+        self._Hs_sensory = []
+
+    def make_image_video(self):
+        # 0         3 4       6
+        #
+        # +---------+---------+  0
+        # |         |         |
+        # |  true   |  pred   |
+        # |   img   |   img   |
+        # |         |         |
+        # +---------+-+-------+  3
+        # |  xy_dist  |th_dist|
+        # |           |       |
+        # |           |       |
+        # |           |       |
+        # |           |       |
+        # +-----------+-------+  7
+        # entropy_o:  1.22       8
+        # entropy_s:  4.21
+        #
+        #
+        fig = plt.figure(layout="constrained", figsize=(7, 7), dpi=100)
+        gs = GridSpec(nrows=8, ncols=6, figure=fig)
+
+        text_artist = fig.suptitle("t=0")
+
+        im_true_ax = fig.add_subplot(gs[0:3, 0:3])
+        im_pred_ax = fig.add_subplot(gs[0:3, 3:6])
+        xy_dist_ax = fig.add_subplot(gs[3:7, 0:4])
+        th_dist_ax = fig.add_subplot(gs[3:7, 4:6])
+        info_ax = fig.add_subplot(gs[8, 0:6])
+
+        im_true_ax.set_title("true image")
+        im_pred_ax.set_title("predicted image")
+        xy_dist_ax.set_title("xy dist around true pos")
+        th_dist_ax.set_title("θ dist around true pos")
+        info_ax.set_title("info")
+
+        xy_dist_ax.set_xlim(
+            self._true_positions[0][0] - self.r_x, self._true_positions[0][0] + self.r_x
+        )
+        xy_dist_ax.set_ylim(
+            self._true_positions[0][1] - self.r_y, self._true_positions[0][1] + self.r_y
+        )
+        th_dist_ax.set_ylim(
+            self._true_positions[0][2] - self.r_theta,
+            self._true_positions[0][2] + self.r_theta,
+        )
+        info_ax.set_ylim(0, 1)
+
+        im_true_artist = im_true_ax.imshow(self._true_images[0], vmin=0, vmax=1)
+        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0], vmin=0, vmax=1)
+        xy_dist_artist = xy_dist_ax.imshow(self._xy_distributions[0])
+        th_dist_artist = plot_probability_distribution_on_ax(
+            self._th_distributions[0],
+            th_dist_ax,
+            orientation="horizontal",
+            start=self._true_positions[0][2] - self.r_theta,
+        )
+        xy_true_pos_artist = xy_dist_ax.plot(
+            [self._true_positions[0][0]], [self._true_positions[0][1]], "ro"
+        )
+        th_true_pos_artist = th_dist_ax.plot([1.0], [self._true_positions[0][2]], "ro")
+        entropy_artist = info_ax.text(
+            0, 0, f"H_o: {self._Hs_odometry[0]:.3f}; H_s: {self._Hs_sensory[0]:.3f}"
+        )
+
+        def plot_func(frame):
+            im_true_artist.set_data(self._true_images[frame])
+            xy_true_pos_artist[0].set_data(
+                [self._true_positions[frame][0]], [self._true_positions[frame][1]]
+            )
+            th_true_pos_artist[0].set_data([1.0], [self._true_positions[frame][2]])
+            text_artist.set_text(f"t={frame}")
+
+            artists = [
+                im_true_artist,
+                xy_true_pos_artist,
+                th_true_pos_artist,
+                text_artist,
+            ]
+
+            if self._estimated_images[frame]:
+                im_pred_artist.set_data(self._estimated_images[frame])
+                xy_dist_artist.set_data(self._xy_distributions[frame])
+                th_dist_artist.set_data(values=self._th_distributions[frame], edges=None)
+
+                entropy_artist.set_text(
+                    f"H_o: {self._Hs_odometry[frame]:.3f}; H_s: {self._Hs_sensory[frame]:.3f}"
+                )
+
+                artists.append(im_pred_artist)
+                artists.append(xy_dist_artist)
+                artists.append(th_dist_ax)
+                artists.append(entropy_artist)
+
+            return artists
+
+        self.ani = animation.FuncAnimation(
+            fig, plot_func, len(self._estimated_images) - 1, blit=False
+        )
+
+        return self.ani
