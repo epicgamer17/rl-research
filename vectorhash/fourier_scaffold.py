@@ -398,7 +398,7 @@ class FourierScaffold:
 
         self._gbook = None
         if not _skip_gs_calc:
-            self.g_s = torch.sum(self.gbook().sum(dim=1))
+            self.g_s = self.gbook().sum(dim=1)
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
         """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
