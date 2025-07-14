@@ -358,9 +358,9 @@ class FourierVectorhashAgentHistory:
         self._xy_distributions = []
         self._th_distributions = []
 
-        self.r_x = 10
-        self.r_y = 10
-        self.r_theta = 10
+        self.r_x = 5
+        self.r_y = 5
+        self.r_theta = 5
         self.ani = None
 
     def append(
@@ -376,15 +376,24 @@ class FourierVectorhashAgentHistory:
         self._true_images.append(true_image.clone().cpu())
         self._true_positions.append(true_position.clone().cpu())
 
-        if P and estimated_image and entropy_odometry and entropy_sensory:
+        if (
+            P != None
+            and estimated_image != None
+            and entropy_odometry
+            and entropy_sensory
+        ):
             self._estimated_images.append(estimated_image.clone().cpu())
             self._Hs_odometry.append(entropy_odometry)
             self._Hs_sensory.append(entropy_sensory)
 
-            x, y, theta = true_position[0], true_position[1], true_position[2]
-            xs = torch.arange(start=x - self.r_x, end=x + self.r_x + 1)  # type: ignore
-            ys = torch.arange(start=y - self.r_y, end=y + self.r_y + 1)  # type: ignore
-            thetas = torch.arange(start=theta - self.r_theta, end=theta + self.r_theta + 1)  # type: ignore
+            x, y, theta = (
+                torch.floor(true_position[0]),
+                torch.floor(true_position[1]),
+                torch.floor(true_position[2]),
+            )
+            xs = torch.arange(start=x - self.r_x, end=x + self.r_x + 1, device=P.device)  # type: ignore
+            ys = torch.arange(start=y - self.r_y, end=y + self.r_y + 1, device=P.device)  # type: ignore
+            thetas = torch.arange(start=theta - self.r_theta, end=theta + self.r_theta + 1, device=P.device)  # type: ignore
 
             # (N,d)
             omega = torch.cartesian_prod(xs, ys, thetas)
@@ -393,7 +402,7 @@ class FourierVectorhashAgentHistory:
             encodings = scaffold.encode_batch(omega.T)
 
             # (D,D) x (D,D,N) -> (N)
-            probabilities = torch.einsum("ij,ijb->b", P, encodings.conj())
+            probabilities = torch.einsum("ij,ijb->b", P, encodings.conj()).abs()
 
             # (N) -> (N_x, N_y, N_theta)
             probabilities = probabilities.reshape(len(xs), len(ys), len(thetas))
@@ -451,7 +460,7 @@ class FourierVectorhashAgentHistory:
         im_pred_ax = fig.add_subplot(gs[0:3, 3:6])
         xy_dist_ax = fig.add_subplot(gs[3:7, 0:4])
         th_dist_ax = fig.add_subplot(gs[3:7, 4:6])
-        info_ax = fig.add_subplot(gs[8, 0:6])
+        info_ax = fig.add_subplot(gs[7, 0:6])
 
         im_true_ax.set_title("true image")
         im_pred_ax.set_title("predicted image")
@@ -459,26 +468,34 @@ class FourierVectorhashAgentHistory:
         th_dist_ax.set_title("θ dist around true pos")
         info_ax.set_title("info")
 
-        xy_dist_ax.set_xlim(
-            self._true_positions[0][0] - self.r_x, self._true_positions[0][0] + self.r_x
+        x, y, theta = (
+            torch.floor(self._true_positions[0][0]).item(),
+            torch.floor(self._true_positions[0][1]).item(),
+            torch.floor(self._true_positions[0][2]).item(),
         )
-        xy_dist_ax.set_ylim(
-            self._true_positions[0][1] - self.r_y, self._true_positions[0][1] + self.r_y
-        )
+        xy_dist_ax.set_xlim(x - self.r_x, x + self.r_x)
+        xy_dist_ax.set_ylim(y - self.r_y, y + self.r_y)
         th_dist_ax.set_ylim(
-            self._true_positions[0][2] - self.r_theta,
-            self._true_positions[0][2] + self.r_theta,
+            theta - self.r_theta,
+            theta + self.r_theta,
         )
         info_ax.set_ylim(0, 1)
 
         im_true_artist = im_true_ax.imshow(self._true_images[0], vmin=0, vmax=1)
-        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0], vmin=0, vmax=1)
-        xy_dist_artist = xy_dist_ax.imshow(self._xy_distributions[0])
+        im_pred_artist = im_pred_ax.imshow(self._estimated_images[0])
+
+        extent = (
+            x - self.r_x,
+            x + self.r_x,
+            y - self.r_y,
+            y + self.r_y,
+        )
+        xy_dist_artist = xy_dist_ax.imshow(self._xy_distributions[0], extent=extent)
         th_dist_artist = plot_probability_distribution_on_ax(
             self._th_distributions[0],
             th_dist_ax,
             orientation="horizontal",
-            start=self._true_positions[0][2] - self.r_theta,
+            start=theta - self.r_theta,
         )
         xy_true_pos_artist = xy_dist_ax.plot(
             [self._true_positions[0][0]], [self._true_positions[0][1]], "ro"
@@ -496,25 +513,48 @@ class FourierVectorhashAgentHistory:
             th_true_pos_artist[0].set_data([1.0], [self._true_positions[frame][2]])
             text_artist.set_text(f"t={frame}")
 
+            x, y, theta = (
+                torch.floor(self._true_positions[frame][0]).item(),
+                torch.floor(self._true_positions[frame][1]).item(),
+                torch.floor(self._true_positions[frame][2]).item(),
+            )
+            xy_dist_ax.set_xlim(x - self.r_x, x + self.r_x)
+            xy_dist_ax.set_ylim(y - self.r_y, y + self.r_y)
+            th_dist_ax.set_ylim(
+                theta - self.r_theta,
+                theta + self.r_theta,
+            )
+            extent = (
+                x - self.r_x,
+                x + self.r_x,
+                y - self.r_y,
+                y + self.r_y,
+            )
+            xy_dist_artist.set_extent(extent)
             artists = [
                 im_true_artist,
                 xy_true_pos_artist,
                 th_true_pos_artist,
                 text_artist,
+                xy_dist_ax,
+                xy_dist_artist,
+                th_dist_ax,
             ]
 
-            if self._estimated_images[frame]:
+            if self._estimated_images[frame] != None:
                 im_pred_artist.set_data(self._estimated_images[frame])
                 xy_dist_artist.set_data(self._xy_distributions[frame])
-                th_dist_artist.set_data(values=self._th_distributions[frame], edges=None)
+                th_dist_artist.set_data(
+                    values=self._th_distributions[frame],
+                    edges=torch.arange(theta - self.r_theta, theta + self.r_theta + 2),
+                )
 
                 entropy_artist.set_text(
                     f"H_o: {self._Hs_odometry[frame]:.3f}; H_s: {self._Hs_sensory[frame]:.3f}"
                 )
 
                 artists.append(im_pred_artist)
-                artists.append(xy_dist_artist)
-                artists.append(th_dist_ax)
+                artists.append(th_dist_artist)
                 artists.append(entropy_artist)
 
             return artists
