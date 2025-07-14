@@ -398,7 +398,7 @@ class FourierScaffold:
 
         self._gbook = None
         if not _skip_gs_calc:
-            self.g_s = torch.sum(self.gbook().sum(dim=1))
+            self.g_s = self.gbook().sum(dim=1)
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
         """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
@@ -531,6 +531,53 @@ class FourierScaffold:
 
     def entropy(self, P: torch.Tensor):
         return P.norm() ** 2
+
+
+class ScaffoldHippocampalLayer:
+    def __init__(
+        self, D: int, N_h: int, theta: float, scaffold: FourierScaffold, device=None
+    ):
+        self.D = D
+        self.N_h = N_h
+        self.theta = theta
+        self.scaffold = scaffold
+        self.device = device
+        self.W_hg = self.initialize_W_hg(D, N_h)
+        self.W_gh = self.compute_W_gh(D, N_h)
+
+    def initialize_W_hg(self, D: int, N_h: int):
+        shape = (N_h, 2 * D)
+        W = torch.rand(shape) * torch.where(
+            torch.rand(shape) > 0, torch.ones(shape), torch.zeros(shape)
+        )
+        return W
+
+    def compute_W_gh(self, D, N_h):
+        gbook = self.scaffold.gbook().T  # (N_patts, D)
+        gbook_real = torch.concat([gbook.real, gbook.imag], dim=1)
+        hbook = self.hippocampal_from_grid(gbook)
+
+        W_gh = torch.zeros((2 * D, N_h))
+        for k in range(len(gbook_real)):
+            g = gbook_real[k]
+            h = hbook[k]
+            W_gh += torch.outer(g, h) / (h.norm() + 1e-8)
+
+        return W_gh
+
+    def grid_from_hippocampal(self, H: torch.Tensor):
+        if H.ndim == 1:
+            H = H.unsqueeze(0)
+        concatted = H @ self.W_gh.T
+
+        return torch.complex(concatted[:, : self.D], concatted[:, self.D :])
+
+    def hippocampal_from_grid(self, G: torch.Tensor):
+        if G.ndim == 1:
+            G = G.unsqueeze(0)
+
+        concatted = torch.cat([G.real, G.imag], dim=1)
+        return torch.relu(concatted @ self.W_hg.T - self.theta)
 
 
 def calculate_alpha(delta_f_x, delta_f_y, device=None):
