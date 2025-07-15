@@ -152,6 +152,7 @@ class PreprocessingCNN(Preprocessor):
 
 
 from skimage import color
+from skimage.transform import rescale
 
 
 class GrayscaleAndFlattenPreprocessing(Preprocessor):
@@ -164,3 +165,26 @@ class GrayscaleAndFlattenPreprocessing(Preprocessor):
         grayscale_img = color.rgb2gray(rescaled)
         torch_img = torch.from_numpy(grayscale_img)
         return torch_img.flatten().float().to(self.device)
+
+
+class RescalePreprocessing(Preprocessor):
+    def __init__(self, scale) -> None:
+        super().__init__()
+        self.scale = scale
+
+    def encode(self, image):
+        scaled = rescale(image, self.scale, channel_axis=-1)
+        return scaled
+
+
+class SequentialPreprocessing(Preprocessor):
+    def __init__(self, transforms: list[Preprocessor]) -> None:
+        super().__init__()
+        self.transforms = transforms
+
+    def encode(self, image):
+        x = image
+        for preprocessor in self.transforms:
+            x = preprocessor.encode(x)
+
+        return x
