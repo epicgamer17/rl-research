@@ -46,7 +46,7 @@ class FourierVectorHaSH:
 
     def combine(self, P1, P2):
         if self.shift_method == "additive":
-            P = P1 + P2
+            P = (P1 + P2) / 2
         else:
             P = torch.exp(torch.log(P1) + torch.log(P2))
 
