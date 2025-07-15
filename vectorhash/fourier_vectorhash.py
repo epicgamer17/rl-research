@@ -158,7 +158,7 @@ def path_test(
         g_avg = P @ agent.vectorhash.scaffold.g_s
         return agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
             g_avg
-        )[0].reshape(60, 80)
+        )[0].reshape(30, 40)
 
     def P_from_s(s):
         encoded = agent.preprocessor.encode(s)
@@ -180,7 +180,7 @@ def path_test(
 
     history.append(
         P=agent.vectorhash.scaffold.P,
-        true_image=agent.preprocessor.encode(start_img).reshape(60, 80),
+        true_image=agent.preprocessor.encode(start_img).reshape(30, 40),
         estimated_image=est_img,
         entropy_odometry=H_o,
         entropy_sensory=H_s,
@@ -201,7 +201,7 @@ def path_test(
                 true_position=grid_vector_from_world_vector(
                     agent.true_data.get_relative_true_pos()
                 ),
-                true_image=agent.preprocessor.encode(new_img).reshape(60, 80),
+                true_image=agent.preprocessor.encode(new_img).reshape(30, 40),
                 scaffold=scaffold,
             )
 
@@ -227,7 +227,7 @@ def path_test(
 
         history.append(
             P=scaffold.P,
-            true_image=agent.preprocessor.encode(new_img).reshape(60, 80),
+            true_image=agent.preprocessor.encode(new_img).reshape(30, 40),
             estimated_image=s_from_P(scaffold.P),
             entropy_odometry=H_o,
             entropy_sensory=H_s,
