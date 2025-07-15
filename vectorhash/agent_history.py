@@ -473,22 +473,22 @@ class FourierVectorhashAgentHistory:
             torch.floor(self._true_positions[0][1]).item(),
             torch.floor(self._true_positions[0][2]).item(),
         )
-        xy_dist_ax.set_xlim(x - self.r_x, x + self.r_x)
-        xy_dist_ax.set_ylim(y - self.r_y, y + self.r_y)
+        # xy_dist_ax.set_xlim(x - self.r_x, x + self.r_x)
+        # xy_dist_ax.set_ylim(y - self.r_y, y + self.r_y)
         th_dist_ax.set_ylim(
             theta - self.r_theta,
             theta + self.r_theta,
         )
         info_ax.set_ylim(0, 1)
 
-        im_true_artist = im_true_ax.imshow(self._true_images[0], vmin=0, vmax=1)
+        im_true_artist = im_true_ax.imshow(self._true_images[0])
         im_pred_artist = im_pred_ax.imshow(self._estimated_images[0])
 
         extent = (
-            x - self.r_x,
-            x + self.r_x,
-            y - self.r_y,
-            y + self.r_y,
+            x - self.r_x - 0.5,
+            x + self.r_x + 1 - 0.5,
+            y - self.r_y - 0.5,
+            y + self.r_y + 1 - 0.5,
         )
         xy_dist_artist = xy_dist_ax.imshow(self._xy_distributions[0], extent=extent)
         th_dist_artist = plot_probability_distribution_on_ax(
@@ -500,7 +500,9 @@ class FourierVectorhashAgentHistory:
         xy_true_pos_artist = xy_dist_ax.plot(
             [self._true_positions[0][0]], [self._true_positions[0][1]], "ro"
         )
-        th_true_pos_artist = th_dist_ax.plot([1.0], [self._true_positions[0][2]], "ro")
+        th_true_pos_artist = th_dist_ax.plot(
+            [1.0], [self._true_positions[0][2] + 0.5], "ro"
+        )
         entropy_artist = info_ax.text(
             0, 0, f"H_o: {self._Hs_odometry[0]:.3f}; H_s: {self._Hs_sensory[0]:.3f}"
         )
@@ -510,7 +512,9 @@ class FourierVectorhashAgentHistory:
             xy_true_pos_artist[0].set_data(
                 [self._true_positions[frame][0]], [self._true_positions[frame][1]]
             )
-            th_true_pos_artist[0].set_data([1.0], [self._true_positions[frame][2]])
+            th_true_pos_artist[0].set_data(
+                [1.0], [self._true_positions[frame][2] + 0.5]
+            )
             text_artist.set_text(f"t={frame}")
 
             x, y, theta = (
@@ -518,17 +522,17 @@ class FourierVectorhashAgentHistory:
                 torch.floor(self._true_positions[frame][1]).item(),
                 torch.floor(self._true_positions[frame][2]).item(),
             )
-            xy_dist_ax.set_xlim(x - self.r_x, x + self.r_x)
-            xy_dist_ax.set_ylim(y - self.r_y, y + self.r_y)
+            # xy_dist_ax.set_xlim(x - self.r_x, x + self.r_x)
+            # xy_dist_ax.set_ylim(y - self.r_y, y + self.r_y)
             th_dist_ax.set_ylim(
                 theta - self.r_theta,
                 theta + self.r_theta,
             )
             extent = (
-                x - self.r_x,
-                x + self.r_x,
-                y - self.r_y,
-                y + self.r_y,
+                x - self.r_x - 0.5,
+                x + self.r_x + 1 - 0.5,
+                y - self.r_y - 0.5,
+                y + self.r_y + 1 - 0.5,
             )
             xy_dist_artist.set_extent(extent)
             artists = [
