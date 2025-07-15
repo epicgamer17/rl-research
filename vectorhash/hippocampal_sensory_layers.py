@@ -320,7 +320,7 @@ class ComplexExactPseudoInverseHippocampalSensoryLayer(HippocampalSensoryLayer):
         """Matrix of all previously seen sensory inputs. Shape: `(N_patts x input_size)`
         """
         # self.hbook = torch.cat([hbook.real, hbook.imag], dim=1)
-        self.hbook = torch.zeros((N_patts, 2 * N_h))
+        self.hbook = torch.zeros((N_patts, 2 * N_h), device=self.device)
         """Matrix of all possible hippocampal states. Shape: `(N_patts x N_h)`
         """
 
