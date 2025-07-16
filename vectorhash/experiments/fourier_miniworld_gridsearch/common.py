@@ -34,18 +34,17 @@ from matplotlib import pyplot as plt
 device = "cuda"
 
 
-Ds = np.arange(300, 1000 + 1)
-# Ds = [600, 500, 400, 300, 200, 100, 1000, 900, 800, 700]
+Ds = [400, 500, 600, 700, 800, 900, 1000, 100, 200, 300]
 preprocessing_methods = ["no_cnn", "cnn"]
 additive_shift_alphas = [0.1, 0.3, 0.5, 0.7, 0.9]
-combine_methods = [
+combine_methods = [AdditiveCombine(alpha) for alpha in additive_shift_alphas] + [
     MultiplicativeCombine(),
-] + [AdditiveCombine(alpha) for alpha in additive_shift_alphas]
-shapes = [(5, 5, 5), (7, 7, 7)]
+]
+shapes = [(3, 3, 3), (7, 7, 7)]
 eps_vs = [0.1, 0.3, 0.5, 0.7, 0.9]
 smoothings = [
     GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[sigma] * 3)
-    for sigma in [0.1, 0.2, 0.4, 0.6, 0.8]
+    for sigma in [0.4, 0.1, 0.2, 0.6, 0.8]
 ]
 shifts = [HadamardShiftMatrixRat(torch.tensor(shapes)), HadamardShiftMatrix()]
 
@@ -163,7 +162,6 @@ device = "cuda"
 
 
 def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None):
-    shapes = [(5, 5, 5), (7, 7, 7)]
     D, M, d = history._scaffold_features.shape
     scaffold = FourierScaffold(
         torch.tensor(shapes),
@@ -217,14 +215,18 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
 
     fig, ax = plt.subplots(figsize=(15, 9))
     if kidnap_t != None:
-        ax.axvline(x=kidnap_t, ymin=0, ymax=100, label="kidnapped")
+        ax.axvline(x=kidnap_t, ymin=0, ymax=100, label="kidnapped", linestyle='--')
 
     ax.plot(torch.arange(N), masses_true, label="true")
     ax.plot(torch.arange(N), masses_error, label="error")
     ax.set_xlabel("t")
     ax.set_ylabel("probability mass in true position")
+    ax.set_xticks(torch.arange(0, N + 1, 20))
+    ax.scatter(torch.arange(N), history._Hs_odometry, label="entropy odometry")
+    ax.scatter(torch.arange(N), history._Hs_sensory, label="entropy sensory")
     ax.legend()
     return fig
+
 
 if __name__ == "__main__":
     combinations = generate_combinations()

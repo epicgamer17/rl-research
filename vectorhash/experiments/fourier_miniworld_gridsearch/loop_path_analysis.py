@@ -21,7 +21,6 @@ for entry in os.listdir(loop_results_dir):
     with open(f"{loop_results_dir}/{entry}", "rb") as f:
         data: tuple[FourierVectorhashAgentHistory, list[int]] = pickle.load(f)
         history, path = data
-        anim = history.make_image_video()
         write_animation(history, loop_animations_dir, entry)
         fig = analyze_history_errors(history)
 
