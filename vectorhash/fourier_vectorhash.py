@@ -39,7 +39,7 @@ class MultiplicativeCombine(CombineMethod):
 
     def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
         S = (P1 * P2.conj()).sum().abs()
-        P = P1 @ P2.conj()
+        P = P1 @ P2.conj().T
         return P / S
 
     def __str__(self) -> str:
