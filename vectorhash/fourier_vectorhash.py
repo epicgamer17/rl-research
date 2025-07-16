@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from gymnasium import Env
 
 from fourier_scaffold import FourierScaffold
@@ -267,3 +268,170 @@ def path_test(
         )
 
     return history, path
+
+def kidnap_test(
+    agent: FourierVectorHaSHAgent,
+    pre_kidnap_path: torch.Tensor,
+    post_kidnap_path: torch.Tensor,
+    kidnap_pos: list[float],
+    kidnap_dir: float,
+    noise_dist: torch.distributions.Distribution | None = None,
+    reshape_img_size=(30, 40),
+):
+    ## aliases
+    scaffold = agent.vectorhash.scaffold
+
+    ## reset states
+    history = FourierVectorhashAgentHistory()
+    agent.vectorhash.reset()
+
+    ## store initial observations
+    start_img, start_pos = agent._env_reset(agent.env)
+
+    g_avg = scaffold.P @ scaffold.g_s
+    agent.vectorhash.hippocampal_sensory_layer.learn(
+        h=g_avg, s=agent.preprocessor.encode(start_img)
+    )
+    agent.true_data = TrueData(start_pos)
+
+    def kidnap():
+        env_agent = agent.env.get_wrapper_attr("agent")
+        agent_copy = copy.deepcopy(env_agent)
+        agent_copy.pos = np.array(kidnap_pos)
+        agent_copy.dir = kidnap_dir
+        agent.env.set_wrapper_attr("agent", agent_copy)
+
+
+    def s_from_P(P):
+        g_avg = P @ agent.vectorhash.scaffold.g_s
+        return agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
+            g_avg
+        )[0].reshape(reshape_img_size)
+
+    def P_from_s(s):
+        encoded = agent.preprocessor.encode(s)
+        g = agent.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(
+            encoded
+        )[0]
+        P = torch.einsum("i,j->ij", g, g.conj())
+        return P
+
+    def grid_vector_from_world_vector(v):
+        return (
+            v * agent.vectorhash.scaffold.scale_factor
+        ) % agent.vectorhash.scaffold.grid_limits
+
+    ## initial history store
+    est_img = s_from_P(agent.vectorhash.scaffold.P)
+    H_o = agent.vectorhash.scaffold.entropy(agent.vectorhash.scaffold.P).item()
+    H_s = agent.vectorhash.scaffold.entropy(P_from_s(start_img)).item()
+
+    history.append(
+        P=agent.vectorhash.scaffold.P,
+        true_image=agent.preprocessor.encode(start_img).reshape(reshape_img_size),
+        estimated_image=est_img,
+        entropy_odometry=H_o,
+        entropy_sensory=H_s,
+        true_position=grid_vector_from_world_vector(
+            agent.true_data.get_relative_true_pos()
+        ),
+        scaffold=scaffold,
+    )
+
+    for i, action in enumerate(pre_kidnap_path):
+        new_pos, new_img, v = agent.step(action, noise_dist)
+        if v.norm() < agent.vectorhash.eps_v:
+            history.append(
+                P=None,
+                estimated_image=None,
+                entropy_odometry=None,
+                entropy_sensory=None,
+                true_position=grid_vector_from_world_vector(
+                    agent.true_data.get_relative_true_pos()
+                ),
+                true_image=agent.preprocessor.encode(new_img).reshape(reshape_img_size),
+                scaffold=scaffold,
+            )
+
+            continue
+
+        print(f"t={i}, shift={v}")
+        scaffold.velocity_shift(v)
+        scaffold.smooth()
+        H_o = scaffold.entropy(scaffold.P).item()
+        P_s = P_from_s(new_img)
+        H_s = scaffold.entropy(P_s).item()
+        if H_s > 0.5 and H_s < agent.vectorhash.eps_H:
+            print(f"t={i}, combine, H_s={H_s:.3f}")
+            # we have been here before
+            scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
+
+        scaffold.sharpen()
+        g_avg = scaffold.P @ scaffold.g_s
+        agent.vectorhash.hippocampal_sensory_layer.learn(
+            h=g_avg, s=agent.preprocessor.encode(new_img)
+        )
+        agent.reset_v()
+
+        history.append(
+            P=scaffold.P,
+            true_image=agent.preprocessor.encode(new_img).reshape(reshape_img_size),
+            estimated_image=s_from_P(scaffold.P),
+            entropy_odometry=H_o,
+            entropy_sensory=H_s,
+            true_position=grid_vector_from_world_vector(
+                agent.true_data.get_relative_true_pos()
+            ),
+            scaffold=scaffold,
+        )
+    
+    kidnap()
+
+    for i, action in enumerate(post_kidnap_path):
+        new_pos, new_img, v = agent.step(action, noise_dist)
+        if v.norm() < agent.vectorhash.eps_v:
+            history.append(
+                P=None,
+                estimated_image=None,
+                entropy_odometry=None,
+                entropy_sensory=None,
+                true_position=grid_vector_from_world_vector(
+                    agent.true_data.get_relative_true_pos()
+                ),
+                true_image=agent.preprocessor.encode(new_img).reshape(reshape_img_size),
+                scaffold=scaffold,
+            )
+
+            continue
+
+        print(f"t={i}, shift={v}")
+        scaffold.velocity_shift(v)
+        scaffold.smooth()
+        H_o = scaffold.entropy(scaffold.P).item()
+        P_s = P_from_s(new_img)
+        H_s = scaffold.entropy(P_s).item()
+        if H_s > 0.5 and H_s < agent.vectorhash.eps_H:
+            print(f"t={i}, combine, H_s={H_s:.3f}")
+            # we have been here before
+            scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
+
+        scaffold.sharpen()
+        g_avg = scaffold.P @ scaffold.g_s
+        agent.vectorhash.hippocampal_sensory_layer.learn(
+            h=g_avg, s=agent.preprocessor.encode(new_img)
+        )
+        agent.reset_v()
+
+        history.append(
+            P=scaffold.P,
+            true_image=agent.preprocessor.encode(new_img).reshape(reshape_img_size),
+            estimated_image=s_from_P(scaffold.P),
+            entropy_odometry=H_o,
+            entropy_sensory=H_s,
+            true_position=grid_vector_from_world_vector(
+                agent.true_data.get_relative_true_pos()
+            ),
+            scaffold=scaffold,
+        )
+
+    return history, pre_kidnap_path, post_kidnap_path
