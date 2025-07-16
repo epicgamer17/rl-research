@@ -1,4 +1,5 @@
 import torch
+import math
 
 from gymnasium import spaces, utils
 
@@ -136,7 +137,7 @@ class RoomAgent(FourierVectorHaSHAgent):
         min_z = 0
         max_z = 10
 
-        return torch.tensor([max_x - min_x, max_z - min_z, 360]).float()
+        return torch.tensor([max_x - min_x, max_z - min_z, 2 * math.pi]).float()
 
     def _env_reset(self, env):
         obs, info = env.reset()
