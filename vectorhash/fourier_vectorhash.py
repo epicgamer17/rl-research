@@ -242,7 +242,7 @@ def path_test(
         H_o = scaffold.entropy(scaffold.P).item()
         P_s = P_from_s(new_img)
         H_s = scaffold.entropy(P_s).item()
-        if H_s < agent.vectorhash.eps_H:
+        if H_s > 0.5 and H_s < agent.vectorhash.eps_H:
             print(f"t={i}, combine, H_s={H_s:.3f}")
             # we have been here before
             scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
