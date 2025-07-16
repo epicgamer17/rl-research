@@ -1,0 +1,4 @@
+*_results
+*_animations
+*_plots
+resnet18_adapter.pth
