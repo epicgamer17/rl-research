@@ -349,6 +349,8 @@ class VectorhashAgentKidnappedHistory:
 
 class FourierVectorhashAgentHistory:
     def __init__(self) -> None:
+        self._scaffold_features = None
+
         self._Ps = []
         self._true_images = []
         self._estimated_images = []
@@ -374,6 +376,9 @@ class FourierVectorhashAgentHistory:
         true_position: torch.Tensor,
         scaffold: FourierScaffold,
     ):
+        if self._scaffold_features == None:
+            self._scaffold_features = scaffold.features
+
         self._true_images.append(true_image.clone().cpu())
         self._true_positions.append(true_position.clone().cpu())
 
