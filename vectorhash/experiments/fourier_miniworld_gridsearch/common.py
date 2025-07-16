@@ -21,6 +21,7 @@ from fourier_scaffold import (
     GuassianFourierSmoothingMatrix,
     HadamardShiftMatrixRat,
     HadamardShiftMatrix,
+    ContractionSharpening,
 )
 from experiments.fourier_miniworld_gridsearch.room_env import RoomExperiment
 from hippocampal_sensory_layers import (
@@ -47,6 +48,11 @@ smoothings = [
     for sigma in [0.4, 0.1, 0.2, 0.6, 0.8]
 ]
 shifts = [HadamardShiftMatrixRat(torch.tensor(shapes)), HadamardShiftMatrix()]
+sharpenings = [
+    ContractionSharpening(2),
+    ContractionSharpening(1),
+    ContractionSharpening(3),
+]
 
 img_size_map = {"cnn": (16, 8), "no_cnn": (30, 40)}
 N_s_map = {"cnn": 16 * 8, "no_cnn": 30 * 40}
@@ -71,7 +77,13 @@ def generate_env(with_red_box: bool, with_blue_box: bool):
 def generate_combinations():
     combinations = list(
         itertools.product(
-            Ds, preprocessing_methods, combine_methods, eps_vs, smoothings, shifts
+            Ds,
+            preprocessing_methods,
+            combine_methods,
+            eps_vs,
+            smoothings,
+            shifts,
+            sharpenings,
         )
     )
     return combinations
@@ -79,7 +91,7 @@ def generate_combinations():
 
 def generate_titles():
     titles = [
-        f"D={D}, preprocessing_method={preprocessing_method}, combine_method={combine_method}, eps_v={eps_v}, smoothing={smoothing}, shift={shift}"
+        f"D={D}, preprocessing_method={preprocessing_method}, combine_method={combine_method}, eps_v={eps_v}, smoothing={smoothing}, shift={shift}, sharpening={sharpening}"
         for (
             D,
             preprocessing_method,
@@ -87,6 +99,7 @@ def generate_titles():
             eps_v,
             smoothing,
             shift,
+            sharpening,
         ) in generate_combinations()
     ]
     return titles
@@ -118,7 +131,7 @@ def generate_titles():
 
 
 def create_agent_for_test(
-    env, D, preprocessing_method, combine_method, eps_v, smoothing, shift
+    env, D, preprocessing_method, combine_method, eps_v, smoothing, shift, sharpening
 ):
     scaffold = FourierScaffold(
         shapes=torch.tensor(shapes),
@@ -126,6 +139,7 @@ def create_agent_for_test(
         smoothing=smoothing,
         device=device,
         shift=shift,
+        sharpening=sharpening,
     )
     layer = (
         ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars(
@@ -215,7 +229,7 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
 
     fig, ax = plt.subplots(figsize=(15, 9))
     if kidnap_t != None:
-        ax.axvline(x=kidnap_t, ymin=0, ymax=100, label="kidnapped", linestyle='--')
+        ax.axvline(x=kidnap_t, ymin=0, ymax=100, label="kidnapped", linestyle="--")
 
     ax.plot(torch.arange(N), masses_true, label="true")
     ax.plot(torch.arange(N), masses_error, label="error")
