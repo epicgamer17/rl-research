@@ -38,8 +38,9 @@ class MultiplicativeCombine(CombineMethod):
         pass
 
     def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
+        S = (P1 * P2.conj()).sum().abs()
         P = P1 @ P2.conj()
-        return P / (P.norm() ** 2)
+        return P / S
 
     def __str__(self) -> str:
         return f"multiplicative"
@@ -269,6 +270,7 @@ def path_test(
 
     return history, path
 
+
 def kidnap_test(
     agent: FourierVectorHaSHAgent,
     pre_kidnap_path: torch.Tensor,
@@ -300,7 +302,6 @@ def kidnap_test(
         agent_copy.pos = np.array(kidnap_pos)
         agent_copy.dir = kidnap_dir
         agent.env.set_wrapper_attr("agent", agent_copy)
-
 
     def s_from_P(P):
         g_avg = P @ agent.vectorhash.scaffold.g_s
@@ -384,7 +385,7 @@ def kidnap_test(
             ),
             scaffold=scaffold,
         )
-    
+
     kidnap()
 
     for i, action in enumerate(post_kidnap_path):
