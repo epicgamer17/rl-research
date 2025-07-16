@@ -102,6 +102,9 @@ class HadamardShift(FourierShift):
         V = (features ** v.to(features.device)).prod(1).prod(1)
         return P * V
 
+    def __str__(self):
+        return f"HadamardShift()"
+
 
 class HadamardShiftRat(FourierShift):
     def __init__(self, shapes: torch.Tensor):
@@ -142,6 +145,9 @@ class HadamardShiftRat(FourierShift):
 
         return P * V
 
+    def __str__(self):
+        return f"HadamardRatShift()"
+
 
 class HadamardShiftMatrix(FourierShift):
     def __init__(self):
@@ -154,6 +160,9 @@ class HadamardShiftMatrix(FourierShift):
         V2 = V1.conj()
         V = torch.einsum("i,j->ij", V1, V2)
         return P * V
+
+    def __str__(self):
+        return f"HadamardShift()"
 
 
 class HadamardShiftMatrixRat(FourierShift):
@@ -195,6 +204,9 @@ class HadamardShiftMatrixRat(FourierShift):
             V += alpha[tuple(kernel_index)] * g
 
         return P * V
+
+    def __str__(self):
+        return f"HadamardRatShift()"
 
 
 class FourierSmoothing:
@@ -268,6 +280,17 @@ class GaussianFourierSmoothing(FourierSmoothing):
     def __call__(self, P: torch.Tensor) -> torch.Tensor:
         return P * self.K
 
+    def __str__(self):
+        radii = self.kernel_radii
+        if torch.all(torch.tensor(self.kernel_radii) == self.kernel_radii[0]):
+            radii = self.kernel_radii[0]
+
+        sigmas = self.kernel_sigmas
+        if torch.all(torch.tensor(self.kernel_sigmas) == self.kernel_sigmas[0]):
+            sigmas = self.kernel_sigmas[0]
+
+        return f"GuassianSmoothing(radii={radii}, sigmas={sigmas})"
+
 
 class GuassianFourierSmoothingMatrix(FourierSmoothing):
     def __init__(self, kernel_radii: list, kernel_sigmas: list) -> None:
@@ -325,6 +348,17 @@ class GuassianFourierSmoothingMatrix(FourierSmoothing):
 
     def __call__(self, P: torch.Tensor) -> torch.Tensor:
         return P * self.K
+
+    def __str__(self):
+        radii = self.kernel_radii
+        if torch.all(torch.tensor(self.kernel_radii) == self.kernel_radii[0]):
+            radii = self.kernel_radii[0]
+
+        sigmas = self.kernel_sigmas
+        if torch.all(torch.tensor(self.kernel_sigmas) == self.kernel_sigmas[0]):
+            sigmas = self.kernel_sigmas[0]
+
+        return f"GuassianSmoothing(radii={radii}, sigmas={sigmas})"
 
 
 class FourierScaffold:
