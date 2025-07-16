@@ -81,6 +81,9 @@ class ContractionSharpening(FourierSharpening):
             P = sharpened_P / scaling
         return P
 
+    def __str__(self):
+        return f"ContractionSharpening(k={self.k})"
+
 
 class FourierShift:
     def __init__(self):
