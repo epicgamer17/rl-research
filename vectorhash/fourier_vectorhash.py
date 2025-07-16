@@ -10,6 +10,40 @@ from agent import TrueData
 import copy
 
 
+class CombineMethod:
+    def __init__(self):
+        pass
+
+    def combine(self, P1: torch.Tensor, P2: torch.Tensor) -> torch.Tensor:  # type: ignore
+        pass
+
+    def __str__(self) -> str:  # type:ignore
+        pass
+
+
+class AdditiveCombine(CombineMethod):
+    def __init__(self, alpha: float) -> None:
+        self.alpha = alpha
+
+    def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
+        return (1 - self.alpha) * P1 + self.alpha * P2
+
+    def __str__(self) -> str:
+        return f"additive (alpha={self.alpha})"
+
+
+class MultiplicativeCombine(CombineMethod):
+    def __init__(self) -> None:
+        pass
+
+    def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
+        P = P1 @ P2.conj()
+        return P / (P.norm() ** 2)
+
+    def __str__(self) -> str:
+        return f"multiplicative"
+
+
 class FourierVectorHaSH:
     def __init__(
         self,
@@ -17,16 +51,13 @@ class FourierVectorHaSH:
         hippocampal_sensory_layer: HippocampalSensoryLayer,
         eps_H: float,
         eps_v: float,
-        shift_method: str,
-        shift_alpha: float = 0.5,
+        combine: CombineMethod,
     ):
-        assert shift_method in ["additive", "multiplicative"]
         self.scaffold = scaffold
         self.hippocampal_sensory_layer = hippocampal_sensory_layer
+        self.combine_method = combine
         self._layer_copy = copy.deepcopy(hippocampal_sensory_layer)
 
-        self.shift_method = shift_method
-        self.shift_alpha = shift_alpha
         self.eps_H = eps_H
         self.eps_v = eps_v
 
@@ -47,13 +78,8 @@ class FourierVectorHaSH:
         return H < self.eps_H
 
     def combine(self, P1: torch.Tensor, P2: torch.Tensor):
-        if self.shift_method == "additive":
-            return P1 * (1 - self.shift_alpha) + P2 * self.shift_alpha
-        else:
-            P = P1 @ P2.conj()
-            return P / (P.norm() ** 2)
+        return self.combine_method.combine(P1, P2)
 
-    
 
 class FourierVectorHaSHAgent:
     def __init__(
@@ -139,6 +165,7 @@ def path_test(
     agent: FourierVectorHaSHAgent,
     path: torch.Tensor,
     noise_dist: torch.distributions.Distribution | None = None,
+    reshape_img_size=(30, 40),
 ):
     ## aliases
     scaffold = agent.vectorhash.scaffold
@@ -160,7 +187,7 @@ def path_test(
         g_avg = P @ agent.vectorhash.scaffold.g_s
         return agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
             g_avg
-        )[0].reshape(30, 40)
+        )[0].reshape(reshape_img_size)
 
     def P_from_s(s):
         encoded = agent.preprocessor.encode(s)
@@ -182,7 +209,7 @@ def path_test(
 
     history.append(
         P=agent.vectorhash.scaffold.P,
-        true_image=agent.preprocessor.encode(start_img).reshape(30, 40),
+        true_image=agent.preprocessor.encode(start_img).reshape(reshape_img_size),
         estimated_image=est_img,
         entropy_odometry=H_o,
         entropy_sensory=H_s,
@@ -203,7 +230,7 @@ def path_test(
                 true_position=grid_vector_from_world_vector(
                     agent.true_data.get_relative_true_pos()
                 ),
-                true_image=agent.preprocessor.encode(new_img).reshape(30, 40),
+                true_image=agent.preprocessor.encode(new_img).reshape(reshape_img_size),
                 scaffold=scaffold,
             )
 
@@ -229,7 +256,7 @@ def path_test(
 
         history.append(
             P=scaffold.P,
-            true_image=agent.preprocessor.encode(new_img).reshape(30, 40),
+            true_image=agent.preprocessor.encode(new_img).reshape(reshape_img_size),
             estimated_image=s_from_P(scaffold.P),
             entropy_odometry=H_o,
             entropy_sensory=H_s,

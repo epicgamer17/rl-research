@@ -349,6 +349,7 @@ class VectorhashAgentKidnappedHistory:
 
 class FourierVectorhashAgentHistory:
     def __init__(self) -> None:
+        self._Ps = []
         self._true_images = []
         self._estimated_images = []
         self._Hs_odometry = []
@@ -382,6 +383,7 @@ class FourierVectorhashAgentHistory:
             and entropy_odometry
             and entropy_sensory
         ):
+            self._Ps.append(P.clone().cpu())
             self._estimated_images.append(estimated_image.clone().cpu())
             self._Hs_odometry.append(entropy_odometry)
             self._Hs_sensory.append(entropy_sensory)
@@ -416,6 +418,7 @@ class FourierVectorhashAgentHistory:
             self._xy_distributions.append(probabilities_xy.cpu())
             self._th_distributions.append(probabilities_theta.cpu())
         else:
+            self._Ps.append(None)
             self._estimated_images.append(None)
             self._Hs_odometry.append(None)
             self._Hs_sensory.append(None)
