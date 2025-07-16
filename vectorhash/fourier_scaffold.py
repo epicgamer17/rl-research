@@ -55,17 +55,19 @@ class HadamardSharpening(FourierSharpening):
 
 
 class ContractionSharpening(FourierSharpening):
-    def __init__(self, a):
+    def __init__(self, k=1):
+        self.k = k
         super().__init__()
 
     def __call__(self, P: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
         """P must be a matrix, not a vector"""
         assert len(P.shape) == 2, "P must be a matrix"
-        D, M, d = features.shape
+        for _ in range(self.k):
+            scaling = P.norm() ** 2
+            sharpened_P = P @ P.conj().T / scaling
+            P = sharpened_P
 
-        scaling = P.norm() ** 2
-        sharpened_P = P @ P.conj().T / scaling
-        return sharpened_P
+        return P
 
     def sharpen_batch(self, P: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
         """Input shape of P: (B, D, D)
@@ -73,9 +75,11 @@ class ContractionSharpening(FourierSharpening):
         Output shape: (B, D, D)
 
         """
-        scaling = torch.linalg.vector_norm(P, dim=(1, 2)) ** 2
-        sharpened_P = torch.einsum("bij,bjk->bik", P, P.conj().T)
-        return sharpened_P / scaling
+        for _ in range(self.k):
+            scaling = torch.linalg.vector_norm(P, dim=(1, 2)) ** 2
+            sharpened_P = torch.einsum("bij,bjk->bik", P, P.conj().T)
+            P = sharpened_P / scaling
+        return P
 
 
 class FourierShift:
@@ -370,7 +374,7 @@ class FourierScaffold:
         smoothing: FourierSmoothing = GuassianFourierSmoothingMatrix(
             kernel_radii=[10] * 3, kernel_sigmas=[0.4] * 3
         ),
-        sharpening: FourierSharpening = ContractionSharpening(2),
+        sharpening: FourierSharpening = ContractionSharpening(1),
         representation="matrix",
         device: torch.device | str | None = None,
         limits=None,
