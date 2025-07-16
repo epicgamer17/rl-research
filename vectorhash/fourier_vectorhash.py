@@ -18,6 +18,7 @@ class FourierVectorHaSH:
         eps_H: float,
         eps_v: float,
         shift_method: str,
+        shift_alpha: float = 0.5,
     ):
         assert shift_method in ["additive", "multiplicative"]
         self.scaffold = scaffold
@@ -25,6 +26,7 @@ class FourierVectorHaSH:
         self._layer_copy = copy.deepcopy(hippocampal_sensory_layer)
 
         self.shift_method = shift_method
+        self.shift_alpha = shift_alpha
         self.eps_H = eps_H
         self.eps_v = eps_v
 
@@ -44,14 +46,14 @@ class FourierVectorHaSH:
         print(f"H = {H:.2f}")
         return H < self.eps_H
 
-    def combine(self, P1, P2):
+    def combine(self, P1: torch.Tensor, P2: torch.Tensor):
         if self.shift_method == "additive":
-            P = (P1 + P2) / 2
+            return P1 * (1 - self.shift_alpha) + P2 * self.shift_alpha
         else:
-            P = torch.exp(torch.log(P1) + torch.log(P2))
+            P = P1 @ P2.conj()
+            return P / (P.norm() ** 2)
 
-        return P
-
+    
 
 class FourierVectorHaSHAgent:
     def __init__(
@@ -221,7 +223,7 @@ def path_test(
         scaffold.sharpen()
         g_avg = scaffold.P @ scaffold.g_s
         agent.vectorhash.hippocampal_sensory_layer.learn(
-            h=g_avg, s=agent.preprocessor.encode(start_img)
+            h=g_avg, s=agent.preprocessor.encode(new_img)
         )
         agent.reset_v()
 
