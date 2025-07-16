@@ -17,19 +17,26 @@ from fourier_vectorhash import (
     MultiplicativeCombine,
     FourierVectorHaSH,
 )
-from fourier_scaffold import GuassianFourierSmoothingMatrix
+from fourier_scaffold import (
+    GuassianFourierSmoothingMatrix,
+    HadamardShiftMatrixRat,
+    HadamardShiftMatrix,
+)
 from experiments.fourier_miniworld_gridsearch.room_env import RoomExperiment
 from hippocampal_sensory_layers import (
     ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars,
 )
 from fourier_scaffold import FourierScaffold
+from agent_history import FourierVectorhashAgentHistory
+from matplotlib import pyplot as plt
 
 
 device = "cuda"
 
 
-Ds = np.arange(100, 1001, 100)
-preprocessing_methods = ["cnn", "no_cnn"]
+Ds = np.arange(300, 1000 + 1)
+# Ds = [600, 500, 400, 300, 200, 100, 1000, 900, 800, 700]
+preprocessing_methods = ["no_cnn", "cnn"]
 additive_shift_alphas = [0.1, 0.3, 0.5, 0.7, 0.9]
 combine_methods = [
     MultiplicativeCombine(),
@@ -38,8 +45,9 @@ shapes = [(5, 5, 5), (7, 7, 7)]
 eps_vs = [0.1, 0.3, 0.5, 0.7, 0.9]
 smoothings = [
     GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[sigma] * 3)
-    for sigma in [0.2, 0.4, 0.6, 0.8, 1]
+    for sigma in [0.1, 0.2, 0.4, 0.6, 0.8]
 ]
+shifts = [HadamardShiftMatrixRat(torch.tensor(shapes)), HadamardShiftMatrix()]
 
 img_size_map = {"cnn": (16, 8), "no_cnn": (30, 40)}
 N_s_map = {"cnn": 16 * 8, "no_cnn": 30 * 40}
@@ -64,7 +72,7 @@ def generate_env(with_red_box: bool, with_blue_box: bool):
 def generate_combinations():
     combinations = list(
         itertools.product(
-            Ds, preprocessing_methods, combine_methods, eps_vs, smoothings
+            Ds, preprocessing_methods, combine_methods, eps_vs, smoothings, shifts
         )
     )
     return combinations
@@ -72,13 +80,14 @@ def generate_combinations():
 
 def generate_titles():
     titles = [
-        f"D={D}, preprocessing_method={preprocessing_method}, combine_method={combine_method}, eps_v={eps_v}, smoothing={smoothing}"
+        f"D={D}, preprocessing_method={preprocessing_method}, combine_method={combine_method}, eps_v={eps_v}, smoothing={smoothing}, shift={shift}"
         for (
             D,
             preprocessing_method,
             combine_method,
             eps_v,
             smoothing,
+            shift,
         ) in generate_combinations()
     ]
     return titles
@@ -110,10 +119,14 @@ def generate_titles():
 
 
 def create_agent_for_test(
-    env, D, preprocessing_method, combine_method, eps_v, smoothing
+    env, D, preprocessing_method, combine_method, eps_v, smoothing, shift
 ):
     scaffold = FourierScaffold(
-        shapes=torch.tensor(shapes), D=D, smoothing=smoothing, device=device
+        shapes=torch.tensor(shapes),
+        D=D,
+        smoothing=smoothing,
+        device=device,
+        shift=shift,
     )
     layer = (
         ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars(
@@ -128,13 +141,90 @@ def create_agent_for_test(
     arch = FourierVectorHaSH(
         scaffold=scaffold,
         hippocampal_sensory_layer=layer,
-        eps_H=1,
+        eps_H=100,
         eps_v=eps_v,
         combine=combine_method,
     )
-    agent = RoomAgent(vectorhash=arch, env=env)
+    agent = RoomAgent(
+        vectorhash=arch, env=env, preprocessor=preprocessor_map[preprocessing_method]
+    )
     return agent
 
+
+def write_animation(history: FourierVectorhashAgentHistory, target_dir, entry_name):
+    anim = history.make_image_video()
+    anim.save(
+        f"{target_dir}/{entry_name.split('.')[0]}.gif",
+        progress_callback=lambda step, total: print(f"frame {step+1}/{total}"),
+    )
+
+
+device = "cuda"
+
+
+def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None):
+    shapes = [(5, 5, 5), (7, 7, 7)]
+    D, M, d = history._scaffold_features.shape
+    scaffold = FourierScaffold(
+        torch.tensor(shapes),
+        D=D,
+        features=history._scaffold_features.to(device),
+        device=device,
+        _skip_K_calc=True,
+        _skip_gs_calc=True,
+    )
+
+    R = 5
+    r = 2
+    N = len(history._true_positions)
+    masses_true = torch.zeros(N)
+    masses_error = torch.zeros(N)
+
+    current_dist = None
+    for k in range(N):
+        print(k)
+        P = history._Ps[k]
+        if P != None:
+            P = P.to(device)
+            x, y, theta = (
+                torch.floor(history._true_positions[k][0]),
+                torch.floor(history._true_positions[k][1]),
+                torch.floor(history._true_positions[k][2]),
+            )
+            xs = torch.arange(start=x - R, end=x + R + 1, device=P.device)  # type: ignore
+            ys = torch.arange(start=y - R, end=y + R + 1, device=P.device)  # type: ignore
+            thetas = torch.arange(start=theta - R, end=theta + R + 1, device=P.device)  # type: ignore
+
+            # (N,d)
+            omega = torch.cartesian_prod(xs, ys, thetas)
+
+            # (D,M,d)**(d,N)->(D,M,N)->(D,N)->(D,D,N)
+            encodings = scaffold.encode_batch(omega.T)
+
+            # (D,D) x (D,D,N) -> (N)
+            probabilities = torch.einsum("ij,ijb->b", P, encodings.conj()).abs()
+
+            # (N) -> (N_x, N_y, N_theta)
+            current_dist = probabilities.reshape(len(xs), len(ys), len(thetas))
+
+        true_mass = (
+            current_dist[R - r : R + r + 1, R - r : R + r + 1, R - r : R + r + 1]
+            .sum()
+            .cpu()
+        )
+        masses_true[k] = true_mass
+        masses_error[k] = current_dist.sum().cpu() - true_mass
+
+    fig, ax = plt.subplots(figsize=(15, 9))
+    if kidnap_t != None:
+        ax.axvline(x=kidnap_t, ymin=0, ymax=100, label="kidnapped")
+
+    ax.plot(torch.arange(N), masses_true, label="true")
+    ax.plot(torch.arange(N), masses_error, label="error")
+    ax.set_xlabel("t")
+    ax.set_ylabel("probability mass in true position")
+    ax.legend()
+    return fig
 
 if __name__ == "__main__":
     combinations = generate_combinations()

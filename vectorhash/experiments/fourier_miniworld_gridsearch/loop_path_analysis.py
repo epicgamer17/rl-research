@@ -1,22 +1,30 @@
 import os
 import pickle
+from common import generate_titles
 
 import sys
 
 sys.path.append("../..")
 from agent_history import FourierVectorhashAgentHistory
+from common import analyze_history_errors, write_animation
 
-results_dir = "loop_path_results"
-animations_dir = "loop_path_animations"
 
-os.makedirs(animations_dir, exist_ok=True)
+loop_results_dir = "loop_path_results"
+loop_animations_dir = "loop_path_animations"
+loop_plots_dir = "loop_path_plots"
 
-for entry in os.listdir(results_dir):
-    with open(f"{results_dir}/{entry}", "rb") as f:
+os.makedirs(loop_animations_dir, exist_ok=True)
+os.makedirs(loop_plots_dir, exist_ok=True)
+titles = generate_titles()
+
+for entry in os.listdir(loop_results_dir):
+    with open(f"{loop_results_dir}/{entry}", "rb") as f:
         data: tuple[FourierVectorhashAgentHistory, list[int]] = pickle.load(f)
         history, path = data
         anim = history.make_image_video()
-        anim.save(
-            f"{animations_dir}/{entry.split('.')[0]}.gif",
-            progress_callback=lambda step, total: print(f"frame {step+1}/{total}"),
-        )
+        write_animation(history, loop_animations_dir, entry)
+        fig = analyze_history_errors(history)
+
+        i = int(entry.split(".")[0])
+        fig.suptitle(titles[i])
+        fig.savefig(f"{loop_plots_dir}/{i}.png")
