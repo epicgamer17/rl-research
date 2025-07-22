@@ -35,7 +35,7 @@ from matplotlib import pyplot as plt
 device = "cuda"
 
 
-Ds = [400, 800, 1200, 10000]
+Ds = [400, 1200, 10000]
 preprocessing_methods = ["no_cnn"]  # , "cnn"]
 additive_shift_alphas = [0.1]  # , 0.3, 0.5, 0.7, 0.9]
 combine_methods = [AdditiveCombine(alpha) for alpha in additive_shift_alphas] + [
@@ -49,9 +49,9 @@ smoothings = [
 ]
 shifts = [HadamardShiftMatrixRat(torch.tensor(shapes)), HadamardShiftMatrix()]
 sharpenings = [
-    ContractionSharpening(2),
+    # ContractionSharpening(2),
     ContractionSharpening(1),
-    ContractionSharpening(3),
+    # ContractionSharpening(3),
 ]
 
 img_size_map = {"cnn": (16, 8), "no_cnn": (30, 40)}
