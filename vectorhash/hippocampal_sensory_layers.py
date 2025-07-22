@@ -714,8 +714,8 @@ class ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayer(
         N_h: int,
         hidden_layer_factor: int,
         stationary=True,
-        epsilon_sh=None,
-        epsilon_hs=None,
+        epsilon_sh: float | None = None,
+        epsilon_hs: float | None = None,
         device=None,
     ):
         super().__init__(input_size, N_h, device)
@@ -899,8 +899,8 @@ class ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexSc
         N_h: int,
         hidden_layer_factor: int,
         stationary=True,
-        epsilon_sh=None,
-        epsilon_hs=None,
+        epsilon_sh: float | None = None,
+        epsilon_hs: float | None = None,
         device=None,
     ):
         super().__init__(input_size, N_h, device)
