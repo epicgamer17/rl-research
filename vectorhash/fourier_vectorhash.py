@@ -390,7 +390,7 @@ def kidnap_test(
 
     for i, action in enumerate(post_kidnap_path):
         new_pos, new_img, v = agent.step(action, noise_dist)
-        if v.norm() < agent.vectorhash.eps_v:
+        if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(
                 P=None,
                 estimated_image=None,
