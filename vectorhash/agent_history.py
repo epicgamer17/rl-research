@@ -498,7 +498,7 @@ class FourierVectorhashAgentHistory:
             y - self.r_y - 0.5,
             y + self.r_y + 1 - 0.5,
         )
-        xy_dist_artist = xy_dist_ax.imshow(self._xy_distributions[0], extent=extent)
+        xy_dist_artist = xy_dist_ax.imshow(self._xy_distributions[0].T.flip(0), extent=extent)
         th_dist_artist = plot_probability_distribution_on_ax(
             self._th_distributions[0],
             th_dist_ax,
@@ -555,7 +555,7 @@ class FourierVectorhashAgentHistory:
 
             if self._estimated_images[frame] != None:
                 im_pred_artist.set_data(self._estimated_images[frame])
-                xy_dist_artist.set_data(self._xy_distributions[frame])
+                xy_dist_artist.set_data(self._xy_distributions[frame].T.flip(0))
                 th_dist_artist.set_data(
                     values=self._th_distributions[frame],
                     edges=torch.arange(theta - self.r_theta, theta + self.r_theta + 2),

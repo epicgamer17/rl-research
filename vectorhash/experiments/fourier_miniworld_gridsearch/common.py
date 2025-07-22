@@ -35,17 +35,17 @@ from matplotlib import pyplot as plt
 device = "cuda"
 
 
-Ds = [400, 500, 600, 700, 800, 900, 1000, 100, 200, 300]
-preprocessing_methods = ["no_cnn", "cnn"]
-additive_shift_alphas = [0.1, 0.3, 0.5, 0.7, 0.9]
+Ds = [400, 800, 1200, 10000]
+preprocessing_methods = ["no_cnn"]  # , "cnn"]
+additive_shift_alphas = [0.1]  # , 0.3, 0.5, 0.7, 0.9]
 combine_methods = [AdditiveCombine(alpha) for alpha in additive_shift_alphas] + [
     MultiplicativeCombine(),
 ]
 shapes = [(3, 3, 3), (7, 7, 7)]
-eps_vs = [0.1, 0.3, 0.5, 0.7, 0.9]
+eps_vs = [1.0]
 smoothings = [
     GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[sigma] * 3)
-    for sigma in [0.4, 0.1, 0.2, 0.6, 0.8]
+    for sigma in [0.5, 0.3, 0.1]
 ]
 shifts = [HadamardShiftMatrixRat(torch.tensor(shapes)), HadamardShiftMatrix()]
 sharpenings = [
