@@ -227,7 +227,7 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
         masses_true[k] = true_mass
         masses_error[k] = current_dist.sum().cpu() - true_mass
 
-    fig, ax = plt.subplots(figsize=(15, 9))
+    fig, ax = plt.subplots(figsize=(20, 9))
     if kidnap_t != None:
         ax.axvline(x=kidnap_t, ymin=0, ymax=100, label="kidnapped", linestyle="--")
 
