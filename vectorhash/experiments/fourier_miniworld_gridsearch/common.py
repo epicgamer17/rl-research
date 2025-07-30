@@ -35,7 +35,7 @@ from matplotlib import pyplot as plt
 device = "cuda"
 
 
-Ds = [400, 1200, 10000]
+Ds = [800]
 preprocessing_methods = ["no_cnn"]  # , "cnn"]
 additive_shift_alphas = [0.1]  # , 0.3, 0.5, 0.7, 0.9]
 combine_methods = [AdditiveCombine(alpha) for alpha in additive_shift_alphas] + [
@@ -182,6 +182,7 @@ def write_animation(history: FourierVectorhashAgentHistory, target_dir, entry_na
 device = "cuda"
 
 
+@torch.no_grad()
 def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None):
     D, M, d = history._scaffold_features.shape
     scaffold = FourierScaffold(

@@ -368,6 +368,7 @@ class FourierVectorhashAgentHistory:
         self.start_x, self.start_y, self.start_theta = None, None, None
         self.r_x, self.r_y, self.r_theta = None, None, None
 
+    @torch.no_grad()
     def append(
         self,
         P: torch.Tensor | None,
@@ -481,6 +482,7 @@ class FourierVectorhashAgentHistory:
         self._scaffold_features = None
         self._scaffold_shapes = None
 
+    @torch.no_grad()
     def make_image_video(self):
         # 0         3 4       6
         #
