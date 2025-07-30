@@ -231,14 +231,20 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
     if kidnap_t != None:
         ax.axvline(x=kidnap_t, ymin=0, ymax=100, label="kidnapped", linestyle="--")
 
+    ax2 = ax.twinx()
+
     ax.plot(torch.arange(N), masses_true, label="true")
     ax.plot(torch.arange(N), masses_error, label="error")
+    ax2.scatter(torch.arange(N), history._Hs_odometry, label="entropy odometry")
+    ax2.scatter(torch.arange(N), history._Hs_sensory, label="entropy sensory")
+
     ax.set_xlabel("t")
+    ax2.set_ylabel("H(P)")
     ax.set_ylabel("probability mass in true position")
+
     ax.set_xticks(torch.arange(0, N + 1, 20))
-    ax.scatter(torch.arange(N), history._Hs_odometry, label="entropy odometry")
-    ax.scatter(torch.arange(N), history._Hs_sensory, label="entropy sensory")
     ax.legend()
+    ax2.legend()
     return fig
 
 
