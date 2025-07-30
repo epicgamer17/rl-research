@@ -542,13 +542,27 @@ class FourierScaffold:
 
         Shape of k: (d)
 
-        Args:
-            k (_type_): _description_
         """
         if P == None:
             return (self.P * self.encode(k).conj()).sum()
         else:
             return (P * self.encode(k).conj()).sum()
+    
+    def get_probability_abs_batched(self, ks, P: torch.Tensor|None=None):
+        """Obtain the probability mass located in cells ks = (k1, ..., kN)
+
+        Shape of ks: (N)
+
+        """
+        _P = P
+        if _P == None:
+            _P = self.P
+        
+        _P = _P.conj()
+        def f(k):
+            return (_P * self.encode(k)).sum().abs()
+
+        return torch.vmap(f, chunk_size=200)(ks)
 
     def get_all_probabilities(self, P: torch.Tensor | None = None):
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
