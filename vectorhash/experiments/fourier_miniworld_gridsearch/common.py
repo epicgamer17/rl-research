@@ -54,12 +54,19 @@ sharpenings = [
     # ContractionSharpening(3),
 ]
 
-img_size_map = {"cnn": (16, 8), "no_cnn": (30, 40)}
-N_s_map = {"cnn": 16 * 8, "no_cnn": 30 * 40}
+img_size_map = {
+    "cnn": (16, 8),
+    "no_cnn": (30, 40),
+    "no_cnn_extra_downscaling": (15, 20),
+}
+N_s_map = {"cnn": 16 * 8, "no_cnn": 30 * 40, "no_cnn_extra_downscaling": 15 * 20}
 preprocessor_map = {
     "cnn": PreprocessingCNN(device=device),
     "no_cnn": SequentialPreprocessing(
         [RescalePreprocessing(0.5), GrayscaleAndFlattenPreprocessing(device=device)]
+    ),
+    "no_cnn_extra_downscaling": SequentialPreprocessing(
+        [RescalePreprocessing(0.25), GrayscaleAndFlattenPreprocessing(device=device)]
     ),
 }
 
