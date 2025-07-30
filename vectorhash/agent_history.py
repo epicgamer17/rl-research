@@ -348,8 +348,9 @@ class VectorhashAgentKidnappedHistory:
 
 
 class FourierVectorhashAgentHistory:
-    def __init__(self) -> None:
+    def __init__(self, fixed_center=True) -> None:
         self._scaffold_features = None
+        self._scaffold_shapes = None
 
         self._Ps = []
         self._true_images = []
@@ -361,10 +362,11 @@ class FourierVectorhashAgentHistory:
         self._xy_distributions = []
         self._th_distributions = []
 
-        self.r_x = 5
-        self.r_y = 5
-        self.r_theta = 5
         self.ani = None
+
+        self.fixed_center = fixed_center
+        self.start_x, self.start_y, self.start_theta = None, None, None
+        self.r_x, self.r_y, self.r_theta = None, None, None
 
     def append(
         self,
@@ -378,6 +380,16 @@ class FourierVectorhashAgentHistory:
     ):
         if self._scaffold_features == None:
             self._scaffold_features = scaffold.features
+
+        if self._scaffold_shapes == None:
+            self._scaffold_shapes = scaffold.shapes
+
+        if self.r_x == None or self.r_y == None or self.r_theta == None:
+            if not self.fixed_center:
+                self.r_x, self.r_y, self.r_theta = 5, 5, 5
+            else:
+                L_theta = scaffold.shapes.prod(0)[2].item()
+                self.r_x, self.r_y, self.r_theta = 5, 5, int((L_theta - 1) // 2)
 
         self._true_images.append(true_image.clone().cpu())
         self._true_positions.append(true_position.clone().cpu())
@@ -393,14 +405,39 @@ class FourierVectorhashAgentHistory:
             self._Hs_odometry.append(entropy_odometry)
             self._Hs_sensory.append(entropy_sensory)
 
-            x, y, theta = (
-                torch.floor(true_position[0]),
-                torch.floor(true_position[1]),
-                torch.floor(true_position[2]),
+            if self.fixed_center:
+                if (
+                    self.start_x == None
+                    or self.start_y == None
+                    or self.start_theta == None
+                ):
+                    self.start_x, self.start_y, self.start_theta = (
+                        torch.floor(true_position[0]).item(),
+                        torch.floor(true_position[1]).item(),
+                        torch.floor(true_position[2]).item(),
+                    )
+                center_x, center_y, center_theta = (
+                    self.start_x,
+                    self.start_y,
+                    self.start_theta,
+                )
+            else:
+                center_x, center_y, center_theta = (
+                    torch.floor(true_position[0]).item(),
+                    torch.floor(true_position[1]).item(),
+                    torch.floor(true_position[2]).item(),
+                )
+            xs = torch.arange(
+                start=center_x - self.r_x, end=center_x + self.r_x + 1, device=P.device
             )
-            xs = torch.arange(start=x - self.r_x, end=x + self.r_x + 1, device=P.device)  # type: ignore
-            ys = torch.arange(start=y - self.r_y, end=y + self.r_y + 1, device=P.device)  # type: ignore
-            thetas = torch.arange(start=theta - self.r_theta, end=theta + self.r_theta + 1, device=P.device)  # type: ignore
+            ys = torch.arange(
+                start=center_y - self.r_y, end=center_y + self.r_y + 1, device=P.device
+            )
+            thetas = torch.arange(
+                start=center_theta - self.r_theta,
+                end=center_theta + self.r_theta + 1,
+                device=P.device,
+            )
 
             # (N,d)
             omega = torch.cartesian_prod(xs, ys, thetas)
@@ -439,6 +476,10 @@ class FourierVectorhashAgentHistory:
         self._th_distributions = []
         self._Hs_odometry = []
         self._Hs_sensory = []
+        self.start_x, self.start_y, self.start_theta = None, None, None
+        self.r_x, self.r_y, self.r_theta = None, None, None
+        self._scaffold_features = None
+        self._scaffold_shapes = None
 
     def make_image_video(self):
         # 0         3 4       6
@@ -459,6 +500,8 @@ class FourierVectorhashAgentHistory:
         # entropy_s:  4.21
         #
         #
+        assert self.r_x != None and self.r_y != None and self.r_theta != None
+
         fig = plt.figure(layout="constrained", figsize=(7, 7), dpi=100)
         gs = GridSpec(nrows=8, ncols=6, figure=fig)
 
@@ -498,7 +541,9 @@ class FourierVectorhashAgentHistory:
             y - self.r_y - 0.5,
             y + self.r_y + 1 - 0.5,
         )
-        xy_dist_artist = xy_dist_ax.imshow(self._xy_distributions[0].T.flip(0), extent=extent)
+        xy_dist_artist = xy_dist_ax.imshow(
+            self._xy_distributions[0].T.flip(0), extent=extent
+        )
         th_dist_artist = plot_probability_distribution_on_ax(
             self._th_distributions[0],
             th_dist_ax,
@@ -516,31 +561,65 @@ class FourierVectorhashAgentHistory:
         )
 
         def plot_func(frame):
+            assert self.r_x != None and self.r_y != None and self.r_theta != None
             im_true_artist.set_data(self._true_images[frame])
-            xy_true_pos_artist[0].set_data(
-                [self._true_positions[frame][0]], [self._true_positions[frame][1]]
+
+            true_x, true_y, true_theta = (
+                self._true_positions[frame][0],
+                self._true_positions[frame][1],
+                self._true_positions[frame][2],
             )
-            th_true_pos_artist[0].set_data(
-                [1.0], [self._true_positions[frame][2] + 0.5]
-            )
+            if self.fixed_center:
+                assert (
+                    self.start_x != None
+                    and self.start_y != None
+                    and self.start_theta != None
+                    and self._scaffold_shapes != None
+                )
+                # [(3.3.3). (7,7,7)]
+                L_x, L_y, L_theta = (
+                    self._scaffold_shapes.prod(dim=0)[0],
+                    self._scaffold_shapes.prod(dim=0)[1],
+                    self._scaffold_shapes.prod(dim=0)[2],
+                )
+                xy_true_pos_artist[0].set_data(
+                    [true_x, true_x, true_x - L_x, true_x - L_x],
+                    [true_y, true_y - L_y, true_y, true_y - L_y],
+                )
+                th_true_pos_artist[0].set_data(
+                    [1.0, 1.0], [true_theta + 0.5, true_theta - L_theta + 0.5]
+                )
+            else:
+                xy_true_pos_artist[0].set_data([true_x], [true_y])
+                th_true_pos_artist[0].set_data([1.0], [true_theta + 0.5])
+
             text_artist.set_text(f"t={frame}")
 
-            x, y, theta = (
-                torch.floor(self._true_positions[frame][0]).item(),
-                torch.floor(self._true_positions[frame][1]).item(),
-                torch.floor(self._true_positions[frame][2]).item(),
-            )
-            # xy_dist_ax.set_xlim(x - self.r_x, x + self.r_x)
-            # xy_dist_ax.set_ylim(y - self.r_y, y + self.r_y)
+            if self.fixed_center:
+                assert (
+                    self.start_x != None
+                    and self.start_y != None
+                    and self.start_theta != None
+                )
+                center_x = self.start_x
+                center_y = self.start_y
+                center_theta = self.start_theta
+            else:
+                center_x, center_y, center_theta = (
+                    torch.floor(self._true_positions[frame][0]).item(),
+                    torch.floor(self._true_positions[frame][1]).item(),
+                    torch.floor(self._true_positions[frame][2]).item(),
+                )
+
             th_dist_ax.set_ylim(
-                theta - self.r_theta,
-                theta + self.r_theta,
+                center_theta - self.r_theta,
+                center_theta + self.r_theta,
             )
             extent = (
-                x - self.r_x - 0.5,
-                x + self.r_x + 1 - 0.5,
-                y - self.r_y - 0.5,
-                y + self.r_y + 1 - 0.5,
+                center_x - self.r_x - 0.5,
+                center_x + self.r_x + 1 - 0.5,
+                center_y - self.r_y - 0.5,
+                center_y + self.r_y + 1 - 0.5,
             )
             xy_dist_artist.set_extent(extent)
             artists = [
