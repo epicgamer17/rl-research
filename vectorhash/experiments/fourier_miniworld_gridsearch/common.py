@@ -217,13 +217,8 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
 
             # (N,d)
             omega = torch.cartesian_prod(xs, ys, thetas)
-
-            # (D,M,d)**(d,N)->(D,M,N)->(D,N)->(D,D,N)
-            encodings = scaffold.encode_batch(omega.T)
-
-            # (D,D) x (D,D,N) -> (N)
-            probabilities = torch.einsum("ij,ijb->b", P, encodings.conj()).abs()
-
+            # (N,d) -> (N)
+            probabilities = scaffold.get_probability_abs_batched(omega, P)
             # (N) -> (N_x, N_y, N_theta)
             current_dist = probabilities.reshape(len(xs), len(ys), len(thetas))
 
