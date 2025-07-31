@@ -323,7 +323,7 @@ def plot_certainty_on_ax(
 
 
 def plot_imgs_side_by_side(
-    imgs: list[list[int]],
+    imgs: list,
     axs: list[matplotlib.axes.Axes],
     titles: list[str],
     fig: matplotlib.figure.Figure,

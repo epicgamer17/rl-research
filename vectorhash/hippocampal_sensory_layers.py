@@ -427,14 +427,14 @@ class ComplexExactPseudoInverseHippocampalSensoryLayerComplexScalars(
         if S.ndim == 1:
             S = S.unsqueeze(0)
 
-        return S @ self.W_hs.T
+        return torch.complex(S, torch.zeros_like(S)) @ self.W_hs.T
 
     @torch.no_grad()
     def sensory_from_hippocampal(self, H):
         if H.ndim == 1:
             H = H.unsqueeze(0)
 
-        return H @ self.W_sh.T
+        return (H @ self.W_sh.T).real
 
     @torch.no_grad()
     def learn_batch(self, sbook: torch.Tensor, hbook: torch.Tensor):
