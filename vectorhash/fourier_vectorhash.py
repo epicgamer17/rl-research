@@ -39,7 +39,7 @@ class MultiplicativeCombine(CombineMethod):
 
     def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
         S = (P1 * P2.conj()).sum().abs()
-        P = P1 @ P2.conj().T
+        P = P1 @ P2.H
         return P / S
 
     def __str__(self) -> str:
@@ -223,7 +223,7 @@ def path_test(
 
     for i, action in enumerate(path):
         new_pos, new_img, v = agent.step(action, noise_dist)
-        if v.norm() < agent.vectorhash.eps_v:
+        if v.norm(p=float('inf')) < agent.vectorhash.eps_v:
             history.append(
                 P=None,
                 estimated_image=None,

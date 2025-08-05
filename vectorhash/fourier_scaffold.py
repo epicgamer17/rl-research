@@ -64,7 +64,7 @@ class ContractionSharpening(FourierSharpening):
         assert len(P.shape) == 2, "P must be a matrix"
         for _ in range(self.k):
             scaling = P.norm() ** 2
-            sharpened_P = P @ P.conj().T / scaling
+            sharpened_P = P @ P.H / scaling
             P = sharpened_P
 
         return P
@@ -77,7 +77,7 @@ class ContractionSharpening(FourierSharpening):
         """
         for _ in range(self.k):
             scaling = torch.linalg.vector_norm(P, dim=(1, 2)) ** 2
-            sharpened_P = torch.einsum("bij,bjk->bik", P, P.conj().T)
+            sharpened_P = torch.einsum("bij,bjk->bik", P, P.H)
             P = sharpened_P / scaling
         return P
 
