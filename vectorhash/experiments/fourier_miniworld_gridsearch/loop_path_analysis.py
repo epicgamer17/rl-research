@@ -9,9 +9,9 @@ from agent_history import FourierVectorhashAgentHistory
 from common import analyze_history_errors, write_animation
 
 
-loop_results_dir = "loop_path_results"
-loop_animations_dir = "loop_path_animations"
-loop_plots_dir = "loop_path_plots"
+loop_results_dir = "loop_path_results_aug_5"
+loop_animations_dir = "loop_path_animations_aug_5"
+loop_plots_dir = "loop_path_plots_aug_5"
 
 os.makedirs(loop_animations_dir, exist_ok=True)
 os.makedirs(loop_plots_dir, exist_ok=True)

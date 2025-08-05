@@ -26,6 +26,7 @@ from fourier_scaffold import (
 from experiments.fourier_miniworld_gridsearch.room_env import RoomExperiment
 from hippocampal_sensory_layers import (
     ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars,
+    ComplexExactPseudoInverseHippocampalSensoryLayer,
 )
 from fourier_scaffold import FourierScaffold
 from agent_history import FourierVectorhashAgentHistory
@@ -47,7 +48,7 @@ smoothings = [
     GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[sigma] * 3)
     for sigma in [0.5, 0.3, 0.1]
 ]
-shifts = [HadamardShiftMatrixRat(torch.tensor(shapes)), HadamardShiftMatrix()]
+shifts = [HadamardShiftMatrixRat(torch.tensor(shapes))]
 sharpenings = [
     # ContractionSharpening(2),
     ContractionSharpening(1),
@@ -148,15 +149,22 @@ def create_agent_for_test(
         shift=shift,
         sharpening=sharpening,
     )
-    layer = (
-        ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars(
-            input_size=N_s_map[preprocessing_method],
-            N_h=D,
-            hidden_layer_factor=0,
-            epsilon_hs=0.1,
-            epsilon_sh=0.1,
-            device=device,
-        )
+    # layer = (
+    #     ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars(
+    #         input_size=N_s_map[preprocessing_method],
+    #         N_h=D,
+    #         hidden_layer_factor=0,
+    #         epsilon_hs=0.1,
+    #         epsilon_sh=0.1,
+    #         device=device,
+    #     )
+    # )
+    layer = ComplexExactPseudoInverseHippocampalSensoryLayer(
+        input_size=N_s_map[preprocessing_method],
+        N_h=D,
+        N_patts=9261,
+        hbook=scaffold.gbook().T,
+        device=device
     )
     arch = FourierVectorHaSH(
         scaffold=scaffold,
