@@ -36,9 +36,9 @@ from matplotlib import pyplot as plt
 device = "cuda"
 
 
-Ds = [800]
+Ds = [600]
 preprocessing_methods = ["no_cnn"]  # , "cnn"]
-additive_shift_alphas = [0.1]  # , 0.3, 0.5, 0.7, 0.9]
+additive_shift_alphas = [0.3, 0.5]  # , 0.3, 0.5, 0.7, 0.9]
 combine_methods = [AdditiveCombine(alpha) for alpha in additive_shift_alphas] + [
     MultiplicativeCombine(),
 ]
@@ -46,13 +46,11 @@ shapes = [(3, 3, 3), (7, 7, 7)]
 eps_vs = [1.0]
 smoothings = [
     GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[sigma] * 3)
-    for sigma in [0.5, 0.3, 0.1]
+    for sigma in [0.5, 0.3]
 ]
 shifts = [HadamardShiftMatrixRat(torch.tensor(shapes))]
 sharpenings = [
-    # ContractionSharpening(2),
-    ContractionSharpening(1),
-    # ContractionSharpening(3),
+    ContractionSharpening(2),
 ]
 
 img_size_map = {
@@ -72,12 +70,13 @@ preprocessor_map = {
 }
 
 
-def generate_env(with_red_box: bool, with_blue_box: bool):
+def generate_env(with_red_box: bool, with_blue_box: bool, fast=False):
     env = RoomExperiment(
         start_pos=[3, 0, 3],
         start_angle=0,
         place_red_box=with_red_box,
         place_blue_box=with_blue_box,
+        fast=fast,
     )
     return env
 
@@ -164,7 +163,7 @@ def create_agent_for_test(
         N_h=D,
         N_patts=9261,
         hbook=scaffold.gbook().T,
-        device=device
+        device=device,
     )
     arch = FourierVectorHaSH(
         scaffold=scaffold,
