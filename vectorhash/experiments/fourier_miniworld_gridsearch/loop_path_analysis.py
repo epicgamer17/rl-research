@@ -9,20 +9,23 @@ from agent_history import FourierVectorhashAgentHistory
 from common import analyze_history_errors, write_animation
 
 
-loop_results_dir = "loop_path_results_aug_6_fast"
-loop_animations_dir = "loop_path_animations_aug_6_fast"
-loop_plots_dir = "loop_path_plots_aug_6_fast"
+loop_results_dir = "loop_path_results_aug_6_fast_specific"
+loop_animations_dir = "loop_path_animations_aug_6_fast_specific"
+loop_plots_dir = "loop_path_plots_aug_6_fast_specific"
 
 os.makedirs(loop_animations_dir, exist_ok=True)
 os.makedirs(loop_plots_dir, exist_ok=True)
 titles = generate_titles()
+
+fast=True
+kidnap_t = 48 if fast else 240
 
 for entry in os.listdir(loop_results_dir):
     with open(f"{loop_results_dir}/{entry}", "rb") as f:
         data: tuple[FourierVectorhashAgentHistory, list[int]] = pickle.load(f)
         history, path = data
         write_animation(history, loop_animations_dir, entry)
-        fig = analyze_history_errors(history)
+        fig = analyze_history_errors(history, kidnap_t=kidnap_t)
 
         i = int(entry.split(".")[0])
         fig.suptitle(titles[i])

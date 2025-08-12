@@ -12,7 +12,7 @@ from common import (
 
 from fourier_vectorhash import path_test
 
-results_dir = "loop_path_results_aug_6_fast"
+results_dir = "loop_path_results_aug_6_fast_specific"
 os.makedirs(results_dir, exist_ok=True)
 
 # each forward step (action 2) = 0.2 units

@@ -69,6 +69,23 @@ preprocessor_map = {
     ),
 }
 
+### specific test
+
+Ds = [600]
+preprocessing_methods = ["no_cnn"]
+combine_methods = [
+    MultiplicativeCombine(),
+]
+shapes = [(3, 3, 3), (7, 7, 7)]
+eps_vs = [1.0]
+smoothings = [
+    GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[0.5] * 3)
+]
+shifts = [HadamardShiftMatrixRat(torch.tensor(shapes))]
+sharpenings = [
+    ContractionSharpening(2),
+]
+
 
 def generate_env(with_red_box: bool, with_blue_box: bool, fast=False):
     env = RoomExperiment(
@@ -161,8 +178,8 @@ def create_agent_for_test(
     layer = ComplexExactPseudoInverseHippocampalSensoryLayer(
         input_size=N_s_map[preprocessing_method],
         N_h=D,
-        N_patts=9261,
-        hbook=scaffold.gbook().T,
+        N_patts=200,#9261,
+        hbook=scaffold.gbook().T[:200],
         device=device,
     )
     arch = FourierVectorHaSH(
@@ -245,7 +262,8 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
 
     ax.plot(torch.arange(N), masses_true, label="true")
     ax.plot(torch.arange(N), masses_error, label="error")
-    ax2.scatter(torch.arange(N), history._Hs_odometry, label="entropy odometry")
+    ax2.set_yscale('log')
+    # ax2.scatter(torch.arange(N), history._Hs_odometry, label="entropy odometry")
     ax2.scatter(torch.arange(N), history._Hs_sensory, label="entropy sensory")
 
     ax.set_xlabel("t")
