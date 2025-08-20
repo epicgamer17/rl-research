@@ -393,28 +393,28 @@ def exp2():
     sharpened_encoding_l2s = torch.zeros(N, num_dists, nruns)
     original_probs_l2_errs = torch.zeros(N, num_dists, nruns)
     sharpened_probs_l2_errs = torch.zeros(N, num_dists, nruns)
-    for i, shapes in enumerate(shape_configurations):
-        for j, (name, distribution) in enumerate(distributions(dim_sizes(shapes))):
-            for run in range(nruns):
+    for run in range(nruns):
+        for i, shapes in enumerate(shape_configurations):
+            scaffold = FourierScaffold(
+                shapes,
+                D=D,
+                sharpening=ContractionSharpening(2),
+                shift=HadamardShiftMatrixRat(shapes=shapes),
+                smoothing=GuassianFourierSmoothingMatrix(
+                    kernel_radii=[10, 10], kernel_sigmas=[1, 1]
+                ),
+                device=device,
+                representation="matrix",
+                _skip_K_calc=True,
+                _skip_gs_calc=True,
+                _skip_Ts_calc=True,
+            )
+            scaffold_debug = FourierScaffoldDebug(shapes, device=device)
+
+            for j, (name, distribution) in enumerate(distributions(dim_sizes(shapes))):
                 print(
                     f" ----------------------- running test: {shapes.tolist()} ({i+1}/{N}), {name} ({j+1}/{num_dists}), run {run+1}/{nruns} --------------------"
                 )
-                scaffold = FourierScaffold(
-                    shapes,
-                    D=D,
-                    sharpening=ContractionSharpening(2),
-                    shift=HadamardShiftMatrixRat(shapes=shapes),
-                    smoothing=GuassianFourierSmoothingMatrix(
-                        kernel_radii=[10, 10], kernel_sigmas=[1, 1]
-                    ),
-                    device=device,
-                    representation="matrix",
-                    _skip_K_calc=True,
-                    _skip_gs_calc=True,
-                    _skip_Ts_calc=True,
-                )
-                scaffold_debug = FourierScaffoldDebug(shapes, device=device)
-
                 (
                     _,
                     _,
