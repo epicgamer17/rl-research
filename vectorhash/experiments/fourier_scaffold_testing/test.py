@@ -376,18 +376,18 @@ def exp2():
         torch.tensor(s)
         for s in [
             [(5, 5), (8, 8)],
-            # [(5, 5), (12, 12)],
-            # [(5, 5), (16, 16)],
-            # [(5, 5), (21, 21)],
-            # [(5, 5), (26, 26)],
-            # [(5, 5), (31, 31j)],
+            [(5, 5), (12, 12)],
+            [(5, 5), (16, 16)],
+            [(5, 5), (21, 21)],
+            [(5, 5), (26, 26)],
+            [(5, 5), (31, 31j)],
         ]
     ]
 
     N = len(shape_configurations)
     num_dists = len(distributions(dim_sizes(shape_configurations[0])))
     D = 400
-    nruns = 5
+    nruns = 1
 
     sharpened_encoding_similarities = torch.zeros(N, num_dists, nruns)
     sharpened_encoding_l2s = torch.zeros(N, num_dists, nruns)
@@ -397,7 +397,7 @@ def exp2():
         for j, (name, distribution) in enumerate(distributions(dim_sizes(shapes))):
             for run in range(nruns):
                 print(
-                    f" ----------------------- running test: {name} ({i}/{N}), ({j+1}/{num_dists}), D={D}, run {run+1}/{nruns} --------------------"
+                    f" ----------------------- running test: {shapes.tolist()} ({i+1}/{N}), {name} ({j+1}/{num_dists}), run {run+1}/{nruns} --------------------"
                 )
                 scaffold = FourierScaffold(
                     shapes,
@@ -486,7 +486,7 @@ def exp2_analysis():
         plot_with_error(
             ax,
             omega_sizes,
-            sharpened_encoding_l2s[i].cpu(),
+            sharpened_encoding_l2s[:, i].cpu(),
             label=name,
         )
 
@@ -502,7 +502,7 @@ def exp2_analysis():
         plot_with_error(
             ax,
             omega_sizes,
-            original_probs_l2_errs[i].cpu(),
+            original_probs_l2_errs[:, i].cpu(),
             label=name,
         )
 
@@ -518,7 +518,7 @@ def exp2_analysis():
         plot_with_error(
             ax,
             omega_sizes,
-            sharpened_probs_l2_errs[i].cpu(),
+            sharpened_probs_l2_errs[:, i].cpu(),
             label=name,
         )
 
@@ -530,6 +530,7 @@ def exp2_analysis():
 
 
 if __name__ == "__main__":
-    # exp1()
+    exp1()
     exp_1_analysis()
-    # exp2()
+    exp2()
+    exp2_analysis()
