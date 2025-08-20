@@ -367,4 +367,5 @@ def plot_with_error(ax: Axes, x, y, **kwargs):
         x,
         means - stds,
         means + stds,
+        alpha=0.2,
     )
