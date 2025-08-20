@@ -380,14 +380,14 @@ def exp2():
             [(5, 5), (16, 16)],
             [(5, 5), (21, 21)],
             [(5, 5), (26, 26)],
-            [(5, 5), (31, 31j)],
+            [(5, 5), (31, 31)],
         ]
     ]
 
     N = len(shape_configurations)
     num_dists = len(distributions(dim_sizes(shape_configurations[0])))
     D = 400
-    nruns = 1
+    nruns = 5
 
     sharpened_encoding_similarities = torch.zeros(N, num_dists, nruns)
     sharpened_encoding_l2s = torch.zeros(N, num_dists, nruns)
