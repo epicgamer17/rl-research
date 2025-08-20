@@ -576,7 +576,10 @@ class FourierScaffold:
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
         return self.get_probability_abs_batched(
             torch.cartesian_prod(
-                *[torch.arange(dim_sizes[dim], device=self.device) for dim in range(self.d)]
+                *[
+                    torch.arange(dim_sizes[dim], device=self.device)
+                    for dim in range(self.d)
+                ]
             ),
             P,
         )
