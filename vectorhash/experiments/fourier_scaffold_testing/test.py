@@ -122,7 +122,9 @@ def run_test(distribution, scaffold, scaffold_debug):
 
     original_decoded_probs = scaffold.get_all_probabilities()
     true_probs = scaffold_debug.ptensor
-    original_probs_l2_err = l2_err(true_probs.flatten(), original_decoded_probs.flatten())
+    original_probs_l2_err = l2_err(
+        true_probs.flatten(), original_decoded_probs.flatten()
+    )
 
     scaffold.sharpen()
     scaffold_debug.sharpen()
@@ -134,7 +136,9 @@ def run_test(distribution, scaffold, scaffold_debug):
 
     sharpened_decoded_probs = scaffold.get_all_probabilities()
     true_probs = scaffold_debug.ptensor
-    sharpened_probs_l2_err = l2_err(true_probs.flatten(), sharpened_decoded_probs.flatten())
+    sharpened_probs_l2_err = l2_err(
+        true_probs.flatten(), sharpened_decoded_probs.flatten()
+    )
 
     return (
         original_decoded_probs,
@@ -217,9 +221,10 @@ def exp1():
         "sharpened_probs_l2_errs": sharpened_probs_l2_errs,
         "original_probability_heatmaps": original_probability_heatmaps,
         "sharpened_probability_heatmaps": sharpened_probability_heatmaps,
-        "true_sharpened_probability_heatmaps": true_sharpened_probability_heatmaps
+        "true_sharpened_probability_heatmaps": true_sharpened_probability_heatmaps,
     }
     torch.save(data, "exp_1_data.pkl")
+
 
 def exp_1_analyis():
     data = torch.load("exp_1_data.pkl")
@@ -281,26 +286,35 @@ def exp_1_analyis():
     fig.savefig("original_vs_recovered_sharpened_l2_error_vs_D.png")
 
     ### Probability heatmap comparisons for true distributions
-    fig, ax = plt.subplots(nrows=len(dists), ncols=2, figsize=(12, 2 * len(dists)))
+    fig, ax = plt.subplots(
+        nrows=len(dists), ncols=1 + len(Ds), figsize=(12, 2 * len(dists))
+    )
     for i, (name, dist) in enumerate(dists):
         plot_imgs_side_by_side(
-            imgs=[dist.cpu(), original_probability_heatmaps[i].cpu()],
-            titles=[f"Original {name}", f"Encoded and decoded {name}"],
+            imgs=[dist.cpu(), *original_probability_heatmaps[i].cpu()],
+            titles=[f"Original {name}"]
+            + [f"Encoded and decoded {name}, D={D}" for D in Ds],
             axs=ax[i, :],
             use_first_img_scale=False,
-            fig=fig
+            fig=fig,
         )
     fig.savefig("original_vs_decoded_probability_heatmaps.png")
 
     ### Probability heatmap comparisons for sharpened distributions
-    fig, ax = plt.subplots(nrows=len(dists), ncols=2, figsize=(12, 2 * len(dists)))
+    fig, ax = plt.subplots(
+        nrows=len(dists), ncols=1 + len(Ds), figsize=(12, 2 * len(dists))
+    )
     for i, (name, _) in enumerate(dists):
         plot_imgs_side_by_side(
-            imgs=[true_sharpened_probability_heatmaps[i].cpu(), sharpened_probability_heatmaps[i].cpu()],
-            titles=[f"True sharpened {name}", f"Decoded sharpened {name}"],
+            imgs=[
+                true_sharpened_probability_heatmaps[i].cpu(),
+                *sharpened_probability_heatmaps[i].cpu(),
+            ],
+            titles=[f"True sharpened {name}"]
+            + [f"Decoded sharpened {name}, D={D}" for D in Ds],
             axs=ax[i, :],
             use_first_img_scale=False,
-            fig=fig
+            fig=fig,
         )
     fig.savefig("true_vs_decoded_sharpened_probability_heatmaps.png")
 
@@ -373,6 +387,7 @@ def exp2():
         "sharpened_probs_l2_errs": sharpened_probs_l2_errs,
     }
     torch.save(data, "exp_2_data.pkl")
+
 
 def exp2_analysis():
     data = torch.load("exp_2_data.pkl")
