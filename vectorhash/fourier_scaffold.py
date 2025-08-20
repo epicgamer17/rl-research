@@ -570,17 +570,16 @@ class FourierScaffold:
         def f(k):
             return (_P * self.encode(k)).sum().abs()
 
-        return torch.vmap(f, chunk_size=200)(ks)
+        return torch.vmap(f, chunk_size=1000)(ks)
 
     def get_all_probabilities(self, P: Optional[torch.Tensor] = None):
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
-        ptensor = torch.empty(*dim_sizes, device=self.device)
-        for k in torch.cartesian_prod(
-            *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
-        ):
-            p = self.get_probability(k.clone().to(self.device), P)
-            ptensor[tuple(k)] = p
-        return ptensor
+        return self.get_probability_abs_batched(
+            torch.cartesian_prod(
+                *[torch.arange(dim_sizes[dim], device=self.device) for dim in range(self.d)]
+            ),
+            P,
+        )
 
     def _T_s(self):
         gbook = self.gbook()  # (D, N_patts)
