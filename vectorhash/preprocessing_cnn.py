@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pretrainedmodels
-
+from typing import Union, Optional
 
 class CNNCoder(nn.Module):
     """
@@ -54,11 +54,11 @@ class PreprocessingCNN(Preprocessor):
 
     def __init__(
         self,
-        device: torch.device | str | None = None,
+        device: Union[torch.device, str, None] = None,
         latent_dim: int = 128,
         input_channels: int = 3,
         target_size: tuple[int, int] = (84, 84),
-        model_path: str = None,
+        model_path: Optional[str] = None,
     ):
         """
         Args:

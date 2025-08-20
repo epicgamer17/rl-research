@@ -1,3 +1,4 @@
+from typing import Optional
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from matplotlib.gridspec import GridSpec
@@ -371,11 +372,11 @@ class FourierVectorhashAgentHistory:
     @torch.no_grad()
     def append(
         self,
-        P: torch.Tensor | None,
+        P: Optional[torch.Tensor],
         true_image: torch.Tensor,
-        estimated_image: torch.Tensor | None,
-        entropy_odometry: float | None,
-        entropy_sensory: float | None,
+        estimated_image: Optional[torch.Tensor],
+        entropy_odometry: Optional[float],
+        entropy_sensory: Optional[float],
         true_position: torch.Tensor,
         scaffold: FourierScaffold,
     ):

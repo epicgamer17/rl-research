@@ -1,3 +1,4 @@
+from typing import Optional, Union
 import math
 import torch
 import torch.linalg
@@ -380,14 +381,14 @@ class FourierScaffold:
         ),
         sharpening: FourierSharpening = ContractionSharpening(1),
         representation="matrix",
-        device: torch.device | str | None = None,
+        device: Union[torch.device, str, None] = None,
         limits=None,
         debug=False,
         rescaling=True,
         _skip_K_calc=False,
         _skip_gs_calc=False,
         _skip_Ts_calc=False,
-        features: None | torch.Tensor = None,
+        features: Optional[torch.Tensor] = None,
     ):
         assert representation in ["matrix", "vector"]
         self.representation = representation
@@ -459,7 +460,7 @@ class FourierScaffold:
 
     @torch.no_grad()
     def encode(
-        self, k: torch.Tensor, representation: str | None = None
+        self, k: torch.Tensor, representation: Optional[str] = None
     ) -> torch.Tensor:
         """Generate encoding of position k.
         Shape of k: (d)
@@ -478,7 +479,7 @@ class FourierScaffold:
 
     @torch.no_grad()
     def encode_batch(
-        self, ks: torch.Tensor, representation: str | None = None
+        self, ks: torch.Tensor, representation: Optional[str] = None
     ) -> torch.Tensor:
         """Generate encoding of position k.
         Shape of k: (d, ...)
@@ -545,7 +546,7 @@ class FourierScaffold:
     def sharpen(self):
         self.P = self.sharpening(self.P, self.features)
 
-    def get_probability(self, k: torch.Tensor, P: torch.Tensor | None = None):
+    def get_probability(self, k: torch.Tensor, P: Optional[torch.Tensor] = None):
         """Obtain the probability mass located in cell k
 
         Shape of k: (d)
@@ -555,7 +556,7 @@ class FourierScaffold:
         else:
             return (P * self.encode(k).conj()).sum()
 
-    def get_probability_abs_batched(self, ks, P: torch.Tensor | None = None):
+    def get_probability_abs_batched(self, ks, P: Optional[torch.Tensor] = None):
         """Obtain the probability mass located in cells ks = (k1, ..., kN)
 
         Shape of ks: (N, d)
@@ -571,7 +572,7 @@ class FourierScaffold:
 
         return torch.vmap(f, chunk_size=200)(ks)
 
-    def get_all_probabilities(self, P: torch.Tensor | None = None):
+    def get_all_probabilities(self, P: Optional[torch.Tensor] = None):
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
         ptensor = torch.empty(*dim_sizes, device=self.device)
         for k in torch.cartesian_prod(
