@@ -328,9 +328,10 @@ def plot_imgs_side_by_side(
     titles: list[str],
     fig: matplotlib.figure.Figure,
     use_first_img_scale=True,
+    cbar_only_on_last = False
 ):
     first = True
-    for img, ax, title in zip(imgs, axs, titles):
+    for i, (img, ax, title) in enumerate(zip(imgs, axs, titles)):
         ax.set_title(title)
         if use_first_img_scale:
             if first:
@@ -340,7 +341,11 @@ def plot_imgs_side_by_side(
                 ax.imshow(img)
         else:
             im = ax.imshow(img)
-        cbar = fig.colorbar(im, ax=ax)
+        if not cbar_only_on_last:
+            cbar = fig.colorbar(im, ax=ax)
+
+    if cbar_only_on_last:
+        cbar = fig.colorbar(im, ax=axs, pad=0.01)
 
 
 def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes, t=0.01):
@@ -362,7 +367,7 @@ def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes, t=0.
 def plot_with_error(ax: Axes, x, y, **kwargs):
     means = y.mean(dim=-1)
     stds = y.std(dim=-1)
-    ax.plot(x, means, **kwargs)
+    ax.plot(x, means, alpha=0.8, **kwargs)
     ax.fill_between(
         x,
         means - stds,
