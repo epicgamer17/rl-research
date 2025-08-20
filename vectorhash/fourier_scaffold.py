@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.linalg
 import math
@@ -64,7 +65,7 @@ class ContractionSharpening(FourierSharpening):
         assert len(P.shape) == 2, "P must be a matrix"
         for _ in range(self.k):
             scaling = P.norm() ** 2
-            sharpened_P = P @ P.H / scaling
+            sharpened_P = P @ P / scaling
             P = sharpened_P
 
         return P
@@ -77,7 +78,7 @@ class ContractionSharpening(FourierSharpening):
         """
         for _ in range(self.k):
             scaling = torch.linalg.vector_norm(P, dim=(1, 2)) ** 2
-            sharpened_P = torch.einsum("bij,bjk->bik", P, P.H)
+            sharpened_P = torch.einsum("bij,bjk->bik", P, P)
             P = sharpened_P / scaling
         return P
 
@@ -385,6 +386,7 @@ class FourierScaffold:
         rescaling=True,
         _skip_K_calc=False,
         _skip_gs_calc=False,
+        _skip_Ts_calc=False,
         features: None | torch.Tensor = None,
     ):
         assert representation in ["matrix", "vector"]
@@ -438,8 +440,9 @@ class FourierScaffold:
             self.smoothing.build_K(self.features)
 
         self._gbook = None
-        if not _skip_gs_calc:
-            self.g_s = self.gbook().sum(dim=1)
+
+        if not _skip_Ts_calc:
+            self.T_s = self._T_s()
 
         self.scale_factor = torch.ones(len(self.shapes[0]), device=self.device)
         """ `scale_factor[d]` is the amount to multiply by to convert "world units" into "grid units" """
@@ -455,14 +458,19 @@ class FourierScaffold:
         self.rescaling = rescaling
 
     @torch.no_grad()
-    def encode(self, k: torch.Tensor) -> torch.Tensor:
+    def encode(
+        self, k: torch.Tensor, representation: str | None = None
+    ) -> torch.Tensor:
         """Generate encoding of position k.
         Shape of k: (d)
         """
 
         base = self.C ** (self.M * self.d) * (self.features**k).prod(1).prod(1)
 
-        if self.representation == "vector":
+        if representation == None:
+            representation = self.representation
+
+        if representation == "vector":
             return base
         else:
             base2 = base.conj()
@@ -478,7 +486,7 @@ class FourierScaffold:
         """
         d = ks.shape[0]
         B = ks.shape[1:]
-        base = self.C ** (self.M * self.d) * (
+        base = (1 / math.sqrt(self.D)) * (
             self.features.unsqueeze(-1).tile(B) ** ks
         ).prod(1).prod(1)
 
@@ -546,8 +554,8 @@ class FourierScaffold:
             return (self.P * self.encode(k).conj()).sum()
         else:
             return (P * self.encode(k).conj()).sum()
-    
-    def get_probability_abs_batched(self, ks, P: torch.Tensor|None=None):
+
+    def get_probability_abs_batched(self, ks, P: torch.Tensor | None = None):
         """Obtain the probability mass located in cells ks = (k1, ..., kN)
 
         Shape of ks: (N, d)
@@ -555,8 +563,9 @@ class FourierScaffold:
         _P = P
         if _P == None:
             _P = self.P
-        
+
         _P = _P.conj()
+
         def f(k):
             return (_P * self.encode(k)).sum().abs()
 
@@ -564,7 +573,7 @@ class FourierScaffold:
 
     def get_all_probabilities(self, P: torch.Tensor | None = None):
         dim_sizes = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
-        ptensor = torch.zeros(*dim_sizes, device=self.device)
+        ptensor = torch.empty(*dim_sizes, device=self.device)
         for k in torch.cartesian_prod(
             *[torch.arange(dim_sizes[dim]) for dim in range(self.d)]
         ):
@@ -572,15 +581,36 @@ class FourierScaffold:
             ptensor[tuple(k)] = p
         return ptensor
 
+    def _T_s(self):
+        gbook = self.gbook()  # (D, N_patts)
+
+        M = [int(self.shapes[:, dim].prod().item()) for dim in range(self.d)]
+        om = torch.cartesian_prod(*[torch.arange(M[i]) for i in range(self.d)])
+        T_s = torch.zeros(
+            self.D, self.D, self.D, dtype=torch.complex64, device=self.device
+        )
+
+        for chunk in torch.arange(len(om)).chunk(max(len(om) // 1000, 1)):
+            print(chunk)
+            T_s += torch.einsum(
+                "ik,jk,mk->ijm",
+                gbook[:, chunk].conj(),
+                gbook[:, chunk],
+                gbook[:, chunk],
+            )
+
+        return T_s
+
     def g_avg(self):
-        return self.P @ self.g_s
+        g_avg = torch.einsum("ijm,ij->m", self.T_s, self.P)
+        return g_avg
 
     def g_avg_batch(self, P: torch.Tensor):
         """P shape: (B, D, D)
 
         Output shape: (B, D)
         """
-        return torch.einsum("bij,j->bi", P, self.g_s)
+        return torch.einsum("ijm,bij->bm", self.T_s, P)
 
     def entropy(self, P: torch.Tensor):
         return P.norm() ** 2
