@@ -120,7 +120,7 @@ def run_test(distribution, scaffold, scaffold_debug):
     scaffold.g = scaffold.encode_probability(distribution)
     scaffold_debug.ptensor = distribution
 
-    original_decoded_probs = scaffold.get_all_probabilities().abs()
+    original_decoded_probs = scaffold.get_all_probabilities()
     true_probs = scaffold_debug.ptensor
     original_probs_l2_err = l2_err(true_probs.flatten(), original_decoded_probs.flatten())
 
@@ -132,7 +132,7 @@ def run_test(distribution, scaffold, scaffold_debug):
     sharpened_encoding_similarity = similarity(true_encodings, generated_encodings)
     sharpened_encoding_l2 = l2_err(true_encodings, generated_encodings)
 
-    sharpened_decoded_probs = scaffold.get_all_probabilities().abs()
+    sharpened_decoded_probs = scaffold.get_all_probabilities()
     true_probs = scaffold_debug.ptensor
     sharpened_probs_l2_err = l2_err(true_probs.flatten(), sharpened_decoded_probs.flatten())
 
@@ -157,9 +157,9 @@ def exp1():
     original_probs_l2_errs = torch.zeros(len(dists), len(Ds), nruns)
     sharpened_probs_l2_errs = torch.zeros(len(dists), len(Ds), nruns)
 
-    original_probability_heatmaps = [[] * len(Ds)] * len(dists)
-    sharpened_probability_heatmaps = [[] * len(Ds)] * len(dists)
-    true_sharpened_probability_heatmaps = [[] * len(Ds)] * len(dists)
+    original_probability_heatmaps = [[None] * len(Ds) for _ in range(len(dists))]
+    sharpened_probability_heatmaps = [[None] * len(Ds) for _ in range(len(dists))]
+    true_sharpened_probability_heatmaps = [[None] * len(Ds) for _ in range(len(dists))]
 
     for i, (name, distribution) in enumerate(dists):
         for j, D in enumerate(Ds):
