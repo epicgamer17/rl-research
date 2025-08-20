@@ -361,7 +361,7 @@ def fourier_plot_probabilities_complex(scaffold: FourierScaffold, ax: Axes, t=0.
 
 def plot_with_error(ax: Axes, x, y, **kwargs):
     means = y.mean(dim=-1)
-    stds = y.mean(dim=-1)
+    stds = y.std(dim=-1)
     ax.plot(x, means, **kwargs)
     ax.fill_between(
         x,

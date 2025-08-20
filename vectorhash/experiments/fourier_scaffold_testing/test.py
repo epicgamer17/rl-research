@@ -89,6 +89,12 @@ def gaussian_mixture(dim_sizes):
     return t
 
 
+def random(dim_sizes):
+    t = torch.rand(dim_sizes, device=device)
+    t = t / t.sum()
+    return t
+
+
 def dim_sizes(shapes):
     return [int(shapes[:, dim].prod().item()) for dim in range(shapes.shape[1])]
 
@@ -97,11 +103,10 @@ def distributions(dim_sizes):
     ret = [
         ("degenerate", degenerate(dim_sizes)),
         ("uniform", uniform(dim_sizes)),
-        ("gaussian σ=1", gaussian(dim_sizes, 1)),
+        ("random", random(dim_sizes)),
         ("gaussian σ=3", gaussian(dim_sizes, 3)),
         ("gaussian σ=5", gaussian(dim_sizes, 5)),
         ("bimodal", bimodal(dim_sizes)),
-        ("bimodal2", bimodal2(dim_sizes)),
         ("gaussian mixture", gaussian_mixture(dim_sizes)),
     ]
 
@@ -116,12 +121,17 @@ def similarity(v1: torch.Tensor, v2: torch.Tensor):
     return (v1 * v2.conj()).sum() / (v1.norm() * v2.norm())
 
 
-def run_test(distribution, scaffold, scaffold_debug):
-    scaffold.g = scaffold.encode_probability(distribution)
+def run_test(
+    distribution: torch.Tensor,
+    scaffold: FourierScaffold,
+    scaffold_debug: FourierScaffoldDebug,
+):
+    scaffold.P = scaffold.encode_probability(distribution)
     scaffold_debug.ptensor = distribution
 
     original_decoded_probs = scaffold.get_all_probabilities()
     true_probs = scaffold_debug.ptensor
+    original_probs = true_probs.clone()
     original_probs_l2_err = l2_err(
         true_probs.flatten(), original_decoded_probs.flatten()
     )
@@ -130,19 +140,22 @@ def run_test(distribution, scaffold, scaffold_debug):
     scaffold_debug.sharpen()
 
     true_encodings = scaffold.encode_probability(scaffold_debug.ptensor).flatten()
-    generated_encodings = scaffold.g.flatten()
+    generated_encodings = scaffold.P.flatten()
     sharpened_encoding_similarity = similarity(true_encodings, generated_encodings)
     sharpened_encoding_l2 = l2_err(true_encodings, generated_encodings)
 
     sharpened_decoded_probs = scaffold.get_all_probabilities()
     true_probs = scaffold_debug.ptensor
+    sharpened_probs = true_probs.clone()
     sharpened_probs_l2_err = l2_err(
         true_probs.flatten(), sharpened_decoded_probs.flatten()
     )
 
     return (
-        original_decoded_probs,
-        sharpened_decoded_probs,
+        original_decoded_probs.clone(),
+        sharpened_decoded_probs.clone(),
+        original_probs.clone(),
+        sharpened_probs.clone(),
         original_probs_l2_err,
         sharpened_probs_l2_err,
         sharpened_encoding_similarity,
@@ -154,42 +167,52 @@ def exp1():
     shapes = torch.tensor([(5, 5), (7, 7)], device=device)
     nruns = 5
     dim_sizes = [int(shapes[:, dim].prod().item()) for dim in range(shapes.shape[1])]
-    dists = distributions(dim_sizes)
     Ds = [100 * i for i in range(1, 11)]
+    dists = distributions(dim_sizes)
     sharpened_encoding_similarities = torch.zeros(len(dists), len(Ds), nruns)
     sharpened_encoding_l2s = torch.zeros(len(dists), len(Ds), nruns)
     original_probs_l2_errs = torch.zeros(len(dists), len(Ds), nruns)
     sharpened_probs_l2_errs = torch.zeros(len(dists), len(Ds), nruns)
 
-    original_probability_heatmaps = [[None] * len(Ds) for _ in range(len(dists))]
-    sharpened_probability_heatmaps = [[None] * len(Ds) for _ in range(len(dists))]
-    true_sharpened_probability_heatmaps = [[None] * len(Ds) for _ in range(len(dists))]
+    decoded_probability_heatmaps = torch.empty(
+        len(dists), len(Ds), *dim_sizes, device=device
+    )
+    decoded_sharpened_probability_heatmaps = torch.empty(
+        len(dists), len(Ds), *dim_sizes, device=device
+    )
+    original_sharpened_probability_heatmaps = torch.empty(
+        len(dists), *dim_sizes, device=device
+    )
+    original_probability_heatmaps = torch.empty(len(dists), *dim_sizes, device=device)
 
-    for i, (name, distribution) in enumerate(dists):
+    for run in range(nruns):
+        dists = distributions(dim_sizes)
         for j, D in enumerate(Ds):
-            for run in range(nruns):
+            scaffold = FourierScaffold(
+                shapes,
+                D=D,
+                sharpening=ContractionSharpening(2),
+                shift=HadamardShiftMatrixRat(shapes=shapes),
+                smoothing=GuassianFourierSmoothingMatrix(
+                    kernel_radii=[10, 10], kernel_sigmas=[1, 1]
+                ),
+                device=device,
+                representation="matrix",
+                _skip_K_calc=True,
+                _skip_gs_calc=True,
+                _skip_Ts_calc=True,
+            )
+            scaffold_debug = FourierScaffoldDebug(shapes, device=device)
+            for i, (name, distribution) in enumerate(dists):
                 print(
-                    f" ----------------------- running test: {name} ({i}/{len(dists)}), D={D} ({j}/{len(Ds)}), run {run}/{nruns} --------------------"
+                    f" ----------------------- running test: {name} ({i+1}/{len(dists)}), D={D} ({j+1}/{len(Ds)}), run {run+1}/{nruns} --------------------"
                 )
-                scaffold = FourierScaffold(
-                    shapes,
-                    D=D,
-                    sharpening=ContractionSharpening(2),
-                    shift=HadamardShiftMatrixRat(shapes=shapes),
-                    smoothing=GuassianFourierSmoothingMatrix(
-                        kernel_radii=[10, 10], kernel_sigmas=[1, 1]
-                    ),
-                    device=device,
-                    representation="matrix",
-                    _skip_K_calc=True,
-                    _skip_gs_calc=True,
-                    _skip_Ts_calc=True,
-                )
-                scaffold_debug = FourierScaffoldDebug(shapes, device=device)
 
                 (
                     original_decoded_probs,
                     sharpened_decoded_probs,
+                    original_probs,
+                    sharpened_probs,
                     original_probs_l2_err,
                     sharpened_probs_l2_err,
                     sharpened_encoding_similarity,
@@ -204,37 +227,46 @@ def exp1():
                 sharpened_probs_l2_errs[i, j, run] = sharpened_probs_l2_err
 
                 if run == 0:
-                    original_probability_heatmaps[i][
-                        j
-                    ] = original_decoded_probs.clone().cpu()
-                    sharpened_probability_heatmaps[i][
-                        j
-                    ] = sharpened_decoded_probs.clone().cpu()
-                    true_sharpened_probability_heatmaps[i][
-                        j
-                    ] = distribution.clone().cpu()
+                    decoded_probability_heatmaps[i, j] = (
+                        original_decoded_probs.clone().cpu().reshape(35, 35)
+                    )
+                    decoded_sharpened_probability_heatmaps[i, j] = (
+                        sharpened_decoded_probs.clone().cpu().reshape(35, 35)
+                    )
+                    original_probability_heatmaps[i] = (
+                        original_probs.clone().cpu().reshape(35, 35)
+                    )
+                    original_sharpened_probability_heatmaps[i] = (
+                        sharpened_probs.clone().cpu().reshape(35, 35)
+                    )
 
     data = {
         "sharpened_encoding_similarities": sharpened_encoding_similarities,
         "sharpened_encoding_l2s": sharpened_encoding_l2s,
         "original_probs_l2_errs": original_probs_l2_errs,
         "sharpened_probs_l2_errs": sharpened_probs_l2_errs,
+        "decoded_probability_heatmaps": decoded_probability_heatmaps,
+        "decoded_sharpened_probability_heatmaps": decoded_sharpened_probability_heatmaps,
         "original_probability_heatmaps": original_probability_heatmaps,
-        "sharpened_probability_heatmaps": sharpened_probability_heatmaps,
-        "true_sharpened_probability_heatmaps": true_sharpened_probability_heatmaps,
+        "original_sharpened_probability_heatmaps": original_sharpened_probability_heatmaps,
     }
     torch.save(data, "exp_1_data.pkl")
 
 
-def exp_1_analyis():
+def exp_1_analysis():
     data = torch.load("exp_1_data.pkl")
     sharpened_encoding_similarities = data["sharpened_encoding_similarities"]
     sharpened_encoding_l2s = data["sharpened_encoding_l2s"]
     original_probs_l2_errs = data["original_probs_l2_errs"]
     sharpened_probs_l2_errs = data["sharpened_probs_l2_errs"]
+    decoded_probability_heatmaps = data["decoded_probability_heatmaps"]
+    decoded_sharpened_probability_heatmaps = data[
+        "decoded_sharpened_probability_heatmaps"
+    ]
     original_probability_heatmaps = data["original_probability_heatmaps"]
-    sharpened_probability_heatmaps = data["sharpened_probability_heatmaps"]
-    true_sharpened_probability_heatmaps = data["true_sharpened_probability_heatmaps"]
+    original_sharpened_probability_heatmaps = data[
+        "original_sharpened_probability_heatmaps"
+    ]
 
     shapes = torch.tensor([(5, 5), (7, 7)], device=device)
     dim_sizes = [int(shapes[:, dim].prod().item()) for dim in range(shapes.shape[1])]
@@ -250,7 +282,7 @@ def exp_1_analyis():
     ax.set_ylabel("L2 error")
     ax.set_title("L2 error between true and computed sharpened encodings")
     ax.legend()
-    fig.savefig("sharpened_encoding_l2_error_vs_D.png")
+    fig.savefig("sharpened_encoding_l2_error_vs_D.png", bbox_inches="tight")
 
     ### D vs cosine similarity between true sharpened encodings and computed sharpened encodings
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -261,7 +293,7 @@ def exp_1_analyis():
     ax.set_ylabel("Cosine similarity")
     ax.set_title("Cosine similarity between true and computed sharpened encodings")
     ax.legend()
-    fig.savefig("sharpened_encoding_similarity_vs_D.png")
+    fig.savefig("sharpened_encoding_similarity_vs_D.png", bbox_inches="tight")
 
     ### D vs l2 error between original and recovered probabilities
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -272,7 +304,7 @@ def exp_1_analyis():
     ax.set_ylabel("L2 error")
     ax.set_title("L2 error between original and recovered encodings")
     ax.legend()
-    fig.savefig("original_vs_recovered_l2_error_vs_D.png")
+    fig.savefig("original_vs_recovered_l2_error_vs_D.png", bbox_inches="tight")
 
     ### D vs l2 error between original and recovered sharpened probabilities
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -283,40 +315,60 @@ def exp_1_analyis():
     ax.set_ylabel("L2 error")
     ax.set_title("L2 error between original and recovered sharpened probabilities")
     ax.legend()
-    fig.savefig("original_vs_recovered_sharpened_l2_error_vs_D.png")
+    fig.savefig(
+        "original_vs_recovered_sharpened_l2_error_vs_D.png", bbox_inches="tight"
+    )
 
     ### Probability heatmap comparisons for true distributions
     fig, ax = plt.subplots(
-        nrows=len(dists), ncols=1 + len(Ds), figsize=(12, 2 * len(dists))
+        nrows=len(dists),
+        ncols=1 + len(Ds),
+        figsize=(2 * len(Ds), 2 * len(dists)),
+        layout="compressed",
     )
+    for r in ax:
+        for c in r:
+            c.axis("off")
+
     for i, (name, dist) in enumerate(dists):
         plot_imgs_side_by_side(
-            imgs=[dist.cpu(), *original_probability_heatmaps[i].cpu()],
-            titles=[f"Original {name}"]
-            + [f"Encoded and decoded {name}, D={D}" for D in Ds],
+            imgs=[original_probability_heatmaps[i].cpu()]
+            + [decoded_probability_heatmaps[i, j].cpu() for j in range(len(Ds))],
+            titles=[f"{name}"] + ([f"D={D}" for D in Ds] if i == 0 else [""] * len(Ds)),
             axs=ax[i, :],
-            use_first_img_scale=False,
+            use_first_img_scale=True,
             fig=fig,
+            cbar_only_on_last=True,
         )
     fig.savefig("original_vs_decoded_probability_heatmaps.png")
 
     ### Probability heatmap comparisons for sharpened distributions
     fig, ax = plt.subplots(
-        nrows=len(dists), ncols=1 + len(Ds), figsize=(12, 2 * len(dists))
+        nrows=len(dists),
+        ncols=1 + len(Ds),
+        figsize=(2 * len(Ds), 2 * len(dists)),
+        layout="compressed",
     )
+    for r in ax:
+        for c in r:
+            c.axis("off")
+
     for i, (name, _) in enumerate(dists):
         plot_imgs_side_by_side(
-            imgs=[
-                true_sharpened_probability_heatmaps[i].cpu(),
-                *sharpened_probability_heatmaps[i].cpu(),
+            imgs=[original_sharpened_probability_heatmaps[i].cpu()]
+            + [
+                decoded_sharpened_probability_heatmaps[i, j].cpu()
+                for j in range(len(Ds))
             ],
-            titles=[f"True sharpened {name}"]
-            + [f"Decoded sharpened {name}, D={D}" for D in Ds],
+            titles=[f"{name}"] + ([f"D={D}" for D in Ds] if i == 0 else [""] * len(Ds)),
             axs=ax[i, :],
-            use_first_img_scale=False,
+            use_first_img_scale=True,
             fig=fig,
+            cbar_only_on_last=True,
         )
-    fig.savefig("true_vs_decoded_sharpened_probability_heatmaps.png")
+    fig.savefig(
+        "true_vs_decoded_sharpened_probability_heatmaps.png", bbox_inches="tight"
+    )
 
 
 def exp2():
@@ -324,14 +376,13 @@ def exp2():
         torch.tensor(s)
         for s in [
             [(5, 5), (8, 8)],
-            [(5, 5), (12, 12)],
-            [(5, 5), (16, 16)],
-            [(5, 5), (21, 21)],
-            [(5, 5), (26, 26)],
-            [(5, 5), (31, 31j)],
+            # [(5, 5), (12, 12)],
+            # [(5, 5), (16, 16)],
+            # [(5, 5), (21, 21)],
+            # [(5, 5), (26, 26)],
+            # [(5, 5), (31, 31j)],
         ]
     ]
-    omega_sizes = [x.prod().item() for x in shape_configurations]
 
     N = len(shape_configurations)
     num_dists = len(distributions(dim_sizes(shape_configurations[0])))
@@ -346,7 +397,7 @@ def exp2():
         for j, (name, distribution) in enumerate(distributions(dim_sizes(shapes))):
             for run in range(nruns):
                 print(
-                    f" ----------------------- running test: {name} ({i}/{N}), ({j}/{num_dists}), D={D}, run {run}/{nruns} --------------------"
+                    f" ----------------------- running test: {name} ({i}/{N}), ({j+1}/{num_dists}), D={D}, run {run+1}/{nruns} --------------------"
                 )
                 scaffold = FourierScaffold(
                     shapes,
@@ -365,8 +416,10 @@ def exp2():
                 scaffold_debug = FourierScaffoldDebug(shapes, device=device)
 
                 (
-                    original_decoded_probs,
-                    sharpened_decoded_probs,
+                    _,
+                    _,
+                    _,
+                    _,
                     original_probs_l2_err,
                     sharpened_probs_l2_err,
                     sharpened_encoding_similarity,
@@ -425,7 +478,7 @@ def exp2_analysis():
     ax.set_ylabel("Similarity")
     ax.set_title("Similarity between true and computed sharpened encodings")
     ax.legend()
-    fig.savefig("sharpened_encoding_similarity_vs_omega.png")
+    fig.savefig("sharpened_encoding_similarity_vs_omega.png", bbox_inches="tight")
 
     ### |\Omega| vs L2 error between true and computed sharpened encodings
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -441,7 +494,7 @@ def exp2_analysis():
     ax.set_ylabel("L2 error")
     ax.set_title("L2 error between true and computed sharpened encodings")
     ax.legend()
-    fig.savefig("sharpened_encoding_l2_error_vs_omega.png")
+    fig.savefig("sharpened_encoding_l2_error_vs_omega.png", bbox_inches="tight")
 
     ### |\Omega| vs L2 error between recovered and true original distributions
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -457,7 +510,7 @@ def exp2_analysis():
     ax.set_ylabel("L2 error")
     ax.set_title("L2 error between true and recovered original distributions")
     ax.legend()
-    fig.savefig("original_distribution_l2_error_vs_omega.png")
+    fig.savefig("original_distribution_l2_error_vs_omega.png", bbox_inches="tight")
 
     ### |\Omega| vs L2 error between recovered and true sharpened distributions
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -473,9 +526,10 @@ def exp2_analysis():
     ax.set_ylabel("L2 error")
     ax.set_title("L2 error between true and recovered sharpened distributions")
     ax.legend()
-    fig.savefig("sharpened_distribution_l2_error_vs_omega.png")
+    fig.savefig("sharpened_distribution_l2_error_vs_omega.png", bbox_inches="tight")
 
 
 if __name__ == "__main__":
     # exp1()
-    exp2()
+    exp_1_analysis()
+    # exp2()
