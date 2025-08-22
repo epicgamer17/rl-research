@@ -393,7 +393,7 @@ def exp_2_analysis():
         label=f"{shape.tolist()}",
     )
     ax.set_xlabel("p_flip")
-    ax.set_ylabel("Average L1 error")
+    ax.set_ylabel("Mean L1 error")
     # ax.set_title("avg_l1_err vs p_flip for different shape configs")
     fig.savefig(f"avg_l1_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight")
 
@@ -419,7 +419,7 @@ def exp_2_analysis():
         label=f"{shape.tolist()}",
     )
     ax.set_xlabel("p_flip")
-    ax.set_ylabel("average l2 error ||H - H recovered||")
+    ax.set_ylabel("mse ||h - h recovered||²")
     # ax.set_title("h l2 err vs p_flip for different shape configs")
     fig.savefig(f"h_l2_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight")
 
@@ -432,7 +432,7 @@ def exp_2_analysis():
         label=f"{shape.tolist()}",
     )
     ax.set_xlabel("p_flip")
-    ax.set_ylabel("average l2 error ||H - H recovered sharp||")
+    ax.set_ylabel("mse ||h - h recovered sharp||²")
     # ax.set_title("h sharp l2 err vs p_flip for different shape configs")
     fig.savefig(
         f"h_sharp_l2_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight"
