@@ -109,7 +109,7 @@ class FourierVectorHaSHAgent:
         start_img, start_pos = self._env_reset(env)
         self.true_data = TrueData(start_pos)
         self.vectorhash.hippocampal_sensory_layer.learn(
-            self.vectorhash.scaffold.P @ self.vectorhash.scaffold.g_s,
+            self.vectorhash.scaffold.g_avg(),
             self.preprocessor.encode(start_img),
         )
 
@@ -171,6 +171,7 @@ def path_test(
 ):
     ## aliases
     scaffold = agent.vectorhash.scaffold
+    hs_layer = agent.vectorhash.hippocampal_sensory_layer
 
     ## reset states
     history = FourierVectorhashAgentHistory()
@@ -179,38 +180,30 @@ def path_test(
     ## store initial observations
     start_img, start_pos = agent._env_reset(agent.env)
 
-    g_avg = scaffold.P @ scaffold.g_s
-    agent.vectorhash.hippocampal_sensory_layer.learn(
-        h=g_avg, s=agent.preprocessor.encode(start_img)
-    )
+    g_avg = scaffold.g_avg()
+    hs_layer.learn(h=g_avg, s=agent.preprocessor.encode(start_img))
     agent.true_data = TrueData(start_pos)
 
     def s_from_P(P):
-        g_avg = P @ agent.vectorhash.scaffold.g_s
-        return agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
-            g_avg
-        )[0].reshape(reshape_img_size)
+        g_avg = torch.einsum("ijm,ij->m", scaffold.T_s, P)
+        return hs_layer.sensory_from_hippocampal(g_avg)[0].reshape(reshape_img_size)
 
     def P_from_s(s):
         encoded = agent.preprocessor.encode(s)
-        g = agent.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(
-            encoded
-        )[0]
+        g = hs_layer.hippocampal_from_sensory(encoded)[0]
         P = torch.einsum("i,j->ij", g, g.conj())
         return P
 
     def grid_vector_from_world_vector(v):
-        return (
-            v * agent.vectorhash.scaffold.scale_factor
-        ) % agent.vectorhash.scaffold.grid_limits
+        return (v * scaffold.scale_factor) % scaffold.grid_limits
 
     ## initial history store
-    est_img = s_from_P(agent.vectorhash.scaffold.P)
-    H_o = agent.vectorhash.scaffold.entropy(agent.vectorhash.scaffold.P).item()
-    H_s = agent.vectorhash.scaffold.entropy(P_from_s(start_img)).item()
+    est_img = s_from_P(scaffold.P)
+    H_o = scaffold.entropy(agent.vectorhash.scaffold.P).item()
+    H_s = scaffold.entropy(P_from_s(start_img)).item()
 
     history.append(
-        P=agent.vectorhash.scaffold.P,
+        P=scaffold.P,
         true_image=agent.preprocessor.encode(start_img).reshape(reshape_img_size),
         estimated_image=est_img,
         entropy_odometry=H_o,
@@ -223,7 +216,7 @@ def path_test(
 
     for i, action in enumerate(path):
         new_pos, new_img, v = agent.step(action, noise_dist)
-        if v.norm(p=float('inf')) < agent.vectorhash.eps_v:
+        if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(
                 P=None,
                 estimated_image=None,
@@ -250,10 +243,7 @@ def path_test(
             scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
 
         scaffold.sharpen()
-        g_avg = scaffold.P @ scaffold.g_s
-        agent.vectorhash.hippocampal_sensory_layer.learn(
-            h=g_avg, s=agent.preprocessor.encode(new_img)
-        )
+        hs_layer.learn(h=scaffold.g_avg(), s=agent.preprocessor.encode(new_img))
         agent.reset_v()
 
         history.append(
@@ -282,6 +272,7 @@ def kidnap_test(
 ):
     ## aliases
     scaffold = agent.vectorhash.scaffold
+    hs_layer = agent.vectorhash.hippocampal_sensory_layer
 
     ## reset states
     history = FourierVectorhashAgentHistory()
@@ -290,10 +281,7 @@ def kidnap_test(
     ## store initial observations
     start_img, start_pos = agent._env_reset(agent.env)
 
-    g_avg = scaffold.P @ scaffold.g_s
-    agent.vectorhash.hippocampal_sensory_layer.learn(
-        h=g_avg, s=agent.preprocessor.encode(start_img)
-    )
+    hs_layer.learn(h=scaffold.g_avg(), s=agent.preprocessor.encode(start_img))
     agent.true_data = TrueData(start_pos)
 
     def kidnap():
@@ -304,28 +292,22 @@ def kidnap_test(
         agent.env.set_wrapper_attr("agent", agent_copy)
 
     def s_from_P(P):
-        g_avg = P @ agent.vectorhash.scaffold.g_s
-        return agent.vectorhash.hippocampal_sensory_layer.sensory_from_hippocampal(
-            g_avg
-        )[0].reshape(reshape_img_size)
+        g_avg = torch.einsum("ijm,ij->m", scaffold.T_s, P)
+        return hs_layer.sensory_from_hippocampal(g_avg)[0].reshape(reshape_img_size)
 
     def P_from_s(s):
         encoded = agent.preprocessor.encode(s)
-        g = agent.vectorhash.hippocampal_sensory_layer.hippocampal_from_sensory(
-            encoded
-        )[0]
+        g = hs_layer.hippocampal_from_sensory(encoded)[0]
         P = torch.einsum("i,j->ij", g, g.conj())
         return P
 
     def grid_vector_from_world_vector(v):
-        return (
-            v * agent.vectorhash.scaffold.scale_factor
-        ) % agent.vectorhash.scaffold.grid_limits
+        return (v * scaffold.scale_factor) % scaffold.grid_limits
 
     ## initial history store
-    est_img = s_from_P(agent.vectorhash.scaffold.P)
-    H_o = agent.vectorhash.scaffold.entropy(agent.vectorhash.scaffold.P).item()
-    H_s = agent.vectorhash.scaffold.entropy(P_from_s(start_img)).item()
+    est_img = s_from_P(scaffold.P)
+    H_o = scaffold.entropy(agent.vectorhash.scaffold.P).item()
+    H_s = scaffold.entropy(P_from_s(start_img)).item()
 
     history.append(
         P=agent.vectorhash.scaffold.P,
@@ -368,10 +350,7 @@ def kidnap_test(
             scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
 
         scaffold.sharpen()
-        g_avg = scaffold.P @ scaffold.g_s
-        agent.vectorhash.hippocampal_sensory_layer.learn(
-            h=g_avg, s=agent.preprocessor.encode(new_img)
-        )
+        hs_layer.learn(h=scaffold.g_avg(), s=agent.preprocessor.encode(new_img))
         agent.reset_v()
 
         history.append(
@@ -417,10 +396,7 @@ def kidnap_test(
             scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
 
         scaffold.sharpen()
-        g_avg = scaffold.P @ scaffold.g_s
-        agent.vectorhash.hippocampal_sensory_layer.learn(
-            h=g_avg, s=agent.preprocessor.encode(new_img)
-        )
+        hs_layer.learn(h=scaffold.g_avg(), s=agent.preprocessor.encode(new_img))
         agent.reset_v()
 
         history.append(
