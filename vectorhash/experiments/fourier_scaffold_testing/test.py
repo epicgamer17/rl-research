@@ -529,8 +529,323 @@ def exp2_analysis():
     fig.savefig("sharpened_distribution_l2_error_vs_omega.png", bbox_inches="tight")
 
 
+def exp3():
+    D_list = [100 * i for i in range(1, 11)]
+    shapes = torch.tensor([(5, 5), (7, 7)], device=device)
+    distributions_list = distributions(dim_sizes(shapes))
+    runs = 5
+
+    compressed_encoding_l2_errs = torch.zeros(
+        len(distributions_list), len(D_list), runs
+    )
+    encoding_l2_errs = torch.zeros(len(distributions_list), len(D_list), runs)
+
+    for run in range(runs):
+        for j, D in enumerate(D_list):
+            scaffold = FourierScaffold(
+                shapes,
+                D=D,
+                device=device,
+                representation="matrix",
+                _skip_K_calc=True,
+            )
+            for i, (name, distribution) in enumerate(distributions_list):
+                print(
+                    f"Running test: {name} ({i+1}/{len(distributions_list)}), D={D} ({j+1}/{len(D_list)}), run {run+1}/{runs}"
+                )
+                scaffold.P = scaffold.encode_probability(distribution)
+                compressed_P = scaffold.g_avg()
+                true_compressed_P = scaffold.encode_probability(
+                    distribution, representation="vector"
+                )
+
+                compressed_encoding_l2_errs[i, j, run] = l2_err(
+                    compressed_P, true_compressed_P
+                )
+                encoding_l2_errs[i, j, run] = l2_err(
+                    scaffold.P, torch.outer(true_compressed_P, true_compressed_P.conj())
+                )
+
+    data = {
+        "compressed_encoding_l2_errs": compressed_encoding_l2_errs,
+        "encoding_l2_errs": encoding_l2_errs,
+        "D_list": D_list,
+    }
+    torch.save(data, "exp_3_data.pkl")
+
+
+def exp3_analysis():
+    data = torch.load("exp_3_data.pkl")
+    encoding_l2_errs = data["encoding_l2_errs"]
+    compressed_encoding_l2_errs = data["compressed_encoding_l2_errs"]
+    D_list = data["D_list"]
+
+    shapes = torch.tensor([(5, 5), (7, 7)], device=device)
+    dim_sizes = [int(shapes[:, dim].prod().item()) for dim in range(shapes.shape[1])]
+    dists = distributions(dim_sizes)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, (name, _) in enumerate(dists):
+        plot_with_error(
+            ax,
+            D_list,
+            encoding_l2_errs[i].cpu(),
+            label=name,
+        )
+    ax.set_xlabel("D")
+    ax.set_ylabel("L2 Error")
+    # ax.set_title("L2 Error between true and computed compressed encodings")
+    ax.legend()
+    fig.savefig("exp3_encoding_l2_error_vs_D.png", bbox_inches="tight")
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, (name, _) in enumerate(dists):
+        plot_with_error(
+            ax,
+            D_list,
+            compressed_encoding_l2_errs[i].cpu(),
+            label=name,
+        )
+    ax.set_xlabel("D")
+    ax.set_ylabel("L2 Error")
+    # ax.set_title("L2 Error between true and computed compressed encodings")
+    ax.legend()
+    fig.savefig("exp3_compressed_encoding_l2_error_vs_D.png", bbox_inches="tight")
+
+
+def exp4():
+    shape_configurations = [
+        torch.tensor(s)
+        for s in [
+            [(5, 5), (8, 8)],
+            [(5, 5), (12, 12)],
+            [(5, 5), (16, 16)],
+            [(5, 5), (21, 21)],
+            [(5, 5), (26, 26)],
+            [(5, 5), (31, 31)],
+        ]
+    ]
+
+    N = len(shape_configurations)
+    num_dists = len(distributions(dim_sizes(shape_configurations[0])))
+    D = 400
+    nruns = 5
+    compressed_encoding_l2_errs = torch.zeros(N, num_dists, nruns)
+    encoding_l2_errs = torch.zeros(N, num_dists, nruns)
+    for run in range(nruns):
+        for i, shapes in enumerate(shape_configurations):
+            scaffold = FourierScaffold(
+                shapes,
+                D=D,
+                device=device,
+                representation="matrix",
+                _skip_K_calc=True,
+            )
+            for j, (name, distribution) in enumerate(distributions(dim_sizes(shapes))):
+                print(
+                    f"Running test: {shapes.tolist()} ({i+1}/{N}), {name} ({j+1}/{num_dists}), run {run+1}/{nruns}"
+                )
+                scaffold.P = scaffold.encode_probability(distribution)
+                compressed_P = scaffold.g_avg()
+                true_compressed_P = scaffold.encode_probability(
+                    distribution, representation="vector"
+                )
+
+                compressed_encoding_l2_errs[i, j, run] = l2_err(
+                    compressed_P, true_compressed_P
+                )
+                encoding_l2_errs[i, j, run] = l2_err(
+                    scaffold.P, torch.outer(true_compressed_P, true_compressed_P.conj())
+                )
+    data = {
+        "compressed_encoding_l2_errs": compressed_encoding_l2_errs,
+        "encoding_l2_errs": encoding_l2_errs,
+        "shape_configurations": shape_configurations,
+    }
+    torch.save(data, "exp_4_data.pkl")
+
+
+def exp4_analysis():
+    data = torch.load("exp_4_data.pkl")
+    compressed_encoding_l2_errs = data["compressed_encoding_l2_errs"]
+    encoding_l2_errs = data["encoding_l2_errs"]
+    shape_configurations = data["shape_configurations"]
+
+    omega_sizes = [x.prod().item() for x in shape_configurations]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, (name, _) in enumerate(distributions(dim_sizes(shape_configurations[0]))):
+        plot_with_error(
+            ax,
+            omega_sizes,
+            encoding_l2_errs[:, i].cpu(),
+            label=name,
+        )
+    ax.set_xlabel("Size of \\Omega")
+    ax.set_ylabel("L2 Error")
+    # ax.set_title("L2 Error between true and computed compressed encodings")
+    ax.legend()
+    fig.savefig("exp4_encoding_l2_error_vs_omega.png", bbox_inches="tight")
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, (name, _) in enumerate(distributions(dim_sizes(shape_configurations[0]))):
+        plot_with_error(
+            ax,
+            omega_sizes,
+            compressed_encoding_l2_errs[:, i].cpu(),
+            label=name,
+        )
+    ax.set_xlabel("Size of \\Omega")
+    ax.set_ylabel("L2 Error")
+    # ax.set_title("L2 Error between true and computed compressed encodings")
+    ax.legend()
+    fig.savefig("exp4_compressed_encoding_l2_error_vs_omega.png", bbox_inches="tight")
+
+
+def exp5():
+    # test error going from prob dist -> encoding -> h (+ noise) -> encoding -> prob dist
+    shapes = torch.tensor([(5, 5), (7, 7)], device=device)
+    dim_sizes = [int(shapes[:, dim].prod().item()) for dim in range(shapes.shape[1])]
+    runs = 5
+    D = 400
+    noise_levels = [1 / math.sqrt(D) * 0.1 * i for i in range(11)]
+    num_dists = len(distributions(dim_sizes))
+
+    P_errors = torch.zeros(num_dists, len(noise_levels), runs)
+    dist_l2_errs = torch.zeros(num_dists, len(noise_levels), runs)
+    original_probability_heatmaps = torch.empty(
+        len(distributions(dim_sizes)), *dim_sizes, device=device
+    )
+    recovered_probability_heatmaps = torch.empty(
+        len(distributions(dim_sizes)), len(noise_levels), *dim_sizes, device=device
+    )
+    for run in range(runs):
+        scaffold = FourierScaffold(
+            shapes,
+            D=D,
+            device=device,
+            representation="matrix",
+            _skip_K_calc=True,
+        )
+        distributions_list = distributions(dim_sizes)
+        for i, (name, distribution) in enumerate(distributions_list):
+            print(
+                f"Running test: {name} ({i+1}/{len(distributions_list)}), run {run+1}/{runs}"
+            )
+            scaffold.P = scaffold.encode_probability(distribution)
+            g_avg = scaffold.g_avg()
+
+            if run == 0:
+                original_probability_heatmaps[i] = (
+                    distribution.clone().cpu().reshape(*dim_sizes)
+                )
+            for j, noise_level in enumerate(noise_levels):
+                print(f"Noise level: {noise_level}")
+                thetas = torch.empty(g_avg.shape, device=device).uniform_(
+                    -math.pi, math.pi
+                )
+                radii = torch.randn(g_avg.shape, device=device) * noise_level
+                noise = torch.polar(radii, thetas)
+                noisy_g_avg = g_avg + noise
+
+                recovered_P = torch.outer(noisy_g_avg, noisy_g_avg.conj())
+                recovered_dist = scaffold.get_all_probabilities(recovered_P)
+                dist_l2_err = l2_err(recovered_dist.flatten(), distribution.flatten())
+                P_l2_error = ((scaffold.P - recovered_P).abs() ** 2).sum()
+                print(
+                    f"Run {run+1}/{runs}, {name} - Noise level {noise_level} - P error: {P_l2_error.item()}, L2 error: {dist_l2_err.item()}"
+                )
+                dist_l2_errs[i, j, run] = dist_l2_err
+                P_errors[i, j, run] = P_l2_error
+                if run == 0:
+                    recovered_probability_heatmaps[i, j] = (
+                        recovered_dist.clone().cpu().reshape(*dim_sizes)
+                    )
+
+    data = {
+        "P_errors": P_errors,
+        "dist_l2_errs": dist_l2_errs,
+        "recovered_probability_heatmaps": recovered_probability_heatmaps,
+        "original_probability_heatmaps": original_probability_heatmaps,
+        "noise_levels": noise_levels,
+    }
+    torch.save(data, "exp_5_data.pkl")
+
+
+def exp5_analysis():
+    data = torch.load("exp_5_data.pkl")
+    P_errors = data["P_errors"]
+    dist_l2_errs = data["dist_l2_errs"]
+    recovered_probability_heatmaps = data["recovered_probability_heatmaps"]
+    original_probability_heatmaps = data["original_probability_heatmaps"]
+    noise_levels = data["noise_levels"]
+
+    shapes = torch.tensor([(5, 5), (7, 7)], device=device)
+    dim_sizes = [int(shapes[:, dim].prod().item()) for dim in range(shapes.shape[1])]
+    dists = distributions(dim_sizes)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, (name, _) in enumerate(dists):
+        plot_with_error(
+            ax,
+            noise_levels,
+            P_errors[i].cpu(),
+            label=name,
+        )
+
+    ax.set_xlabel("Noise Level")
+    ax.set_ylabel("P Error")
+    ax.set_title("P Error between original and recovered distributions")
+    ax.legend()
+    fig.savefig("exp3_P_l2_err_vs_noise.png", bbox_inches="tight")
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, (name, _) in enumerate(dists):
+        plot_with_error(ax, noise_levels, dist_l2_errs[i].cpu(), label=name)
+
+    ax.set_xlabel("Noise level")
+    ax.set_ylabel("L2 Error")
+    ax.set_title("L2 Error between original and recovered distributions")
+    ax.legend()
+    fig.savefig("exp3_dist_L2_error_vs_noise.png", bbox_inches="tight")
+
+    ### Probability heatmap comparisons for true distributions
+    fig, ax = plt.subplots(
+        nrows=len(dists),
+        ncols=len(noise_levels) + 1,
+        figsize=(2 + 2 * len(noise_levels), 2 * len(dists)),
+        layout="compressed",
+    )
+    for r in ax:
+        for c in r:
+            c.axis("off")
+
+    for i, (name, _) in enumerate(dists):
+        plot_imgs_side_by_side(
+            imgs=[
+                original_probability_heatmaps[i].cpu(),
+            ]
+            + [
+                recovered_probability_heatmaps[i][j].cpu()
+                for j in range(len(noise_levels))
+            ],
+            axs=ax[i],
+            titles=[f"{name}"]
+            + [(f"noise={noise:.2f}" if i == 0 else "") for noise in noise_levels],
+            use_first_img_scale=True,
+            fig=fig,
+            cbar_only_on_last=True,
+        )
+    fig.savefig(
+        "exp3_original_vs_recovered_probability_heatmaps_noise.png", bbox_inches="tight"
+    )
+
+
 if __name__ == "__main__":
-    exp1()
-    exp_1_analysis()
-    exp2()
-    exp2_analysis()
+    # exp1()
+    # exp_1_analysis()
+    # exp2()
+    # exp2_analysis()
+    exp3()
+    exp3_analysis()
+    exp4()
+    exp4_analysis()
