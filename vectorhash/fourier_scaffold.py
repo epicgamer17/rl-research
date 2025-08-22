@@ -237,6 +237,9 @@ class FourierSmoothing:
     def __call__(self, P) -> torch.Tensor:  # type: ignore
         pass
 
+    def smooth_batch(self, P_batch: torch.Tensor) -> torch.Tensor:  # type: ignore
+        pass
+
 
 class GaussianFourierSmoothing(FourierSmoothing):
     def __init__(self, kernel_radii: list, kernel_sigmas: list) -> None:
@@ -288,6 +291,9 @@ class GaussianFourierSmoothing(FourierSmoothing):
 
     def __call__(self, P: torch.Tensor) -> torch.Tensor:
         return P * self.K
+
+    def smooth_batch(self, P_batch: torch.Tensor) -> torch.Tensor:
+        return P_batch * self.K.unsqueeze(0)
 
     def __str__(self):
         radii = self.kernel_radii
@@ -357,6 +363,9 @@ class GuassianFourierSmoothingMatrix(FourierSmoothing):
 
     def __call__(self, P: torch.Tensor) -> torch.Tensor:
         return P * self.K
+
+    def smooth_batch(self, P_batch: torch.Tensor) -> torch.Tensor:
+        return P_batch * self.K.unsqueeze(0)
 
     def __str__(self):
         radii = self.kernel_radii
