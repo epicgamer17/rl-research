@@ -65,10 +65,13 @@ class ContractionSharpening(FourierSharpening):
         """P must be a matrix, not a vector"""
         assert len(P.shape) == 2, "P must be a matrix"
         for _ in range(self.k):
-            scaling = P.norm() ** 2
-            sharpened_P = P @ P / scaling
-            P = sharpened_P
+            # scaling = P.norm() ** 2
+            # sharpened_P = P @ P / scaling
+            # P = sharpened_P
 
+            sharpened_P = P @ P
+            scaling = sharpened_P.trace()
+            P = sharpened_P / scaling
         return P
 
     def sharpen_batch(self, P: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
@@ -535,7 +538,20 @@ class FourierScaffold:
         self, distribution, representation: Optional[str] = None
     ) -> torch.Tensor:
         """Generate encoding of probability distribution"""
-        encoding = torch.zeros_like(self.P)
+        if representation == None:
+            representation = self.representation
+
+        if representation == "vector":
+            encoding = torch.complex(
+                torch.zeros(self.D, device=self.device),
+                torch.zeros(self.D, device=self.device),
+            )
+        else:
+            encoding = torch.complex(
+                torch.zeros(self.D, self.D, device=self.device),
+                torch.zeros(self.D, self.D, device=self.device),
+            )
+
         for k in torch.cartesian_prod(
             *[torch.arange(int(self.shapes[:, i].prod().item())) for i in range(self.d)]
         ):
@@ -606,7 +622,7 @@ class FourierScaffold:
             self.D, self.D, self.D, dtype=torch.complex64, device=self.device
         )
 
-        for chunk in torch.arange(len(om)).chunk(max(len(om) // 1000, 1)):
+        for chunk in torch.arange(len(om)).chunk(max(len(om) // 200, 1)):
             print(chunk)
             T_s += torch.einsum(
                 "ik,jk,mk->ijm",
