@@ -398,7 +398,6 @@ def exp_2_analysis():
     ax.set_xlabel("p_flip")
     ax.set_ylabel("Average L1 error")
     # ax.set_title("avg_l1_err vs p_flip for different shape configs")
-    ax.legend()
     fig.savefig(f"avg_l1_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight")
 
     ### p(flip) vs pflip
@@ -412,7 +411,6 @@ def exp_2_analysis():
     ax.set_xlabel("p_flip")
     ax.set_ylabel("Probability of flipping a sign")
     # ax.set_title("p_flip error vs p_flip for different shape configs")
-    ax.legend()
     fig.savefig(f"p_flip_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight")
 
     ### h err vs pflip
@@ -426,7 +424,6 @@ def exp_2_analysis():
     ax.set_xlabel("p_flip")
     ax.set_ylabel("average l2 error ||H - H recovered||")
     # ax.set_title("h l2 err vs p_flip for different shape configs")
-    ax.legend()
     fig.savefig(f"h_l2_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight")
 
     ### h sharp err vs pflip
@@ -439,8 +436,7 @@ def exp_2_analysis():
     )
     ax.set_xlabel("p_flip")
     ax.set_ylabel("average l2 error ||H - H recovered sharp||")
-    ax.set_title("h sharp l2 err vs p_flip for different shape configs")
-    ax.legend()
+    # ax.set_title("h sharp l2 err vs p_flip for different shape configs")
     fig.savefig(
         f"h_sharp_l2_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight"
     )
@@ -449,12 +445,13 @@ def exp_2_analysis():
     N = 10
     for i in range(N):
         fig, ax = plt.subplots(
+            nrows=2
             ncols=len(pflip_list) + 1,
-            figsize=((1 + len(pflip_list)) * 2, 4),
+            figsize=((1 + len(pflip_list)) * 2, 5),
             layout="compressed",
         )
         plot_imgs_side_by_side(
-            axs=ax,
+            axs=ax[0],
             imgs=[sbook[0, i].reshape(*img_size).cpu()]
             + [
                 recovered_sbook_0[j, i].reshape(*img_size).cpu()
@@ -464,19 +461,8 @@ def exp_2_analysis():
             fig=fig,
             cbar_only_on_last=True,
         )
-        fig.savefig(
-            f"recovered_sbook_vs_pflip_shapes-{shape.tolist()}_D-{D}_pflip-{i}.png"
-        )
-
-    ### same for nosharp
-    for i in range(N):
-        fig, ax = plt.subplots(
-            ncols=len(pflip_list) + 1,
-            figsize=((1 + len(pflip_list)) * 2, 4),
-            layout="compressed",
-        )
         plot_imgs_side_by_side(
-            axs=ax,
+            axs=ax[1],
             imgs=[sbook[0, i].reshape(*img_size).cpu()]
             + [
                 recovered_sbook_nosharp_0[j, i].reshape(*img_size).cpu()
@@ -487,9 +473,8 @@ def exp_2_analysis():
             cbar_only_on_last=True,
         )
         fig.savefig(
-            f"recovered_sbook_nosharp_vs_pflip_shapes-{shape.tolist()}_D-{D}_pflip-{i}.png"
+            f"recovered_sbook_vs_pflip_shapes-{shape.tolist()}_D-{D}_pflip-{i}.png"
         )
-
 
 if __name__ == "__main__":
     # exp_2()
