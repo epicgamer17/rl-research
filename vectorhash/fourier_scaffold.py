@@ -531,13 +531,17 @@ class FourierScaffold:
         return self._gbook
 
     @torch.no_grad()
-    def encode_probability(self, distribution) -> torch.Tensor:
+    def encode_probability(
+        self, distribution, representation: Optional[str] = None
+    ) -> torch.Tensor:
         """Generate encoding of probability distribution"""
         encoding = torch.zeros_like(self.P)
         for k in torch.cartesian_prod(
             *[torch.arange(int(self.shapes[:, i].prod().item())) for i in range(self.d)]
         ):
-            encoding += distribution[tuple(k)] * self.encode(k.to(self.device))
+            encoding += distribution[tuple(k)] * self.encode(
+                k.to(self.device), representation
+            )
 
         return encoding
 
