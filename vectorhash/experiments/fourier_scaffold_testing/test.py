@@ -302,7 +302,7 @@ def exp_1_analysis():
 
     ax.set_xlabel("D")
     ax.set_ylabel("L2 error")
-    ax.set_title("L2 error between original and recovered encodings")
+    ax.set_title("L2 error between original and recovered distributions")
     ax.legend()
     fig.savefig("original_vs_recovered_l2_error_vs_D.png", bbox_inches="tight")
 
@@ -458,7 +458,7 @@ def exp2_analysis():
             [(5, 5), (16, 16)],
             [(5, 5), (21, 21)],
             [(5, 5), (26, 26)],
-            [(5, 5), (31, 31j)],
+            [(5, 5), (31, 31)],
         ]
     ]
     omega_sizes = [x.prod().item() for x in shape_configurations]
