@@ -473,6 +473,183 @@ def exp_2_analysis():
             f"recovered_sbook_vs_pflip_shapes-{shape.tolist()}_D-{D}_pflip-{i}.png"
         )
 
+
+def exp_3():
+    runs = 1
+    D = 600
+    Npatts = 100
+
+    pflip_list = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+    shape = torch.tensor([(3, 3), (4, 4), (5, 5)], device=device)
+
+    p_flips = torch.empty(len(pflip_list), runs)
+    l1_errs = torch.empty(len(pflip_list), runs)
+    h_errs = torch.empty(len(pflip_list), runs)
+    h_sharp_errs = torch.empty(len(pflip_list), runs)
+    recovered_sbook_0 = torch.empty(len(pflip_list), Npatts, N_s, device=device)
+    recovered_sbook_nosharp_0 = torch.empty(len(pflip_list), Npatts, N_s, device=device)
+    sbook = torch.sign(torch.randn(runs, Npatts, N_s, device=device))
+    for k in range(runs):
+        scaffold = FourierScaffold(
+            shapes=shape,
+            D=D,
+            device=device,
+            smoothing=GuassianFourierSmoothingMatrix([10, 10], [1, 1]),
+        )
+        gbook_ = scaffold.gbook().T[:Npatts]
+        gbook = torch.vmap(
+            lambda h: torch.einsum(
+                "ijm,ij->m",
+                scaffold.T_s,
+                scaffold.smoothing(torch.outer(h, h.conj())),
+            ),
+            0,
+            0,
+            chunk_size=100,
+        )(gbook_)
+        for i, pflip in enumerate(pflip_list):
+            layer = ComplexExactPseudoInverseHippocampalSensoryLayerComplexScalars(
+                input_size=N_s, N_h=D, N_patts=Npatts, hbook=gbook, device=device
+            )
+            (
+                recovered_sbook,
+                recovered_sbook_nosharp,
+                _,
+                _,
+                p_flips[i, k],
+                l1_errs[i, k],
+                h_errs[i, k],
+                h_sharp_errs[i, k],
+            ) = run_test(scaffold, layer, sbook[k], Npatts, pflip)
+            if k == 0:
+                recovered_sbook_0[i] = recovered_sbook
+                recovered_sbook_nosharp_0[i] = recovered_sbook_nosharp
+
+    data = {
+        "D": D,
+        "shape": shape,
+        "p_flips": p_flips,
+        "pflip_list": pflip_list,
+        "l1_errs": l1_errs,
+        "sbook": sbook,
+        "recovered_sbook_run_0": recovered_sbook_0,
+        "recovered_sbook_nosharp_run_0": recovered_sbook_nosharp_0,
+        "h_errs": h_errs,
+        "h_sharp_errs": h_sharp_errs,
+    }
+    torch.save(data, "exp_3_results.pt")
+
+
+def exp_3_analysis():
+    data = torch.load("exp_3_results.pt")
+    sbook = data["sbook"]
+    D = data["D"]
+    shape = data["shape"]
+    p_flips = data["p_flips"]
+    pflip_list = data["pflip_list"]
+    l1_errs = data["l1_errs"]
+    recovered_sbook_0 = data["recovered_sbook_run_0"]
+    recovered_sbook_nosharp_0 = data["recovered_sbook_nosharp_run_0"]
+    h_errs = data["h_errs"]
+    h_sharp_errs = data["h_sharp_errs"]
+
+    ### avg l1 err vs pflip
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plot_with_error(
+        ax=ax,
+        x=pflip_list,
+        y=l1_errs,
+        label=f"{shape.tolist()}",
+    )
+    ax.set_xlabel("p_flip")
+    ax.set_ylabel("Mean L1 error")
+    # ax.set_title("avg_l1_err vs p_flip for different shape configs")
+    fig.savefig(
+        f"gauss_avg_l1_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight"
+    )
+
+    ### p(flip) vs pflip
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plot_with_error(
+        ax=ax,
+        x=pflip_list,
+        y=p_flips,
+        label=f"{shape.tolist()}",
+    )
+    ax.set_xlabel("p_flip")
+    ax.set_ylabel("Probability of flipping a sign")
+    # ax.set_title("p_flip error vs p_flip for different shape configs")
+    fig.savefig(
+        f"gauss_p_flip_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight"
+    )
+
+    ### h err vs pflip
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plot_with_error(
+        ax=ax,
+        x=pflip_list,
+        y=h_errs,
+        label=f"{shape.tolist()}",
+    )
+    ax.set_xlabel("p_flip")
+    ax.set_ylabel("mse ||h - h recovered||²")
+    # ax.set_title("h l2 err vs p_flip for different shape configs")
+    fig.savefig(
+        f"gauss_h_l2_err_vs_pflip_shapes-{shape.tolist()}.png", bbox_inches="tight"
+    )
+
+    ### h sharp err vs pflip
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plot_with_error(
+        ax=ax,
+        x=pflip_list,
+        y=h_sharp_errs,
+        label=f"{shape.tolist()}",
+    )
+    ax.set_xlabel("p_flip")
+    ax.set_ylabel("mse ||h - h recovered sharp||²")
+    # ax.set_title("h sharp l2 err vs p_flip for different shape configs")
+    fig.savefig(
+        f"gauss_h_sharp_l2_err_vs_pflip_shapes-{shape.tolist()}.png",
+        bbox_inches="tight",
+    )
+
+    ### recovered sbook graphing for specific pflip and shape config
+    N = 10
+    for i in range(N):
+        fig, ax = plt.subplots(
+            nrows=2,
+            ncols=len(pflip_list) + 1,
+            figsize=((1 + len(pflip_list)) * 2, 5),
+            layout="compressed",
+        )
+        plot_imgs_side_by_side(
+            axs=ax[0],
+            imgs=[sbook[0, i].reshape(*img_size).cpu()]
+            + [
+                recovered_sbook_0[j, i].reshape(*img_size).cpu()
+                for j in range(len(pflip_list))
+            ],
+            titles=["original"] + [f"pflip={p}" for p in pflip_list],
+            fig=fig,
+            cbar_only_on_last=True,
+        )
+        plot_imgs_side_by_side(
+            axs=ax[1],
+            imgs=[sbook[0, i].reshape(*img_size).cpu()]
+            + [
+                recovered_sbook_nosharp_0[j, i].reshape(*img_size).cpu()
+                for j in range(len(pflip_list))
+            ],
+            titles=[""] + [f"" for p in pflip_list],
+            fig=fig,
+            cbar_only_on_last=True,
+        )
+        fig.savefig(
+            f"gauss_recovered_sbook_vs_pflip_shapes-{shape.tolist()}_D-{D}_pflip-{i}.png"
+        )
+
+
 if __name__ == "__main__":
-    # exp_2()
-    exp_2_analysis()
+    exp_3()
+    exp_3_analysis()
