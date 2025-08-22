@@ -383,9 +383,6 @@ def exp_2_analysis():
     recovered_sbook_nosharp_0 = data["recovered_sbook_nosharp_run_0"]
     h_errs = data["h_errs"]
     h_sharp_errs = data["h_sharp_errs"]
-    dists_sharp = data["dists_sharp"]
-    dists_nosharp = data["dists_nosharp"]
-    dists_org = data["dists"]
 
     ### avg l1 err vs pflip
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -445,7 +442,7 @@ def exp_2_analysis():
     N = 10
     for i in range(N):
         fig, ax = plt.subplots(
-            nrows=2
+            nrows=2,
             ncols=len(pflip_list) + 1,
             figsize=((1 + len(pflip_list)) * 2, 5),
             layout="compressed",
@@ -468,7 +465,7 @@ def exp_2_analysis():
                 recovered_sbook_nosharp_0[j, i].reshape(*img_size).cpu()
                 for j in range(len(pflip_list))
             ],
-            titles=["original"] + [f"pflip={p}" for p in pflip_list],
+            titles=[""] + [f"" for p in pflip_list],
             fig=fig,
             cbar_only_on_last=True,
         )
