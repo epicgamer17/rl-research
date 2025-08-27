@@ -134,6 +134,69 @@ class RoomExperiment(MiniWorldEnv, utils.EzPickle):
         return obs, reward, termination, truncation, info
 
 
+class RoomExperimentPositionInputs(MiniWorldEnv, utils.EzPickle):
+    def __init__(
+        self,
+        start_pos,
+        start_angle,
+        place_red_box=True,
+        place_blue_box=True,
+        max_x=10,
+        max_z=10,
+        **kwargs
+    ):
+        self.start_pos = start_pos
+        self.start_angle = start_angle
+        self.place_red_box = place_red_box
+        self.place_blue_box = place_blue_box
+        self.max_x = max_x
+        self.max_z = max_z
+
+        params = EXP_PARAMS
+
+        MiniWorldEnv.__init__(
+            self, max_episode_steps=-1, domain_rand=False, params=params, **kwargs
+        )
+        utils.EzPickle.__init__(
+            self, max_episode_steps=-1, domain_rand=False, params=params, **kwargs
+        )
+
+        # Allow only movement actions (left/right/forward)
+        self.action_space = spaces.Discrete(self.actions.move_forward + 1)
+
+    def _gen_world(self):
+        self.add_rect_room(min_x=0, max_x=self.max_x, min_z=0, max_z=self.max_z)
+
+        if self.place_red_box:
+            self.red_box = self.place_entity(
+                Box(color="red"), pos=[8 * self.max_x / 10, 0, 1.5 * self.max_z / 10]
+            )
+        if self.place_blue_box:
+            self.blue_box = self.place_entity(
+                Box(color="blue"), pos=[1.5 * self.max_x / 10, 0, 8 * self.max_z / 10]
+            )
+
+        self.place_agent(dir=self.start_angle, pos=self.start_pos)
+
+    def kidnap(self, kidnap_pos, kidnap_dir):
+        self.agent.pos = kidnap_pos
+        self.agent.dir = kidnap_dir
+
+    def step(self, v, w):
+        self.agent.pos = self.agent.pos + torch.tensor(
+            [v * math.cos(self.agent.dir), 0, v * math.sin(self.agent.dir)]
+        )
+        self.agent.dir = self.agent.dir + w
+
+        obs, reward, termination, truncation, info = super().step(3)
+
+        if self.near(self.red_box):
+            reward += self._reward()
+            termination = True
+
+        return obs, reward, termination, truncation, info
+
+
 class RoomExperimentFast(MiniWorldEnv, utils.EzPickle):
     """
     ## Action Space
