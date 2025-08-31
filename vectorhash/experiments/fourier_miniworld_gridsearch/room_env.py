@@ -169,11 +169,13 @@ class RoomExperimentPositionInputs(MiniWorldEnv, utils.EzPickle):
 
         if self.place_red_box:
             self.red_box = self.place_entity(
-                Box(color="red"), pos=[8 * self.max_x / 10, 0, 1.5 * self.max_z / 10]
+                Box(color="red", size=0.8),
+                pos=[8 * self.max_x / 10, 0, 1.5 * self.max_z / 10],
             )
         if self.place_blue_box:
             self.blue_box = self.place_entity(
-                Box(color="blue"), pos=[1.5 * self.max_x / 10, 0, 8 * self.max_z / 10]
+                Box(color="blue", size=0.8),
+                pos=[1.5 * self.max_x / 10, 0, 8 * self.max_z / 10],
             )
 
         self.place_agent(dir=self.start_angle, pos=self.start_pos)

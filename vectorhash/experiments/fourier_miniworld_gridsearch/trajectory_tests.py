@@ -46,17 +46,19 @@ os.makedirs(results_dir, exist_ok=True)
 #    ↓
 
 pos, _ = generate_rat_trajectory(
-    limits=np.array([1, 1]), num_samples=300, start_location=np.array([0.5, 0.5])
+    limits=np.array([1, 1]), num_samples=100, start_location=np.array([0.5, 0.5])
 )
 
-vel = pos[1:] - pos[:-1]
+pos_rescaled = pos * 10
+
+vel = pos_rescaled[1:] - pos_rescaled[:-1]
 
 if __name__ == "__main__":
     combinations, titles = generate_combinations(), generate_titles()
     for i, (combination, title) in enumerate(zip(combinations, titles)):
         print(f"(fast) test {i+1}/{len(combinations)}: {title}")
         env = generate_traj_env(with_blue_box=True, with_red_box=True)
-        noise_dist = Normal(0, 0.01)
+        noise_dist = Normal(0, 0.1)
         history, noisy_vels = trajectory_test(
             agent=create_agent_for_test(env, *combination),
             velocities=torch.from_numpy(vel).float(),
@@ -65,6 +67,10 @@ if __name__ == "__main__":
         )
         with open(f"{results_dir}/{i}.pt", "wb") as f:
             torch.save(
-                {"history": history, "noisy_velocities": noisy_vels, "positions": pos},
+                {
+                    "history": history,
+                    "noisy_velocities": noisy_vels,
+                    "positions": pos_rescaled,
+                },
                 f,
             )

@@ -585,7 +585,9 @@ class FourierScaffold:
         else:
             return (P * self.encode(k).conj()).sum()
 
-    def get_probability_abs_batched(self, ks, P: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def get_probability_abs_batched(
+        self, ks, P: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """Obtain the probability mass located in cells ks = (k1, ..., kN)
 
         Shape of ks: (N, d)
@@ -646,6 +648,12 @@ class FourierScaffold:
 
     def entropy(self, P: torch.Tensor):
         return P.norm() ** 2
+
+    def grid_coords_to_world_coords(self, coord, d):
+        """Convert grid coordinates to world coordinates."""
+        L = self.grid_limits[d].item()
+        scale_factor = 1 / self.scale_factor[d].item()
+        return ((coord + L) % L) * scale_factor
 
 
 class ScaffoldHippocampalLayer:

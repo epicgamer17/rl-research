@@ -82,28 +82,28 @@ def generate_rat_trajectory(limits, num_samples, start_location):
         position[i, :] = position[i - 1, :] + direction_vector * v * dt
         velocity[i, :] = direction_vector * v * dt
 
-        if position[i, 0] < 0:
-            diff = np.abs(position[i, 0])
+        if position[i, 0] < 0.1:
+            diff = np.abs(position[i, 0] - 0.1)
             velocity[i, 0] -= diff
-            position[i, 0] = 0
-        if position[i, 0] > limits[0]:
-            diff = np.abs(position[i, 0] - limits[0])
+            position[i, 0] = 0.1
+        if position[i, 0] > limits[0] - 0.1:
+            diff = np.abs(position[i, 0] - limits[0] - 0.1)
             velocity[i, 0] -= diff
-            position[i, 0] = limits[0]
-        if position[i, 1] < 0:
-            diff = np.abs(position[i, 1])
+            position[i, 0] = limits[0] - 0.1
+        if position[i, 1] < 0.1:
+            diff = np.abs(position[i, 1] - 0.1)
             velocity[i, 1] -= diff
-            position[i, 1] = 0
-        if position[i, 1] > limits[1]:
-            diff = np.abs(position[i, 1] - limits[1])
+            position[i, 1] = 0.1
+        if position[i, 1] > limits[1] - 0.1:
+            diff = np.abs(position[i, 1] - limits[1] + 0.1)
             velocity[i, 1] -= diff
-            position[i, 1] = limits[1]
+            position[i, 1] = limits[1] - 0.1
 
         if (
-            position[i, 0] < 0
-            or position[i, 0] > limits[0]
-            or position[i, 1] < 0
-            or position[i, 1] > limits[1]
+            position[i, 0] < 0.1
+            or position[i, 0] > limits[0] - 0.1
+            or position[i, 1] < 0.1
+            or position[i, 1] > limits[1] - 0.1
         ):
             print("OUTSIDE BOUNDARIES: t=" + str(i * dt))
 

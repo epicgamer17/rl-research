@@ -1,6 +1,5 @@
 import torch
 import os
-import pickle
 from common import generate_titles
 from fourier_scaffold import FourierScaffold
 from matplotlib import pyplot as plt
@@ -8,7 +7,6 @@ from matplotlib import pyplot as plt
 import sys
 
 sys.path.append("../..")
-from agent_history import FourierVectorhashAgentHistory
 from common import analyze_history_errors, write_animation
 
 trajectory_results_dir = "trajectory_tests"
@@ -41,28 +39,40 @@ for entry in os.listdir(trajectory_results_dir):
         est_ys = []
         scaffold = FourierScaffold(
             shapes=history._scaffold_shapes,
-            D=300,
+            D=400,
             features=history._scaffold_features,
             device="cuda",
+            _skip_Ts_calc=True,
+            _skip_K_calc=True,
+            limits=torch.tensor([10, 10, torch.pi * 2]).to("cuda"),
         )
         for P in Ps:
             if P == None:
                 continue
             else:
-                # P is a tensor
                 dim_sizes = [
                     history._scaffold_shapes[:, i].prod()
                     for i in range(history._scaffold_shapes.shape[1])
                 ]
-                probs = scaffold.get_all_probabilities(P.to("cuda")).reshape(
-                    *dim_sizes
-                )  # (x,y,theta)
+                probs = scaffold.get_all_probabilities(P.to("cuda")).reshape(*dim_sizes)
                 probs_xy = probs.sum(dim=2)
                 max_xy = probs_xy.flatten().argmax()
-                x_idx = max_xy // dim_sizes[0]
-                y_idx = max_xy % dim_sizes[1]
-                est_xs.append((x_idx.item() + 0.5) * 1 / dim_sizes[0])
-                est_ys.append((y_idx.item() + 0.5) * 1 / dim_sizes[1])
+                x_idx = max_xy % dim_sizes[0]
+                y_idx = max_xy // dim_sizes[0]
+                est_xs.append(
+                    scaffold.grid_coords_to_world_coords(
+                        x_idx.item()
+                        + positions[0, 0] * scaffold.scale_factor[0].item(),
+                        0,
+                    )
+                )
+                est_ys.append(
+                    scaffold.grid_coords_to_world_coords(
+                        y_idx.item()
+                        + positions[0, 1] * scaffold.scale_factor[1].item(),
+                        1,
+                    )
+                )
 
         fig, ax = plt.subplots()
         ax.plot(true_xs, true_ys, label="True Path")
@@ -81,4 +91,3 @@ for entry in os.listdir(trajectory_results_dir):
             target_dir=trajectory_animations_dir,
             entry_name=entry,
         )
-

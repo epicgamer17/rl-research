@@ -469,7 +469,7 @@ def trajectory_test(
         scaffold=scaffold,
     )
 
-    for i, vel in enumerate(velocities):
+    for i, vel in enumerate(noisy_vels):
         new_pos, new_img, v = agent.step(vel, None)
         if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(

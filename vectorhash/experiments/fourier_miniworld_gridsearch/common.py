@@ -103,12 +103,12 @@ def generate_env(with_red_box: bool, with_blue_box: bool, fast=False):
 
 def generate_traj_env(with_red_box: bool, with_blue_box: bool):
     env = RoomExperimentPositionInputs(
-        start_pos=[3, 0, 3],
+        start_pos=[5, 0, 5],
         start_angle=0,
         place_red_box=with_red_box,
         place_blue_box=with_blue_box,
-        max_x=1,
-        max_z=1
+        max_x=10,
+        max_z=10,
     )
     return env
 
@@ -179,6 +179,9 @@ def create_agent_for_test(
         device=device,
         shift=shift,
         sharpening=sharpening,
+        limits=torch.tensor([10, 10, 2 * torch.pi]).to(
+            device
+        ),  # uncomment this for trajectory test
     )
     # layer = (
     #     ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars(
