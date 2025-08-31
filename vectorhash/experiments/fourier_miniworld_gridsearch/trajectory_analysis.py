@@ -22,7 +22,7 @@ titles = generate_titles()
 for entry in os.listdir(trajectory_results_dir):
 
     with open(f"{trajectory_results_dir}/{entry}", "rb") as f:
-        history = torch.load(f)
+        history = torch.load(f, weights_only=False)
         history, positions, noisy_vels = (
             history["history"],
             history["positions"],
