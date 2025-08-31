@@ -1,4 +1,5 @@
 import torch
+torch.manual_seed(0)
 import pickle
 import os
 import math

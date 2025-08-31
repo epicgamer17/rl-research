@@ -23,7 +23,10 @@ from fourier_scaffold import (
     HadamardShiftMatrix,
     ContractionSharpening,
 )
-from experiments.fourier_miniworld_gridsearch.room_env import RoomExperiment
+from experiments.fourier_miniworld_gridsearch.room_env import (
+    RoomExperiment,
+    RoomExperimentPositionInputs,
+)
 from hippocampal_sensory_layers import (
     ComplexIterativeBidirectionalPseudoInverseHippocampalSensoryLayerComplexScalars,
     ComplexExactPseudoInverseHippocampalSensoryLayer,
@@ -94,6 +97,18 @@ def generate_env(with_red_box: bool, with_blue_box: bool, fast=False):
         place_red_box=with_red_box,
         place_blue_box=with_blue_box,
         fast=fast,
+    )
+    return env
+
+
+def generate_traj_env(with_red_box: bool, with_blue_box: bool):
+    env = RoomExperimentPositionInputs(
+        start_pos=[3, 0, 3],
+        start_angle=0,
+        place_red_box=with_red_box,
+        place_blue_box=with_blue_box,
+        max_x=1,
+        max_z=1
     )
     return env
 
@@ -262,7 +277,7 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
 
     ax.plot(torch.arange(N), masses_true, label="true")
     ax.plot(torch.arange(N), masses_error, label="error")
-    ax2.set_yscale('log')
+    ax2.set_yscale("log")
     # ax2.scatter(torch.arange(N), history._Hs_odometry, label="entropy odometry")
     ax2.scatter(torch.arange(N), history._Hs_sensory, label="entropy sensory")
 

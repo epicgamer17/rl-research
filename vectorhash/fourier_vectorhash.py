@@ -138,7 +138,7 @@ class FourierVectorHaSHAgent:
     def error(self, true_pos):
         pass
 
-    def step(self, action, noise_dist):
+    def step(self, action, noise_dist: torch.distributions.Distribution | None):
         ### env-specific observation processing
         step_tuple = self.env.step(action)
 
@@ -150,7 +150,7 @@ class FourierVectorHaSHAgent:
         self.true_data.true_position = new_pos
         noisy_dp = new_pos
         if noise_dist != None:
-            noisy_dp += noise_dist.sample(3)
+            noisy_dp += noise_dist.sample(noisy_dp.shape).to(self.device)
 
         dt = 1
         v = (dp / dt) * self.vectorhash.scaffold.scale_factor
@@ -413,11 +413,12 @@ def kidnap_test(
 
     return history, pre_kidnap_path, post_kidnap_path
 
+
 def trajectory_test(
     agent: FourierVectorHaSHAgent,
-    path: torch.Tensor,
-    noise_dist: torch.distributions.Distribution | None = None,
+    velocities: torch.Tensor,
     reshape_img_size=(30, 40),
+    noise_dist: torch.distributions.Distribution | None = None,
 ):
     ## aliases
     scaffold = agent.vectorhash.scaffold
@@ -452,6 +453,10 @@ def trajectory_test(
     H_o = scaffold.entropy(agent.vectorhash.scaffold.P).item()
     H_s = scaffold.entropy(P_from_s(start_img)).item()
 
+    noisy_vels = velocities.clone()
+    if noise_dist is not None:
+        noisy_vels += noise_dist.sample(noisy_vels.shape)
+
     history.append(
         P=scaffold.P,
         true_image=agent.preprocessor.encode(start_img).reshape(reshape_img_size),
@@ -464,8 +469,8 @@ def trajectory_test(
         scaffold=scaffold,
     )
 
-    for i, action in enumerate(path):
-        new_pos, new_img, v = agent.step(action, noise_dist)
+    for i, vel in enumerate(velocities):
+        new_pos, new_img, v = agent.step(vel, None)
         if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(
                 P=None,
@@ -508,4 +513,4 @@ def trajectory_test(
             scaffold=scaffold,
         )
 
-    return history, path
+    return history, noisy_vels

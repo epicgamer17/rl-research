@@ -182,11 +182,10 @@ class RoomExperimentPositionInputs(MiniWorldEnv, utils.EzPickle):
         self.agent.pos = kidnap_pos
         self.agent.dir = kidnap_dir
 
-    def step(self, v, w):
-        self.agent.pos = self.agent.pos + torch.tensor(
-            [v * math.cos(self.agent.dir), 0, v * math.sin(self.agent.dir)]
-        )
-        self.agent.dir = self.agent.dir + w
+    def step(self, v):
+        self.agent.pos[0] = self.agent.pos[0] + v[0]
+        self.agent.pos[2] = self.agent.pos[2] + v[1]
+        self.agent.dir = math.atan2(v[1], v[0])
 
         obs, reward, termination, truncation, info = super().step(3)
 

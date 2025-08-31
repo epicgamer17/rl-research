@@ -585,7 +585,7 @@ class FourierScaffold:
         else:
             return (P * self.encode(k).conj()).sum()
 
-    def get_probability_abs_batched(self, ks, P: Optional[torch.Tensor] = None):
+    def get_probability_abs_batched(self, ks, P: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Obtain the probability mass located in cells ks = (k1, ..., kN)
 
         Shape of ks: (N, d)
