@@ -71,15 +71,9 @@ def run_test(
     mean_h_err_l2 = ((gbook - h).abs() ** 2).mean()
     mean_h_sharp_err_l2 = ((h_sharp - h).abs() ** 2).mean()
 
-    P_nosharp = torch.einsum("bi,bj->bij", h, h.conj())
-    P_sharp = torch.einsum("bi,bj->bij", h_sharp, h_sharp.conj())
-
-    distances_nosharp = torch.empty(Npatts)
-    distances_sharp = torch.empty(Npatts)
-
-    for i in range(10):
+    def f(h, i):
         print(i)
-        P = P_nosharp[i]
+        P = torch.outer(h, h.conj())
         prob_dist = scaffold.get_all_probabilities(P)
         probs_x = prob_dist.reshape(60, 60).sum(dim=1)
         probs_y = prob_dist.reshape(60, 60).sum(dim=0)
@@ -87,37 +81,26 @@ def run_test(
         mean_x = circular_mean_weighted(torch.arange(60, device=P.device), probs_x, 60)
         mean_y = circular_mean_weighted(torch.arange(60, device=P.device), probs_y, 60)
 
-        true_x = i
-        true_y = 0
+        true_x = i // 60
+        true_y = i % 60
 
         distance = (
             circ_dist(mean_x, true_x, 60) ** 2 + circ_dist(mean_y, true_y, 60) ** 2
         ) ** 0.5
-        distances_nosharp[i] = distance
+        return distance
 
-    for i in range(10):
-        print(i)
-        P = P_sharp[i]
-        prob_dist = scaffold.get_all_probabilities(P)
-        probs_x = prob_dist.reshape(60, 60).sum(dim=1)
-        probs_y = prob_dist.reshape(60, 60).sum(dim=0)
-
-        mean_x = circular_mean_weighted(torch.arange(60, device=P.device), probs_x, 60)
-        mean_y = circular_mean_weighted(torch.arange(60, device=P.device), probs_y, 60)
-
-        true_x = i
-        true_y = 0
-
-        distance = (
-            circ_dist(mean_x, true_x, 60) ** 2 + circ_dist(mean_y, true_y, 60) ** 2
-        ) ** 0.5
-        distances_sharp[i] = distance
+    distances_nosharp = torch.vmap(f, chunk_size=10)(
+        h, torch.arange(len(h), device=h.device)
+    )
+    distances_sharp = torch.vmap(f, chunk_size=10)(
+        h_sharp, torch.arange(len(h), device=h.device)
+    )
 
     dists_nosharp = torch.vmap(scaffold.get_all_probabilities, chunk_size=1)(
-        P_nosharp[:10]
+        torch.einsum("bi,bj->bij", h[:10], h[:10].conj())
     )  # (B, |\Omega|, |\Omega|)
     dists_sharp = torch.vmap(scaffold.get_all_probabilities, chunk_size=1)(
-        P_sharp[:10]
+        torch.einsum("bi,bj->bij", h_sharp[:10], h_sharp[:10].conj())
     )  # (B, |\Omega|, |\Omega|)
 
     return (
