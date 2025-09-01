@@ -52,16 +52,20 @@ smoothings = [
     for sigma in [0.5, 0.3]
 ]
 shifts = [HadamardShiftMatrixRat(torch.tensor(shapes))]
-sharpenings = [
-    ContractionSharpening(2),
-]
+sharpenings = [ContractionSharpening(1)]
 
 img_size_map = {
     "cnn": (16, 8),
     "no_cnn": (30, 40),
     "no_cnn_extra_downscaling": (15, 20),
+    "no_cnn_extra_downscaling_2x": (12, 16),
 }
-N_s_map = {"cnn": 16 * 8, "no_cnn": 30 * 40, "no_cnn_extra_downscaling": 15 * 20}
+N_s_map = {
+    "cnn": 16 * 8,
+    "no_cnn": 30 * 40,
+    "no_cnn_extra_downscaling": 15 * 20,
+    "no_cnn_extra_downscaling_2x": 12 * 16,
+}
 preprocessor_map = {
     "cnn": PreprocessingCNN(device=device),
     "no_cnn": SequentialPreprocessing(
@@ -70,24 +74,25 @@ preprocessor_map = {
     "no_cnn_extra_downscaling": SequentialPreprocessing(
         [RescalePreprocessing(0.25), GrayscaleAndFlattenPreprocessing(device=device)]
     ),
+    "no_cnn_extra_downscaling_2x": SequentialPreprocessing(
+        [RescalePreprocessing(0.2), GrayscaleAndFlattenPreprocessing(device=device)]
+    ),
 }
 
-### specific test
-
-Ds = [600]
-preprocessing_methods = ["no_cnn"]
-combine_methods = [
-    MultiplicativeCombine(),
-]
+### configuration for trajectory test:
+Ds = [400]
+preprocessing_methods = ["no_cnn_extra_downscaling"]  # , "cnn"]
+combine_methods = [AdditiveCombine(0)]
 shapes = [(3, 3, 3), (7, 7, 7)]
 eps_vs = [1.0]
 smoothings = [
-    GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[0.5] * 3)
+    GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[0] * 3)
 ]
 shifts = [HadamardShiftMatrixRat(torch.tensor(shapes))]
-sharpenings = [
-    ContractionSharpening(2),
-]
+sharpenings = [ContractionSharpening(1)]
+
+eps_H = 10000
+###
 
 
 def generate_env(with_red_box: bool, with_blue_box: bool, fast=False):
@@ -196,14 +201,14 @@ def create_agent_for_test(
     layer = ComplexExactPseudoInverseHippocampalSensoryLayer(
         input_size=N_s_map[preprocessing_method],
         N_h=D,
-        N_patts=200,#9261,
+        N_patts=200,  # 9261,
         hbook=scaffold.gbook().T[:200],
         device=device,
     )
     arch = FourierVectorHaSH(
         scaffold=scaffold,
         hippocampal_sensory_layer=layer,
-        eps_H=100,
+        eps_H=eps_H,
         eps_v=eps_v,
         combine=combine_method,
     )
@@ -233,7 +238,7 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
         features=history._scaffold_features.to(device),
         device=device,
         _skip_K_calc=True,
-        _skip_gs_calc=True,
+        _skip_Ts_calc=True,
     )
 
     R = 5
@@ -262,7 +267,7 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
             # (N,d) -> (N)
             probabilities = scaffold.get_probability_abs_batched(omega, P)
             # (N) -> (N_x, N_y, N_theta)
-            current_dist = probabilities.reshape(len(xs), len(ys), len(thetas))
+            current_dist = probabilities.reshape(len(xs), len(ys), len(thetas)).transpose(0, 1).flip(0)
 
         true_mass = (
             current_dist[R - r : R + r + 1, R - r : R + r + 1, R - r : R + r + 1]
@@ -278,6 +283,7 @@ def analyze_history_errors(history: FourierVectorhashAgentHistory, kidnap_t=None
 
     ax2 = ax.twinx()
 
+    
     ax.plot(torch.arange(N), masses_true, label="true")
     ax.plot(torch.arange(N), masses_error, label="error")
     ax2.set_yscale("log")
