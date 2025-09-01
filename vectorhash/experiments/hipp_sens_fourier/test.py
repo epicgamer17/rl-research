@@ -46,6 +46,11 @@ def dynamics_s_h_h_s(
     return h, h_sharp, s_recovered_sharp, s_recovered_nosharp
 
 
+def circ_dist(x, y, L):
+    d = (x - y).abs()
+    return min(d, (L - d).abs())
+
+
 def run_test(
     scaffold: FourierScaffold,
     layer: ComplexExactPseudoInverseHippocampalSensoryLayerComplexScalars,
@@ -72,7 +77,8 @@ def run_test(
     distances_nosharp = torch.empty(Npatts)
     distances_sharp = torch.empty(Npatts)
 
-    for i in range(len(hbook)):
+    for i in range(10):
+        print(i)
         P = P_nosharp[i]
         prob_dist = scaffold.get_all_probabilities(P)
         probs_x = prob_dist.reshape(60, 60).sum(dim=1)
@@ -84,10 +90,13 @@ def run_test(
         true_x = i
         true_y = 0
 
-        distance = ((mean_x - true_x) ** 2 + (mean_y - true_y) ** 2) ** 0.5
+        distance = (
+            circ_dist(mean_x, true_x, 60) ** 2 + circ_dist(mean_y, true_y, 60) ** 2
+        ) ** 0.5
         distances_nosharp[i] = distance
 
-    for i in range(len(hbook)):
+    for i in range(10):
+        print(i)
         P = P_sharp[i]
         prob_dist = scaffold.get_all_probabilities(P)
         probs_x = prob_dist.reshape(60, 60).sum(dim=1)
@@ -99,7 +108,9 @@ def run_test(
         true_x = i
         true_y = 0
 
-        distance = ((mean_x - true_x) ** 2 + (mean_y - true_y) ** 2) ** 0.5
+        distance = (
+            circ_dist(mean_x, true_x, 60) ** 2 + circ_dist(mean_y, true_y, 60) ** 2
+        ) ** 0.5
         distances_sharp[i] = distance
 
     dists_nosharp = torch.vmap(scaffold.get_all_probabilities, chunk_size=1)(
@@ -118,8 +129,8 @@ def run_test(
         avg_l1,
         mean_h_err_l2,
         mean_h_sharp_err_l2,
-        distances_sharp.mean(),
         distances_nosharp.mean(),
+        distances_sharp.mean(),
     )
 
 
@@ -256,7 +267,7 @@ def exp_1_analysis():
     # ax.set_title("avg_l1_err vs D for different shape configs")
     ax.legend()
     fig.savefig(f"exp_sens_avg_dist_vs_D_sharp_pflip-{pflip}.png", bbox_inches="tight")
-    
+
     ### avg l1 err vs D
     fig, ax = plt.subplots(figsize=(10, 6))
     for i, shape in enumerate(shape_configs):
@@ -729,5 +740,5 @@ def exp_3_analysis():
 
 
 if __name__ == "__main__":
-    exp_3()
-    exp_3_analysis()
+    exp_1()
+    exp_1_analysis()
