@@ -149,16 +149,16 @@ class FourierVectorHaSHAgent:
         ### calculation of noisy input
         dp = new_pos - self.true_data.true_position
         self.true_data.true_position = new_pos
-        noisy_dp = new_pos
+        noisy_world_dp = dp.clone()
         if noise_dist != None:
-            noisy_dp += noise_dist.sample(noisy_dp.shape).to(self.device)
+            noisy_world_dp += noise_dist.sample(noisy_world_dp.shape).to(self.device)
 
         dt = 1
-        v = (dp / dt) * self.vectorhash.scaffold.scale_factor
+        v = (noisy_world_dp / dt) * self.vectorhash.scaffold.scale_factor
 
         self.v = self.v + v
 
-        return new_pos, new_img, self.v
+        return new_pos, new_img, self.v, noisy_world_dp
 
     def reset_v(self):
         self.v = torch.zeros(self.vectorhash.scaffold.d, device=self.device)
@@ -215,8 +215,10 @@ def path_test(
         scaffold=scaffold,
     )
 
+    noisy_world_vs = torch.zeros(len(path))
     for i, action in enumerate(path):
-        new_pos, new_img, v = agent.step(action, noise_dist)
+        new_pos, new_img, v, noisy_world_dp  = agent.step(action, noise_dist)
+        noisy_world_vs[i] = noisy_world_dp
         if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(
                 P=None,
@@ -259,7 +261,7 @@ def path_test(
             scaffold=scaffold,
         )
 
-    return history, path
+    return history, path, noisy_world_vs
 
 
 def kidnap_test(
@@ -323,7 +325,7 @@ def kidnap_test(
     )
 
     for i, action in enumerate(pre_kidnap_path):
-        new_pos, new_img, v = agent.step(action, noise_dist)
+        new_pos, new_img, v, _ = agent.step(action, noise_dist)
         if v.norm() < agent.vectorhash.eps_v:
             history.append(
                 P=None,
@@ -369,7 +371,7 @@ def kidnap_test(
     kidnap()
 
     for i, action in enumerate(post_kidnap_path):
-        new_pos, new_img, v = agent.step(action, noise_dist)
+        new_pos, new_img, v, _ = agent.step(action, noise_dist)
         if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(
                 P=None,
@@ -471,7 +473,7 @@ def trajectory_test(
     )
 
     for i, vel in enumerate(noisy_vels):
-        new_pos, new_img, v = agent.step(vel, None)
+        new_pos, new_img, v, _ = agent.step(vel, None)
         if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(
                 P=None,
