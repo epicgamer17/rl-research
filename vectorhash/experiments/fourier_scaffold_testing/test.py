@@ -300,7 +300,7 @@ def exp_1_analysis():
     ]
     original_probs_similarities = data["original_probs_similarities"]
 
-    shapes = torch.tensor([(5, 5), (7, 7)], device=device)
+    shapes = torch.tensor([(3, 3), (5, 5), (7, 7)], device=device)
     dim_sizes = [int(shapes[:, dim].prod().item()) for dim in range(shapes.shape[1])]
     dists = distributions(dim_sizes)
 
@@ -341,7 +341,7 @@ def exp_1_analysis():
 
     ax.set_xlabel("$D$")
     ax.set_ylabel("Encoding-space L2 error")
-    ax.set_title("Encoding-space L2 error true and computed encodings")
+    ax.set_title("Encoding-space L2 error for sharpened probabilities")
     ax.legend()
     fig.savefig("exp1_sharpened_encoding_l2_error_vs_D.png", bbox_inches="tight")
 
@@ -366,7 +366,7 @@ def exp_1_analysis():
     ax.set_xlabel("$D$")
     ax.set_ylabel("Encoding-space cosine similarity")
     ax.set_title(
-        "Encoding-space cosine similarity between true and computed sharpened encodings"
+        "Encoding-space similarity for sharpened probabilities"
     )
     ax.legend()
     fig.savefig("exp1_sharpened_encoding_similarity_vs_D.png", bbox_inches="tight")
