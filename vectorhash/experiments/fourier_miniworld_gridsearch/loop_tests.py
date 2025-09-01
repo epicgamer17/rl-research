@@ -68,12 +68,14 @@ if __name__ == "__main__":
     combinations, titles = generate_combinations(), generate_titles()
     for i, (combination, title) in enumerate(zip(combinations, titles)):
         print(f"(fast) test {i+1}/{len(combinations)}: {title}")
-        env = generate_env(with_red_box=True, with_blue_box=True, fast=True)
+        env = generate_env(with_red_box=True, with_blue_box=True, fast=False)
         agent = create_agent_for_test(env, *combination)
+        noise_dist = torch.distributions.Normal(0, 0.02)
         results = path_test(
             agent=agent,
-            path=torch.tensor(loop_path_2_fast),
+            path=torch.tensor(loop_path),
             reshape_img_size=img_size_map[combination[1]],
+            noise_dist=noise_dist,
         )
         torch.save(
             {"results": results, "scaffold": agent.vectorhash.scaffold},

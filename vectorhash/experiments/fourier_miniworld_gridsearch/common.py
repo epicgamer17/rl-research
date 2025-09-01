@@ -94,6 +94,21 @@ sharpenings = [ContractionSharpening(1)]
 eps_H = 10000
 ###
 
+### configuration for loop test:
+Ds = [400]
+preprocessing_methods = ["no_cnn_extra_downscaling"]  # , "cnn"]
+combine_methods = [AdditiveCombine(0.3)]
+shapes = [(3, 3, 3), (7, 7, 7)]
+eps_vs = [1.0]
+smoothings = [
+    GuassianFourierSmoothingMatrix(kernel_radii=[10] * 3, kernel_sigmas=[0] * 3)
+]
+shifts = [HadamardShiftMatrixRat(torch.tensor(shapes))]
+sharpenings = [ContractionSharpening(1)]
+
+eps_H = 2
+###
+
 
 def generate_env(with_red_box: bool, with_blue_box: bool, fast=False):
     env = RoomExperiment(

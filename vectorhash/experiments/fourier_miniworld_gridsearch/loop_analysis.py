@@ -1,5 +1,4 @@
 import torch
-from fourier_scaffold import FourierScaffold
 import os
 from common import generate_titles
 
@@ -12,6 +11,7 @@ from graph_utils import colored_line
 from vectorhash_functions import circular_mean_weighted
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
+from fourier_scaffold import FourierScaffold
 
 
 loop_results_dir = "loop_results_sept_1"
@@ -22,7 +22,7 @@ os.makedirs(loop_animations_dir, exist_ok=True)
 os.makedirs(loop_plots_dir, exist_ok=True)
 titles = generate_titles()
 
-fast = True
+fast = False
 kidnap_t = 48 if fast else 240
 
 for entry in os.listdir(loop_results_dir):
@@ -37,9 +37,14 @@ for entry in os.listdir(loop_results_dir):
     Ps = history._Ps
 
     positions = torch.zeros(len(noisy_world_vs + 1), 2)
-    for i, true_pos in enumerate(history._true_positions):
-        positions[i, 0] = true_pos[i][0] / scaffold.scale_factor[0]
-        positions[i, 1] = true_pos[i][1] / scaffold.scale_factor[1]
+    for i in range(len(history._true_positions) - 1):
+        true_pos = history._true_positions[i]
+        positions[i, 0] = (
+            (true_pos[0] + 3 * scaffold.scale_factor[0]) % scaffold.grid_limits[0]
+        ) / scaffold.scale_factor[0]
+        positions[i, 1] = (
+            (true_pos[1] + 3 * scaffold.scale_factor[1]) % scaffold.grid_limits[1]
+        ) / scaffold.scale_factor[1]
 
     true_xs = positions[:, 0]
     true_ys = positions[:, 1]
@@ -119,8 +124,8 @@ for entry in os.listdir(loop_results_dir):
     )
 
     green_patch = Patch(color="green", label="True Path")
-    blue_patch = Patch(color="blue", label="Noisy Path")
-    red_patch = Patch(color="red", label="Estimated Path")
+    blue_patch = Patch(color="blue", label="Noisy Path", linestyle="--")
+    red_patch = Patch(color="red", label="Estimated Path", linestyle=":")
 
     ax.set_xlim(0, 10)
     ax.set_ylim(0, 10)
@@ -128,7 +133,7 @@ for entry in os.listdir(loop_results_dir):
 
     fig.savefig(f"{loop_plots_dir}/{entry}.png")
 
-    write_animation(history, loop_animations_dir, entry)
+    # write_animation(history, loop_animations_dir, entry)
     fig = analyze_history_errors(history, kidnap_t=kidnap_t)
 
     i = int(entry.split(".")[0])
