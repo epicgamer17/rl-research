@@ -11,6 +11,7 @@ from hippocampal_sensory_layers import (
 )
 import matplotlib.pyplot as plt
 from graph_utils import plot_with_error, plot_imgs_side_by_side
+from vectorhash_functions import circular_mean_weighted
 
 device = "cuda"
 
@@ -67,12 +68,47 @@ def run_test(
 
     P_nosharp = torch.einsum("bi,bj->bij", h, h.conj())
     P_sharp = torch.einsum("bi,bj->bij", h_sharp, h_sharp.conj())
+
+    distances_nosharp = torch.empty(Npatts)
+    distances_sharp = torch.empty(Npatts)
+
+    for i in range(len(hbook)):
+        P = P_nosharp[i]
+        prob_dist = scaffold.get_all_probabilities(P)
+        probs_x = prob_dist.reshape(60, 60).sum(dim=1)
+        probs_y = prob_dist.reshape(60, 60).sum(dim=0)
+
+        mean_x = circular_mean_weighted(torch.arange(60, device=P.device), probs_x, 60)
+        mean_y = circular_mean_weighted(torch.arange(60, device=P.device), probs_y, 60)
+
+        true_x = i
+        true_y = 0
+
+        distance = ((mean_x - true_x) ** 2 + (mean_y - true_y) ** 2) ** 0.5
+        distances_nosharp[i] = distance
+
+    for i in range(len(hbook)):
+        P = P_sharp[i]
+        prob_dist = scaffold.get_all_probabilities(P)
+        probs_x = prob_dist.reshape(60, 60).sum(dim=1)
+        probs_y = prob_dist.reshape(60, 60).sum(dim=0)
+
+        mean_x = circular_mean_weighted(torch.arange(60, device=P.device), probs_x, 60)
+        mean_y = circular_mean_weighted(torch.arange(60, device=P.device), probs_y, 60)
+
+        true_x = i
+        true_y = 0
+
+        distance = ((mean_x - true_x) ** 2 + (mean_y - true_y) ** 2) ** 0.5
+        distances_sharp[i] = distance
+
     dists_nosharp = torch.vmap(scaffold.get_all_probabilities, chunk_size=1)(
         P_nosharp[:10]
     )  # (B, |\Omega|, |\Omega|)
     dists_sharp = torch.vmap(scaffold.get_all_probabilities, chunk_size=1)(
         P_sharp[:10]
     )  # (B, |\Omega|, |\Omega|)
+
     return (
         recovered_sbook,
         recovered_sbook_nosharp,
@@ -82,6 +118,8 @@ def run_test(
         avg_l1,
         mean_h_err_l2,
         mean_h_sharp_err_l2,
+        distances_sharp.mean(),
+        distances_nosharp.mean(),
     )
 
 
@@ -94,10 +132,7 @@ def exp_1(pflip=0.01):
     D_list = [400, 500, 600, 700, 800]
 
     Npatts = 100
-    shape_configs = [
-        torch.tensor(s)
-        for s in [[(3, 3), (4, 4), (5, 5)], [(5, 5), (12, 12)], [(60,), (60,)]]
-    ]
+    shape_configs = [torch.tensor(s) for s in [[(3, 3), (4, 4), (5, 5)]]]
 
     p_flips = torch.empty(len(shape_configs), len(D_list), runs)
     l1_errs = torch.empty(len(shape_configs), len(D_list), runs)
@@ -115,6 +150,9 @@ def exp_1(pflip=0.01):
         len(shape_configs), len(D_list), 10, 3600, device=device
     )
     dists_org = torch.empty(len(shape_configs), len(D_list), 10, 3600, device=device)
+
+    mean_distances_xy_nosharp = torch.empty(len(shape_configs), len(D_list), runs)
+    mean_distances_xy_sharp = torch.empty(len(shape_configs), len(D_list), runs)
     for k in range(runs):
         for i, shapes in enumerate(shape_configs):
 
@@ -138,6 +176,8 @@ def exp_1(pflip=0.01):
                     l1_errs[i, j, k],
                     h_errs[i, j, k],
                     h_sharp_errs[i, j, k],
+                    mean_distances_xy_nosharp[i, j, k],
+                    mean_distances_xy_sharp[i, j, k],
                 ) = run_test(scaffold, layer, sbook[k], Npatts, pflip)
                 if k == 0:
                     recovered_sbook_0[i, j] = recovered_sbook
@@ -159,6 +199,8 @@ def exp_1(pflip=0.01):
         "dists_sharp": dists_sharp,
         "dists_nosharp": dists_nosharp,
         "dists": dists_org,
+        "mean_distances_xy_nosharp": mean_distances_xy_nosharp,
+        "mean_distances_xy_sharp": mean_distances_xy_sharp,
     }
     torch.save(data, "exp_1_results.pt")
 
@@ -178,7 +220,43 @@ def exp_1_analysis():
     dists_nosharp = data["dists_nosharp"]
     dists_org = data["dists"]
     pflip = data["pflip"]
+    mean_distances_xy_nosharp = data["mean_distances_xy_nosharp"]
+    mean_distances_xy_sharp = data["mean_distances_xy_sharp"]
 
+    ### avg dist xy nosharp vs D
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, shape in enumerate(shape_configs):
+        plot_with_error(
+            ax=ax,
+            x=D_list,
+            y=mean_distances_xy_nosharp[i],
+            label=f"{shape.tolist()}",
+        )
+    ax.set_xlabel("D")
+    ax.set_ylabel("mean distance")
+    # ax.set_ylim(0, 1)
+    # ax.set_title("avg_l1_err vs D for different shape configs")
+    ax.legend()
+    fig.savefig(
+        f"exp_sens_avg_dist_vs_D_nosharp_pflip-{pflip}.png", bbox_inches="tight"
+    )
+
+    ### avg dist xy sharp vs D
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, shape in enumerate(shape_configs):
+        plot_with_error(
+            ax=ax,
+            x=D_list,
+            y=mean_distances_xy_sharp[i],
+            label=f"{shape.tolist()}",
+        )
+    ax.set_xlabel("D")
+    ax.set_ylabel("mean distance")
+    # ax.set_ylim(0, 1)
+    # ax.set_title("avg_l1_err vs D for different shape configs")
+    ax.legend()
+    fig.savefig(f"exp_sens_avg_dist_vs_D_sharp_pflip-{pflip}.png", bbox_inches="tight")
+    
     ### avg l1 err vs D
     fig, ax = plt.subplots(figsize=(10, 6))
     for i, shape in enumerate(shape_configs):
