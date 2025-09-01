@@ -215,7 +215,7 @@ def path_test(
         scaffold=scaffold,
     )
 
-    noisy_world_vs = torch.zeros(len(path))
+    noisy_world_vs = torch.zeros(len(path), 3)
     for i, action in enumerate(path):
         new_pos, new_img, v, noisy_world_dp  = agent.step(action, noise_dist)
         noisy_world_vs[i] = noisy_world_dp

@@ -1,6 +1,6 @@
 import torch
+
 torch.manual_seed(0)
-import pickle
 import os
 
 from common import (
@@ -13,7 +13,7 @@ from common import (
 
 from fourier_vectorhash import path_test
 
-results_dir = "loop_path_results_aug_6_fast_specific"
+results_dir = "loop_results_sept_1"
 os.makedirs(results_dir, exist_ok=True)
 
 # each forward step (action 2) = 0.2 units
@@ -69,10 +69,13 @@ if __name__ == "__main__":
     for i, (combination, title) in enumerate(zip(combinations, titles)):
         print(f"(fast) test {i+1}/{len(combinations)}: {title}")
         env = generate_env(with_red_box=True, with_blue_box=True, fast=True)
-        history = path_test(
-            agent=create_agent_for_test(env, *combination),
+        agent = create_agent_for_test(env, *combination)
+        results = path_test(
+            agent=agent,
             path=torch.tensor(loop_path_2_fast),
             reshape_img_size=img_size_map[combination[1]],
         )
-        with open(f"{results_dir}/{i}.pkl", "wb") as f:
-            pickle.dump(history, f)
+        torch.save(
+            {"results": results, "scaffold": agent.vectorhash.scaffold},
+            f"{results_dir}/{i}.pkl",
+        )
