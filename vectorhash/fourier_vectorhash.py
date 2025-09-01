@@ -24,6 +24,7 @@ class CombineMethod:
 
 class AdditiveCombine(CombineMethod):
     def __init__(self, alpha: float) -> None:
+        """ alpha = how much weight to put on sensory (second arg) """
         self.alpha = alpha
 
     def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
