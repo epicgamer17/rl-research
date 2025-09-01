@@ -8,6 +8,9 @@ import sys
 
 sys.path.append("../..")
 from common import analyze_history_errors, write_animation
+from graph_utils import colored_line
+from vectorhash_functions import circular_mean_weighted
+from matplotlib.patches import Patch
 
 trajectory_results_dir = "trajectory_tests"
 trajectory_animations_dir = "trajectory_path_animations"
@@ -56,29 +59,63 @@ for entry in os.listdir(trajectory_results_dir):
                 ]
                 probs = scaffold.get_all_probabilities(P.to("cuda")).reshape(*dim_sizes)
                 probs_xy = probs.sum(dim=2)
-                max_xy = probs_xy.flatten().argmax()
-                x_idx = max_xy % dim_sizes[0]
-                y_idx = max_xy // dim_sizes[0]
+                dist_x = probs_xy.sum(dim=1)
+                dist_y = probs_xy.sum(dim=0)
+
+                circ_mean_x = circular_mean_weighted(
+                    torch.arange(len(dist_x), device=dist_x.device), dist_x, len(dist_x)
+                )
+                circ_mean_y = circular_mean_weighted(
+                    torch.arange(len(dist_y), device=dist_x.device), dist_y, len(dist_y)
+                )
                 est_xs.append(
                     scaffold.grid_coords_to_world_coords(
-                        x_idx.item()
+                        circ_mean_x.item()
                         + positions[0, 0] * scaffold.scale_factor[0].item(),
                         0,
                     )
                 )
                 est_ys.append(
                     scaffold.grid_coords_to_world_coords(
-                        y_idx.item()
+                        circ_mean_y.item()
                         + positions[0, 1] * scaffold.scale_factor[1].item(),
                         1,
                     )
                 )
 
         fig, ax = plt.subplots()
-        ax.plot(true_xs, true_ys, label="True Path")
-        ax.plot(noisy_xs, noisy_ys, label="Noisy Path")
-        ax.plot(est_xs, est_ys, label="Estimated Path")
-        ax.legend()
+
+        colored_line(
+            true_xs,
+            true_ys,
+            torch.linspace(0.5, 2, len(true_xs)),
+            ax,
+            cmap="Greens",
+        )
+        colored_line(
+            noisy_xs,
+            noisy_ys,
+            torch.linspace(0.5, 2, len(noisy_xs)),
+            ax,
+            cmap="Blues",
+            linestyle="--",
+        )
+        colored_line(
+            est_xs,
+            est_ys,
+            torch.linspace(0.5, 2, len(est_xs)),
+            ax,
+            cmap="Reds",
+            linestyle=":",
+        )
+
+        green_patch = Patch(color="green", label="True Path")
+        blue_patch = Patch(color="blue", label="Noisy Path")
+        red_patch = Patch(color="red", label="Estimated Path")
+
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 10)
+        ax.legend(handles=[green_patch, blue_patch, red_patch])
 
         fig.savefig(f"{trajectory_plots_dir}/{entry}.png")
 
@@ -87,7 +124,7 @@ for entry in os.listdir(trajectory_results_dir):
         fig2.savefig(f"{trajectory_animations_dir}/{entry}.png")
 
         write_animation(
-            history=history,
-            target_dir=trajectory_animations_dir,
-            entry_name=entry,
+           history=history,
+           target_dir=trajectory_animations_dir,
+           entry_name=entry,
         )
