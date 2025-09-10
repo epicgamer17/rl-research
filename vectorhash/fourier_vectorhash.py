@@ -24,7 +24,7 @@ class CombineMethod:
 
 class AdditiveCombine(CombineMethod):
     def __init__(self, alpha: float) -> None:
-        """ alpha = how much weight to put on sensory (second arg) """
+        """alpha = how much weight to put on sensory (second arg)"""
         self.alpha = alpha
 
     def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
@@ -219,7 +219,7 @@ def path_test(
 
     noisy_world_vs = torch.zeros(len(path), 3)
     for i, action in enumerate(path):
-        new_pos, new_img, v, noisy_world_dp  = agent.step(action, noise_dist)
+        new_pos, new_img, v, noisy_world_dp = agent.step(action, noise_dist)
         noisy_world_vs[i] = noisy_world_dp
         if v.norm(p=float("inf")) < agent.vectorhash.eps_v:
             history.append(
