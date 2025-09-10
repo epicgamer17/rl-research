@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import pretrainedmodels
 from typing import Union, Optional
 
+
 class CNNCoder(nn.Module):
     """
     A simple convolutional encoder that expects inputs of size
@@ -161,9 +162,11 @@ class GrayscaleAndFlattenPreprocessing(Preprocessor):
         pass
 
     def encode(self, image) -> torch.Tensor:
-        rescaled = image / 255
+        rescaled = image# / 255
         grayscale_img = color.rgb2gray(rescaled)
-        torch_img = torch.from_numpy(grayscale_img)
+        # print("gray:", grayscale_img)
+        torch_img = (torch.from_numpy(grayscale_img) - 0.5) * 2
+        # print("gray after rescale:", trch_img)
         return torch_img.flatten().float().to(self.device)
 
 
