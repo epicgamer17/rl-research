@@ -39,9 +39,8 @@ class MultiplicativeCombine(CombineMethod):
         pass
 
     def combine(self, P1, P2) -> torch.Tensor:  # type: ignore
-        S = (P1 * P2.conj()).sum().abs()
-        P = P1 @ P2.H
-        return P / S
+        P = P1 @ P2
+        return P / P.trace()
 
     def __str__(self) -> str:
         return f"multiplicative"
@@ -151,7 +150,9 @@ class FourierVectorHaSHAgent:
         self.true_data.true_position = new_pos
         noisy_world_dp = dp.clone()
         if noise_dist != None:
-            noisy_world_dp += noise_dist.sample(noisy_world_dp.shape).to(self.device)
+            noisy_world_dp += noise_dist.sample(noisy_world_dp.shape).to(
+                self.device
+            ) * torch.tensor([1, 1, 0], device=self.device)
 
         dt = 1
         v = (noisy_world_dp / dt) * self.vectorhash.scaffold.scale_factor
@@ -193,7 +194,8 @@ def path_test(
         encoded = agent.preprocessor.encode(s)
         g = hs_layer.hippocampal_from_sensory(encoded)[0]
         P = torch.einsum("i,j->ij", g, g.conj())
-        return P
+        P_normalized = P / P.trace()
+        return P_normalized
 
     def grid_vector_from_world_vector(v):
         return (v * scaffold.scale_factor) % scaffold.grid_limits
@@ -240,10 +242,7 @@ def path_test(
         H_o = scaffold.entropy(scaffold.P).item()
         P_s = P_from_s(new_img)
         H_s = scaffold.entropy(P_s).item()
-        if H_s > 0.5 and H_s < agent.vectorhash.eps_H:
-            print(f"t={i}, combine, H_s={H_s:.3f}")
-            # we have been here before
-            scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
+        scaffold.P = agent.vectorhash.combine(scaffold.P, P_from_s(new_img))
 
         scaffold.sharpen()
         hs_layer.learn(h=scaffold.g_avg(), s=agent.preprocessor.encode(new_img))

@@ -3,7 +3,7 @@ import math
 
 from gymnasium import spaces, utils
 
-from miniworld.entity import Box
+from miniworld.entity import Box, Key, Ball
 from miniworld.miniworld import MiniWorldEnv
 from miniworld.params import DomainParams
 
@@ -114,9 +114,14 @@ class RoomExperiment(MiniWorldEnv, utils.EzPickle):
         self.add_rect_room(min_x=0, max_x=10, min_z=0, max_z=10)
 
         if self.place_red_box:
-            self.red_box = self.place_entity(Box(color="red"), pos=[8, 0, 1.5])
-        if self.place_blue_box:
-            self.blue_box = self.place_entity(Box(color="blue"), pos=[1.5, 0, 8])
+            self.red_box = self.place_entity(Box(color="yellow"), pos=[8, 0, 1.5])
+            self.red_ball = self.place_entity(
+                Ball(color="yellow", size=0.3), pos=[8, 1, 8]
+            )
+            self.blue_box = self.place_entity(Box(color="purple"), pos=[1.5, 0, 8])
+            self.blue_ball = self.place_entity(
+                Ball(color="purple", size=0.4), pos=[1.5, 1, 1.5]
+            )
 
         self.place_agent(dir=self.start_angle, pos=self.start_pos)
 
