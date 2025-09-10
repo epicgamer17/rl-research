@@ -391,7 +391,7 @@ class FourierVectorhashAgentHistory:
                 self.r_x, self.r_y, self.r_theta = 5, 5, 5
             else:
                 L_theta = scaffold.shapes.prod(0)[2].item()
-                self.r_x, self.r_y, self.r_theta = 5, 5, int((L_theta - 1) // 2)
+                self.r_x, self.r_y, self.r_theta = 7, 7, int((L_theta - 1) // 2)
 
         self._true_images.append(true_image.clone().cpu())
         self._true_positions.append(true_position.clone().cpu())
