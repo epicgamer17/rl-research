@@ -11,9 +11,10 @@ class BaseReplayBuffer:
         batch_size: int = None,
         compressed_observations: bool = False,
     ):
-        self.max_size = max_size
-        self.batch_size = batch_size if batch_size is not None else max_size
-        self.compressed_observations = compressed_observations
+        self.max_size: int = max_size
+        self.batch_size: int = batch_size if batch_size is not None else max_size
+        self.compressed_observations: bool = compressed_observations
+        print("Max size:", max_size)
 
         self.clear()
         assert self.size == 0, "Replay buffer should be empty at initialization"
@@ -56,19 +57,23 @@ class Game:
     def append(
         self,
         observation,
-        reward: int,
-        policy,
+        info,
+        reward: int = None,
+        policy=None,
         value=None,
         action=None,
-        info=None,
     ):
         self.observation_history.append(copy.deepcopy(observation))
-        self.rewards.append(reward)
-        self.policy_history.append(policy)
-        self.value_history.append(value)
-        self.action_history.append(action)
-        self.info_history.append(info)
-        self.length += 1
+        self.info_history.append(copy.deepcopy(info))
+        if reward is not None:
+            self.rewards.append(reward)
+        if policy is not None:
+            self.policy_history.append(policy)
+        if value is not None:
+            self.value_history.append(value)
+        if action is not None:
+            self.action_history.append(action)
+        # print("Game info history", self.info_history)
 
     def set_rewards(self):
         print("Initial Rewards", self.rewards)
@@ -82,7 +87,9 @@ class Game:
         print("Updated Rewards", self.rewards)
 
     def __len__(self):
-        return self.length
+        # SHOULD THIS BE LEN OF ACTIONS INSTEAD???
+        # AS THIS ALLOWS SAMPLING THE TERMINAL STATE WHICH HAS NO FURTHER ACTIONS
+        return len(self.observation_history)
 
 
 class BaseGameReplayBuffer(BaseReplayBuffer):
@@ -94,10 +101,9 @@ class BaseGameReplayBuffer(BaseReplayBuffer):
         super().__init__(max_size=max_size, batch_size=batch_size)
 
     def store(self, game: Game):
-        if len(self.buffer) >= self.max_size:
-            self.buffer.pop(0)
-        self.buffer.append(game)
-        self.size += 1
+        self.buffer[self.pointer] = copy.deepcopy(game)
+        self.pointer = (self.pointer + 1) % self.max_size
+        self.size = min(self.size + 1, self.max_size)
 
     def sample(self):
         move_sum = float(sum([len(game) for game in self.buffer]))
@@ -110,8 +116,9 @@ class BaseGameReplayBuffer(BaseReplayBuffer):
         return [(game, np.random.randint(len(game))) for game in games]
 
     def clear(self):
-        self.buffer: list[Game] = []
+        self.buffer: list[Game] = np.zeros(self.max_size, dtype=np.object_)
         self.size = 0
+        self.pointer = 0
 
 
 class BaseDQNReplayBuffer(BaseReplayBuffer):
@@ -145,13 +152,13 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
     ):
         # compute n-step return and store
         self.id_buffer[self.pointer] = id
-        self.observation_buffer[self.pointer] = observation
+        self.observation_buffer[self.pointer] = copy.deepcopy(observation)
         self.action_buffer[self.pointer] = action
         self.reward_buffer[self.pointer] = reward
-        self.next_observation_buffer[self.pointer] = next_observation
+        self.next_observation_buffer[self.pointer] = copy.deepcopy(next_observation)
         self.done_buffer[self.pointer] = done
-        self.info_buffer[self.pointer] = info
-        self.next_info_buffer[self.pointer] = next_info
+        self.info_buffer[self.pointer] = copy.deepcopy(info)
+        self.next_info_buffer[self.pointer] = copy.deepcopy(next_info)
 
         self.pointer = (self.pointer + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
@@ -236,12 +243,12 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         reward: float,
         id=None,
     ):
-        self.observation_buffer[self.pointer] = observation
+        self.observation_buffer[self.pointer] = copy.deepcopy(observation)
         self.action_buffer[self.pointer] = action
         self.reward_buffer[self.pointer] = reward
         self.value_buffer[self.pointer] = value
         self.log_probability_buffer[self.pointer] = log_probability
-        self.info_buffer[self.pointer] = info
+        self.info_buffer[self.pointer] = copy.deepcopy(info)
 
         self.pointer = (self.pointer + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)

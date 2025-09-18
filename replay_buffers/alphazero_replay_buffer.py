@@ -5,7 +5,6 @@ from replay_buffers.base_replay_buffer import Game, BaseGameReplayBuffer
 class AlphaZeroReplayBuffer(BaseGameReplayBuffer):
     def sample(self):
         game_indices = super().sample()
-        print("Game Indices", game_indices)
         return dict(
             observations=np.array(
                 [game.observation_history[i] for game, i in game_indices]

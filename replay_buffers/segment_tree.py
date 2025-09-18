@@ -6,7 +6,7 @@ from typing import Callable
 
 
 class SegmentTree:
-    """ Create SegmentTree.
+    """Create SegmentTree.
 
     Taken from OpenAI baselines github repository:
     https://github.com/openai/baselines/blob/master/baselines/common/segment_tree.py
@@ -52,6 +52,34 @@ class SegmentTree:
                     self._operate_helper(mid + 1, end, 2 * node + 1, mid + 1, node_end),
                 )
 
+    def _get_operate_index_helper(
+        self, start: int, end: int, node: int, node_start: int, node_end: int
+    ) -> int:
+        """Returns index of result of operation in segment."""
+        if start == node_start and end == node_end:
+            return node
+        mid = (node_start + node_end) // 2
+        if end <= mid:
+            return self._get_operate_index_helper(start, end, 2 * node, node_start, mid)
+        else:
+            if mid + 1 <= start:
+                return self._get_operate_index_helper(
+                    start, end, 2 * node + 1, mid + 1, node_end
+                )
+            else:
+                left_index = self._get_operate_index_helper(
+                    start, mid, 2 * node, node_start, mid
+                )
+                right_index = self._get_operate_index_helper(
+                    mid + 1, end, 2 * node + 1, mid + 1, node_end
+                )
+                if self.tree[left_index] == self.operation(
+                    self.tree[left_index], self.tree[right_index]
+                ):
+                    return left_index
+                else:
+                    return right_index
+
     def operate(self, start: int = 0, end: int = 0) -> float:
         """Returns result of applying `self.operation`."""
         if end <= 0:
@@ -59,6 +87,14 @@ class SegmentTree:
         end -= 1
 
         return self._operate_helper(start, end, 1, 0, self.capacity - 1)
+
+    def get_operate_index(self, start: int = 0, end: int = 0) -> int:
+        """Returns index of the result of applying `self.operation`."""
+        if end <= 0:
+            end += self.capacity
+        end -= 1
+
+        return self._get_operate_index_helper(start, end, 1, 0, self.capacity - 1)
 
     def __setitem__(self, idx: int, val: float):
         """Set value in tree."""
@@ -78,7 +114,7 @@ class SegmentTree:
 
 
 class SumSegmentTree(SegmentTree):
-    """ Create SumSegmentTree.
+    """Create SumSegmentTree.
 
     Taken from OpenAI baselines github repository:
     https://github.com/openai/baselines/blob/master/baselines/common/segment_tree.py
@@ -119,7 +155,7 @@ class SumSegmentTree(SegmentTree):
 
 
 class MinSegmentTree(SegmentTree):
-    """ Create SegmentTree.
+    """Create SegmentTree.
 
     Taken from OpenAI baselines github repository:
     https://github.com/openai/baselines/blob/master/baselines/common/segment_tree.py
@@ -140,3 +176,7 @@ class MinSegmentTree(SegmentTree):
     def min(self, start: int = 0, end: int = 0) -> float:
         """Returns min(arr[start], ...,  arr[end])."""
         return super(MinSegmentTree, self).operate(start, end)
+
+    def min_index(self, start: int = 0, end: int = 0) -> int:
+        """Returns index of min(arr[start], ...,  arr[end])."""
+        return super(MinSegmentTree, self).get_operate_index(start, end)

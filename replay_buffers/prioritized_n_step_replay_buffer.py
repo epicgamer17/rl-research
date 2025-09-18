@@ -24,7 +24,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         assert alpha >= 0 and alpha <= 1
         assert beta >= 0 and beta <= 1
         assert n_step >= 1
-        assert gamma > 0 and gamma <= 1
+        assert gamma >= 0 and gamma <= 1
 
         self.initial_max_priority = max_priority
         super(PrioritizedNStepReplayBuffer, self).__init__(
@@ -68,10 +68,10 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         )
 
         if priority is None:
-            priority = self.max_priority**self.alpha
-            self.max_priority = max(
-                self.max_priority, priority
-            )  # could remove and clip priorities in experience replay isntead
+            priority = self.max_priority
+        self.max_priority = max(
+            self.max_priority, priority
+        )  # could remove and clip priorities in experience replay isntead
 
         if transition:
             self.sum_tree[self.tree_pointer] = priority**self.alpha
