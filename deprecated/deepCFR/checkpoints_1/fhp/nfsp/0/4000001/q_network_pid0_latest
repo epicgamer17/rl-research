@@ -1,5 +1,0 @@
-model_checkpoint_path: "q_network_pid0"
-all_model_checkpoint_paths: "../1000002/q_network_pid0"
-all_model_checkpoint_paths: "../2000000/q_network_pid0"
-all_model_checkpoint_paths: "../3000001/q_network_pid0"
-all_model_checkpoint_paths: "q_network_pid0"
