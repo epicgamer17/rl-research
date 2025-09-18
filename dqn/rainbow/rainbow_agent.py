@@ -87,7 +87,7 @@ class RainbowAgent(BaseAgent):
 
         self.replay_buffer = PrioritizedNStepReplayBuffer(
             observation_dimensions=self.observation_dimensions,
-            observation_dtype=self.env.observation_space.dtype,
+            observation_dtype=self.observation_dtype,
             max_size=self.config.replay_buffer_size,
             batch_size=self.config.minibatch_size,
             max_priority=1.0,
@@ -122,10 +122,11 @@ class RainbowAgent(BaseAgent):
             "loss": [],
             "test_score": [],
         }
-        self.targets = {
-            "score": self.env.spec.reward_threshold,
-            "test_score": self.env.spec.reward_threshold,
-        }
+        if hasattr(self.env, "spec") and self.env.spec is not None:
+            self.targets = {
+                "score": self.env.spec.reward_threshold,
+                "test_score": self.env.spec.reward_threshold,
+            }
 
     def checkpoint_model_weights(self, checkpoint):
         checkpoint = super().checkpoint_model_weights(checkpoint)
@@ -150,16 +151,17 @@ class RainbowAgent(BaseAgent):
         return q_distribution
 
     def select_actions(
-        self, distribution, info: dict = None, mask_actions: bool = True
+        self,
+        distribution,
+        info: dict = None,
     ):
-        assert info is not None if mask_actions else True, "Need info to mask actions"
-        # print(info)
+
         if self.config.atom_size > 1:
             q_values = distribution * self.support
             q_values = q_values.sum(2, keepdim=False)
         else:
             q_values = distribution
-        if mask_actions:
+        if "legal_moves" in info:
             legal_moves = get_legal_moves(info)
             q_values = action_mask(
                 q_values, legal_moves, mask_value=-float("inf"), device=self.device
@@ -203,6 +205,7 @@ class RainbowAgent(BaseAgent):
         # print(online_predictions)
         # (B, atom_size)
         if self.config.atom_size > 1:
+            # print("using categorical dqn loss")
             assert isinstance(
                 self.config.loss_function, KLDivergenceLoss
             ) or isinstance(
@@ -231,9 +234,15 @@ class RainbowAgent(BaseAgent):
             next_actions = self.select_actions(
                 self.predict(next_observations),  # current q values
                 info=next_infos,
-                mask_actions=self.config.game.has_legal_moves,
             )
-            # print("Next actions", next_actions)
+
+            # print("RL Learning Summary")
+            # print("Online Predictions:", online_predictions)
+            # print("Target Predictions:", target_predictions)
+            # print("Next Actions:", next_actions)
+            # print("Rewards:", rewards)
+            # print("Dones:", dones)
+
             target_predictions = target_predictions[
                 range(self.config.minibatch_size), next_actions
             ]  # this might not work
@@ -299,7 +308,6 @@ class RainbowAgent(BaseAgent):
             next_actions = self.select_actions(
                 online_distributions,
                 info=samples["next_infos"],
-                mask_actions=self.config.game.has_legal_moves,
             )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[
@@ -441,15 +449,6 @@ class RainbowAgent(BaseAgent):
                     state = next_state
                     info = next_info
                     score += reward
-                    self.replay_buffer.set_beta(
-                        update_per_beta(
-                            self.replay_buffer.beta,
-                            self.config.per_beta_final,
-                            self.training_steps,
-                            self.config.per_beta,
-                        )
-                    )
-
                     if done:
                         state, info = self.env.reset()
                         score_dict = {
@@ -459,6 +458,14 @@ class RainbowAgent(BaseAgent):
                         self.stats["score"].append(score_dict)
                         target_model_updated = (False, target_model_updated[1])
                         score = 0
+            self.replay_buffer.set_beta(
+                update_per_beta(
+                    self.replay_buffer.beta,
+                    self.config.per_beta_final,
+                    self.training_steps,
+                    self.config.per_beta,
+                )
+            )
 
             self.update_eg_epsilon(self.training_step + 1)
             # print("replay buffer size", len(self.replay_buffer))
@@ -483,9 +490,6 @@ class RainbowAgent(BaseAgent):
 
             if self.training_step % self.checkpoint_interval == 0:
                 scores = [s["score"] for s in self.stats["score"]]
-                print(
-                    f"Checkpointing at {self.training_step} with total mean {np.mean(scores)} and last 100 : {np.mean(scores[-100:])} and last 10 : {np.mean(scores[-10:])}"
-                )
                 self.training_time = time() - start_time
                 self.total_environment_steps = (
                     self.training_step * self.config.replay_interval
