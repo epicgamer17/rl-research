@@ -13,4 +13,5 @@ class ToyTextConfig(GameConfig):
             perfect_information=False,
             multi_agent=False,
             num_players=1,
+            has_intermediate_rewards=True,
         )

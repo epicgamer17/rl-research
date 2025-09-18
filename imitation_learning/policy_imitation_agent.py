@@ -31,7 +31,7 @@ class PolicyImitationAgent(BaseAgent):
 
         self.replay_buffer = NFSPReservoirBuffer(
             observation_dimensions=self.observation_dimensions,
-            observation_dtype=self.env.observation_space.dtype,
+            observation_dtype=self.observation_dtype,
             max_size=self.config.replay_buffer_size,
             num_actions=self.num_actions,
             batch_size=self.config.minibatch_size,
@@ -63,11 +63,14 @@ class PolicyImitationAgent(BaseAgent):
         selected_action = distribution.sample()
         return selected_action
 
-    def predict(self, state, info: dict = None, mask_actions: bool = True):
-        assert info is not None if mask_actions else True, "Need info to mask actions"
+    def predict(
+        self,
+        state,
+        info: dict = None,
+    ):
         state_input = self.preprocess(state)
         policy = self.model(inputs=state_input)
-        if mask_actions:
+        if "legal_moves" in info:
             legal_moves = get_legal_moves(info)
             policy = action_mask(policy, legal_moves, mask_value=0)
             # print("Original", policy)

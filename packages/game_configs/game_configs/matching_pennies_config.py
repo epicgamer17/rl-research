@@ -1,16 +1,16 @@
 from .game_config import GameConfig
 
 
-class Connect4Config(GameConfig):
+class MatchingPenniesConfig(GameConfig):
     def __init__(self):
-        super(Connect4Config, self).__init__(
+        super(MatchingPenniesConfig, self).__init__(
             max_score=1,
             min_score=-1,
             is_discrete=True,
-            is_image=True,
-            is_deterministic=True,
-            has_legal_moves=True,
-            perfect_information=True,
+            is_image=False,
+            is_deterministic=False,
+            has_legal_moves=False,
+            perfect_information=False,
             multi_agent=True,
             num_players=2,
             has_intermediate_rewards=False,

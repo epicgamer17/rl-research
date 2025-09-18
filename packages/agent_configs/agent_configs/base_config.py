@@ -1,12 +1,8 @@
 import torch
-from utils import Loss
 import yaml
 
 from game_configs import GameConfig
-from utils import (
-    prepare_kernel_initializers,
-    prepare_activations,
-)
+from utils import prepare_kernel_initializers, prepare_activations, MSELoss, Loss
 
 
 class ConfigBase:
@@ -100,7 +96,7 @@ class Config(ConfigBase):
             "optimizer", torch.optim.Adam
         )
         self.weight_decay: float = self.parse_field("weight_decay", 0.0)
-        self.loss_function: Loss = self.parse_field("loss_function", required=True)
+        self.loss_function: Loss = self.parse_field("loss_function", MSELoss)
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations
         )

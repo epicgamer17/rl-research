@@ -1,26 +1,116 @@
-from .alphazero_config import AlphaZeroConfig
+from typing import Callable
+
+from torch import Tensor
+from .base_config import Config
+from utils import CategoricalCrossentropyLoss, tointlists, Loss, MSELoss
+import copy
 
 
-class MuZeroConfig(AlphaZeroConfig):
+class MuZeroConfig(Config):
     def __init__(self, config_dict, game_config):
         super(MuZeroConfig, self).__init__(config_dict, game_config)
-        if "known_bounds" in config_dict:
-            self.known_bounds = config_dict[
-                "known_bounds"
-            ]  # this is the min and max value of the reward (in one step and not score over the whole game (so not the same as vmin and vmax in rainbow i think))
-        else:
-            self.known_bounds = None
-            print("No known bounds set")
+        # SAME AS VMIN AND VMAX
+        self.known_bounds = self.parse_field("known_bounds", None)
 
-        self.num_players = (
-            game_config["num_players"] if "num_players" in game_config else None
+        # Network Arcitecture
+        self.residual_layers: list = self.parse_field(
+            "residual_layers", [(256, 3, 1)] * 20
         )
-        assert (
-            self.num_players is not None
-        ), "Number of players should be defined in the game config"
-        self.known_bounds = (
-            config_dict["known_bounds"] if "known_bounds" in config_dict else None
+        self.conv_layers: list = self.parse_field("conv_layers", [])
+        self.dense_layer_widths: int = self.parse_field(
+            "dense_layer_widths", [], tointlists
         )
+
+        self.representation_residual_layers: list = self.parse_field(
+            "representation_residual_layers", copy.deepcopy(self.residual_layers)
+        )
+        self.representation_conv_layers: list = self.parse_field(
+            "representation_conv_layers", copy.deepcopy(self.conv_layers)
+        )
+        self.representation_dense_layer_widths: int = self.parse_field(
+            "representation_dense_layer_widths", copy.deepcopy(self.dense_layer_widths)
+        )
+
+        self.dynamics_residual_layers: list = self.parse_field(
+            "dynamics_residual_layers", copy.deepcopy(self.residual_layers)
+        )
+        self.dynamics_conv_layers: list = self.parse_field(
+            "dynamics_conv_layers", copy.deepcopy(self.conv_layers)
+        )
+        self.dynamics_dense_layer_widths: int = self.parse_field(
+            "dynamics_dense_layer_widths", copy.deepcopy(self.dense_layer_widths)
+        )
+
+        self.reward_conv_layers: list = self.parse_field(
+            "reward_conv_layers", [(32, 3, 1)]
+        )
+        self.reward_dense_layer_widths: int = self.parse_field(
+            "reward_dense_layer_widths", [256], tointlists
+        )
+
+        self.critic_conv_layers: list = self.parse_field(
+            "critic_conv_layers", [(32, 3, 1)]
+        )
+        self.critic_dense_layer_widths: int = self.parse_field(
+            "critic_dense_layer_widths", [256], tointlists
+        )
+        self.actor_conv_layers: list = self.parse_field(
+            "actor_conv_layers", [(32, 3, 1)]
+        )
+        self.actor_dense_layer_widths: int = self.parse_field(
+            "actor_dense_layer_widths", [256], tointlists
+        )
+
+        self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.0)
+
+        # Training
+        self.games_per_generation: int = self.parse_field("games_per_generation", 100)
+        self.value_loss_factor: float = self.parse_field("value_loss_factor", 1.0)
+        self.weight_decay: float = self.parse_field("weight_decay", 1e-4)
+
+        # MCTS
+        self.root_dirichlet_alpha: float = self.parse_field(
+            "root_dirichlet_alpha", required=True
+        )
+        self.root_exploration_fraction: float = self.parse_field(
+            "root_exploration_fraction", 0.25
+        )
+        self.num_simulations: int = self.parse_field("num_simulations", 800)
+        self.num_sampling_moves: int = self.parse_field("num_sampling_moves", 30)
+        self.exploration_temperature: float = self.parse_field(
+            "exploration_temperature", 1.0
+        )
+        self.exploitation_temperature: float = self.parse_field(
+            "exploitation_temperature", 0.1
+        )
+        self.clip_low_prob: float = self.parse_field("clip_low_prob", 0.0)
+        self.pb_c_base: int = self.parse_field("pb_c_base", 19652)
+        self.pb_c_init: float = self.parse_field("pb_c_init", 1.25)
+
+        self.value_loss_function: Loss = self.parse_field(
+            "value_loss_function", MSELoss
+        )
+
+        self.reward_loss_function: Loss = self.parse_field(
+            "reward_loss_function", MSELoss
+        )
+
+        self.policy_loss_function: Loss = self.parse_field(
+            "policy_loss_function", CategoricalCrossentropyLoss
+        )
+
+        self.action_function: Callable = self.parse_field(
+            "action_function", required=True
+        )
+
+        self.n_step: int = self.parse_field("n_step", 5)
+        self.discount_factor: float = self.parse_field("discount_factor", 1.0)
+        self.unroll_steps: int = self.parse_field("unroll_steps", 500)
+
+        self.per_alpha: float = self.parse_field("per_alpha", 0.5)
+        self.per_beta: float = self.parse_field("per_beta_initial", 0.4)
+        self.per_beta_final: float = self.parse_field("per_beta_final", 1.0)
+        self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
 
     def _verify_game(self):
         # override alphazero game verification since muzero can play those games

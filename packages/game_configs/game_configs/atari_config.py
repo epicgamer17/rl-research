@@ -13,4 +13,5 @@ class AtariConfig(GameConfig):
             perfect_information=True,  # although it is not deterministic, it is so close to it that it is considered perfect information
             multi_agent=False,
             num_players=1,
+            has_intermediate_rewards=True,
         )

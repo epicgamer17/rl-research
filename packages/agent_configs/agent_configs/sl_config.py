@@ -10,6 +10,7 @@ class SupervisedConfig(ConfigBase):
         print("SupervisedConfig")
         self.adam_epsilon = self.parse_field("sl_adam_epsilon", 1e-7)
         self.learning_rate = self.parse_field("sl_learning_rate", 0.005)
+        self.momentum = self.parse_field("sl_momentum", 0.9)
         self.loss_function: Loss = self.parse_field("sl_loss_function", required=True)
         self.clipnorm = self.parse_field("sl_clipnorm", 0)
         self.optimizer: Optimizer = self.parse_field("sl_optimizer", Adam)

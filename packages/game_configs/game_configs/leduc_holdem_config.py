@@ -13,4 +13,5 @@ class LeducHoldemConfig(GameConfig):
             perfect_information=False,
             multi_agent=True,
             num_players=2,
+            has_intermediate_rewards=False,
         )

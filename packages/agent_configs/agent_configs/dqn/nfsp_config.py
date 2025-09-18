@@ -9,6 +9,7 @@ class NFSPDQNConfig(Config):
         # Config type should be a DQN Type
         super(NFSPDQNConfig, self).__init__(config_dict, game_config)
         print("NFSPDQNConfig")
+        self.num_players = self.game.num_players
         self.rl_configs = [
             RainbowConfig(config_dict, game_config) for _ in range(self.num_players)
         ]

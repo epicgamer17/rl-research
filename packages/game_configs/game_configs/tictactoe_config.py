@@ -13,4 +13,5 @@ class TicTacToeConfig(GameConfig):
             perfect_information=True,
             multi_agent=True,
             num_players=2,
+            has_intermediate_rewards=False,
         )

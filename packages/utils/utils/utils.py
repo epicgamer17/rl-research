@@ -64,7 +64,7 @@ def action_mask(
     # actions[mask == 0] = mask_value
     actions = torch.where(mask, actions, torch.tensor(mask_value).to(device)).to(device)
     # print(mask)
-    
+
     return actions
 
 
@@ -85,10 +85,10 @@ def clip_low_prob_actions(actions: Tensor, low_prob: float = 0.01) -> Tensor:
 
 def get_legal_moves(info: dict | list[dict]):
     # print(info)
-    if isinstance(info, dict):
-        return [info["legal_moves"] if "legal_moves" in info else None]
-    else:
-        return [(i["legal_moves"] if "legal_moves" in i else None) for i in info]
+    # if isinstance(info, dict):
+    return [info["legal_moves"] if "legal_moves" in info else None]
+    # else:
+    #     return [(i["legal_moves"] if "legal_moves" in i else None) for i in info]
 
 
 def normalize_images(image: Tensor) -> Tensor:
@@ -118,6 +118,30 @@ def make_stack(item: Tensor) -> Tensor:
     """
     #
     return item.view(1, *item.shape)
+
+
+def action_mask_to_legal_moves(action_mask):
+    # print(action_mask)
+    legal_moves = [i for i, x in enumerate(action_mask) if x == 1]
+    # print(legal_moves)
+    return legal_moves
+
+
+def process_petting_zoo_obs(state, info, current_player):
+    if "action_mask" in state:
+        info["legal_moves"] = action_mask_to_legal_moves(state["action_mask"])
+
+    if "player" not in info:
+        info["player"] = current_player
+
+    if "observation" in state:
+        state = state["observation"]
+
+    if len(state.shape) == 3:  # is an image
+        # change from H, W, C to C, H, W
+        state = np.transpose(state, (2, 0, 1))
+
+    return state, info
 
 
 def update_per_beta(
@@ -176,10 +200,23 @@ def default_plot_func(
 def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col: int):
     if len(values) == 0:
         return
-    print(values)
+
+    # print(values)
     scores = [value["score"] for value in values]
-    x = np.arange(1, len(values) + 1)
-    axs[row][col].plot(x, scores)
+    axs[row][col].set_title(
+        f"{key} | rolling average: {np.mean(scores[-100:])} | latest: {scores[-1]}"
+    )
+
+    # if scores are win/loss 1 or 0 only
+    if not all(s in [-1, 0, 1] for s in scores):
+        # If not, plot the raw scores
+        x = np.arange(1, len(values) + 1)
+        axs[row][col].plot(x, scores)
+    else:
+        print("scores are win/loss plotting a rolling average of the scores")
+        scores = np.convolve(scores, np.ones(100) / 100, mode="valid")
+        x = np.arange(1, len(scores) + 1)
+        axs[row][col].plot(x, scores)
 
     has_max_scores = "max_score" in values[0]
     has_min_scores = "min_score" in values[0]
@@ -217,14 +254,10 @@ def plot_scores(axs, key: str, values: list[dict], targets: dict, row: int, col:
                     # label="Model Weight Update",
                 )
 
-    axs[row][col].set_title(
-        f"{key} | rolling average: {np.mean(scores[-5:])} | latest: {scores[-1]}"
-    )
-
     axs[row][col].set_xlabel("Game")
     axs[row][col].set_ylabel("Score")
 
-    axs[row][col].set_xlim(1, len(values))
+    axs[row][col].set_xlim(1, len(scores))
 
     if len(scores) > 1:
         best_fit_x, best_fit_y = np.polyfit(x, scores, 1)
@@ -429,9 +462,11 @@ def plot_trials(scores: list, file_name: str, final_trial: int = 0):
 
 stat_keys_to_plot_funcs = {
     "test_score": plot_scores,
+    "test_score_vs_random": plot_scores,
     "score": plot_scores,
     "policy_loss": plot_loss,
     "value_loss": plot_loss,
+    "reward_loss": plot_loss,
     "l2_loss": plot_loss,
     "loss": plot_loss,
     "rl_loss": plot_loss,
@@ -471,7 +506,10 @@ def plot_graphs(
     for i, (key, values) in enumerate(stats.items()):
         row = i // sqrt_num_plots
         col = i % sqrt_num_plots
-
+        if len(values) == 0:
+            print(f"Skipping {key}...")
+            continue
+        print(f"Plotting {key}...")
         if key in stat_keys_to_plot_funcs:
             stat_keys_to_plot_funcs[key](axs, key, values, targets, row, col)
         else:
@@ -837,12 +875,13 @@ _epsilon = 1e-7
 
 
 def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
-    # print(predicted)
+    # print("Predicted:", predicted)
     predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
-    # print(predicted)
+    # print("Normalized Predicted:", predicted)
     predicted = torch.clamp(predicted, _epsilon, 1.0 - _epsilon)
-    # print(predicted)
+    # print("Clamped Predicted:", predicted)
     log_prob = torch.log(predicted)
+    # print("Log Prob:", log_prob)
     return -torch.sum(log_prob * target, axis=axis)
 
 
@@ -1277,3 +1316,248 @@ class ApexLearnerStoppingCriteria(StoppingCriteria):
     def add_score(self, score: float):
         tc: AverageScoreStoppingCritera = self.criterias["avg_score"]
         tc.add_score(score)
+
+
+import cv2
+import numpy as np
+import os
+from typing import Optional, Dict, Any, Callable
+from pettingzoo import AECEnv
+from pettingzoo.utils import BaseWrapper
+
+
+class RecordVideo(BaseWrapper):
+    """
+    Records video of PettingZoo AEC environment episodes.
+
+    Args:
+        env: The PettingZoo AEC environment to wrap
+        video_folder: Directory to save videos
+        episode_trigger: Function that takes episode_id and returns True if recording should start
+        video_length: Maximum number of frames per video (0 for unlimited)
+        name_prefix: Prefix for video filenames
+        fps: Frames per second for the video
+        codec: Video codec (fourcc format)
+    """
+
+    def __init__(
+        self,
+        env: AECEnv,
+        video_folder: str = "videos",
+        episode_trigger: Optional[Callable[[int], bool]] = None,
+        video_length: int = 0,
+        name_prefix: str = "episode",
+        fps: int = 30,
+        codec: str = "mp4v",
+    ):
+        super().__init__(env)
+
+        self.video_folder = video_folder
+        self.episode_trigger = episode_trigger or (lambda x: x % 1000 == 0)
+        self.video_length = video_length
+        self.name_prefix = name_prefix
+        self.fps = fps
+        self.codec = codec
+
+        # Create video directory
+        os.makedirs(self.video_folder, exist_ok=True)
+
+        # Video recording state
+        self.recording = False
+        self.video_writer = None
+        self.frames_recorded = 0
+        self.episode_id = 0
+        self.episode_started = False
+
+        # Ensure environment has render capability
+        if not hasattr(env, "render"):
+            raise ValueError("Environment must support rendering to record video")
+
+    def reset(
+        self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
+    ):
+        """Reset environment and potentially start recording new episode"""
+        # Call parent reset
+        super().reset(seed=seed, options=options)
+
+        # Check if we should record this episode
+        should_record = self.episode_trigger(self.episode_id)
+
+        if should_record and not self.recording:
+            self._start_recording()
+        elif not should_record and self.recording:
+            self._stop_recording()
+
+        # Capture initial frame if recording
+        if self.recording:
+            self._capture_frame()
+
+        self.episode_started = True
+        return None  # PettingZoo AEC reset doesn't return anything
+
+    def step(self, action):
+        """Step environment and capture frame if recording"""
+        # Call parent step - this updates env state but returns nothing
+        super().step(action)
+
+        # Capture frame if recording
+        if self.recording:
+            self._capture_frame()
+
+        # Check if episode ended
+        episode_ended = (
+            not self.agents  # No more agents
+            or all(self.terminations.values())
+            or all(self.truncations.values())
+        )
+
+        # Stop recording if episode ended or max frames reached
+        if self.recording and (
+            episode_ended
+            or (self.video_length > 0 and self.frames_recorded >= self.video_length)
+        ):
+            self._stop_recording()
+
+        # If episode ended, increment episode counter
+        if episode_ended and self.episode_started:
+            self.episode_id += 1
+            self.episode_started = False
+
+        return None  # PettingZoo AEC step doesn't return anything
+
+    def _start_recording(self):
+        """Initialize video recording"""
+        if self.recording:
+            self._stop_recording()
+
+        # Generate filename
+        video_name = f"{self.name_prefix}_{self.episode_id:06d}.mp4"
+        video_path = os.path.join(self.video_folder, video_name)
+
+        # Get a frame to determine video dimensions
+        frame = self._get_frame()
+        if frame is None:
+            print(
+                f"Warning: Could not get frame for recording episode {self.episode_id}"
+            )
+            return
+
+        height, width = frame.shape[:2]
+
+        # Initialize video writer
+        fourcc = cv2.VideoWriter_fourcc(*self.codec)
+        self.video_writer = cv2.VideoWriter(
+            video_path, fourcc, self.fps, (width, height)
+        )
+
+        if not self.video_writer.isOpened():
+            print(f"Warning: Could not open video writer for {video_path}")
+            self.video_writer = None
+            return
+
+        self.recording = True
+        self.frames_recorded = 0
+        print(f"Started recording episode {self.episode_id} to {video_path}")
+
+    def _stop_recording(self):
+        """Stop video recording and save file"""
+        if self.video_writer is not None:
+            self.video_writer.release()
+            self.video_writer = None
+            print(
+                f"Stopped recording episode {self.episode_id}. Recorded {self.frames_recorded} frames."
+            )
+
+        self.recording = False
+        self.frames_recorded = 0
+
+    def _get_frame(self):
+        """Get current frame from environment"""
+        try:
+            # Try to render as rgb_array
+            frame = self.env.render()
+
+            if frame is None:
+                return None
+
+            # Convert to numpy array if needed
+            if not isinstance(frame, np.ndarray):
+                return None
+
+            # Ensure frame is in correct format (BGR for OpenCV)
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                # Convert RGB to BGR for OpenCV
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            elif len(frame.shape) == 3 and frame.shape[2] == 4:
+                # Convert RGBA to BGR
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+            elif len(frame.shape) == 2:
+                # Convert grayscale to BGR
+                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            else:
+                print(f"Warning: Unexpected frame shape: {frame.shape}")
+                return None
+
+            return frame
+
+        except Exception as e:
+            print(f"Warning: Error getting frame: {e}")
+            return None
+
+    def _capture_frame(self):
+        """Capture and write current frame to video"""
+        if not self.recording or self.video_writer is None:
+            return
+
+        frame = self._get_frame()
+        if frame is not None:
+            self.video_writer.write(frame)
+            self.frames_recorded += 1
+
+    def close(self):
+        """Clean up video recording"""
+        if self.recording:
+            self._stop_recording()
+        super().close()
+
+    def __del__(self):
+        """Ensure video recording is stopped on deletion"""
+        if hasattr(self, "recording") and self.recording:
+            self._stop_recording()
+
+
+# Convenience function for common use cases
+def record_video_wrapper(
+    env: AECEnv,
+    video_folder: str = "videos",
+    record_every: int = 1000,
+    max_frames: int = 0,
+    fps: int = 30,
+):
+    """
+    Convenience function to wrap environment with video recording.
+
+    Args:
+        env: PettingZoo environment
+        video_folder: Where to save videos
+        record_every: Record every N episodes (default: every 1000)
+        max_frames: Maximum frames per video (0 for unlimited)
+        fps: Video framerate
+    """
+    return RecordVideo(
+        env=env,
+        video_folder=video_folder,
+        episode_trigger=lambda x: x % record_every == 0,
+        video_length=max_frames,
+        fps=fps,
+    )
+
+
+def scale_gradient(tensor, scale):
+    """
+    Scales the gradient for the backward pass without changing the forward pass.
+    Args:
+        tensor (torch.Tensor): The input tensor.
+        scale (float): The scaling factor for the gradient.
+    """
+    return tensor * scale + tensor.detach() * (1 - scale)

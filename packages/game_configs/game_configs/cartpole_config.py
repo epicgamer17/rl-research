@@ -13,4 +13,5 @@ class CartPoleConfig(GameConfig):
             perfect_information=True,
             multi_agent=False,
             num_players=1,
+            has_intermediate_rewards=True,
         )

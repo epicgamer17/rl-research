@@ -26,13 +26,13 @@ class SupervisedNetwork(nn.Module):
 
         if self.has_residual_layers:
             assert (
-                len(input_shape) == 4
-            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+                len(current_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(current_shape)
             filters, kernel_sizes, strides = to_lists(config.residual_layers)
 
             # (B, C_in, H, W) -> (B, C_out H, W)
             self.residual_layers = ResidualStack(
-                input_shape=input_shape,
+                input_shape=current_shape,
                 filters=filters,
                 kernel_sizes=kernel_sizes,
                 strides=strides,
@@ -48,13 +48,13 @@ class SupervisedNetwork(nn.Module):
 
         if self.has_conv_layers:
             assert (
-                len(input_shape) == 4
-            ), "Input shape should be (B, C, H, W), got {}".format(input_shape)
+                len(current_shape) == 4
+            ), "Input shape should be (B, C, H, W), got {}".format(current_shape)
             filters, kernel_sizes, strides = to_lists(config.conv_layers)
 
             # (B, C_in, H, W) -> (B, C_out H, W)
             self.conv_layers = Conv2dStack(
-                input_shape=input_shape,
+                input_shape=current_shape,
                 filters=filters,
                 kernel_sizes=kernel_sizes,
                 strides=strides,
@@ -119,7 +119,7 @@ class SupervisedNetwork(nn.Module):
         x = inputs
         if self.has_residual_layers:
             x: Tensor = self.residual_layers(x)
-
+        # print(x.shape)
         if self.has_conv_layers:
             x: Tensor = self.conv_layers(x)
 

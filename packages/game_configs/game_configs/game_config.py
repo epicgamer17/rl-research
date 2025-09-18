@@ -10,6 +10,7 @@ class GameConfig:
         perfect_information,
         multi_agent,
         num_players,
+        has_intermediate_rewards,
     ):
         self.max_score = max_score
         self.min_score = min_score
@@ -23,6 +24,7 @@ class GameConfig:
         self.perfect_information = perfect_information
         self.multi_agent = multi_agent
         self.num_players = num_players
+        self.has_intermediate_rewards = has_intermediate_rewards
 
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, GameConfig):
@@ -38,4 +40,5 @@ class GameConfig:
             and self.perfect_information == o.perfect_information
             and self.multi_agent == o.multi_agent
             and self.num_players == o.num_players
+            and self.has_intermediate_rewards == o.has_intermediate_rewards
         )
