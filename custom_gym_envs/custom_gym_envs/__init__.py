@@ -1,6 +1,18 @@
 from gymnasium.envs.registration import register
 
 register(
+    id="custom_gym_envs/Catan-v0",
+    entry_point="custom_gym_envs.envs:CatanAECEnv",
+    max_episode_steps=1000,
+)
+
+register(
+    id="custom_gym_envs/MatchingPennies-v0",
+    entry_point="custom_gym_envs.envs:MatchingPenniesEnv",
+    max_episode_steps=100,
+)
+
+register(
     id="custom_gym_envs/Connect4-v0",
     entry_point="custom_gym_envs.envs:Connect4Env",
     max_episode_steps=300,
