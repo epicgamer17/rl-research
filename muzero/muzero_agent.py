@@ -132,8 +132,10 @@ class MuZeroAgent(AlphaZeroAgent):
 
             # Turn of the leaf node
             parent = search_path[-2]
-            reward, hidden_state, value, policy = self.predict_single_recurrent_inference(
-                parent.hidden_state, history[-1]
+            reward, hidden_state, value, policy = (
+                self.predict_single_recurrent_inference(
+                    parent.hidden_state, history[-1]
+                )
             )
 
             node.expand(to_play, self.num_actions, policy, hidden_state, reward)
@@ -145,11 +147,15 @@ class MuZeroAgent(AlphaZeroAgent):
 
                 value = node.reward + self.config.discount_factor * value
 
-        visit_counts = [(child.visits, action) for action, child in root.children.items()]
+        visit_counts = [
+            (child.visits, action) for action, child in root.children.items()
+        ]
         return root.value(), visit_counts
 
     def experience_replay(self):
-        samples = self.replay_buffer.sample(self.config.unroll_steps, self.config.n_step)
+        samples = self.replay_buffer.sample(
+            self.config.unroll_steps, self.config.n_step
+        )
         observations = samples["observations"]
         target_policies = samples["policy"]
         target_values = samples["values"]
@@ -177,7 +183,9 @@ class MuZeroAgent(AlphaZeroAgent):
                     rewards = [0]  # maybe this is from initial inference
                     for action in actions[item]:
                         reward, hidden_state, value, policy = (
-                            self.predict_single_recurrent_inference(hidden_state, action)
+                            self.predict_single_recurrent_inference(
+                                hidden_state, action
+                            )
                         )
                         gradient_scales.append(1.0 / len(actions[item]))
                         values.append(value)
@@ -241,7 +249,7 @@ class MuZeroAgent(AlphaZeroAgent):
         return reward, hidden_state, value, policy
 
     def select_actions(self, state, legal_moves=None, game=None):
-        value, visit_counts = self.monte_carlo_tree_search(self.env, state, legal_moves)
+        visit_counts = self.monte_carlo_tree_search(self.env, state, legal_moves)
         actions = [action for _, action in visit_counts]
         visit_counts = np.array([count for count, _ in visit_counts], dtype=np.float32)
         if (not self.is_test) and game.length < self.config.num_sampling_moves:
@@ -259,7 +267,7 @@ class MuZeroAgent(AlphaZeroAgent):
         if self.is_test:
             return action
         else:
-            return action, target_policy, value
+            return action, target_policy
 
     def play_game(self):
         state, info = self.env.reset()

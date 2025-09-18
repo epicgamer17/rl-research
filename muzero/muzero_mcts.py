@@ -18,7 +18,7 @@ class Node:
         self.to_play = to_play
         self.reward = reward
         self.hidden_state = hidden_state
-
+        # print(legal_moves)
         policy = {a: policy[a] for a in legal_moves}
         policy_sum = sum(policy.values())
 
@@ -42,12 +42,14 @@ class Node:
                 a
             ].prior_policy + frac * n
 
-    def select_child(self, min_max_stats, pb_c_base, pb_c_init):
+    def select_child(self, min_max_stats, pb_c_base, pb_c_init, discount):
         # Select the child with the highest UCB
         _, action, child = max(
             [
                 (
-                    self.child_ucb_score(child, min_max_stats, pb_c_base, pb_c_init),
+                    self.child_ucb_score(
+                        child, min_max_stats, pb_c_base, pb_c_init, discount
+                    ),
                     action,
                     child,
                 )
@@ -56,10 +58,15 @@ class Node:
         )
         return action, child
 
-    def child_ucb_score(self, child, min_max_stats, pb_c_base, pb_c_init):
+    def child_ucb_score(self, child, min_max_stats, pb_c_base, pb_c_init, discount):
         pb_c = log((self.visits + pb_c_base + 1) / pb_c_base) + pb_c_init
         pb_c *= sqrt(self.visits) / (child.visits + 1)
 
-        prior_score = pb_c * child.prior_policy * sqrt(self.visits) / (child.visits + 1)
-        value_score = min_max_stats.normalize(child.value())
+        prior_score = pb_c * child.prior_policy
+        if child.visits > 0:
+            value_score = child.reward + discount * min_max_stats.normalize(
+                child.value()
+            )
+        else:
+            value_score = 0
         return prior_score + value_score
