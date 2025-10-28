@@ -29,6 +29,7 @@ sys.path.append("../../")
 from base_agent.agent import BaseAgent
 from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
 from dqn.rainbow.rainbow_network import RainbowNetwork
+from stats.stats import PlotType, StatTracker
 
 
 class RainbowAgent(BaseAgent):
@@ -117,16 +118,37 @@ class RainbowAgent(BaseAgent):
 
         self.eg_epsilon = self.config.eg_epsilon
 
-        self.stats = {
-            "score": [],
-            "loss": [],
-            "test_score": [],
-        }
-        if hasattr(self.env, "spec") and self.env.spec is not None:
-            self.targets = {
-                "score": self.env.spec.reward_threshold,
-                "test_score": self.env.spec.reward_threshold,
-            }
+        self.stats = StatTracker(
+            model_name=self.model_name,
+            stat_keys=[
+                "score",
+                "loss",
+                "test_score",
+            ],
+            target_values={
+                "score": (
+                    self.env.spec.reward_threshold
+                    if hasattr(self.env, "spec") and self.env.spec.reward_threshold
+                    else None
+                ),
+                "test_score": (
+                    self.env.spec.reward_threshold
+                    if hasattr(self.env, "spec") and self.env.spec.reward_threshold
+                    else None
+                ),
+            },
+            use_tensor_dicts={
+                "test_score": ["score", "max_score", "min_score"],
+            },
+        )
+        self.stats.add_plot_types(
+            "score",
+            PlotType.ROLLING_AVG,
+            PlotType.BEST_FIT_LINE,
+            rolling_window=100,
+        )
+        self.stats.add_plot_types("test_score", PlotType.BEST_FIT_LINE)
+        self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
 
     def checkpoint_model_weights(self, checkpoint):
         checkpoint = super().checkpoint_model_weights(checkpoint)
@@ -440,7 +462,6 @@ class RainbowAgent(BaseAgent):
         super().train()
         start_time = time() - self.training_time
         score = 0
-        target_model_updated = (False, False)  # (score, loss)
         self.fill_replay_buffer()
 
         state, info = self.env.reset()
@@ -476,12 +497,7 @@ class RainbowAgent(BaseAgent):
                     score += reward
                     if done:
                         state, info = self.env.reset()
-                        score_dict = {
-                            "score": score,
-                            "target_model_updated": target_model_updated[0],
-                        }
-                        self.stats["score"].append(score_dict)
-                        target_model_updated = (False, target_model_updated[1])
+                        self.stats.append("score", score)
                         score = 0
             self.replay_buffer.set_beta(
                 update_per_beta(
@@ -501,29 +517,21 @@ class RainbowAgent(BaseAgent):
                 # print(losses)
                 loss_mean = losses.mean()
                 # could do things other than taking the mean here
-                self.stats["loss"].append(
-                    {"loss": loss_mean, "target_model_updated": target_model_updated[1]}
-                )
-                target_model_updated = (target_model_updated[0], False)
+                self.stats.append("loss", loss_mean)
 
             if self.training_step % self.config.transfer_interval == 0:
-                target_model_updated = (True, True)
-                # stats["test_score"].append(
-                #     {"target_model_weight_update": training_step}
-                # )
                 self.update_target_model()
 
             if self.training_step % self.checkpoint_interval == 0:
-                scores = [s["score"] for s in self.stats["score"]]
-                self.training_time = time() - start_time
-                self.total_environment_steps = (
+                self.stats.set_time_elapsed(time() - start_time)
+                self.stats.increment_steps(
                     self.training_step * self.config.replay_interval
                 )
                 self.save_checkpoint()
             # gc.collect()
             self.training_step += 1
 
-        self.training_time = time() - start_time
-        self.total_environment_steps = self.training_step * self.config.replay_interval
+        self.stats.set_time_elapsed(time() - start_time)
+        self.stats.increment_steps(self.training_step * self.config.replay_interval)
         self.save_checkpoint()
         # self.env.close()
