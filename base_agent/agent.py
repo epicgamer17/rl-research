@@ -91,7 +91,7 @@ class BaseAgent:
             self.num_actions = int(env.action_space.shape[0])
             self.discrete_action_space = False
 
-        print("num_actions: ", self.num_actions)
+        print("num_actions: ", self.num_actions, type(self.num_actions))
 
     def make_test_env(self, env: gym.Env):
         print("making test env")
