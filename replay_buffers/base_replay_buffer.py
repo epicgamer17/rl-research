@@ -173,10 +173,12 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
     def clear(self):
         observation_buffer_shape = (self.max_size,) + self.observation_dimensions
         self.observation_buffer = torch.zeros(
-            observation_buffer_shape, self.observation_dtype
+            observation_buffer_shape,
+            dtype=numpy_dtype_to_torch_dtype(self.observation_dtype),
         )
         self.next_observation_buffer = torch.zeros(
-            observation_buffer_shape, dtype=self.observation_dtype
+            observation_buffer_shape,
+            dtype=numpy_dtype_to_torch_dtype(self.observation_dtype),
         )
 
         self.action_buffer = torch.zeros(self.max_size, dtype=torch.uint8)
