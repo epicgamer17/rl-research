@@ -12,7 +12,7 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         observation_dimensions,
         observation_dtype: np.dtype,
         max_size: int,
-        num_actions=num_actions,
+        num_actions: int,
         batch_size: int = 32,
         max_priority: float = 1.0,
         alpha: float = 0.6,
