@@ -12,6 +12,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
         observation_dimensions: tuple,
         observation_dtype: torch.dtype,
         max_size: int,
+        num_actions: int,
         batch_size: int = 32,
         n_step: int = 1,
         gamma: float = 0.99,
@@ -25,6 +26,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
             max_size=max_size,
+            num_actions=num_actions
             batch_size=batch_size,
             compressed_observations=compressed_observations,
         )
