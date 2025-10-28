@@ -19,7 +19,7 @@ class CatanConfig(GameConfig):
 
 class SinglePlayerCatanConfig(GameConfig):
     def __init__(self, make_env=None):
-        super(CatanConfig, self).__init__(
+        super(SinglePlayerCatanConfig, self).__init__(
             max_score=1,
             min_score=-1,
             is_discrete=True,
