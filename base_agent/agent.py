@@ -82,13 +82,13 @@ class BaseAgent:
         print("Observation dtype:", self.observation_dtype)
 
         if isinstance(env.action_space, gym.spaces.Discrete):
-            self.num_actions = env.action_space.n
+            self.num_actions = int(env.action_space.n)
             self.discrete_action_space = True
         elif callable(env.action_space):
-            self.num_actions = env.action_space(self.player_id).n
+            self.num_actions = int(env.action_space(self.player_id).n)
             self.discrete_action_space = True
         else:
-            self.num_actions = env.action_space.shape[0]
+            self.num_actions = int(env.action_space.shape[0])
             self.discrete_action_space = False
 
         print("num_actions: ", self.num_actions)

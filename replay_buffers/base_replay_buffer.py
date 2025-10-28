@@ -154,7 +154,7 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         id=None,
     ):
         # compute n-step return and store
-        self.id_buffer[self.pointer] = id
+        # self.id_buffer[self.pointer] = id
         self.observation_buffer[self.pointer] = copy.deepcopy(observation)
         self.action_buffer[self.pointer] = action
         self.reward_buffer[self.pointer] = reward
@@ -206,7 +206,7 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             actions=self.action_buffer[indices],
             rewards=self.reward_buffer[indices],
             dones=self.done_buffer[indices],
-            ids=self.id_buffer[indices],
+            # ids=self.id_buffer[indices],
             # info=self.info_buffer[indices],
             # next_info=self.next_info_buffer[indices],
             # action_masks=self.action_mask_buffer[indices],
