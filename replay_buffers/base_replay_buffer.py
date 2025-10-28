@@ -224,15 +224,15 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             actions=self.action_buffer[indices],
             rewards=self.reward_buffer[indices],
             dones=self.done_buffer[indices],
-            ids=self.id_buffer[indices],
+            # ids=self.id_buffer[indices],
             # infos=self.info_buffer[indices],
             # next_infos=self.next_info_buffer[indices],
             # legal_moves_masks=self.legal_moves_mask_buffer[indices],
             next_legal_moves_masks=self.next_legal_moves_mask_buffer[indices],
         )
 
-    def __check_id__(self, index: int, id: str) -> bool:
-        return self.id_buffer[index] == id
+    # def __check_id__(self, index: int, id: str) -> bool:
+    #     return self.id_buffer[index] == id
 
 
 class BasePPOReplayBuffer(BaseReplayBuffer):
