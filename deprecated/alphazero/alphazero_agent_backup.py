@@ -20,7 +20,10 @@ from base_agent.agent import BaseAgent
 
 import copy
 import numpy as np
-from replay_buffers.alphazero_replay_buffer import AlphaZeroReplayBuffer, Game
+from replay_buffers.deprecated.alphazero_replay_buffer import (
+    AlphaZeroReplayBuffer,
+    Game,
+)
 from alphazero.alphazero_mcts import Node
 from alphazero.alphazero_network import Network
 from torch.nn.utils import clip_grad_norm_

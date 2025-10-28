@@ -1,6 +1,8 @@
 import copy
 
 import numpy as np
+import torch
+from packages.utils.utils.utils import action_mask
 from utils.utils import discounted_cumulative_sums
 
 
@@ -89,43 +91,43 @@ class Game:
     def __len__(self):
         # SHOULD THIS BE LEN OF ACTIONS INSTEAD???
         # AS THIS ALLOWS SAMPLING THE TERMINAL STATE WHICH HAS NO FURTHER ACTIONS
-        return len(self.observation_history)
+        return len(self.action_history)
 
 
-class BaseGameReplayBuffer(BaseReplayBuffer):
-    def __init__(
-        self,
-        max_size: int,
-        batch_size: int,
-    ):
-        super().__init__(max_size=max_size, batch_size=batch_size)
+# class BaseGameReplayBuffer(BaseReplayBuffer):
+#     def __init__(
+#         self,
+#         max_size: int,
+#         batch_size: int,
+#     ):
+#         super().__init__(max_size=max_size, batch_size=batch_size)
 
-    def store(self, game: Game):
-        self.buffer[self.pointer] = copy.deepcopy(game)
-        self.pointer = (self.pointer + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
+#     def store(self, game: Game):
+#         self.buffer[self.pointer] = copy.deepcopy(game)
+#         self.pointer = (self.pointer + 1) % self.max_size
+#         self.size = min(self.size + 1, self.max_size)
 
-    def sample(self):
-        move_sum = float(sum([len(game) for game in self.buffer]))
-        games: list[Game] = np.random.choice(
-            self.buffer,
-            self.batch_size,
-            p=[len(game) / move_sum for game in self.buffer],
-        )
+#     def sample(self):
+#         move_sum = float(sum([len(game) for game in self.buffer]))
+#         games: list[Game] = np.random.choice(
+#             self.buffer,
+#             self.batch_size,
+#             p=[len(game) / move_sum for game in self.buffer],
+#         )
 
-        return [(game, np.random.randint(len(game))) for game in games]
+#         return [(game, np.random.randint(len(game))) for game in games]
 
-    def clear(self):
-        self.buffer: list[Game] = np.zeros(self.max_size, dtype=np.object_)
-        self.size = 0
-        self.pointer = 0
+#     def clear(self):
+#         self.buffer: list[Game] = torch.zeros(self.max_size, dtype=torch.object)
+#         self.size = 0
+#         self.pointer = 0
 
 
 class BaseDQNReplayBuffer(BaseReplayBuffer):
     def __init__(
         self,
         observation_dimensions: tuple,
-        observation_dtype: np.dtype,
+        observation_dtype: torch.dtype,
         max_size: int,
         batch_size: int = 32,
         compressed_observations: bool = False,
@@ -157,31 +159,38 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         self.reward_buffer[self.pointer] = reward
         self.next_observation_buffer[self.pointer] = copy.deepcopy(next_observation)
         self.done_buffer[self.pointer] = done
-        self.info_buffer[self.pointer] = copy.deepcopy(info)
-        self.next_info_buffer[self.pointer] = copy.deepcopy(next_info)
+        # self.info_buffer[self.pointer] = copy.deepcopy(info)
+        # self.next_info_buffer[self.pointer] = copy.deepcopy(next_info)
+        # self.action_mask_buffer[self.pointer] = action_mask(
+        #     self.num_actions, info.get("legal_actions", [])
+        # )
+        self.next_action_mask_buffer[self.pointer] = action_mask(
+            self.num_actions, next_info.get("legal_actions", [])
+        )
 
         self.pointer = (self.pointer + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
 
     def clear(self):
-        if self.compressed_observations:
-            self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
-            self.next_observation_buffer = np.zeros(self.max_size, dtype=np.object_)
-        else:
-            observation_buffer_shape = (self.max_size,) + self.observation_dimensions
-            self.observation_buffer = np.zeros(
-                observation_buffer_shape, self.observation_dtype
-            )
-            self.next_observation_buffer = np.zeros(
-                observation_buffer_shape, dtype=self.observation_dtype
-            )
+        observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+        self.observation_buffer = torch.zeros(
+            observation_buffer_shape, self.observation_dtype
+        )
+        self.next_observation_buffer = torch.zeros(
+            observation_buffer_shape, dtype=self.observation_dtype
+        )
 
-        self.id_buffer = np.zeros(self.max_size, dtype=np.object_)
-        self.action_buffer = np.zeros(self.max_size, dtype=np.uint8)
-        self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
-        self.done_buffer = np.zeros(self.max_size, dtype=np.bool_)
-        self.info_buffer = np.zeros(self.max_size, dtype=np.object_)
-        self.next_info_buffer = np.zeros(self.max_size, dtype=np.object_)
+        self.action_buffer = torch.zeros(self.max_size, dtype=torch.uint8)
+        self.reward_buffer = torch.zeros(self.max_size, dtype=torch.float16)
+        self.done_buffer = torch.zeros(self.max_size, dtype=torch.bool)
+        # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
+        # self.next_info_buffer = torch.zeros(self.max_size, dtype=torch.object)
+        # self.action_mask_buffer = torch.zeros(
+        #     (self.max_size, self.num_actions), dtype=torch.bool
+        # )
+        self.next_action_mask_buffer = torch.zeros(
+            (self.max_size, self.num_actions), dtype=torch.bool
+        )
         self.pointer = 0
         self.size = 0
 
@@ -195,8 +204,10 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             rewards=self.reward_buffer[indices],
             dones=self.done_buffer[indices],
             ids=self.id_buffer[indices],
-            info=self.info_buffer[indices],
-            next_info=self.next_info_buffer[indices],
+            # info=self.info_buffer[indices],
+            # next_info=self.next_info_buffer[indices],
+            # action_masks=self.action_mask_buffer[indices],
+            next_action_masks=self.next_action_mask_buffer[indices],
         )
 
     def sample_from_indices(self, indices: list[int]):
@@ -207,8 +218,10 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             rewards=self.reward_buffer[indices],
             dones=self.done_buffer[indices],
             ids=self.id_buffer[indices],
-            infos=self.info_buffer[indices],
-            next_infos=self.next_info_buffer[indices],
+            # infos=self.info_buffer[indices],
+            # next_infos=self.next_info_buffer[indices],
+            # action_masks=self.action_mask_buffer[indices],
+            next_action_masks=self.next_action_mask_buffer[indices],
         )
 
     def __check_id__(self, index: int, id: str) -> bool:
@@ -219,7 +232,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
-        observation_dtype: np.dtype,
+        observation_dtype: torch.dtype,
         max_size: int,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
@@ -248,15 +261,24 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         self.reward_buffer[self.pointer] = reward
         self.value_buffer[self.pointer] = value
         self.log_probability_buffer[self.pointer] = log_probability
-        self.info_buffer[self.pointer] = copy.deepcopy(info)
+        # self.info_buffer[self.pointer] = copy.deepcopy(info)
+        self.action_mask_buffer[self.pointer] = action_mask(
+            self.num_actions, info.get("legal_actions", [])
+        )
 
         self.pointer = (self.pointer + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
 
     def sample(self):
         self.pointer, self.trajectory_start_index = 0, 0
-        advantage_mean = np.mean(self.advantage_buffer)
-        advantage_std = np.std(self.advantage_buffer)
+        # advantage_mean = np.mean(self.advantage_buffer)
+        # advantage_std = np.std(self.advantage_buffer)
+        advantage_mean = torch.mean(
+            torch.tensor(self.advantage_buffer, dtype=torch.float32)
+        )
+        advantage_std = torch.std(
+            torch.tensor(self.advantage_buffer, dtype=torch.float32)
+        )
         self.advantage_buffer = (self.advantage_buffer - advantage_mean) / (
             advantage_std + 1e-10
         )  # avoid division by zero
@@ -266,28 +288,27 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
             advantages=self.advantage_buffer,
             returns=self.return_buffer,
             log_probabilities=self.log_probability_buffer,
-            infos=self.info_buffer,
+            action_masks=self.action_mask_buffer,
         )
 
     def clear(self):
-        if self.compressed_observations:
-            self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
-            self.next_observation_buffer = np.zeros(self.max_size, dtype=np.object_)
-        else:
-            observation_buffer_shape = (self.max_size,) + self.observation_dimensions
-            self.observation_buffer = np.zeros(
-                observation_buffer_shape, self.observation_dtype
-            )
-            self.next_observation_buffer = np.zeros(
-                observation_buffer_shape, dtype=self.observation_dtype
-            )
-        self.action_buffer = np.zeros(self.max_size, dtype=np.int8)
-        self.reward_buffer = np.zeros(self.max_size, dtype=np.float16)
-        self.advantage_buffer = np.zeros(self.max_size, dtype=np.float16)
-        self.return_buffer = np.zeros(self.max_size, dtype=np.float16)
-        self.value_buffer = np.zeros(self.max_size, dtype=np.float16)
-        self.log_probability_buffer = np.zeros(self.max_size, dtype=np.float16)
-        self.info_buffer = np.zeros(self.max_size, dtype=np.object_)
+        observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+        self.observation_buffer = torch.zeros(
+            observation_buffer_shape, self.observation_dtype
+        )
+        self.next_observation_buffer = torch.zeros(
+            observation_buffer_shape, dtype=self.observation_dtype
+        )
+        self.action_buffer = torch.zeros(self.max_size, dtype=torch.int8)
+        self.reward_buffer = torch.zeros(self.max_size, dtype=torch.float16)
+        self.advantage_buffer = torch.zeros(self.max_size, dtype=torch.float16)
+        self.return_buffer = torch.zeros(self.max_size, dtype=torch.float16)
+        self.value_buffer = torch.zeros(self.max_size, dtype=torch.float16)
+        self.log_probability_buffer = torch.zeros(self.max_size, dtype=torch.float16)
+        # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
+        self.action_mask_buffer = torch.zeros(
+            (self.max_size, self.num_actions), dtype=torch.bool
+        )
 
         self.pointer = 0
         self.trajectory_start_index = 0
@@ -295,8 +316,18 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
 
     def finish_trajectory(self, last_value: float = 0):
         path_slice = slice(self.trajectory_start_index, self.pointer)
-        rewards = np.append(self.reward_buffer[path_slice], last_value)
-        values = np.append(self.value_buffer[path_slice], last_value)
+        rewards = torch.cat(
+            (
+                self.reward_buffer[path_slice],
+                torch.tensor([last_value], dtype=torch.float16),
+            )
+        )
+        values = torch.cat(
+            (
+                self.value_buffer[path_slice],
+                torch.tensor([last_value], dtype=torch.float16),
+            )
+        )
 
         deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
 

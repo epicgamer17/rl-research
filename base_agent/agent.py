@@ -7,23 +7,26 @@ import pettingzoo
 import torch
 import gymnasium as gym
 import copy
+from agents.random import RandomAgent
+from stats.stats import StatTracker
+from tensordict import TensorDict
 
 from tqdm import tqdm
 from agent_configs import Config
-import pickle
+import dill as pickle
 from torch.optim import Optimizer
 from torch.nn import Module
 
 from utils import (
     make_stack,
-    plot_graphs,
-    process_petting_zoo_obs,
+    # process_petting_zoo_obs,
     record_video_wrapper,
     get_legal_moves,
+    EpisodeTrigger,
 )
 
 import time
-from pynput import keyboard
+import torch.multiprocessing as mp
 
 # Every model should have:
 # 1. A network
@@ -60,14 +63,14 @@ class BaseAgent:
         self.model_name = name
         self.config = config
         self.device = device
+        print("Using device:", self.device)
 
         self.player_id = "player_0"
-        self.training_time = 0
         self.training_step = 0
-        self.total_environment_steps = 0
         self.training_steps = self.config.training_steps
         self.checkpoint_interval = max(self.training_steps // 30, 1)
-        self.checkpoint_trials = 5
+        self.test_interval = max(self.training_steps // 30, 1)
+        self.test_trials = 5
 
         self.env = env
         self.test_env = self.make_test_env(env)
@@ -91,46 +94,12 @@ class BaseAgent:
 
         print("num_actions: ", self.num_actions)
 
-        self.stop_flag = False
-        # Track which keys are pressed
-        pressed_keys = set()
-
-        def on_press(key):
-            try:
-                if key == keyboard.Key.shift:
-                    pressed_keys.add("shift")
-                elif key == keyboard.Key.esc:
-                    pressed_keys.add("esc")
-
-                # Check if both are pressed
-                if "shift" in pressed_keys and "esc" in pressed_keys:
-                    self.stop_flag = True
-            except Exception as e:
-                print(f"Error: {e}")
-
-        def on_release(key):
-            try:
-                if key == keyboard.Key.shift:
-                    pressed_keys.discard("shift")
-                elif key == keyboard.Key.esc:
-                    pressed_keys.discard("esc")
-            except Exception as e:
-                print(f"Error: {e}")
-
-        # Run listener in the background
-        listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-        listener.start()
-
-        # Set up the keyboard listener
-
-        # TODO: NEED TO MAKE AN END OF TRAIN LOOP FUNCTION TO END THE LISTENER THREAD
-        # listener.join()
-
     def make_test_env(self, env: gym.Env):
         print("making test env")
         # self.test_env = copy.deepcopy(env)
         if hasattr(env, "render_mode") and env.render_mode == "rgb_array":
             print("Test env with record video")
+            print("env render mode", env.render_mode)
             if isinstance(env, gym.Env):
                 print("gym env")
                 return gym.wrappers.RecordVideo(
@@ -161,45 +130,11 @@ class BaseAgent:
             ), np.int32  # for tuple of discretes
         elif callable(env.observation_space):
             # Petting Zoo MARL
-            # if isinstance(self.env.observation_space(self.player_id), Dict):
-            try:
-                print("petting zoo")
-                if self.config.game.is_image:
-                    # change from H, W, C to C, H, W
-                    return (
-                        env.observation_space(self.player_id)["observation"].shape[2],
-                        env.observation_space(self.player_id)["observation"].shape[0],
-                        env.observation_space(self.player_id)["observation"].shape[1],
-                    ), env.observation_space(self.player_id)["observation"].dtype
-                return (
-                    env.observation_space(self.player_id)["observation"].shape,
-                    env.observation_space(self.player_id)["observation"].dtype,
-                )
-            except KeyError:
-                print("custom petting zoo")
-                if self.config.game.is_image:
-                    # change from H, W, C to C, H, W
-                    return (
-                        env.observation_space(self.player_id).shape[2],
-                        env.observation_space(self.player_id).shape[0],
-                        env.observation_space(self.player_id).shape[1],
-                    ), env.observation_space(self.player_id).dtype
-                return (
-                    env.observation_space(self.player_id).shape,
-                    env.observation_space(self.player_id).dtype,
-                )
-            except TypeError:
-                if self.config.game.is_image:
-                    # change from H, W, C to C, H, W
-                    return (
-                        env.observation_space(self.player_id).shape[2],
-                        env.observation_space(self.player_id).shape[0],
-                        env.observation_space(self.player_id).shape[1],
-                    ), env.observation_space(self.player_id).dtype
-                return (
-                    env.observation_space(self.player_id).shape,
-                    env.observation_space(self.player_id).dtype,
-                )
+            print("petting zoo")
+            return (
+                env.observation_space(self.player_id).shape,
+                env.observation_space(self.player_id).dtype,
+            )
         else:
             print("fallback case for observation dimension")
             return env.observation_space.shape, env.observation_space.dtype
@@ -231,7 +166,9 @@ class BaseAgent:
         # np_states = np.array(states)
         # FRAME STACK IS NO LONGER IN GYMNASIUM WRAPPERS
 
-        np_states = np.array(states)
+        np_states = (
+            np.array(states.cpu()) if torch.is_tensor(states) else np.array(states)
+        )
 
         # print("Numpyified States", np_states)
         prepared_state = (
@@ -250,7 +187,7 @@ class BaseAgent:
 
         if prepared_state.shape == self.observation_dimensions:
             prepared_state = make_stack(prepared_state)
-        return prepared_state
+        return prepared_state.to(self.device)
 
     def predict(
         self, state: torch.Tensor, *args
@@ -291,9 +228,9 @@ class BaseAgent:
         self.model.load_state_dict(checkpoint["model"])
 
     def checkpoint_base(self, checkpoint):
-        checkpoint["training_time"] = self.training_time
+        # checkpoint["training_time"] = self.training_time
         checkpoint["training_step"] = self.training_step
-        checkpoint["total_environment_steps"] = self.total_environment_steps
+        # checkpoint["total_environment_steps"] = self.total_environment_steps
         return checkpoint
 
     def checkpoint_environment(self, checkpoint):
@@ -336,9 +273,9 @@ class BaseAgent:
         # load the model state (weights, optimizer, replay buffer, training time, training step, total environment steps)
         os.makedirs(weights_dir, exist_ok=True)
 
-        agent.training_time = checkpoint["training_time"]
+        # agent.training_time = checkpoint["training_time"]
         agent.training_step = checkpoint["training_step"]
-        agent.total_environment_steps = checkpoint["total_environment_steps"]
+        # agent.total_environment_steps = checkpoint["total_environment_steps"]
 
         agent.load_model_weights(checkpoint)
         agent.load_optimizer_state(checkpoint)
@@ -354,36 +291,11 @@ class BaseAgent:
 
     def save_checkpoint(
         self,
-        frames_seen=None,
-        training_step=None,
-        time_taken=None,
         save_weights=False,
     ):
-
-        if not frames_seen is None:
-            print(
-                "warning: frames_seen option is deprecated, update self.total_environment_steps instead"
-            )
-
-        if not time_taken is None:
-            print(
-                "warning: time_taken option is deprecated, update self.training_time instead"
-            )
-
-        if not training_step is None:
-            print(
-                "warning: training_step option is deprecated, update self.training_step instead"
-            )
-
         dir = Path("checkpoints", self.model_name)
         training_step_dir = Path(dir, f"step_{self.training_step}")
         os.makedirs(dir, exist_ok=True)
-
-        # test model
-        test_score = self.test(
-            self.checkpoint_trials, step=self.training_step, dir=training_step_dir
-        )
-        self.stats["test_score"].append(test_score)
 
         # save the model state
         if save_weights:
@@ -398,32 +310,18 @@ class BaseAgent:
         # save config
         os.makedirs(Path(dir, "configs"), exist_ok=True)
         self.config.dump(f"{dir}/configs/config.yaml")
-        os.makedirs(Path(dir, "stats"), exist_ok=True)
-        pickle.dump(self.stats, open(f"{dir}/stats/stats.pkl", "wb"))
-
         # save the graph stats and targets
         os.makedirs(
             Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
         )
         with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
-            pickle.dump(self.stats, f)
-        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
-            pickle.dump(self.targets, f)
+            pickle.dump(self.stats.get_data(), f)
 
-        # to periodically clear uneeded memory, if it is drastically slowing down training you can comment this out, checkpoint less often, or do less trials
-        gc.collect()
-
+        # to periodically clear unneeded memory, if it is drastically slowing down training you can comment this out, checkpoint less often, or do less trials
         # plot the graphs (and save the graph)
         os.makedirs(Path(dir, "graphs"), exist_ok=True)
-        plot_graphs(
-            self.stats,
-            self.targets,
-            self.training_step if training_step is None else training_step,
-            self.total_environment_steps if frames_seen is None else frames_seen,
-            self.training_time if time_taken is None else time_taken,
-            self.model_name,
-            f"{dir}/graphs",
-        )
+        self.stats.plot_graphs(dir=Path(dir, "graphs"))
+        gc.collect()
 
     def make_checkpoint_dict(self):
         checkpoint = self.checkpoint_base({})
@@ -434,7 +332,7 @@ class BaseAgent:
         checkpoint = self.checkpoint_extra(checkpoint)
         return checkpoint
 
-    def test(self, num_trials, step, dir="./checkpoints") -> None:
+    def test(self, num_trials, dir="./checkpoints") -> None:
         if num_trials == 0:
             return
         with torch.no_grad():
@@ -444,10 +342,8 @@ class BaseAgent:
             min_score = float("inf")
             # self.test_env.reset()
             if self.test_env.render_mode == "rgb_array":
-                self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
-                self.test_env.video_folder = "{}/videos/{}/{}".format(
-                    dir, self.model_name, step
-                )
+                self.test_env.episode_trigger = EpisodeTrigger(num_trials)
+                self.test_env.video_folder = "{}/videos/{}".format(dir, self.model_name)
                 if not os.path.exists(self.test_env.video_folder):
                     os.makedirs(self.test_env.video_folder)
             for trials in range(num_trials):
@@ -495,6 +391,21 @@ class BaseAgent:
     def print_stats(self):
         print(f"")
 
+    def run_tests(self, stats):
+        dir = Path("checkpoints", self.model_name)
+        training_step_dir = Path(dir, f"step_{self.training_step}")
+
+        test_score = self.test(self.test_trials, dir=training_step_dir)
+        print("Test score", test_score)
+        for key in test_score:
+            stats.append("test_score", test_score[key], subkey=key)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Don't pickle the environment
+        del state["stats"]
+        return state
+
 
 class MARLBaseAgent(BaseAgent):
     def __init__(
@@ -502,6 +413,7 @@ class MARLBaseAgent(BaseAgent):
         env,
         model,
         name: str,
+        test_agents=[RandomAgent()],
         device: torch.device = (
             torch.device("cuda")
             if torch.cuda.is_available()
@@ -518,23 +430,23 @@ class MARLBaseAgent(BaseAgent):
             env, model, name, device=device, from_checkpoint=from_checkpoint
         )
 
-        self.test_agents = ["random"]
+        self.test_agents = test_agents
         print("Test agents:", self.test_agents)
 
-    def test(self, num_trials, player=0, step=None, dir="./checkpoints") -> None:
+    def test(self, num_trials, player=0, dir="./checkpoints") -> None:
+        if self.config.game.num_players == 1:
+            return super(MARLBaseAgent, self).test(num_trials, dir)
         if num_trials == 0:
             return
         with torch.no_grad():
             """Test the agent."""
-            average_score = 0
+            results = []
             max_score = float("-inf")
             min_score = float("inf")
             # self.test_env.reset()
             if self.test_env.render_mode == "rgb_array":
                 self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
-                self.test_env.video_folder = "{}/videos/{}/{}".format(
-                    dir, self.model_name, step
-                )
+                self.test_env.video_folder = "{}/videos/{}".format(dir, self.model_name)
                 if not os.path.exists(self.test_env.video_folder):
                     os.makedirs(self.test_env.video_folder)
             for trials in tqdm(range(num_trials)):
@@ -542,7 +454,7 @@ class MARLBaseAgent(BaseAgent):
                 state, reward, terminated, truncated, info = self.test_env.last()
                 agent_id = self.test_env.agent_selection
                 current_player = self.test_env.agents.index(agent_id)
-                state, info = process_petting_zoo_obs(state, info, current_player)
+                # state, info = process_petting_zoo_obs(state, info, current_player)
                 done = terminated or truncated
                 score = 0
 
@@ -554,147 +466,149 @@ class MARLBaseAgent(BaseAgent):
                     state, reward, terminated, truncated, info = self.test_env.last()
                     agent_id = self.test_env.agent_selection
                     current_player = self.test_env.agents.index(agent_id)
-                    state, info = process_petting_zoo_obs(state, info, current_player)
+                    # state, info = process_petting_zoo_obs(state, info, current_player)
                     done = terminated or truncated
 
                     if done:
                         score += self.test_env.rewards[f"player_{player}"]
-                average_score += score
-                max_score = max(max_score, score)
-                min_score = min(min_score, score)
+                results.append(score)
 
             # reset
             # if self.test_env.render_mode != "rgb_array":
             #     self.test_env.render()
             self.test_env.close()
-            average_score /= num_trials
+            average_score = sum(results) / num_trials
+            max_score = max(results)
+            min_score = min(results)
+            # std = np.std(results)
+
             print("average score:", average_score)
             return {
                 "score": average_score,
                 "max_score": max_score,
                 "min_score": min_score,
+                # "std": std,
             }
 
-    def test_vs_agent(
-        self, num_trials, agent, player=None, step=None, dir="./checkpoints"
-    ):
+    def test_vs_agent(self, num_trials, agent, dir="./checkpoints"):
         """
         Test the trained NFSP agent against a random agent
         """
-        if agent is None:
-            agent = "random"
-        print("Testing Player {} vs Agent {}".format(player, agent))
-        if self.test_env.render_mode == "rgb_array":
-            self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
-            self.test_env.video_folder = "{}/videos/random/{}/{}".format(
-                dir, self.model_name, step
-            )
-            if not os.path.exists(self.test_env.video_folder):
-                os.makedirs(self.test_env.video_folder)
+        final_rewards = {player: [] for player in range(self.config.game.num_players)}
+        results = {}
+        for player in range(self.config.game.num_players):
+            print("Testing Player {} vs Agent {}".format(player, agent.model_name))
+            if self.test_env.render_mode == "rgb_array":
+                self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
+                self.test_env.video_folder = "{}/videos/{}".format(
+                    dir, agent.model_name
+                )
+                if not os.path.exists(self.test_env.video_folder):
+                    os.makedirs(self.test_env.video_folder)
 
-        test_player_win_percentage = 0
-        test_player_average_score = 0
+            with torch.no_grad():  # No gradient computation during testing
+                for trial in tqdm(range(num_trials // self.config.game.num_players)):
+                    # Reset environment
+                    self.test_env.reset()
+                    state, reward, termination, truncation, info = self.test_env.last()
+                    done = termination or truncation
+                    agent_id = self.test_env.agent_selection
+                    current_player = self.test_env.agents.index(agent_id)
+                    # state, info = process_petting_zoo_obs(state, info, current_player)
+                    agent_names = self.test_env.agents.copy()
 
-        with torch.no_grad():  # No gradient computation during testing
-            for trial in tqdm(range(num_trials)):
-                # Reset environment
-                self.test_env.reset()
-                state, reward, termination, truncation, info = self.test_env.last()
-                done = termination or truncation
-                agent_id = self.test_env.agent_selection
-                current_player = self.test_env.agents.index(agent_id)
-                state, info = process_petting_zoo_obs(state, info, current_player)
-                agent_names = self.test_env.agents.copy()
+                    episode_length = 0
+                    while not done and episode_length < 1000:  # Safety limit
+                        # Get current agent and player
+                        episode_length += 1
 
-                episode_length = 0
-                while not done and episode_length < 1000:  # Safety limit
-                    # Get current agent and player
-                    episode_length += 1
-
-                    # Get action from average strategy
-                    if current_player == player:
-                        prediction = self.predict(state, info, env=self.test_env.env)
-                        if trial == 0:
-                            print(f"Player {current_player} Prediction: {prediction}")
-                        action = self.select_actions(prediction, info).item()
-                    else:
-                        if agent == "random":
-                            if "legal_moves" in info:
-                                # print("legal moves found")
-                                legal_moves = get_legal_moves(info)[0]
-
-                                action = torch.multinomial(
-                                    torch.ones_like(torch.tensor(legal_moves)).float()
-                                    / len(legal_moves),
-                                    1,
-                                ).item()
-                                action = legal_moves[action]
-                            else:
-                                action = self.test_env.action_space(agent_id).sample()
-                        else:
+                        # Get action from average strategy
+                        if current_player == player:
                             prediction = self.predict(
                                 state, info, env=self.test_env.env
                             )
                             action = self.select_actions(prediction, info).item()
+                            if trial == 0:
+                                print(
+                                    f"Player {current_player} prediction: {prediction}"
+                                )
+                                print(f"action: {action}")
 
-                        if trial == 0:
-                            print(f"Player {current_player} Random Action: {action}")
+                        else:
 
-                    # Step environment
-                    self.test_env.step(action)
-                    state, reward, termination, truncation, info = self.test_env.last()
-                    agent_id = self.test_env.agent_selection
-                    current_player = self.test_env.agents.index(agent_id)
-                    state, info = process_petting_zoo_obs(state, info, current_player)
-                    done = termination or truncation
+                            prediction = agent.predict(
+                                state, info, env=self.test_env.env
+                            )
+                            action = agent.select_actions(prediction, info).item()
 
-                episode_rewards = self.test_env.rewards
-                if episode_rewards:
-                    max_reward = max(episode_rewards.values())
-                    winners = [
-                        agent
-                        for agent, reward in episode_rewards.items()
-                        if reward == max_reward
-                    ]
-                    if len(winners) == 1:
-                        winner = winners[0]
-                        if agent_names.index(winner) == player:
-                            test_player_win_percentage += 1
-                        test_player_average_score += episode_rewards[
-                            self.test_env.agents[player]
-                        ]
+                            if trial == 0:
+                                print(
+                                    f"Player {current_player} {agent.model_name} action: {action}"
+                                )
 
-        test_player_win_percentage /= num_trials
-        test_player_average_score /= num_trials
+                        # Step environment
+                        self.test_env.step(action)
+                        state, reward, termination, truncation, info = (
+                            self.test_env.last()
+                        )
+                        agent_id = self.test_env.agent_selection
+                        current_player = self.test_env.agents.index(agent_id)
+                        # state, info = process_petting_zoo_obs(
+                        #     state, info, current_player
+                        # )
+                        done = termination or truncation
 
-        return test_player_win_percentage, test_player_average_score
+                    final_rewards[player].append(
+                        self.test_env.rewards[self.test_env.agents[player]]
+                    )
 
-    def save_checkpoint(
-        self, frames_seen=None, training_step=None, time_taken=None, save_weights=False
-    ):
+            test_player_average_score = sum(final_rewards[player]) / len(
+                final_rewards[player]
+            )
+            test_player_win_percentage = sum(
+                1 for r in final_rewards[player] if r > 0
+            ) / len(final_rewards[player])
+            # std = np.std(final_rewards[player])
+            results.update(
+                {
+                    "player_{}_score".format(player): test_player_average_score,
+                }
+            )
+            results.update(
+                {
+                    "player_{}_win%".format(player): test_player_win_percentage,
+                }
+            )
+            print(
+                f"Player {player} win percentage vs {agent.model_name}: {test_player_win_percentage * 100} and average score: {test_player_average_score}"
+            )
+        results.update(
+            {
+                "score": sum(
+                    results["player_{}_score".format(player)]
+                    for player in range(self.config.game.num_players)
+                )
+                / self.config.game.num_players
+            }
+        )
+        return results
+
+    def run_tests(self, stats: StatTracker):
         dir = Path("checkpoints", self.model_name)
         training_step_dir = Path(dir, f"step_{self.training_step}")
-        os.makedirs(dir, exist_ok=True)
 
-        # exploitability /= self.config.num_players
         for test_agent in self.test_agents:
-            avg_score_vs_agent = 0
-            for p in range(self.config.game.num_players):
-                test_player_win_percentage, test_player_average_score = (
-                    self.test_vs_agent(
-                        self.checkpoint_trials,
-                        test_agent,
-                        player=p,
-                        step=training_step,
-                        dir=training_step_dir,
-                    )
-                )
-                avg_score_vs_agent += test_player_average_score
-            avg_score_vs_agent /= self.config.game.num_players
-            self.stats["test_score_vs_{}".format(test_agent)].append(
-                {"score": avg_score_vs_agent}
+            results = self.test_vs_agent(
+                self.test_trials,
+                test_agent,
+                dir=training_step_dir,
             )
+            print("Results vs {}: {}".format(test_agent.model_name, results))
 
-        return super().save_checkpoint(
-            frames_seen, training_step, time_taken, save_weights=save_weights
-        )
+            for key in results:
+                stats.append(
+                    "test_score_vs_{}".format(test_agent.model_name),
+                    results[key],
+                    subkey=key,
+                )
+        super().run_tests(stats)

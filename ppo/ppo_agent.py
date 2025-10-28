@@ -246,11 +246,16 @@ class PPOAgent(BaseAgent):
     def learn(self):
         samples = self.replay_buffer.sample()
         observations = samples["observations"]
-        actions = torch.from_numpy(samples["actions"])
-        log_probabilities = torch.from_numpy(samples["log_probabilities"])
-        advantages = torch.from_numpy(samples["advantages"])
-        returns = torch.from_numpy(samples["returns"])
-        infos = torch.from_numpy(samples["infos"])
+        # actions = torch.from_numpy(samples["actions"])
+        # log_probabilities = torch.from_numpy(samples["log_probabilities"])
+        # advantages = torch.from_numpy(samples["advantages"])
+        # returns = torch.from_numpy(samples["returns"])
+        # infos = torch.from_numpy(samples["infos"])
+        actions = samples["actions"].to(self.device)
+        log_probabilities = samples["log_probabilities"].to(self.device)
+        advantages = samples["advantages"].to(self.device)
+        returns = samples["returns"].to(self.device)
+        infos = samples["infos"].to(self.device)
         inputs = self.preprocess(observations)
 
         indices = torch.randperm(len(observations))

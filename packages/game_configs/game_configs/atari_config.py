@@ -2,7 +2,7 @@ from .game_config import GameConfig
 
 
 class AtariConfig(GameConfig):
-    def __init__(self):
+    def __init__(self, make_env=None):
         super(AtariConfig, self).__init__(
             max_score=10,  # FROM CATEGORICAL DQN PAPER
             min_score=-10,
@@ -13,5 +13,6 @@ class AtariConfig(GameConfig):
             perfect_information=True,  # although it is not deterministic, it is so close to it that it is considered perfect information
             multi_agent=False,
             num_players=1,
-            has_intermediate_rewards=True,
+            # has_intermediate_rewards=True,
+            make_env=make_env,
         )

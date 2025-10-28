@@ -17,7 +17,7 @@ from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
 # from packages.utils.utils.utils import KLDivergenceLoss
-from replay_buffers.rssm_replay_buffer import RSSMReplayBuffer
+from replay_buffers.deprecated.rssm_replay_buffer import RSSMReplayBuffer
 from torch.nn.utils import clip_grad_norm_
 import gc
 

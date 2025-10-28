@@ -2,7 +2,7 @@ from .game_config import GameConfig
 
 
 class MississippiMarblesConfig(GameConfig):
-    def __init__(self):
+    def __init__(self, make_env=None):
         super(MississippiMarblesConfig, self).__init__(
             max_score=20000,  # technically infinite, but this is a good enough approximation
             min_score=0,
@@ -13,5 +13,6 @@ class MississippiMarblesConfig(GameConfig):
             perfect_information=False,
             multi_agent=True,
             num_players=2,  # could be more
-            has_intermediate_rewards=False,
+            # has_intermediate_rewards=False,
+            make_env=make_env,
         )

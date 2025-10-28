@@ -30,7 +30,7 @@ import copy
 import numpy as np
 from alphazero.alphazero_network import Network
 
-from replay_buffers.alphazero_replay_buffer import ReplayBuffer
+from replay_buffers.deprecated.alphazero_replay_buffer import ReplayBuffer
 import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
 import gymnasium as gym

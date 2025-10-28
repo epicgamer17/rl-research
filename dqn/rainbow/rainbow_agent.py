@@ -190,7 +190,8 @@ class RainbowAgent(BaseAgent):
         observations, weights, actions = (
             samples["observations"],
             samples["weights"],
-            torch.from_numpy(samples["actions"]).to(self.device).long(),
+            # torch.from_numpy(samples["actions"]).to(self.device).long(),
+            samples["actions"].to(self.device).long(),
         )
         # print("actions", actions)
 
@@ -221,12 +222,23 @@ class RainbowAgent(BaseAgent):
             ), "Only HuberLoss or MSELoss are supported for atom_size = 1, recieved {}".format(
                 self.config.loss_function
             )
+            # next_observations, rewards, dones = (
+            #     torch.from_numpy(samples["next_observations"]).to(self.device),
+            #     torch.from_numpy(samples["rewards"]).to(self.device),
+            #     torch.from_numpy(samples["dones"]).to(self.device),
+            # )
             next_observations, rewards, dones = (
-                torch.from_numpy(samples["next_observations"]).to(self.device),
-                torch.from_numpy(samples["rewards"]).to(self.device),
-                torch.from_numpy(samples["dones"]).to(self.device),
+                samples["next_observations"].to(self.device),
+                samples["rewards"].to(self.device),
+                samples["dones"].to(self.device),
             )
-            next_infos = samples["next_infos"]
+
+            next_action_masks = samples["next_action_masks"].to(self.device)
+            next_infos = [
+                {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
+                for mask in next_action_masks
+            ]
+            # next_infos = samples["next_infos"].to(self.device)
             target_predictions = self.predict_target(next_observations)  # next q values
             # print("Next q values", target_predictions)
             # print("Current q values", online_predictions)
@@ -255,7 +267,8 @@ class RainbowAgent(BaseAgent):
         # print("predicted", online_distributions)
         # print("target", target_distributions)
 
-        weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
+        # weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
+        weights_cuda = weights.to(torch.float32).to(self.device)
         # (B)
         elementwise_loss = self.config.loss_function(
             online_predictions, target_predictions
@@ -296,18 +309,30 @@ class RainbowAgent(BaseAgent):
             delta_z = (self.config.v_max - self.config.v_min) / (
                 self.config.atom_size - 1
             )
+            # next_observations, rewards, dones = (
+            #     samples["next_observations"],
+            #     torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
+            #     torch.from_numpy(samples["dones"]).to(self.device).view(-1, 1),
+            # )
             next_observations, rewards, dones = (
                 samples["next_observations"],
-                torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
-                torch.from_numpy(samples["dones"]).to(self.device).view(-1, 1),
+                samples["rewards"].to(self.device).view(-1, 1),
+                samples["dones"].to(self.device).view(-1, 1),
             )
+
             online_distributions = self.predict(next_observations)
             target_distributions = self.predict_target(next_observations)
 
             # print(samples["next_infos"])
+            # recreate legal moves from action masks samples
+            next_action_masks = samples["next_action_masks"].to(self.device)
+            next_infos = [
+                {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
+                for mask in next_action_masks
+            ]
             next_actions = self.select_actions(
                 online_distributions,
-                info=samples["next_infos"],
+                info=next_infos,
             )  # {} is the info but we are not doing action masking yet
             # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
             probabilities = target_distributions[

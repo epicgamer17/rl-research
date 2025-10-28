@@ -84,9 +84,17 @@ class PolicyImitationAgent(BaseAgent):
         for training_iteration in range(self.config.training_iterations):
             sample = self.replay_buffer.sample()
             observations = sample["observations"]
-            targets = torch.from_numpy(sample["targets"]).to(self.device)
+            # targets = torch.from_numpy(sample["targets"]).to(self.device)
+            targets = sample["targets"].to(self.device)
 
-            policy = self.predict(observations, info=sample["infos"])
+            action_masks = sample["action_masks"].to(self.device)
+            # recreate infos from action masks
+            infos = [
+                {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
+                for mask in action_masks
+            ]
+
+            policy = self.predict(observations, infos)
             loss = self.config.loss_function(policy, targets).mean()
 
             self.optimizer.zero_grad()

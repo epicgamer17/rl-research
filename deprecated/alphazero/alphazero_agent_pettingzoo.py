@@ -20,7 +20,10 @@ from base_agent.agent import BaseAgent
 
 import copy
 import numpy as np
-from replay_buffers.alphazero_replay_buffer import AlphaZeroReplayBuffer, Game
+from replay_buffers.deprecated.alphazero_replay_buffer import (
+    AlphaZeroReplayBuffer,
+    Game,
+)
 from alphazero.alphazero_mcts import Node
 from alphazero.alphazero_network import Network
 from torch.nn.utils import clip_grad_norm_
@@ -30,34 +33,36 @@ import pettingzoo
 class AlphaZeroAgentPettingZoo(BaseAgent):
     """
     AlphaZero agent modified to work with PettingZoo environments.
-    
+
     Key modifications:
     1. Handles PettingZoo AECEnv and ParallelEnv environments
     2. Manages multi-agent turn-based gameplay
     3. Properly handles PettingZoo observation and action spaces
     4. Adapts reward handling for multi-agent scenarios
     """
-    
+
     def __init__(
         self,
         env,
         config: AlphaZeroConfig,
         name=datetime.datetime.now().timestamp(),
         device: torch.device = (
-            torch.device("cuda")
-            if torch.cuda.is_available()
-            else torch.device("cpu")
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         ),
         from_checkpoint=False,
     ):
         # Check if environment is PettingZoo
-        self.is_pettingzoo = isinstance(env, pettingzoo.AECEnv) or isinstance(env, pettingzoo.ParallelEnv)
-        
+        self.is_pettingzoo = isinstance(env, pettingzoo.AECEnv) or isinstance(
+            env, pettingzoo.ParallelEnv
+        )
+
         if self.is_pettingzoo:
             # For PettingZoo environments, we need to handle multi-agent setup
-            self.agents = env.possible_agents if hasattr(env, 'possible_agents') else env.agents
+            self.agents = (
+                env.possible_agents if hasattr(env, "possible_agents") else env.agents
+            )
             self.agent_id = self.agents[0] if self.agents else None
-            
+
         super(AlphaZeroAgentPettingZoo, self).__init__(
             env, config, name, device=device, from_checkpoint=from_checkpoint
         )
@@ -97,7 +102,7 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
             "loss": [],
             "test_score": [],
         }
-        
+
         # Handle reward threshold for PettingZoo environments
         if self.is_pettingzoo:
             self.targets = {
@@ -153,7 +158,7 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
 
     def get_current_player(self, env):
         """Helper method to get current player from PettingZoo environment."""
-        if hasattr(env, 'agent_selection'):
+        if hasattr(env, "agent_selection"):
             current_agent = env.agent_selection
             if current_agent and current_agent in self.agents:
                 return self.agents.index(current_agent)
@@ -161,7 +166,7 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
 
     def get_observation(self, env, agent=None):
         """Helper method to get observation from PettingZoo environment."""
-        if hasattr(env, 'observe'):
+        if hasattr(env, "observe"):
             if agent is None:
                 agent = env.agent_selection
             return env.observe(agent) if agent else None
@@ -172,13 +177,13 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
         value, policy = self.predict_no_mcts(state, info)
         policy = policy[0]
         value = value[0][0]
-        
+
         # Handle player turn for PettingZoo environments
         if self.is_pettingzoo:
             root.to_play = self.get_current_player(env)
         else:
             root.to_play = int(state[0][0][2])  # Original frame stacking logic
-            
+
         root.expand(policy, env)
 
         if env == self.env:  # Check if we are in training mode
@@ -196,23 +201,39 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
                 action, node = node.select_child(
                     self.config.pb_c_base, self.config.pb_c_init
                 )
-                
+
                 # Handle environment step for PettingZoo vs regular Gym
                 if self.is_pettingzoo:
-                    if hasattr(mcts_env, 'step'):
+                    if hasattr(mcts_env, "step"):
                         mcts_env.step(action)
-                        
+
                         # Check termination status
-                        if hasattr(mcts_env, 'terminations') and hasattr(mcts_env, 'truncations'):
-                            terminated = any(mcts_env.terminations.values()) if mcts_env.terminations else False
-                            truncated = any(mcts_env.truncations.values()) if mcts_env.truncations else False
-                            
+                        if hasattr(mcts_env, "terminations") and hasattr(
+                            mcts_env, "truncations"
+                        ):
+                            terminated = (
+                                any(mcts_env.terminations.values())
+                                if mcts_env.terminations
+                                else False
+                            )
+                            truncated = (
+                                any(mcts_env.truncations.values())
+                                if mcts_env.truncations
+                                else False
+                            )
+
                             # Get rewards
-                            reward = mcts_env.rewards if hasattr(mcts_env, 'rewards') else {}
-                            
+                            reward = (
+                                mcts_env.rewards if hasattr(mcts_env, "rewards") else {}
+                            )
+
                             # Get info
                             current_agent = mcts_env.agent_selection
-                            info = mcts_env.infos.get(current_agent, {}) if hasattr(mcts_env, 'infos') and current_agent else {}
+                            info = (
+                                mcts_env.infos.get(current_agent, {})
+                                if hasattr(mcts_env, "infos") and current_agent
+                                else {}
+                            )
                         else:
                             # Fallback
                             terminated, truncated, reward, info = False, False, {}, {}
@@ -221,7 +242,7 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
                         _, reward, terminated, truncated, info = mcts_env.step(action)
                 else:
                     _, reward, terminated, truncated, info = mcts_env.step(action)
-                    
+
                 search_path.append(node)
 
             # Handle leaf node turn for PettingZoo
@@ -229,17 +250,25 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
                 leaf_node_turn = self.get_current_player(mcts_env)
             else:
                 leaf_node_turn = node.info.get("player", 0)
-                
+
             node.to_play = int(leaf_node_turn)
 
             if terminated or truncated:
                 # Handle rewards for PettingZoo vs regular environments
                 if self.is_pettingzoo and isinstance(reward, dict):
                     # PettingZoo returns rewards as dict
-                    agent_name = self.agents[leaf_node_turn] if leaf_node_turn < len(self.agents) else self.agents[0]
+                    agent_name = (
+                        self.agents[leaf_node_turn]
+                        if leaf_node_turn < len(self.agents)
+                        else self.agents[0]
+                    )
                     value = reward.get(agent_name, 0)
                 elif isinstance(reward, (list, np.ndarray)):
-                    value = reward[leaf_node_turn] if leaf_node_turn < len(reward) else reward[0]
+                    value = (
+                        reward[leaf_node_turn]
+                        if leaf_node_turn < len(reward)
+                        else reward[0]
+                    )
                 else:
                     value = float(reward) if reward is not None else 0.0
             else:
@@ -248,7 +277,7 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
                     new_state = self.get_observation(mcts_env)
                     if new_state is not None:
                         node.state = new_state
-                        
+
                 value, policy = self.predict_no_mcts(node.state, info)
                 policy = policy[0]
                 value = value[0][0]
@@ -256,10 +285,12 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
 
             # Backpropagate values
             for path_node in search_path:
-                path_node.value_sum += value if path_node.to_play != leaf_node_turn else -value
+                path_node.value_sum += (
+                    value if path_node.to_play != leaf_node_turn else -value
+                )
                 path_node.visits += 1
 
-            if hasattr(mcts_env, 'close'):
+            if hasattr(mcts_env, "close"):
                 mcts_env.close()
             del mcts_env
             del node
@@ -278,11 +309,11 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
         target_policies = samples["policies"]
         target_values = samples["rewards"]
         infos = samples["infos"]
-        
+
         inputs = self.preprocess(observations)
         for training_iteration in range(self.config.training_iterations):
             values, policies = self.predict_no_mcts(inputs, infos)
-            
+
             # Compute losses
             value_loss = self.config.value_loss_factor * MSELoss()(
                 values, torch.Tensor(target_values).to(self.device)
@@ -309,13 +340,13 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
     def predict_no_mcts(self, state, info: dict = None):
         state_input = self.preprocess(state)
         value, policy = self.model(inputs=state_input)
-        
+
         if info and "legal_moves" in info:
             legal_moves = get_legal_moves(info)
             policy = action_mask(policy, legal_moves, mask_value=0, device=self.device)
             policy = clip_low_prob_actions(policy, self.config.clip_low_prob)
             policy = normalize_policies(policy)
-            
+
         return value, policy
 
     def predict(
@@ -352,15 +383,19 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
             current_agent = self.env.agent_selection
             if current_agent is None:
                 return 0, 0  # Game ended immediately
-                
+
             state = self.get_observation(self.env, current_agent)
             if state is None:
                 return 0, 0
-                
-            info = self.env.infos.get(current_agent, {}) if hasattr(self.env, 'infos') else {}
+
+            info = (
+                self.env.infos.get(current_agent, {})
+                if hasattr(self.env, "infos")
+                else {}
+            )
         else:
             state, info = self.env.reset()
-            
+
         game = Game(self.config.game.num_players)
         step_count = 0
 
@@ -370,20 +405,31 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
                 current_agent = self.env.agent_selection
                 if current_agent is None:
                     break
-                    
+
                 state = self.get_observation(self.env, current_agent)
                 if state is None:
                     break
-                    
-                info = self.env.infos.get(current_agent, {}) if hasattr(self.env, 'infos') else {}
+
+                info = (
+                    self.env.infos.get(current_agent, {})
+                    if hasattr(self.env, "infos")
+                    else {}
+                )
                 info["step"] = step_count
-                
+
                 # Check if game is already terminated
-                if hasattr(self.env, 'terminations') and hasattr(self.env, 'truncations'):
-                    if (current_agent in self.env.terminations and self.env.terminations[current_agent]) or \
-                       (current_agent in self.env.truncations and self.env.truncations[current_agent]):
+                if hasattr(self.env, "terminations") and hasattr(
+                    self.env, "truncations"
+                ):
+                    if (
+                        current_agent in self.env.terminations
+                        and self.env.terminations[current_agent]
+                    ) or (
+                        current_agent in self.env.truncations
+                        and self.env.truncations[current_agent]
+                    ):
                         break
-            
+
             # Temperature scheduling
             if info.get("step", step_count) < self.config.num_sampling_moves:
                 temperature = self.config.exploration_temperature
@@ -397,29 +443,41 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
             print("Temperature Policy ", prediction[0])
             action = self.select_actions(prediction)
             print("Action ", action)
-            
+
             # Handle environment step
             if self.is_pettingzoo:
                 self.env.step(action)
-                
+
                 # Check if game is done
-                if hasattr(self.env, 'terminations') and hasattr(self.env, 'truncations'):
-                    terminated = any(self.env.terminations.values()) if self.env.terminations else False
-                    truncated = any(self.env.truncations.values()) if self.env.truncations else False
-                    
+                if hasattr(self.env, "terminations") and hasattr(
+                    self.env, "truncations"
+                ):
+                    terminated = (
+                        any(self.env.terminations.values())
+                        if self.env.terminations
+                        else False
+                    )
+                    truncated = (
+                        any(self.env.truncations.values())
+                        if self.env.truncations
+                        else False
+                    )
+
                     # Get rewards
-                    reward = self.env.rewards if hasattr(self.env, 'rewards') else {}
+                    reward = self.env.rewards if hasattr(self.env, "rewards") else {}
                 else:
                     # Fallback
                     terminated, truncated, reward = False, False, {}
-                    
+
                 # Check if we should continue
                 if terminated or truncated:
                     game.append(state, reward, prediction[1], info=info)
                     break
-                    
+
             else:
-                next_state, reward, terminated, truncated, next_info = self.env.step(action)
+                next_state, reward, terminated, truncated, next_info = self.env.step(
+                    action
+                )
                 if terminated or truncated:
                     game.append(state, reward, prediction[1], info=info)
                     break
@@ -428,14 +486,14 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
 
             game.append(state, reward, prediction[1], info=info)
             step_count += 1
-            
+
             # Safety check to prevent infinite loops
             if step_count > 1000:
                 print("Warning: Game exceeded 1000 steps, terminating")
                 break
-            
+
         game.set_rewards()
-        
+
         # Return appropriate score based on environment type
         if self.is_pettingzoo:
             # For PettingZoo, return the reward for the first agent or average reward
@@ -446,7 +504,11 @@ class AlphaZeroAgentPettingZoo(BaseAgent):
             else:
                 score = 0
         else:
-            score = game.rewards[0] if isinstance(game.rewards, (list, np.ndarray)) else game.rewards
-            
+            score = (
+                game.rewards[0]
+                if isinstance(game.rewards, (list, np.ndarray))
+                else game.rewards
+            )
+
         self.replay_buffer.store(game)
         return score, game.length

@@ -123,6 +123,11 @@ class Config(ConfigBase):
     def _verify_game(self):
         raise NotImplementedError
 
+    def __eq__(self, other):
+        if not isinstance(other, Config):
+            return False
+        return self.config_dict == other.config_dict and self.game == other.game
+
 
 def kernel_initializer_wrapper(x):
     if x is None:

@@ -87,7 +87,7 @@ class Representation(nn.Module):
             else:
                 assert len(current_shape) == 2
                 initial_width = current_shape[1]
-
+            # print(initial_width)
             # (B, width_in) -> (B, width_out)
             self.dense_layers = DenseStack(
                 initial_width=initial_width,
@@ -131,7 +131,9 @@ class Representation(nn.Module):
 
         # (B, dense_features_in) -> (B, dense_features_out)
         if self.has_dense_layers:
+            # print("S", S.shape)
             S = S.flatten(1, -1)
+            # print("Flattened S", S.shape)
             S = self.dense_layers(S)
 
             # normalize inputs as per paper
@@ -175,8 +177,9 @@ class Dynamics(nn.Module):
     ):
         assert (
             config.game.is_discrete
-        ), "AlphaZero only works for discrete action space games (board games)"
+        ), "MuZero only works for discrete action space games (board games)"
 
+        print("dynamics input shape", input_shape)
         self.config = config
 
         super(Dynamics, self).__init__()
@@ -245,6 +248,7 @@ class Dynamics(nn.Module):
                 initial_width = current_shape[1]
 
             # (B, width_in) -> (B, width_out)
+            # print("initial_width", initial_width)
             self.dense_layers = DenseStack(
                 initial_width=initial_width,
                 widths=self.config.dynamics_dense_layer_widths,
@@ -308,11 +312,19 @@ class Dynamics(nn.Module):
             assert len(current_shape) == 2
             initial_width = current_shape[1]
 
-        self.reward = build_dense(
-            in_features=initial_width,
-            out_features=1,
-            sigma=0,
-        )
+        if config.support_range is not None:
+            self.full_support_size = 2 * config.support_range + 1
+            self.reward = build_dense(
+                in_features=initial_width,
+                out_features=self.full_support_size,
+                sigma=0,
+            )
+        else:
+            self.reward = build_dense(
+                in_features=initial_width,
+                out_features=1,
+                sigma=0,
+            )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_residual_layers:
@@ -348,21 +360,10 @@ class Dynamics(nn.Module):
             S = self.conv_layers(S)
 
         # (B, *) -> (B, dense_features_in)
-
-        # (B, dense_features_in) -> (B, dense_features_out)
-        if self.has_reward_conv_layers:
-            reward_vector = self.reward_conv_layers(S)
-            flattened_reward_vector = reward_vector.flatten(1, -1)
-        else:
-            flattened_reward_vector = S.flatten(1, -1)
-
-        if self.has_reward_dense_layers:
-            flattened_reward_vector = self.reward_dense_layers(flattened_reward_vector)
-
-        reward = self.reward(flattened_reward_vector)
-
         if self.has_dense_layers:
+            # print("S Shape", S.shape)
             flattened_hidden_state = S.flatten(1, -1)
+            # print("flattened shape", flattened_hidden_state.shape)
             S = self.dense_layers(flattened_hidden_state)
 
             # normalize inputs as per paper
@@ -395,6 +396,22 @@ class Dynamics(nn.Module):
             scale_hidden_state[scale_hidden_state < 1e-5] += 1e-5
             hidden_state = (S - min_hidden_state) / scale_hidden_state
 
+        # (B, dense_features_in) -> (B, dense_features_out)
+        if self.has_reward_conv_layers:
+            reward_vector = self.reward_conv_layers(S)
+            flattened_reward_vector = reward_vector.flatten(1, -1)
+        else:
+            flattened_reward_vector = hidden_state.flatten(1, -1)
+
+        if self.has_reward_dense_layers:
+            flattened_reward_vector = self.reward_dense_layers(flattened_reward_vector)
+
+        if self.config.support_range is None:
+            reward = self.reward(flattened_reward_vector)
+        else:
+            # TODO: should this be turned into an expected value and then in the loss function into a two hot?
+            reward = self.reward(flattened_reward_vector).softmax(dim=-1)
+
         return reward, hidden_state
 
 
@@ -416,9 +433,10 @@ class Prediction(nn.Module):
         self.has_residual_layers = len(config.residual_layers) > 0
         self.has_conv_layers = len(config.conv_layers) > 0
         self.has_dense_layers = len(config.dense_layer_widths) > 0
-        assert (
+        if not (
             self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
-        ), "At least one of the layers should be present."
+        ):
+            print("Warning no layers set for prediction network.")
 
         current_shape = input_shape
         B = current_shape[0]
@@ -583,11 +601,19 @@ class CriticNetwork(nn.Module):
             assert len(current_shape) == 2
             initial_width = current_shape[1]
 
-        self.value = build_dense(
-            in_features=initial_width,
-            out_features=1,
-            sigma=0,
-        )
+        if config.support_range is not None:
+            self.full_support_size = 2 * config.support_range + 1
+            self.value = build_dense(
+                in_features=initial_width,
+                out_features=self.full_support_size,
+                sigma=0,
+            )
+        else:
+            self.value = build_dense(
+                in_features=initial_width,
+                out_features=1,
+                sigma=0,
+            )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_conv_layers:
@@ -609,7 +635,11 @@ class CriticNetwork(nn.Module):
         if self.has_dense_layers:
             x = self.dense_layers(x)
         value = self.value(x)
-        return value.tanh()
+        if self.config.support_range is None:
+            return value
+        else:
+            # TODO: should this be turned into an expected value and then in the loss function into a two hot?
+            return value.softmax(dim=-1)
 
     def reset_noise(self):
         if self.has_conv_layers:
@@ -771,8 +801,11 @@ class Network(nn.Module):
             hidden_state = hidden_state.squeeze(0)
         # print("hidden state shape:", hidden_state.shape)
         # print("action shape:", self.action_function(action).shape)
-        nn_input = torch.concat((hidden_state, self.action_function(action)))
+        nn_input = torch.concat(
+            (hidden_state, self.action_function(action).to(hidden_state.device)), dim=0
+        )
         nn_input = nn_input.unsqueeze(0)
+        # print(nn_input.shape)
         reward, hidden_state = self.dynamics(nn_input)
         value, policy = self.prediction(hidden_state)
         # print("Hidden state:", hidden_state)

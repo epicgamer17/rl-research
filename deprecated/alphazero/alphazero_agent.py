@@ -3,7 +3,6 @@ from time import time
 
 from agent_configs import AlphaZeroConfig
 import torch
-from packages.utils.utils.utils import process_petting_zoo_obs
 from utils import (
     clip_low_prob_actions,
     normalize_policies,
@@ -17,12 +16,15 @@ from torch.optim.adam import Adam
 
 import sys
 
-sys.path.append("../")
+sys.path.append("../../")
 from base_agent.agent import MARLBaseAgent
 
 import copy
 import numpy as np
-from replay_buffers.alphazero_replay_buffer import AlphaZeroReplayBuffer, Game
+from replay_buffers.deprecated.alphazero_replay_buffer import (
+    AlphaZeroReplayBuffer,
+    Game,
+)
 from alphazero.alphazero_mcts import Node
 from alphazero.alphazero_network import Network
 from torch.nn.utils import clip_grad_norm_

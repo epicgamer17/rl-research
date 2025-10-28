@@ -76,13 +76,14 @@ class MuZeroConfig(Config):
             "root_exploration_fraction", 0.25
         )
         self.num_simulations: int = self.parse_field("num_simulations", 800)
-        self.num_sampling_moves: int = self.parse_field("num_sampling_moves", 30)
-        self.exploration_temperature: float = self.parse_field(
-            "exploration_temperature", 1.0
+
+        self.temperatures = self.parse_field("temperatures", [1.0, 0.1])
+        self.temperature_updates = self.parse_field("temperature_updates", [5])
+        self.temperature_with_training_steps = self.parse_field(
+            "temperature_with_training_steps", False
         )
-        self.exploitation_temperature: float = self.parse_field(
-            "exploitation_temperature", 0.1
-        )
+        assert len(self.temperatures) == len(self.temperature_updates) + 1
+
         self.clip_low_prob: float = self.parse_field("clip_low_prob", 0.0)
         self.pb_c_base: int = self.parse_field("pb_c_base", 19652)
         self.pb_c_init: float = self.parse_field("pb_c_init", 1.25)
@@ -108,10 +109,23 @@ class MuZeroConfig(Config):
         self.unroll_steps: int = self.parse_field("unroll_steps", 500)
 
         self.per_alpha: float = self.parse_field("per_alpha", 0.5)
-        self.per_beta: float = self.parse_field("per_beta_initial", 0.4)
+        self.per_beta: float = self.parse_field("per_beta", 0.5)
         self.per_beta_final: float = self.parse_field("per_beta_final", 1.0)
         self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
+        self.per_use_batch_weights: bool = self.parse_field(
+            "per_use_batch_weights", False
+        )
+        self.per_initial_priority_max: bool = self.parse_field(
+            "per_initial_priority_max", False
+        )
+
+        self.support_range: int = self.parse_field("support_range", None)
+
+        self.multi_process: bool = self.parse_field("multi_process", False)
+        self.num_workers: int = self.parse_field("num_workers", 4)
+        self.lr_ratio: float = self.parse_field("lr_ratio", float("inf"))
 
     def _verify_game(self):
         # override alphazero game verification since muzero can play those games
-        assert self.game.is_image, "MuZero only supports image-based games right now"
+        # assert self.game.is_image, "MuZero only supports image-based games right now"
+        pass

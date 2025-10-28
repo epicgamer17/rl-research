@@ -1,7 +1,8 @@
 from time import time
 import numpy as np
+import torch
 from replay_buffers.segment_tree import SumSegmentTree, MinSegmentTree
-from replay_buffers.fast_sum_tree import FastSumTree
+from replay_buffers.deprecated.fast_sum_tree import FastSumTree
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
 
 
@@ -257,9 +258,12 @@ class FastPrioritizedReplayBuffer(NStepReplayBuffer):
         assert len(self) >= self.batch_size
 
         priority_segment = self.tree.total_priority / self.batch_size
-        indices, weights = np.empty((self.batch_size,), dtype=np.int32), np.empty(
-            (self.batch_size, 1), dtype=np.float32
-        )
+        # indices, weights = np.empty((self.batch_size,), dtype=np.int32), np.empty(
+        #     (self.batch_size, 1), dtype=np.float32
+        # )
+        indices, weights = torch.zeros(
+            (self.batch_size,), dtype=torch.int32
+        ), torch.zeros((self.batch_size, 1), dtype=torch.float32)
         for i in range(self.batch_size):
             a, b = priority_segment * i, priority_segment * (i + 1)
             value = np.random.uniform(a, b)

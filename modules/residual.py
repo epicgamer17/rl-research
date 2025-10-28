@@ -101,6 +101,7 @@ class Residual(nn.Module):
             kernel_size=kernel_size,
             stride=stride,
             padding="same",
+            bias=False,
         )
 
         # REGULARIZATION?
@@ -114,6 +115,7 @@ class Residual(nn.Module):
             kernel_size=kernel_size,
             stride=stride,
             padding="same",
+            bias=False,
         )
 
         # REGULARIZATION?

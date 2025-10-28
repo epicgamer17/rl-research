@@ -1,6 +1,7 @@
 from copy import deepcopy
 from math import log, sqrt, inf
 import copy
+import math
 import numpy as np
 
 
@@ -23,7 +24,7 @@ class Node:
         policy_sum = sum(policy.values())
 
         for action, p in policy.items():
-            self.children[action] = Node(p / policy_sum)
+            self.children[action] = Node((p / (policy_sum + 1e-10)).item())
 
     def expanded(self):
         return len(self.children) > 0
@@ -42,31 +43,45 @@ class Node:
                 a
             ].prior_policy + frac * n
 
-    def select_child(self, min_max_stats, pb_c_base, pb_c_init, discount):
+    def select_child(self, min_max_stats, pb_c_base, pb_c_init, discount, num_players):
         # Select the child with the highest UCB
-        _, action, child = max(
-            [
-                (
-                    self.child_ucb_score(
-                        child, min_max_stats, pb_c_base, pb_c_init, discount
-                    ),
-                    action,
-                    child,
-                )
-                for action, child in self.children.items()
-            ]
+        child_ucbs = [
+            self.child_ucb_score(
+                child, min_max_stats, pb_c_base, pb_c_init, discount, num_players
+            )
+            for action, child in self.children.items()
+        ]
+        # print("Child UCBs", child_ucbs)
+        action_index = np.random.choice(
+            np.where(np.isclose(child_ucbs, max(child_ucbs)))[0]
         )
-        return action, child
+        action = list(self.children.keys())[action_index]
+        return action, self.children[action]
 
-    def child_ucb_score(self, child, min_max_stats, pb_c_base, pb_c_init, discount):
+    def child_ucb_score(
+        self, child, min_max_stats, pb_c_base, pb_c_init, discount, num_players
+    ):
         pb_c = log((self.visits + pb_c_base + 1) / pb_c_base) + pb_c_init
         pb_c *= sqrt(self.visits) / (child.visits + 1)
 
         prior_score = pb_c * child.prior_policy
         if child.visits > 0:
-            value_score = child.reward + discount * min_max_stats.normalize(
-                child.value()
+            value_score = min_max_stats.normalize(
+                child.reward
+                + discount
+                * (
+                    child.value() if num_players == 1 else -child.value()
+                )  # (or if on the same team)
             )
         else:
-            value_score = 0
+            value_score = 0.0
+
+        # check if value_score is nan
+        assert (
+            value_score == value_score
+        ), "value_score is nan, child value is {}, and reward is {},".format(
+            child.value(),
+            child.reward,
+        )
+        assert prior_score == prior_score, "prior_score is nan"
         return prior_score + value_score

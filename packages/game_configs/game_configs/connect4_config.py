@@ -2,7 +2,7 @@ from .game_config import GameConfig
 
 
 class Connect4Config(GameConfig):
-    def __init__(self):
+    def __init__(self, make_env=None):
         super(Connect4Config, self).__init__(
             max_score=1,
             min_score=-1,
@@ -13,5 +13,6 @@ class Connect4Config(GameConfig):
             perfect_information=True,
             multi_agent=True,
             num_players=2,
-            has_intermediate_rewards=False,
+            # has_intermediate_rewards=False,
+            make_env=make_env,
         )

@@ -1,7 +1,7 @@
 from calendar import c
 import numpy as np
 from sympy import N
-from replay_buffers.alphazero_replay_buffer import AlphaZeroReplayBuffer
+from replay_buffers.deprecated.alphazero_replay_buffer import AlphaZeroReplayBuffer
 from replay_buffers.base_replay_buffer import BaseGameReplayBuffer, Game
 
 

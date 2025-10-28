@@ -1,5 +1,7 @@
 import numpy as np
+import torch
 
+from packages.utils.utils.utils import action_mask
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
 
 from utils import augment_board
@@ -10,7 +12,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
     def __init__(
         self,
         observation_dimensions,
-        observation_dtype: np.dtype,
+        observation_dtype: torch.dtype,
         max_size: int,
         num_actions: int,
         batch_size: int = 32,
@@ -40,14 +42,18 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         """
         if self.size < self.max_size:
             self.observation_buffer[self.add_calls] = copy.deepcopy(observation)
-            self.info_buffer[self.add_calls] = copy.deepcopy(info)
+            self.action_mask_buffer[self.add_calls] = action_mask(
+                self.num_actions, info.get("legal_actions", [])
+            )
             self.target_policy_buffer[self.add_calls] = target_policy
             self.size = min(self.size + 1, self.max_size)
         else:
             idx = np.random.randint(0, self.add_calls + 1)
             if idx < self.max_size:
                 self.observation_buffer[idx] = copy.deepcopy(observation)
-                self.info_buffer[idx] = copy.deepcopy(info)
+                self.action_mask_buffer[idx] = action_mask(
+                    self.num_actions, info.get("legal_actions", [])
+                )
                 self.target_policy_buffer[idx] = target_policy
         self.add_calls += 1
 
@@ -57,7 +63,8 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         indices = np.random.choice(len(self), self.batch_size, replace=False)
         return dict(
             observations=self.observation_buffer[indices],
-            infos=self.info_buffer[indices],
+            action_masks=self.action_mask_buffer[indices],
+            current_players=self.current_player_buffer[indices],
             targets=self.target_policy_buffer[indices],
         )
 
@@ -96,18 +103,19 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         # )
 
     def clear(self):
-        if self.compressed_observations:
-            self.observation_buffer = np.zeros(self.max_size, dtype=np.object_)
-        else:
-            observation_buffer_shape = (self.max_size,) + self.observation_dimensions
+        observation_buffer_shape = (self.max_size,) + self.observation_dimensions
 
-            print(observation_buffer_shape)
-            self.observation_buffer = np.zeros(
-                observation_buffer_shape, dtype=self.observation_dtype
-            )
-        self.info_buffer = np.zeros(self.max_size, dtype=np.object_)
-        self.target_policy_buffer = np.zeros(
-            (self.max_size, self.num_actions), dtype=np.float16
+        print(observation_buffer_shape)
+        self.observation_buffer = torch.zeros(
+            observation_buffer_shape, dtype=self.observation_dtype
+        )
+        # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
+        self.action_mask_buffer = torch.zeros(
+            (self.max_size, self.num_actions), dtype=torch.bool
+        )
+
+        self.target_policy_buffer = torch.zeros(
+            (self.max_size, self.num_actions), dtype=torch.float16
         )
         self.size = 0
         self.add_calls = 0

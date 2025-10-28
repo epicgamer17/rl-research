@@ -14,7 +14,7 @@ from time import time
 
 sys.path.append("../")
 
-from replay_buffers.a2c_replay_buffer import A2CReplayBuffer
+from replay_buffers.deprecated.a2c_replay_buffer import A2CReplayBuffer
 from a2c_network import A2CNetwork
 import numpy as np
 import gymnasium as gym
@@ -42,7 +42,9 @@ class A2CAgent(BaseAgent):
         ),
         from_checkpoint=False,
     ):
-        super(A2CAgent, self).__init__(env, config, name, device=device, from_checkpoint=from_checkpoint)
+        super(A2CAgent, self).__init__(
+            env, config, name, device=device, from_checkpoint=from_checkpoint
+        )
         self.model = A2CNetwork(
             config=config,
             output_size=self.num_actions,
@@ -119,12 +121,12 @@ class A2CAgent(BaseAgent):
             "score": self.env.spec.reward_threshold,
             "test_score": self.env.spec.reward_threshold,
         }
-    
+
     def checkpoint_optimizer_state(self, checkpoint):
         checkpoint["actor_optimizer"] = self.actor_optimizer.state_dict()
         checkpoint["critic_optimizer"] = self.critic_optimizer.state_dict()
         return checkpoint
-    
+
     def load_optimizer_state(self, checkpoint):
         self.actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
         self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
@@ -204,7 +206,9 @@ class A2CAgent(BaseAgent):
 
         critic_loss = 0.0
         for i in range(len(values)):
-            critic_loss += self.config.critic_coefficient * (returns[i] - values[i]) ** 2
+            critic_loss += (
+                self.config.critic_coefficient * (returns[i] - values[i]) ** 2
+            )
         critic_loss = critic_loss / len(values)
         self.critic_optimizer.zero_grad()
         critic_loss.backward()

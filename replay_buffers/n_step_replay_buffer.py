@@ -1,6 +1,8 @@
 import numpy as np
 from collections import deque
 
+import torch
+
 from replay_buffers.base_replay_buffer import BaseDQNReplayBuffer, BaseReplayBuffer
 
 
@@ -8,7 +10,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
     def __init__(
         self,
         observation_dimensions: tuple,
-        observation_dtype: np.dtype,
+        observation_dtype: torch.dtype,
         max_size: int,
         batch_size: int = 32,
         n_step: int = 1,
