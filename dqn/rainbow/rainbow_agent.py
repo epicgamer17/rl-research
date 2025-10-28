@@ -256,10 +256,10 @@ class RainbowAgent(BaseAgent):
                 samples["dones"].to(self.device),
             )
 
-            next_action_masks = samples["next_action_masks"].to(self.device)
+            next_legal_moves_masks = samples["next_legal_moves_masks"].to(self.device)
             next_infos = [
                 {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
-                for mask in next_action_masks
+                for mask in next_legal_moves_masks
             ]
             # next_infos = samples["next_infos"].to(self.device)
             target_predictions = self.predict_target(next_observations)  # next q values
@@ -348,10 +348,10 @@ class RainbowAgent(BaseAgent):
 
             # print(samples["next_infos"])
             # recreate legal moves from action masks samples
-            next_action_masks = samples["next_action_masks"].to(self.device)
+            next_legal_moves_masks = samples["next_legal_moves_masks"].to(self.device)
             next_infos = [
                 {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
-                for mask in next_action_masks
+                for mask in next_legal_moves_masks
             ]
             next_actions = self.select_actions(
                 online_distributions,

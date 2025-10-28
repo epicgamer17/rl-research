@@ -2,7 +2,11 @@ import copy
 
 import numpy as np
 import torch
-from utils import action_mask, numpy_dtype_to_torch_dtype, discounted_cumulative_sums
+from utils import (
+    legal_moves_mask,
+    numpy_dtype_to_torch_dtype,
+    discounted_cumulative_sums,
+)
 
 
 class BaseReplayBuffer:
@@ -162,10 +166,10 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         self.done_buffer[self.pointer] = done
         # self.info_buffer[self.pointer] = copy.deepcopy(info)
         # self.next_info_buffer[self.pointer] = copy.deepcopy(next_info)
-        # self.action_mask_buffer[self.pointer] = action_mask(
+        # self.legal_moves_mask_buffer[self.pointer] = legal_moves_mask(
         #     self.num_actions, info.get("legal_actions", [])
         # )
-        self.next_action_mask_buffer[self.pointer] = action_mask(
+        self.next_legal_moves_mask_buffer[self.pointer] = legal_moves_mask(
             self.num_actions, next_info.get("legal_actions", [])
         )
 
@@ -188,10 +192,10 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         self.done_buffer = torch.zeros(self.max_size, dtype=torch.bool)
         # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
         # self.next_info_buffer = torch.zeros(self.max_size, dtype=torch.object)
-        # self.action_mask_buffer = torch.zeros(
+        # self.legal_moves_mask_buffer = torch.zeros(
         #     (self.max_size, self.num_actions), dtype=torch.bool
         # )
-        self.next_action_mask_buffer = torch.zeros(
+        self.next_legal_moves_mask_buffer = torch.zeros(
             (self.max_size, self.num_actions), dtype=torch.bool
         )
         self.pointer = 0
@@ -209,8 +213,8 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             # ids=self.id_buffer[indices],
             # info=self.info_buffer[indices],
             # next_info=self.next_info_buffer[indices],
-            # action_masks=self.action_mask_buffer[indices],
-            next_action_masks=self.next_action_mask_buffer[indices],
+            # legal_moves_masks=self.legal_moves_mask_buffer[indices],
+            next_legal_moves_masks=self.next_legal_moves_mask_buffer[indices],
         )
 
     def sample_from_indices(self, indices: list[int]):
@@ -223,8 +227,8 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             ids=self.id_buffer[indices],
             # infos=self.info_buffer[indices],
             # next_infos=self.next_info_buffer[indices],
-            # action_masks=self.action_mask_buffer[indices],
-            next_action_masks=self.next_action_mask_buffer[indices],
+            # legal_moves_masks=self.legal_moves_mask_buffer[indices],
+            next_legal_moves_masks=self.next_legal_moves_mask_buffer[indices],
         )
 
     def __check_id__(self, index: int, id: str) -> bool:
@@ -265,7 +269,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         self.value_buffer[self.pointer] = value
         self.log_probability_buffer[self.pointer] = log_probability
         # self.info_buffer[self.pointer] = copy.deepcopy(info)
-        self.action_mask_buffer[self.pointer] = action_mask(
+        self.legal_moves_mask_buffer[self.pointer] = legal_moves_mask(
             self.num_actions, info.get("legal_actions", [])
         )
 
@@ -291,7 +295,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
             advantages=self.advantage_buffer,
             returns=self.return_buffer,
             log_probabilities=self.log_probability_buffer,
-            action_masks=self.action_mask_buffer,
+            legal_moves_masks=self.legal_moves_mask_buffer,
         )
 
     def clear(self):
@@ -311,7 +315,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         self.value_buffer = torch.zeros(self.max_size, dtype=torch.float16)
         self.log_probability_buffer = torch.zeros(self.max_size, dtype=torch.float16)
         # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
-        self.action_mask_buffer = torch.zeros(
+        self.legal_moves_mask_buffer = torch.zeros(
             (self.max_size, self.num_actions), dtype=torch.bool
         )
 
