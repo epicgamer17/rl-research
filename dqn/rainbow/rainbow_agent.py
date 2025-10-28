@@ -414,7 +414,10 @@ class RainbowAgent(BaseAgent):
                     )
                 # dist = self.predict(state)
                 # action = self.select_actions(dist).item()
-                action = self.env.action_space.sample()
+                if "legal_moves" in info:
+                    action = np.random.choice(info["legal_moves"])
+                else:
+                    action = self.env.action_space.sample()
                 next_state, reward, terminated, truncated, next_info = self.env.step(
                     action
                 )
