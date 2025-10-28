@@ -38,6 +38,26 @@ def normalize_policies(policies: torch.float32):
     return policies
 
 
+def legal_moves_mask(num_actions: int, legal_moves, device="cpu"):
+    assert isinstance(
+        legal_moves, list
+    ), "Legal moves should be a list got {} of type {}".format(
+        legal_moves, type(legal_moves)
+    )
+    # add a dimension if the legal moves are not a list of lists
+
+    # assert (
+    #     len(legal_moves) == actions.shape[0]
+    # ), "Legal moves should be the same length as the batch size"
+    legal_mask = torch.ones(num_actions)
+    mask = torch.zeros_like(legal_mask, dtype=torch.bool).to(device)
+    for i, legal in enumerate(legal_moves):
+        mask[i, legal] = True
+    legal_mask = torch.where(mask, legal_mask, torch.tensor(0).to(device)).to(device)
+
+    return legal_mask
+
+
 def action_mask(
     actions: Tensor, legal_moves, mask_value: float = 0, device="cpu"
 ) -> Tensor:
