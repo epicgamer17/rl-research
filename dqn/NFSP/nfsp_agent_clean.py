@@ -44,7 +44,6 @@ from stats.stats import PlotType, StatTracker
 from utils import (
     current_timestamp,
     update_per_beta,
-    process_petting_zoo_obs,
     epsilon_greedy_policy,
 )
 
@@ -265,9 +264,6 @@ class NFSPDQN(MARLBaseAgent):
         done = termination or truncation
         agent_id = self.env.agent_selection
         current_player = self.env.agents.index(agent_id)
-        # print(done)
-        state, info = process_petting_zoo_obs(state, info, current_player)
-
         for training_step in tqdm(range(self.start_training_step, self.training_steps)):
             # print(training_step)
             with torch.no_grad():
@@ -329,9 +325,6 @@ class NFSPDQN(MARLBaseAgent):
                     info = next_info
                     agent_id = self.env.agent_selection
                     current_player = self.env.agents.index(agent_id)
-                    # print(done)
-                    state, info = process_petting_zoo_obs(state, info, current_player)
-
                     if done:
                         # Store final transitions for all players before reset
                         for p in range(self.config.game.num_players):
@@ -346,16 +339,10 @@ class NFSPDQN(MARLBaseAgent):
 
                         # Reset environment and get new episode
                         self.env.reset()
-                        agent_id = self.env.agent_selection
-                        current_player = self.env.agents.index(agent_id)
                         state, reward, termination, truncation, info = self.env.last()
                         done = termination or truncation
                         agent_id = self.env.agent_selection
                         current_player = self.env.agents.index(agent_id)
-                        # print(done)
-                        state, info = process_petting_zoo_obs(
-                            state, info, current_player
-                        )
                         self.select_agent_policies()
 
                         # Reset previous states for new episode
