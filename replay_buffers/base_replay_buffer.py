@@ -155,10 +155,10 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
     ):
         # compute n-step return and store
         # self.id_buffer[self.pointer] = id
-        self.observation_buffer[self.pointer] = copy.deepcopy(observation)
+        self.observation_buffer[self.pointer] = torch.from_numpy(observation)
         self.action_buffer[self.pointer] = action
         self.reward_buffer[self.pointer] = reward
-        self.next_observation_buffer[self.pointer] = copy.deepcopy(next_observation)
+        self.next_observation_buffer[self.pointer] = torch.from_numpy(next_observation)
         self.done_buffer[self.pointer] = done
         # self.info_buffer[self.pointer] = copy.deepcopy(info)
         # self.next_info_buffer[self.pointer] = copy.deepcopy(next_info)
