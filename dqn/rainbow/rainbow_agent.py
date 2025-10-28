@@ -90,6 +90,7 @@ class RainbowAgent(BaseAgent):
             observation_dimensions=self.observation_dimensions,
             observation_dtype=self.observation_dtype,
             max_size=self.config.replay_buffer_size,
+            num_actions=self.num_actions,
             batch_size=self.config.minibatch_size,
             max_priority=1.0,
             alpha=self.config.per_alpha,

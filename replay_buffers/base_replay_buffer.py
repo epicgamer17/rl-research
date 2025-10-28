@@ -128,11 +128,13 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         observation_dimensions: tuple,
         observation_dtype: torch.dtype,
         max_size: int,
+        num_actions: int,
         batch_size: int = 32,
         compressed_observations: bool = False,
     ):
         self.observation_dimensions = observation_dimensions
         self.observation_dtype = observation_dtype
+        self.num_actions = (num_actions,)
         print(observation_dtype)
         super().__init__(
             max_size=max_size,
