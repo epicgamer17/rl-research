@@ -286,3 +286,63 @@ class FrameStackWrapper(BaseWrapper):
 
     def step(self, action: ActionType) -> None:
         self.env.step(action)
+
+
+import gymnasium as gym
+from gymnasium.core import Wrapper
+from typing import Any, Tuple, Dict, SupportsFloat as float_t
+
+
+class CatanatronWrapper(Wrapper):
+    """
+    A Gymnasium wrapper to rename a specific key within the 'info' dictionary
+    returned by the environment's step method.
+
+    This is useful for standardizing environment metadata, such as changing
+    'valid_actions' (used in some older or custom environments) to
+    'legal_moves' (a more common term in board/turn-based games).
+
+    In this specific implementation, it changes "valid_actions" to "legal_moves".
+
+    If the original key does not exist, the info dictionary is returned unmodified.
+    """
+
+    def __init__(self, env: gym.Env):
+        """
+        Initializes the wrapper.
+
+        Args:
+            env: The environment to wrap.
+        """
+        super().__init__(env)
+        self.old_key = "valid_actions"
+        self.new_key = "legal_moves"
+
+    def step(self, action: Any) -> Tuple[Any, float_t, bool, bool, Dict[str, Any]]:
+        """
+        Performs a step in the environment and renames the key in the info dictionary.
+
+        Args:
+            action: The action to take.
+
+        Returns:
+            obs (Any): The new observation.
+            reward (float_t): The reward from the step.
+            terminated (bool): Whether the episode terminated.
+            truncated (bool): Whether the episode truncated.
+            info (Dict[str, Any]): The modified info dictionary.
+        """
+        # Call the wrapped environment's step method
+        obs, reward, terminated, truncated, info = self.env.step(action)
+
+        # Check if the old key exists in the info dictionary
+        if self.old_key in info:
+            # 1. Copy the value to the new key
+            info[self.new_key] = info[self.old_key]
+            # 2. Delete the old key
+            del info[self.old_key]
+
+            # Note: For demonstration purposes below, we'll also inject a mock key
+            # if the environment doesn't provide one.
+
+        return obs, reward, terminated, truncated, info

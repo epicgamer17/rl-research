@@ -467,9 +467,6 @@ class RainbowAgent(BaseAgent):
         state, info = self.env.reset()
 
         while self.training_step < self.config.training_steps:
-            if self.training_step % self.config.print_interval == 0:
-                self.print_training_progress()
-
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     values = self.predict(state)
