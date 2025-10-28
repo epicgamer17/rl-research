@@ -42,12 +42,9 @@ import copy
 import torch
 from stats.stats import PlotType, StatTracker
 from utils import (
-    get_legal_moves,
     current_timestamp,
     update_per_beta,
-    plot_graphs,
     process_petting_zoo_obs,
-    action_mask,
     epsilon_greedy_policy,
 )
 
