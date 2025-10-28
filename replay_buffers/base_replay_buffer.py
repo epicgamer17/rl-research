@@ -187,7 +187,7 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
             dtype=numpy_dtype_to_torch_dtype(self.observation_dtype),
         )
 
-        self.action_buffer = torch.zeros(self.max_size, dtype=torch.uint16)
+        self.action_buffer = torch.zeros(self.max_size, dtype=torch.int16)
         self.reward_buffer = torch.zeros(self.max_size, dtype=torch.float16)
         self.done_buffer = torch.zeros(self.max_size, dtype=torch.bool)
         # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
