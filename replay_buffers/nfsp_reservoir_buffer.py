@@ -1,10 +1,8 @@
 import numpy as np
 import torch
 
-from packages.utils.utils.utils import action_mask
+from utils import action_mask, numpy_dtype_to_torch_dtype
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
-
-from utils import augment_board
 import copy
 
 
@@ -41,7 +39,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         :param id: the id of the transition
         """
         if self.size < self.max_size:
-            self.observation_buffer[self.add_calls] = copy.deepcopy(observation)
+            self.observation_buffer[self.add_calls] = torch.from_numpy(observation)
             self.action_mask_buffer[self.add_calls] = action_mask(
                 self.num_actions, info.get("legal_actions", [])
             )
@@ -50,7 +48,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         else:
             idx = np.random.randint(0, self.add_calls + 1)
             if idx < self.max_size:
-                self.observation_buffer[idx] = copy.deepcopy(observation)
+                self.observation_buffer[idx] = torch.from_numpy(observation)
                 self.action_mask_buffer[idx] = action_mask(
                     self.num_actions, info.get("legal_actions", [])
                 )
@@ -107,7 +105,8 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
 
         print(observation_buffer_shape)
         self.observation_buffer = torch.zeros(
-            observation_buffer_shape, dtype=self.observation_dtype
+            observation_buffer_shape,
+            dtype=numpy_dtype_to_torch_dtype(self.observation_dtype),
         )
         # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
         self.action_mask_buffer = torch.zeros(
