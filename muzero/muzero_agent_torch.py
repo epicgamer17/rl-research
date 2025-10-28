@@ -602,7 +602,9 @@ class MuZeroAgent(MARLBaseAgent):
 
             self.optimizer.step()
 
-            self.replay_buffer.update_priorities(samples["indices"], priorities)
+            self.replay_buffer.update_priorities(
+                samples["indices"], priorities.detach()
+            )
 
         # Convert tensors to float for return values
         return (

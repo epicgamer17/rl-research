@@ -315,8 +315,7 @@ class RainbowAgent(BaseAgent):
         self.optimizer.step()
         self.update_replay_priorities(
             samples=samples,
-            priorities=elementwise_loss.detach().to("cpu").numpy()
-            + self.config.per_epsilon,
+            priorities=elementwise_loss.detach() + self.config.per_epsilon,
         )
         self.model.reset_noise()
         self.target_model.reset_noise()
