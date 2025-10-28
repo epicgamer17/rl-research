@@ -26,7 +26,7 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
             observation_dimensions=observation_dimensions,
             observation_dtype=observation_dtype,
             max_size=max_size,
-            num_actions=num_actions
+            num_actions=num_actions,
             batch_size=batch_size,
             compressed_observations=compressed_observations,
         )
