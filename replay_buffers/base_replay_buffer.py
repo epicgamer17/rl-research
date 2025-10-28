@@ -134,7 +134,7 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
     ):
         self.observation_dimensions = observation_dimensions
         self.observation_dtype = observation_dtype
-        self.num_actions = (num_actions,)
+        self.num_actions = num_actions
         print(observation_dtype)
         super().__init__(
             max_size=max_size,
