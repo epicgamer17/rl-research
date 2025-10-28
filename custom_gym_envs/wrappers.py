@@ -346,3 +346,25 @@ class CatanatronWrapper(Wrapper):
             # if the environment doesn't provide one.
 
         return obs, reward, terminated, truncated, info
+
+    def reset(self, **kwargs) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Resets the environment and renames the key in the initial info dictionary.
+
+        Args:
+            **kwargs: Keyword arguments passed to the environment's reset method
+                      (e.g., 'seed' or 'options').
+
+        Returns:
+            obs (Any): The initial observation.
+            info (Dict[str, Any]): The modified info dictionary.
+        """
+        # Call the wrapped environment's reset method
+        obs, info = self.env.reset(**kwargs)
+
+        # Apply the same key renaming logic
+        if self.old_key in info:
+            info[self.new_key] = info[self.old_key]
+            del info[self.old_key]
+
+        return obs, info

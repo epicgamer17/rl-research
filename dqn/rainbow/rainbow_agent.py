@@ -522,12 +522,15 @@ class RainbowAgent(BaseAgent):
             if self.training_step % self.config.transfer_interval == 0:
                 self.update_target_model()
 
+            if self.training_step % self.test_interval == 0:
+                self.run_tests(self.stats)
+
             if self.training_step % self.checkpoint_interval == 0:
                 self.stats.set_time_elapsed(time() - start_time)
                 self.stats.increment_steps(
                     self.training_step * self.config.replay_interval
                 )
-                self.save_checkpoint()
+                self.save_checkpoint(save_weights=self.config.save_intermediate_weights)
             # gc.collect()
             self.training_step += 1
 

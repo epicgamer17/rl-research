@@ -40,6 +40,7 @@ from agent_configs import NFSPDQNConfig
 import copy
 
 import torch
+from stats.stats import PlotType, StatTracker
 from utils import (
     get_legal_moves,
     current_timestamp,
@@ -114,25 +115,37 @@ class NFSPDQN(MARLBaseAgent):
         self.previous_infos = [None] * self.config.game.num_players
         self.previous_actions = [None] * self.config.game.num_players
 
-        self.stats = (
-            {
-                "rl_loss": [],
-                "sl_loss": [],
-                "exploitability": [],
-                "test_score_vs_random": [],
-            }
-            if self.config.anticipatory_param != 1.0
-            else {"rl_loss": [], "test_score": []}
-        )
+        test_score_keys = [
+            "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
+        ]
 
-        self.targets = (
-            {
-                "exploitability": 0,
-            }
-            if self.config.anticipatory_param != 1.0
-            else {}
+        self.stats = StatTracker(
+            model_name=self.model_name,
+            stat_keys=[
+                "rl_loss",
+                "sl_loss",
+                "test_score",
+            ]
+            + test_score_keys,
+            target_values={},
+            use_tensor_dicts={
+                **{
+                    key: ["score"]
+                    + [
+                        "player_{}_score".format(player)
+                        for player in range(self.config.game.num_players)
+                    ]
+                    + [
+                        "player_{}_win%".format(player)
+                        for player in range(self.config.game.num_players)
+                    ]
+                    for key in test_score_keys
+                },
+            },
         )
-
+        self.stats.add_plot_types("test_score", PlotType.BEST_FIT_LINE)
+        self.stats.add_plot_types("rl_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("sl_loss", PlotType.ROLLING_AVG, rolling_window=100)
         self.start_training_step = 0
 
     def select_agent_policies(self):
@@ -376,10 +389,10 @@ class NFSPDQN(MARLBaseAgent):
             for minibatch in range(self.config.num_minibatches):
                 rl_loss, sl_loss = self.learn()
                 if rl_loss is not None:
-                    self.stats["rl_loss"].append({"loss": rl_loss})
+                    self.stats.append("rl_loss", rl_loss)
                     # print(f"   RL loss: {rl_loss:.6f}")
                 if sl_loss is not None:
-                    self.stats["sl_loss"].append({"loss": sl_loss})
+                    self.stats.append("sl_loss", sl_loss)
                     # print(f"   SL loss: {sl_loss:.6f}")
 
             # Update target networks
@@ -537,112 +550,7 @@ class NFSPDQN(MARLBaseAgent):
                 ].model.state_dict()
         return checkpoint
 
-    def save_checkpoint(
-        self,
-        training_step=None,
-        frames_seen=None,
-        time_taken=None,
-    ):
-        if not frames_seen is None:
-            print(
-                "warning: frames_seen option is deprecated, update self.total_environment_steps instead"
-            )
-
-        if not time_taken is None:
-            print(
-                "warning: time_taken option is deprecated, update self.training_time instead"
-            )
-
-        if not training_step is None:
-            print(
-                "warning: training_step option is deprecated, update self.training_step instead"
-            )
-
-        dir = Path("checkpoints", self.model_name)
-        training_step_dir = Path(dir, f"step_{training_step}")
-        os.makedirs(dir, exist_ok=True)
-
-        # save the model state
-        if self.config.save_intermediate_weights:
-            weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
-            os.makedirs(Path(training_step_dir, "model_weights"), exist_ok=True)
-            checkpoint = self.make_checkpoint_dict()
-            torch.save(checkpoint, weights_path)
-
-        if self.env.render_mode == "rgb_array":
-            os.makedirs(Path(training_step_dir, "videos"), exist_ok=True)
-
-        # save config
-        os.makedirs(Path(dir, "configs"), exist_ok=True)
-        self.config.dump(f"{dir}/configs/config.yaml")
-        os.makedirs(Path(dir, "stats"), exist_ok=True)
-        pickle.dump(self.stats, open(f"{dir}/stats/stats.pkl", "wb"))
-
-        if self.config.anticipatory_param != 1.0:
-            exploitability = 0
-            avg_score_vs_random = 0
-            for p in range(self.config.game.num_players):
-                test_score = self.test(
-                    self.checkpoint_trials, p, training_step, training_step_dir
-                )
-                exploitability += test_score
-
-                test_player_win_percentage, test_player_average_score = (
-                    self.test_vs_random(
-                        self.checkpoint_trials, p, training_step, training_step_dir
-                    )
-                )
-                avg_score_vs_random += test_player_average_score
-            exploitability /= self.config.game.num_players
-            avg_score_vs_random /= self.config.game.num_players
-
-            # exploitability /= self.config.num_players
-            self.stats["exploitability"].append({"exploitability": exploitability})
-            self.stats["test_score_vs_random"].append({"score": avg_score_vs_random})
-
-        else:
-            test_score = -self.test(
-                self.checkpoint_trials, 0, training_step, training_step_dir
-            )
-            self.stats["test_score"].append({"score": test_score})
-
-        # save the graph stats and targets
-        os.makedirs(
-            Path(training_step_dir, f"graphs_stats", exist_ok=True), exist_ok=True
-        )
-        with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "wb") as f:
-            pickle.dump(self.stats, f)
-        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "wb") as f:
-            pickle.dump(self.targets, f)
-
-        # to periodically clear uneeded memory, if it is drastically slowing down training you can comment this out, checkpoint less often, or do less trials
-        gc.collect()
-
-        os.makedirs(Path(dir, "graphs"), exist_ok=True)
-        plot_graphs(
-            self.stats,
-            self.targets,
-            self.training_step if training_step is None else training_step,
-            self.total_environment_steps if frames_seen is None else frames_seen,
-            self.training_time if time_taken is None else time_taken,
-            self.model_name,
-            f"{dir}/graphs",
-        )
-
-    def test_vs_random(self, num_trials, player=None, step=None, dir="./checkpoints"):
-        """
-        Test the trained NFSP agent against a random agent
-        """
-        original_policies = self.policies.copy()
-        self.policies = ["average_strategy"] * self.config.game.num_players
-
-        test_results = super().test_vs_random(num_trials, player, step, dir)
-
-        self.policies = original_policies
-
-        return test_results
-
-    def test(self, num_trials, player=None, step=None, dir="./checkpoints"):
+    def test(self, num_trials, player=None, dir="./checkpoints"):
         """
         Test the trained NFSP agent against itself or specific players
 
@@ -652,21 +560,25 @@ class NFSPDQN(MARLBaseAgent):
             step: Training step for logging
             dir: Directory for saving results
         """
-        # Set test agent to average strategy, and all other agents to best response (see how much a best response can exploit the average strategy)
-        original_policies = self.policies.copy()
-        self.policies = ["best_response"] * self.config.game.num_players
-        self.policies[player] = (
-            "average_strategy"
-            if self.config.anticipatory_param != 1.0
-            else "best_response"
-        )
+        final_exploitability = 0
+        for player in range(self.config.game.num_players):
+            # Set test agent to average strategy, and all other agents to best response (see how much a best response can exploit the average strategy)
+            original_policies = self.policies.copy()
+            self.policies = ["best_response"] * self.config.game.num_players
+            self.policies[player] = (
+                "average_strategy"
+                if self.config.anticipatory_param != 1.0
+                else "best_response"
+            )
 
-        test_results = super().test(num_trials, player, step, dir)
-        exploitability = -test_results["score"]
+            test_results = super().test(num_trials // 2, player, dir)
+            exploitability = -test_results["score"]
 
-        # Restore original policies
-        self.policies = original_policies
-        return exploitability
+            # Restore original policies
+            self.policies = original_policies
+            final_exploitability += exploitability
+        final_exploitability /= self.config.game.num_players
+        return final_exploitability
 
     def load_from_checkpoint(agent_class, config_class, dir: str, training_step):
         # load the config and checkpoint
