@@ -9,7 +9,6 @@ import gymnasium as gym
 import copy
 from agents.random import RandomAgent
 from stats.stats import StatTracker
-from tensordict import TensorDict
 
 from tqdm import tqdm
 from agent_configs import Config

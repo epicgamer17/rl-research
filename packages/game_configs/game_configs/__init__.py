@@ -8,3 +8,4 @@ from .leduc_holdem_config import LeducHoldemConfig
 from .classiccontrol_config import ClassicControlConfig
 from .blackjack_config import BlackjackConfig
 from .matching_pennies_config import MatchingPenniesConfig
+from .catan_config import CatanConfig, SinglePlayerCatanConfig
