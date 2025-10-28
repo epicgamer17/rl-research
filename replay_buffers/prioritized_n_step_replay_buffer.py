@@ -125,7 +125,9 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
         else:
             indices = np.random.choice(self.size, size=self.batch_size, replace=False)
             # print(indices)
-        weights = np.array([self._calculate_weight(i) for i in indices])
+        weights = torch.tensor(
+            [self._calculate_weight(i) for i in indices], dtype=torch.float32
+        )
 
         n_step_samples = self.sample_from_indices(indices)
         # print(n_step_samples)
@@ -160,8 +162,8 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
                 )
                 assert 0 <= index < len(self)
 
-                if self.id_buffer[index] != id:
-                    continue
+                # if self.id_buffer[index] != id:
+                #     continue
 
                 self.sum_tree[index] = priority**self.alpha
                 self.min_tree[index] = priority**self.alpha
