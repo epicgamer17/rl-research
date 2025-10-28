@@ -461,7 +461,7 @@ class RainbowAgent(BaseAgent):
 
     def train(self):
         super().train()
-        start_time = time() - self.training_time
+        start_time = time() - self.stats.get_time_elapsed()
         score = 0
         self.fill_replay_buffer()
 
