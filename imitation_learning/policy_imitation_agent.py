@@ -41,7 +41,8 @@ class PolicyImitationAgent(BaseAgent):
             config,
             self.num_actions,
             (self.config.minibatch_size,) + self.observation_dimensions,
-        )
+        ).to(device)
+
         if self.config.optimizer == Adam:
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
                 params=self.model.parameters(),
