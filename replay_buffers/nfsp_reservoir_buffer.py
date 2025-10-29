@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from utils import legal_move_mask, numpy_dtype_to_torch_dtype
+from utils import legal_moves_mask, numpy_dtype_to_torch_dtype
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
 import copy
 
