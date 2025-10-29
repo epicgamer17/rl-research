@@ -51,7 +51,7 @@ class PPOAgent(BaseAgent):
             output_size=self.num_actions,
             input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
-        )
+        ).to(self.device)
 
         if self.config.actor.optimizer == Adam:
             self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(

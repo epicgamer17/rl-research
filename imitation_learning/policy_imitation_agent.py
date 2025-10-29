@@ -41,7 +41,7 @@ class PolicyImitationAgent(BaseAgent):
             config,
             self.num_actions,
             (self.config.minibatch_size,) + self.observation_dimensions,
-        ).to(device)
+        ).to(self.device)
 
         if self.config.optimizer == Adam:
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
@@ -72,8 +72,8 @@ class PolicyImitationAgent(BaseAgent):
         state_input = self.preprocess(state)
         policy = self.model(inputs=state_input)
         if "legal_moves" in info:
-            legal_moves = get_legal_moves(info)
-            policy = action_mask(policy, legal_moves, mask_value=0)
+            legal_moves = get_legal_moves(info).to(self.device)
+            policy = action_mask(policy, legal_moves, mask_value=0, device=self.device)
             # print("Original", policy)
             policy = normalize_policies(policy)
             policy = clip_low_prob_actions(policy, self.config.clip_low_prob)

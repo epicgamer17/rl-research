@@ -623,7 +623,7 @@ class MuZeroAgent(MARLBaseAgent):
         value, policy, hidden_state = self.model.initial_inference(state_input)
         # should we action mask the priors?
         # legal_moves = get_legal_moves(info)
-        # policy = action_mask(policy, legal_moves)
+        # policy = action_mask(policy, legal_moves, device=self.device)
         # policy = policy / torch.sum(policy)  # Normalize policy
         return value[0], policy[0], hidden_state
 
