@@ -72,7 +72,7 @@ class PolicyImitationAgent(BaseAgent):
         state_input = self.preprocess(state)
         policy = self.model(inputs=state_input)
         if "legal_moves" in info:
-            legal_moves = get_legal_moves(info).to(self.device)
+            legal_moves = get_legal_moves(info)
             policy = action_mask(policy, legal_moves, mask_value=0, device=self.device)
             # print("Original", policy)
             policy = normalize_policies(policy)
