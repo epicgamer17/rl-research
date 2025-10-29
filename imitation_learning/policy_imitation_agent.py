@@ -87,11 +87,11 @@ class PolicyImitationAgent(BaseAgent):
             # targets = torch.from_numpy(sample["targets"]).to(self.device)
             targets = sample["targets"].to(self.device)
 
-            legal_move_masks = sample["legal_move_masks"].to(self.device)
+            legal_moves_masks = sample["legal_moves_masks"].to(self.device)
             # recreate infos from action masks
             infos = [
                 {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
-                for mask in legal_move_masks
+                for mask in legal_moves_masks
             ]
 
             policy = self.predict(observations, infos)
