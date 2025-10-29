@@ -298,7 +298,7 @@ class MuZeroAgent(MARLBaseAgent):
                     update_per_beta(
                         self.replay_buffer.beta,
                         self.config.per_beta_final,
-                        self.training_steps,
+                        self.config.training_steps,
                         self.config.per_beta,
                     )
                 )

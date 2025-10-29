@@ -232,10 +232,6 @@ class NFSPDQN(MARLBaseAgent):
                 *transition,
                 player=player if self.config.shared_networks_and_buffers else 0,
             )
-            # print("experience stored in RL buffer")
-            # print("reward:", reward)
-            # print("player:", player)
-            # print("info:", info)
 
         if not done:
             # print("experience cached for next step")
@@ -252,8 +248,6 @@ class NFSPDQN(MARLBaseAgent):
         pass
 
     def train(self):
-        training_time = time()
-
         self.select_agent_policies()
         print(f"🎯 Initial policies: {self.policies}")
 
@@ -264,7 +258,7 @@ class NFSPDQN(MARLBaseAgent):
         done = termination or truncation
         agent_id = self.env.agent_selection
         current_player = self.env.agents.index(agent_id)
-        for training_step in tqdm(range(self.start_training_step, self.training_steps)):
+        for _ in range(self.start_training_step, self.config.training_steps):
             # print(training_step)
             with torch.no_grad():
                 for replay_step in range(self.config.replay_interval):
@@ -356,8 +350,8 @@ class NFSPDQN(MARLBaseAgent):
                 else range(self.config.game.num_players)
             ):
                 old_epsilon = self.rl_agents[p].eg_epsilon
-                self.rl_agents[p].update_eg_epsilon(training_step)
-                if training_step % 1000 == 0 and p == 0:
+                self.rl_agents[p].update_eg_epsilon(self.training_step)
+                if self.training_step % 1000 == 0 and p == 0:
                     print(
                         f"   Player {p} ε: {old_epsilon:.4f} → {self.rl_agents[p].eg_epsilon:.4f}"
                     )
@@ -366,7 +360,7 @@ class NFSPDQN(MARLBaseAgent):
                     update_per_beta(
                         self.rl_agents[p].replay_buffer.beta,
                         self.rl_agents[p].config.per_beta_final,
-                        self.training_steps,
+                        self.config.training_steps,
                         self.rl_agents[p].config.per_beta,
                     )
                 )
@@ -374,13 +368,15 @@ class NFSPDQN(MARLBaseAgent):
                 rl_loss, sl_loss = self.learn()
                 if rl_loss is not None:
                     self.stats.append("rl_loss", rl_loss)
-                    # print(f"   RL loss: {rl_loss:.6f}")
+                    print(f"   RL loss: {rl_loss:.6f}")
                 if sl_loss is not None:
                     self.stats.append("sl_loss", sl_loss)
-                    # print(f"   SL loss: {sl_loss:.6f}")
+                    print(f"   SL loss: {sl_loss:.6f}")
+                if rl_loss is not None or sl_loss is not None:
+                    self.training_step += 1
 
             # Update target networks
-            if training_step % self.rl_agents[0].config.transfer_interval == 0:
+            if self.training_step % self.rl_agents[0].config.transfer_interval == 0:
                 # print(f"🎯 Updating target networks at step {training_step}")
                 for p in (
                     [0]
@@ -390,8 +386,8 @@ class NFSPDQN(MARLBaseAgent):
                     self.rl_agents[p].update_target_model()
 
             # Buffer size monitoring
-            if training_step % 1000 == 0:
-                print(f"\n📊 Buffer sizes at step {training_step}:")
+            if self.training_step % 1000 == 0:
+                print(f"Buffer sizes at step {self.training_step}:")
                 for p in range(min(2, self.config.game.num_players)):
                     rl_size = self.rl_agents[p].replay_buffer.size
                     rl_capacity = self.rl_agents[p].replay_buffer.max_size
@@ -404,8 +400,8 @@ class NFSPDQN(MARLBaseAgent):
 
             # Checkpointing
             if (
-                training_step % self.checkpoint_interval == 0
-                and training_step > self.start_training_step
+                self.training_step % self.checkpoint_interval == 0
+                and self.training_step > self.start_training_step
             ):
 
                 print("P1 SL Buffer Size: ", self.sl_agents[0].replay_buffer.size)
