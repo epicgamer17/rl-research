@@ -436,17 +436,9 @@ class NFSPDQN(MARLBaseAgent):
                 )
                 print("P2 actions distribution", p2_actions_distribution)
 
-                self.save_checkpoint(
-                    training_step,
-                    training_step * self.config.replay_interval,
-                    time() - training_time,
-                )
+                self.save_checkpoint(save_weights=self.config.save_intermediate_weights)
 
-        self.save_checkpoint(
-            training_step,
-            training_step * self.config.replay_interval,
-            time() - training_time,
-        )
+        self.save_checkpoint(save_weights=True)
         self.env.close()
 
     def load_optimizer_state(self, checkpoint):

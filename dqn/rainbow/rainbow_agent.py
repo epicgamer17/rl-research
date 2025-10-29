@@ -536,5 +536,5 @@ class RainbowAgent(BaseAgent):
 
         self.stats.set_time_elapsed(time() - start_time)
         self.stats.increment_steps(self.training_step * self.config.replay_interval)
-        self.save_checkpoint()
+        self.save_checkpoint(save_weights=True)
         # self.env.close()
