@@ -226,10 +226,6 @@ class MuZeroAgent(MARLBaseAgent):
             raise  # ensures worker process exits with error
 
     def train(self):
-        super().train()
-        if self.training_step == 0:
-            self.print_resume_training()
-
         if self.config.multi_process:
             stats_client = self.stats.get_client()
             error_queue = mp.Queue()
@@ -602,9 +598,7 @@ class MuZeroAgent(MARLBaseAgent):
 
             self.optimizer.step()
 
-            self.replay_buffer.update_priorities(
-                samples["indices"], priorities.detach()
-            )
+            self.replay_buffer.update_priorities(samples["indices"], priorities)
 
         # Convert tensors to float for return values
         return (

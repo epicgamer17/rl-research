@@ -66,9 +66,8 @@ class BaseAgent:
 
         self.player_id = "player_0"
         self.training_step = 0
-        self.training_steps = self.config.training_steps
-        self.checkpoint_interval = max(self.training_steps // 30, 1)
-        self.test_interval = max(self.training_steps // 30, 1)
+        self.checkpoint_interval = max(self.config.training_steps // 30, 1)
+        self.test_interval = max(self.config.training_steps // 30, 1)
         self.test_trials = 5
 
         self.env = env
@@ -139,10 +138,7 @@ class BaseAgent:
             return env.observation_space.shape, env.observation_space.dtype
 
     def train(self):
-        if self.training_steps != 0:
-            self.print_resume_training()
-
-        pass
+        raise NotImplementedError
 
     def preprocess(self, states) -> torch.Tensor:
         """Applies necessary preprocessing steps to a batch of environment observations or a single environment observation
@@ -378,17 +374,6 @@ class BaseAgent:
                 "max_score": max_score,
                 "min_score": min_score,
             }
-
-    def print_training_progress(self):
-        print(f"Training step: {self.training_step + 1}/{self.training_steps}")
-
-    def print_resume_training(self):
-        print(
-            f"Resuming training at step {self.training_step + 1} / {self.training_steps}"
-        )
-
-    def print_stats(self):
-        print(f"")
 
     def run_tests(self, stats):
         dir = Path("checkpoints", self.model_name)
