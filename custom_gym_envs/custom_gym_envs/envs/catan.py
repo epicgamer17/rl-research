@@ -124,6 +124,8 @@ class CatanAECEnv(AECEnv):
     ):
         super().__init__()
 
+        self.render_mode = None
+
         # Game configuration
         self.map_type = map_type
         self.vps_to_win = vps_to_win
