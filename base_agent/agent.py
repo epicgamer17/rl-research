@@ -396,11 +396,13 @@ class BaseAgent:
 
         test_score = self.test(self.test_trials, dir=training_step_dir)
         print("Test score", test_score)
-        if type(test_score, int):
+        if isinstance(test_score, int):
             stats.append("test_score", test_score)
-        else:
+        elif isinstance(test_score, dict):
             for key in test_score:
                 stats.append("test_score", test_score[key], subkey=key)
+        else:
+            raise ValueError
 
     def __getstate__(self):
         state = self.__dict__.copy()

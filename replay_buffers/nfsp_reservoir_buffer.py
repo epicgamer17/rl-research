@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from utils import action_mask, numpy_dtype_to_torch_dtype
+from utils import legal_move_mask, numpy_dtype_to_torch_dtype
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
 import copy
 
@@ -40,7 +40,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         """
         if self.size < self.max_size:
             self.observation_buffer[self.add_calls] = torch.from_numpy(observation)
-            self.action_mask_buffer[self.add_calls] = action_mask(
+            self.legal_moves_mask_buffer[self.add_calls] = legal_moves_mask(
                 self.num_actions, info.get("legal_actions", [])
             )
             self.target_policy_buffer[self.add_calls] = target_policy
@@ -49,7 +49,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             idx = np.random.randint(0, self.add_calls + 1)
             if idx < self.max_size:
                 self.observation_buffer[idx] = torch.from_numpy(observation)
-                self.action_mask_buffer[idx] = action_mask(
+                self.legal_moves_mask_buffer[idx] = legal_moves_mask(
                     self.num_actions, info.get("legal_actions", [])
                 )
                 self.target_policy_buffer[idx] = target_policy
@@ -61,8 +61,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         indices = np.random.choice(len(self), self.batch_size, replace=False)
         return dict(
             observations=self.observation_buffer[indices],
-            action_masks=self.action_mask_buffer[indices],
-            current_players=self.current_player_buffer[indices],
+            legal_moves_masks=self.legal_moves_mask_buffer[indices],
             targets=self.target_policy_buffer[indices],
         )
 
@@ -109,7 +108,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             dtype=numpy_dtype_to_torch_dtype(self.observation_dtype),
         )
         # self.info_buffer = torch.zeros(self.max_size, dtype=torch.object)
-        self.action_mask_buffer = torch.zeros(
+        self.legal_moves_mask_buffer = torch.zeros(
             (self.max_size, self.num_actions), dtype=torch.bool
         )
 

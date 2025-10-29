@@ -54,20 +54,23 @@ class ActionMaskInInfoWrapper(BaseWrapper):
         for agent in self.env.agents:
             obs = self.env.observe(agent)
             self.env.infos[agent] = getattr(self.env, "infos", {}).get(agent, {})
-            _ = action_mask_to_info(obs, self.env.infos[agent], agent)
+            agent_index = self.env.agents.index(agent)
+            _ = action_mask_to_info(obs, self.env.infos[agent], agent_index)
 
     def observe(self, agent: AgentID) -> np.ndarray:
         obs = self.env.observe(agent)
         info = self.env.infos[agent]
-        return action_mask_to_info(obs, info, agent)
+        agent_index = self.env.agents.index(agent)
+        return action_mask_to_info(obs, info, agent_index)
 
     def step(self, action: ActionType):
         self.env.step(action)
         # Process observation and info for current agent
         agent = self.env.agent_selection
+        agent_index = self.env.agents.index(agent)
         obs = self.env.observe(agent)
         info = self.env.infos[agent]
-        _ = action_mask_to_info(obs, info, agent)
+        _ = action_mask_to_info(obs, info, agent_index)
 
 
 class ChannelLastToFirstWrapper(BaseWrapper):
