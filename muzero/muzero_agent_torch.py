@@ -24,12 +24,10 @@ from muzero.muzero_minmax_stats import MinMaxStats
 from packages.agent_configs.agent_configs.muzero_config import MuZeroConfig
 import torch
 import copy
-from pynput import keyboard
 from replay_buffers.muzero_replay_buffer import MuZeroReplayBuffer, Game
 from muzero.muzero_mcts import Node
 from muzero.muzero_network import Network
 import datetime
-from tensordict import TensorDict
 
 from utils import (
     clip_low_prob_actions,
@@ -685,7 +683,8 @@ class MuZeroAgent(MARLBaseAgent):
             done = False
             while not done:
                 # total_game_step_time = time()
-
+                if self.replay_buffer.size < 1000:
+                    print("Move", len(game) + 1)
                 temperature = self.config.temperatures[0]
                 for i, temperature_step in enumerate(self.config.temperature_updates):
                     if self.config.temperature_with_training_steps:

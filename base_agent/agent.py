@@ -17,7 +17,6 @@ from torch.optim import Optimizer
 from torch.nn import Module
 
 from utils import (
-    make_stack,
     # process_petting_zoo_obs,
     record_video_wrapper,
     get_legal_moves,
@@ -180,8 +179,12 @@ class BaseAgent:
         if prepared_state.shape == torch.Size([]):
             prepared_state = prepared_state.unsqueeze(0)
 
+        # print(prepared_state.shape)
+        # print(self.observation_dimensions)
         if prepared_state.shape == self.observation_dimensions:
-            prepared_state = make_stack(prepared_state)
+            # print("single observation to stack")
+            prepared_state = prepared_state.unsqueeze(0)
+        # print("processed shape", prepared_state.shape)
         return prepared_state.to(self.device)
 
     def predict(

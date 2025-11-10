@@ -222,7 +222,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         n_step_policies = torch.zeros(
             (num_unroll_steps + 1, self.num_actions), dtype=torch.float32
         )
-        n_step_actions = torch.zeros(num_unroll_steps, dtype=torch.int8)
+        n_step_actions = torch.zeros(num_unroll_steps, dtype=torch.int16)
         for current_index in range(index, index + num_unroll_steps + 1):
             unroll_step = current_index - index
             bootstrap_index = current_index + n_step
@@ -336,7 +336,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                 ).share_memory_()
                 self.n_step_actions_buffer = torch.zeros(
                     (self.max_size, self.unroll_steps),
-                    dtype=torch.int8,
+                    dtype=torch.int16,
                 ).share_memory_()
 
                 tree_capacity = 1

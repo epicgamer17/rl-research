@@ -269,23 +269,30 @@ class FrameStackWrapper(BaseWrapper):
             obs_space = orig_space
 
         shape = obs_space.shape
-        if len(shape) != 3:
+        if len(shape) == 3:
+            if self.channel_first:
+                c, h, w = shape
+                new_shape = (c * self.k, h, w)
+            else:
+                h, w, c = shape
+                new_shape = (h, w, c * self.k)
+
+            return gymnasium.spaces.Box(
+                low=np.min(obs_space.low),
+                high=np.max(obs_space.high),
+                shape=new_shape,
+                dtype=obs_space.dtype,
+            )
+        elif len(shape) == 1:
             # Only stack 3D frames
-            return obs_space
-
-        if self.channel_first:
-            c, h, w = shape
-            new_shape = (c * self.k, h, w)
+            return gymnasium.spaces.Box(
+                low=np.min(obs_space.low),
+                high=np.max(obs_space.high),
+                shape=(shape[0] * self.k,),
+                dtype=obs_space.dtype,
+            )
         else:
-            h, w, c = shape
-            new_shape = (h, w, c * self.k)
-
-        return gymnasium.spaces.Box(
-            low=np.min(obs_space.low),
-            high=np.max(obs_space.high),
-            shape=new_shape,
-            dtype=obs_space.dtype,
-        )
+            raise NotImplementedError
 
     def step(self, action: ActionType) -> None:
         self.env.step(action)

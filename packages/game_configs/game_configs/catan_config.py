@@ -1,8 +1,37 @@
+from wrappers import (
+    ActionMaskInInfoWrapper,
+    FrameStackWrapper,
+    TwoPlayerPlayerPlaneWrapper,
+)
 from .game_config import GameConfig
+from custom_gym_envs.envs.catan import (
+    env as catan_env,
+    CatanAECEnv,
+)
+
+
+def make_env(
+    num_players=2,
+    map_type="BASE",
+    vps_to_win=10,
+    representation="vector",
+    invalid_action_reward=-10,
+    render_mode=None,
+):
+    env = catan_env(
+        num_players=num_players,
+        map_type=map_type,
+        vps_to_win=vps_to_win,
+        representation=representation,
+        invalid_action_reward=invalid_action_reward,
+    )
+    env = ActionMaskInInfoWrapper(env)
+    env = FrameStackWrapper(env, 4, channel_first=False)
+    return env
 
 
 class CatanConfig(GameConfig):
-    def __init__(self, make_env=None):
+    def __init__(self, make_env=make_env):
         super(CatanConfig, self).__init__(
             max_score=1,
             min_score=-1,

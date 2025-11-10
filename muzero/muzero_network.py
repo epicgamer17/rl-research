@@ -767,18 +767,26 @@ class Network(nn.Module):
             config,
             input_shape,
         )
+        self.num_actions = output_size
 
         # Board planes (116, 8, 8) + action planes (8, 8, 8)
         # observation vector + 1-hot action vector, shape = (4,) + (2,)
         self.action_function = action_function
         print("Hidden state shape:", self.representation.output_shape)
-        print("Action function output shape:", self.action_function(0).shape)
+        print(
+            "Action function output shape:",
+            self.action_function(
+                self.num_actions, self.representation.output_shape, 0
+            ).shape,
+        )
         dynamics_input_shape = (
             torch.Size([self.representation.output_shape[0]])
             + torch.concat(
                 [
                     torch.zeros(self.representation.output_shape[1:]),
-                    self.action_function(0),
+                    self.action_function(
+                        self.num_actions, self.representation.output_shape, 0
+                    ),
                 ],
             ).shape
         )
@@ -790,19 +798,28 @@ class Network(nn.Module):
         )
 
     def initial_inference(self, x):
+        # print("Input to initial inference", x)
         hidden_state = self.representation(x)
         value, policy = self.prediction(hidden_state)
         # print("Hidden state:", hidden_state)
         return value, policy, hidden_state
 
     def recurrent_inference(self, hidden_state, action):
-        if len(hidden_state.shape) > len(self.action_function(action).shape):
+        if len(hidden_state.shape) > len(
+            self.action_function(self.num_actions, hidden_state.shape, action).shape
+        ):
             assert hidden_state.shape[0] == 1, "does not work with batches"
             hidden_state = hidden_state.squeeze(0)
         # print("hidden state shape:", hidden_state.shape)
         # print("action shape:", self.action_function(action).shape)
         nn_input = torch.concat(
-            (hidden_state, self.action_function(action).to(hidden_state.device)), dim=0
+            (
+                hidden_state,
+                self.action_function(self.num_actions, hidden_state.shape, action).to(
+                    hidden_state.device
+                ),
+            ),
+            dim=0,
         )
         nn_input = nn_input.unsqueeze(0)
         # print(nn_input.shape)

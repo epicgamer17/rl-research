@@ -126,20 +126,6 @@ def normalize_images(image: Tensor) -> Tensor:
     return normalized_image
 
 
-def make_stack(item: Tensor) -> Tensor:
-    """Convert a tensor of shape (*) to (1, *). Does not copy the data; instead,
-    returns a view of the original tensor.
-
-    Args:
-        item (Tensor):
-
-    Returns:
-        Tensor: A view of the original tensor.
-    """
-    #
-    return item.view(1, *item.shape)
-
-
 def action_mask_to_legal_moves(action_mask):
     # print(action_mask)
     legal_moves = [i for i, x in enumerate(action_mask) if x == 1]
