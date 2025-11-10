@@ -5,10 +5,10 @@ class TicTacToeBestAgent:
     def __init__(self, model_name="tictactoe_expert"):
         self.model_name = model_name
 
-    def predict(self, observation, info, env=None):
+    def predict(self, observation, info, env=None, *args, **kwargs):
         return observation, info
 
-    def select_actions(self, prediction, info):
+    def select_actions(self, prediction, info, *args, **kwargs):
         # Reconstruct board: +1 for current player, -1 for opponent, 0 otherwise
         board = prediction[0][0] - prediction[0][1]
         # print(board)

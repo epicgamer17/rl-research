@@ -6,10 +6,10 @@ class RandomAgent:
         self.model_name = model_name
         self.action_space = action_space
 
-    def predict(self, observation, info, env=None):
+    def predict(self, observation, info, env=None, *args, **kwargs):
         return observation, info
 
-    def select_actions(self, prediction, info):
+    def select_actions(self, prediction, info, *args, **kwargs):
         if self.action_space is not None:
             return self.action_space.sample()
         return np.random.choice(info["legal_moves"])

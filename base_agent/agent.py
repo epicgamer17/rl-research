@@ -245,6 +245,7 @@ class BaseAgent:
         return checkpoint
 
     def checkpoint_extra(self, checkpoint) -> dict:
+        checkpoint["model_name"] = self.model_name
         return checkpoint
 
     @classmethod
@@ -252,18 +253,22 @@ class BaseAgent:
         cls.loaded_from_checkpoint = True
         return cls.load_from_checkpoint(*args, **kwargs)
 
-    def load_from_checkpoint(agent_class, config_class, dir: str, training_step):
+    def load_from_checkpoint(
+        agent_class, config_class, dir: str, training_step, device
+    ):
         # load the config and checkpoint
         training_step_dir = Path(dir, f"step_{training_step}")
         weights_dir = Path(training_step_dir, "model_weights")
         weights_path = str(Path(training_step_dir, f"model_weights/weights.keras"))
         config = config_class.load(Path(dir, "configs/config.yaml"))
-        checkpoint = torch.load(weights_path)
+        checkpoint = torch.load(weights_path, weights_only=False)
         env = checkpoint["enviroment"]
-        model_name = checkpoint["model_name"]
+        model_name = checkpoint.get("model_name", "unamed_model")
 
         # construct the agent
-        agent = agent_class(env, config, model_name, from_checkpoint=True)
+        agent = agent_class(
+            env, config, model_name, device=device, from_checkpoint=True
+        )
 
         # load the model state (weights, optimizer, replay buffer, training time, training step, total environment steps)
         os.makedirs(weights_dir, exist_ok=True)
@@ -279,9 +284,6 @@ class BaseAgent:
         # load the graph stats and targets
         with open(Path(training_step_dir, f"graphs_stats/stats.pkl"), "rb") as f:
             agent.stats = pickle.load(f)
-        with open(Path(training_step_dir, f"graphs_stats/targets.pkl"), "rb") as f:
-            agent.targets = pickle.load(f)
-
         return agent
 
     def save_checkpoint(

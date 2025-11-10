@@ -5,6 +5,7 @@ from hyperopt import STATUS_OK, STATUS_FAIL
 import gc
 from hyperopt import space_eval
 
+from agents.random import RandomAgent
 from elo.elo import StandingsTable
 
 
@@ -37,7 +38,8 @@ class MarlHyperoptConfig:
     checkpoint_interval: int = 100
     test_interval: int = 100
     test_trials: int = 10
-    test_agents: List[str] = field(default_factory=lambda: ["random"])
+    test_agents: List = field(default_factory=lambda: [RandomAgent()])
+    test_agent_weights: List[int] = field(default_factory=lambda: [1.0])
     device: str = "cpu"
 
 
@@ -106,6 +108,8 @@ def marl_run_training(params, agent_name):
         return elo_evaulation(agent)
     elif config.eval_method == "best_agent_elo":
         return best_agent_elo_evaluation(agent)
+    elif config.eval_method == "test_agents_elo":
+        return test_agents_elo_evaluation(agent)
     else:
         raise NotImplementedError
 
@@ -344,3 +348,33 @@ def best_agent_elo_evaluation(agent):
     print(bayes_elo)
     print(f"Elo: {elo}")
     return -elo
+
+
+def test_agents_elo_evaluation(agent):
+    assert _MARL_CONFIG is not None, "Config not set. Call set_config first."
+    config = _MARL_CONFIG
+    loss = 0
+    for test_agent, test_agent_weight in zip(
+        config.test_agents, config.test_agent_weights
+    ):
+        table = StandingsTable([test_agent], start_elo=1400)
+        table.add_player(agent)
+        results = table.play_matches(
+            play_game=config.play_game,
+            player_index=1,
+            opponent_indices=[0],
+            games_per_pair=config.games_per_pair,
+        )
+        bayes_elo = table.bayes_elo()["Elo table"]
+        elo = bayes_elo.iloc[-1]["Elo"]
+        best_agent_elo = bayes_elo.iloc[0]["Elo"]
+        # get difference between best_agent_elo and 1000
+        diff = best_agent_elo - 1400
+        elo -= diff
+        elo *= test_agent_weight
+
+        loss -= elo
+
+        print(bayes_elo)
+        print(f"Elo: {elo}")
+    return loss

@@ -1,4 +1,3 @@
-from .alphazero_config import AlphaZeroConfig
 from .dqn.ape_x_config import (
     ApeXLearnerConfig,
     ApeXActorConfig,

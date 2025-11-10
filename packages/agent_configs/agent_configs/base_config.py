@@ -88,7 +88,7 @@ class Config(ConfigBase):
             "training_steps", 10000, wrapper=int
         )
 
-        self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
+        self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-8)
         self.momentum = self.parse_field("momentum", 0.9)
         self.learning_rate: float = self.parse_field("learning_rate", 0.001)
         self.clipnorm: int = self.parse_field("clipnorm", 0)

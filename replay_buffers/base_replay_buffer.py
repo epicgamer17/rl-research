@@ -2,7 +2,7 @@ import copy
 
 import numpy as np
 import torch
-from utils import (
+from packages.utils.utils import (
     legal_moves_mask,
     numpy_dtype_to_torch_dtype,
     discounted_cumulative_sums,

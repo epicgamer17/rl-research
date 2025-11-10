@@ -148,7 +148,12 @@ class RainbowAgent(BaseAgent):
             PlotType.BEST_FIT_LINE,
             rolling_window=100,
         )
-        self.stats.add_plot_types("test_score", PlotType.BEST_FIT_LINE)
+        self.stats.add_plot_types(
+            "test_score",
+            PlotType.BEST_FIT_LINE,
+            PlotType.ROLLING_AVG,
+            rolling_window=100,
+        )
         self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
 
     def checkpoint_model_weights(self, checkpoint):
@@ -462,7 +467,6 @@ class RainbowAgent(BaseAgent):
             )
 
     def train(self):
-        super().train()
         start_time = time() - self.stats.get_time_elapsed()
         score = 0
         self.fill_replay_buffer()
