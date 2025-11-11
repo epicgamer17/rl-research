@@ -1,7 +1,5 @@
 import collections
-from typing import Optional
-
-from pyparsing import List
+from typing import Optional, List
 
 MAXIMUM_FLOAT_VALUE = float("inf")
 
