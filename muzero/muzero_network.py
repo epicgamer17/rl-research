@@ -187,6 +187,7 @@ class Dynamics(nn.Module):
         self.has_residual_layers = len(config.dynamics_residual_layers) > 0
         self.has_conv_layers = len(config.dynamics_conv_layers) > 0
         self.has_dense_layers = len(config.dynamics_dense_layer_widths) > 0
+
         assert (
             self.has_conv_layers or self.has_dense_layers or self.has_residual_layers
         ), "At least one of the layers should be present."
@@ -199,7 +200,9 @@ class Dynamics(nn.Module):
         if self.has_residual_layers:
             assert (
                 len(current_shape) == 4
-            ), "Input shape should be (B, C, H, W), got {}".format(current_shape)
+            ), "dynamics residual layers expected an input shape should be (B, C, H, W), got {}".format(
+                current_shape
+            )
             filters, kernel_sizes, strides = to_lists(config.dynamics_residual_layers)
 
             # (B, C_in, H, W) -> (B, C_out H, W)
@@ -268,7 +271,9 @@ class Dynamics(nn.Module):
         if self.has_reward_conv_layers:
             assert (
                 len(current_shape) == 4
-            ), "Input shape should be (B, C, H, W), got {}".format(current_shape)
+            ), "reward layers expected an input shape should be (B, C, H, W), got {}".format(
+                current_shape
+            )
             filters, kernel_sizes, strides = to_lists(config.reward_conv_layers)
 
             self.reward_conv_layers = Conv2dStack(
@@ -325,6 +330,66 @@ class Dynamics(nn.Module):
                 out_features=1,
                 sigma=0,
             )
+
+        current_shape = self.output_shape
+
+        self.has_to_play_conv_layers = len(config.to_play_conv_layers) > 0
+        self.has_to_play_dense_layers = len(config.to_play_dense_layer_widths) > 0
+
+        if self.has_to_play_conv_layers:
+            assert (
+                len(current_shape) == 4
+            ), "to_play layers expected an input shape should be (B, C, H, W), got {}".format(
+                current_shape
+            )
+            filters, kernel_sizes, strides = to_lists(config.to_play_conv_layers)
+
+            self.to_play_conv_layers = Conv2dStack(
+                input_shape=current_shape,
+                filters=filters,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                activation=self.config.activation,
+                noisy_sigma=config.noisy_sigma,
+            )
+
+            current_shape = (
+                B,
+                self.to_play_conv_layers.output_channels,
+                current_shape[2],
+                current_shape[3],
+            )
+
+        if self.has_to_play_dense_layers:
+            if len(current_shape) == 4:
+                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+            else:
+                assert len(current_shape) == 2
+                initial_width = current_shape[1]
+
+            self.to_play_dense_layers = DenseStack(
+                initial_width=initial_width,
+                widths=self.config.to_play_dense_layer_widths,
+                activation=self.config.activation,
+                noisy_sigma=self.config.noisy_sigma,
+            )
+
+            current_shape = (
+                B,
+                self.to_play_dense_layers.output_width,
+            )
+
+        if len(current_shape) == 4:
+            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
+        else:
+            assert len(current_shape) == 2
+            initial_width = current_shape[1]
+
+        self.to_play = build_dense(
+            in_features=initial_width,
+            out_features=self.config.game.num_players,
+            sigma=0,
+        )
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_residual_layers:
@@ -412,7 +477,21 @@ class Dynamics(nn.Module):
             # TODO: should this be turned into an expected value and then in the loss function into a two hot?
             reward = self.reward(flattened_reward_vector).softmax(dim=-1)
 
-        return reward, hidden_state
+        # (B, dense_features_in) -> (B, dense_features_out)
+        if self.has_to_play_conv_layers:
+            to_play_vector = self.to_play_conv_layers(S)
+            flattened_to_play_vector = to_play_vector.flatten(1, -1)
+        else:
+            flattened_to_play_vector = hidden_state.flatten(1, -1)
+
+        if self.has_to_play_dense_layers:
+            flattened_to_play_vector = self.to_play_dense_layers(
+                flattened_to_play_vector
+            )
+
+        to_play = self.to_play(flattened_to_play_vector).softmax(dim=-1)
+
+        return reward, hidden_state, to_play
 
 
 class Prediction(nn.Module):
@@ -760,6 +839,7 @@ class Network(nn.Module):
         output_size: int,
         input_shape: Tuple[int],
         action_function: Callable,
+        channel_first: bool = True,
     ):
         super(Network, self).__init__()
         self.config = config
@@ -768,6 +848,7 @@ class Network(nn.Module):
             input_shape,
         )
         self.num_actions = output_size
+        self.channel_first = channel_first
 
         # Board planes (116, 8, 8) + action planes (8, 8, 8)
         # observation vector + 1-hot action vector, shape = (4,) + (2,)
@@ -776,7 +857,13 @@ class Network(nn.Module):
         print(
             "Action function output shape:",
             self.action_function(
-                self.num_actions, self.representation.output_shape, 0
+                self.num_actions,
+                (
+                    self.representation.output_shape[2:]
+                    if self.channel_first
+                    else self.representation.output_shape[1:-1]
+                ),
+                0,
             ).shape,
         )
         dynamics_input_shape = (
@@ -785,7 +872,13 @@ class Network(nn.Module):
                 [
                     torch.zeros(self.representation.output_shape[1:]),
                     self.action_function(
-                        self.num_actions, self.representation.output_shape, 0
+                        self.num_actions,
+                        (
+                            self.representation.output_shape[2:]
+                            if self.channel_first
+                            else self.representation.output_shape[1:-1]
+                        ),
+                        0,
                     ),
                 ],
             ).shape
@@ -798,32 +891,53 @@ class Network(nn.Module):
         )
 
     def initial_inference(self, x):
-        # print("Input to initial inference", x)
+        # print("Initial inference")
         hidden_state = self.representation(x)
         value, policy = self.prediction(hidden_state)
-        # print("Hidden state:", hidden_state)
+        # print("Hidden state:", hidden_state.shape)
         return value, policy, hidden_state
 
     def recurrent_inference(self, hidden_state, action):
-        if len(hidden_state.shape) > len(
-            self.action_function(self.num_actions, hidden_state.shape, action).shape
-        ):
-            assert hidden_state.shape[0] == 1, "does not work with batches"
-            hidden_state = hidden_state.squeeze(0)
+        # print("reccurent inference")
+        # if len(hidden_state.shape) > len(
+        #     self.action_function(
+        #         self.num_actions,
+        #         (
+        #             hidden_state.shape[2:]
+        #             if self.channel_first
+        #             else hidden_state.shape[1:-1]
+        #         ),
+        #         action,
+        #     ).shape
+        # ):
+        #     assert hidden_state.shape[0] == 1, "does not work with batches"
+        hidden_state = hidden_state.squeeze(0)
+        plane_shape = (
+            hidden_state.shape[1:] if self.channel_first else hidden_state.shape[:-1]
+        )
         # print("hidden state shape:", hidden_state.shape)
-        # print("action shape:", self.action_function(action).shape)
+        # print(
+        #     "action shape:",
+        #     self.action_function(
+        #         self.num_actions,
+        #         plane_shape,
+        #         action,
+        #     ).shape,
+        # )
         nn_input = torch.concat(
             (
                 hidden_state,
-                self.action_function(self.num_actions, hidden_state.shape, action).to(
-                    hidden_state.device
-                ),
+                self.action_function(
+                    self.num_actions,
+                    plane_shape,
+                    action,
+                ).to(hidden_state.device),
             ),
             dim=0,
         )
         nn_input = nn_input.unsqueeze(0)
         # print(nn_input.shape)
-        reward, hidden_state = self.dynamics(nn_input)
+        reward, hidden_state, to_play = self.dynamics(nn_input)
         value, policy = self.prediction(hidden_state)
         # print("Hidden state:", hidden_state)
-        return reward, hidden_state, value, policy
+        return reward, hidden_state, value, policy, to_play

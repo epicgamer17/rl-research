@@ -24,6 +24,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         num_unroll_steps: int,
         gamma: float,
         # has_intermediate_rewards: bool,
+        num_players: int,
         max_priority: float = 1.0,
         alpha: float = 0.6,
         beta: float = 0.4,
@@ -47,6 +48,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         )  # protects segment trees and max_priority updates
 
         self.num_actions = num_actions
+        self.num_players = num_players
 
         self.n_step = n_step
         self.unroll_steps = num_unroll_steps
@@ -84,7 +86,8 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             game.observation_history[position]
         )
 
-        values, policies, rewards, actions = self._get_n_step_info(
+        # _get_n_step_info now returns (values, policies, rewards, actions, to_plays)
+        values, policies, rewards, actions, to_plays = self._get_n_step_info(
             position,
             game.value_history,
             game.policy_history,
@@ -98,6 +101,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         self.n_step_policies_buffer[idx] = policies
         self.n_step_rewards_buffer[idx] = rewards
         self.n_step_actions_buffer[idx] = actions
+        self.n_step_to_plays_buffer[idx] = to_plays  # NEW: store to_play sequence
 
         if priority is None:
             if self.per_initial_priority_max:
@@ -107,7 +111,6 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
 
         # Update priority trees under priority_lock to avoid races with concurrent tree writes
         with self.priority_lock:
-            # print("Setting priority", priority, "at index", tree_idx)
             self.sum_tree[tree_idx] = priority**self.alpha
             self.min_tree[tree_idx] = priority**self.alpha
             # update shared max_priority safely
@@ -206,6 +209,96 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
 
         return weight
 
+    # def _get_n_step_info(
+    #     self,
+    #     index: int,
+    #     values: list,
+    #     policies: list,
+    #     rewards: list,
+    #     actions: list,
+    #     infos: list,
+    #     num_unroll_steps: int,
+    #     n_step: int,
+    # ):
+    #     n_step_values = torch.zeros(num_unroll_steps + 1, dtype=torch.float32)
+    #     n_step_rewards = torch.zeros(num_unroll_steps + 1, dtype=torch.float32)
+    #     n_step_policies = torch.zeros(
+    #         (num_unroll_steps + 1, self.num_actions), dtype=torch.float32
+    #     )
+    #     n_step_actions = torch.zeros(num_unroll_steps, dtype=torch.int16)
+    #     for current_index in range(index, index + num_unroll_steps + 1):
+    #         unroll_step = current_index - index
+    #         bootstrap_index = current_index + n_step
+    #         # print("bootstrapping")
+    #         # value of current position is the value at the position n_steps away + rewards to get to the n_step position
+    #         if bootstrap_index < len(values):
+    #             if (
+    #                 "player" not in infos[current_index]
+    #                 or infos[current_index]["player"]
+    #                 == infos[bootstrap_index]["player"]
+    #             ):
+    #                 value = values[bootstrap_index] * self.gamma**n_step
+    #             else:
+    #                 value = -values[bootstrap_index] * self.gamma**n_step
+    #         else:
+    #             value = 0
+
+    #         # the rewards at this index to the bootstrap index should be added to the value
+    #         for i, reward in enumerate(rewards[current_index:bootstrap_index]):
+    #             # WHAT IS current_index + i + 1 when current index is the last frame?? IS THIS AN ERROR?
+    #             if (
+    #                 "player" not in infos[current_index]
+    #                 or infos[current_index]["player"]
+    #                 == infos[current_index + i][
+    #                     "player"
+    #                 ]  # + 1 if doing my og thing and i want to go back
+    #             ):
+    #                 value += reward * self.gamma**i
+    #             else:
+    #                 value -= reward * self.gamma**i
+
+    #         # target reward is the reward before the ones added to the value
+    #         if current_index > 0 and current_index <= len(rewards):
+    #             last_reward = rewards[current_index - 1]
+    #             # if self.has_intermediate_rewards:
+    #             #     last_reward = rewards[current_index - 1]
+    #             # else:
+    #             #     value += (
+    #             #         rewards[current_index - 1]
+    #             #         if infos[current_index]["player"]
+    #             #         == infos[current_index - 1]["player"]
+    #             #         else -rewards[current_index - 1]
+    #             #     )
+    #             #     last_reward = rewards[current_index - 1]  # reward not used
+    #         else:
+    #             last_reward = 0  # self absorbing state 0 reward
+
+    #         if current_index < len(values):
+    #             n_step_values[unroll_step] = value
+    #             n_step_rewards[unroll_step] = last_reward
+    #             n_step_policies[unroll_step] = policies[current_index]
+    #             if unroll_step < num_unroll_steps:
+    #                 # no action for last unroll step (since you dont act on that state)
+    #                 n_step_actions[unroll_step] = actions[current_index]
+    #         else:
+    #             n_step_values[unroll_step] = (
+    #                 value  # should be value or 0, maybe broken for single player
+    #             )
+    #             n_step_rewards[unroll_step] = last_reward
+    #             n_step_policies[unroll_step] = (
+    #                 torch.ones(self.num_actions) / self.num_actions
+    #             )  # self absorbing state
+    #             if unroll_step < num_unroll_steps:
+    #                 # no action for last unroll step (since you dont act on that state)
+    #                 n_step_actions[unroll_step] = -1  # self absorbing state
+
+    #     return (
+    #         n_step_values,  # [initial value, recurrent values]
+    #         n_step_policies,  # [initial policy, recurrent policies]
+    #         n_step_rewards,  # [initial reward (0), recurrent rewards] initial reward is useless like the first last action, but we ignore it in the learn function
+    #         n_step_actions,  # [recurrent actions, extra action]
+    #     )  # remove the last actions, as there should be one less action than other stuff
+
     def _get_n_step_info(
         self,
         index: int,
@@ -217,84 +310,117 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         num_unroll_steps: int,
         n_step: int,
     ):
+        """
+        Returns:
+            n_step_values: tensor shape (num_unroll_steps+1,)
+            n_step_policies: tensor shape (num_unroll_steps+1, num_actions)
+            n_step_rewards: tensor shape (num_unroll_steps+1,)  # n_step_rewards[0] == 0
+            n_step_actions: tensor shape (num_unroll_steps,)
+            n_step_to_plays: tensor shape (num_unroll_steps+1,)  # NEW: player id at each unroll step (or -1 if OOB)
+        Conventions:
+            - rewards[t] is the reward from taking action at state t (transition t → t+1)
+            - infos[t]["player"] is the player who acted at state t
+            - n_step_rewards[0] = 0 (no reward leading into root)
+        """
         n_step_values = torch.zeros(num_unroll_steps + 1, dtype=torch.float32)
         n_step_rewards = torch.zeros(num_unroll_steps + 1, dtype=torch.float32)
         n_step_policies = torch.zeros(
             (num_unroll_steps + 1, self.num_actions), dtype=torch.float32
         )
         n_step_actions = torch.zeros(num_unroll_steps, dtype=torch.int16)
-        for current_index in range(index, index + num_unroll_steps + 1):
-            unroll_step = current_index - index
-            bootstrap_index = current_index + n_step
-            # print("bootstrapping")
-            # value of current position is the value at the position n_steps away + rewards to get to the n_step position
-            if bootstrap_index < len(values):
-                if (
-                    "player" not in infos[current_index]
-                    or infos[current_index]["player"]
-                    == infos[bootstrap_index]["player"]
-                ):
-                    value = values[bootstrap_index] * self.gamma**n_step
+        n_step_to_plays = torch.zeros(
+            (num_unroll_steps + 1, self.num_players), dtype=torch.int16
+        )
+
+        for u in range(0, num_unroll_steps + 1):
+            current_index = index + u
+
+            # 1. discounted n-step value from current_index (same logic as before)
+            value = 0.0
+            for k in range(n_step):
+                r_idx = current_index + k
+                if r_idx < len(rewards):
+                    r = rewards[r_idx]
+                    node_player = (
+                        infos[current_index].get("player", None)
+                        if current_index < len(infos)
+                        else None
+                    )
+                    acting_player = (
+                        infos[r_idx].get("player", None) if r_idx < len(infos) else None
+                    )
+                    sign = (
+                        1.0
+                        if (
+                            node_player is None
+                            or acting_player is None
+                            or node_player == acting_player
+                        )
+                        else -1.0
+                    )
+                    value += (self.gamma**k) * (sign * r)
                 else:
-                    value = -values[bootstrap_index] * self.gamma**n_step
-            else:
-                value = 0
+                    break
 
-            # the rewards at this index to the bootstrap index should be added to the value
-            for i, reward in enumerate(rewards[current_index:bootstrap_index]):
-                # WHAT IS current_index + i + 1 when current index is the last frame?? IS THIS AN ERROR?
-                if (
-                    "player" not in infos[current_index]
-                    or infos[current_index]["player"]
-                    == infos[current_index + i][
-                        "player"
-                    ]  # + 1 if doing my og thing and i want to go back
-                ):
-                    value += reward * self.gamma**i
-                else:
-                    value -= reward * self.gamma**i
-
-            # target reward is the reward before the ones added to the value
-            if current_index > 0 and current_index <= len(rewards):
-                last_reward = rewards[current_index - 1]
-                # if self.has_intermediate_rewards:
-                #     last_reward = rewards[current_index - 1]
-                # else:
-                #     value += (
-                #         rewards[current_index - 1]
-                #         if infos[current_index]["player"]
-                #         == infos[current_index - 1]["player"]
-                #         else -rewards[current_index - 1]
-                #     )
-                #     last_reward = rewards[current_index - 1]  # reward not used
-            else:
-                last_reward = 0  # self absorbing state 0 reward
-
-            if current_index < len(values):
-                n_step_values[unroll_step] = value
-                n_step_rewards[unroll_step] = last_reward
-                n_step_policies[unroll_step] = policies[current_index]
-                if unroll_step < num_unroll_steps:
-                    # no action for last unroll step (since you dont act on that state)
-                    n_step_actions[unroll_step] = actions[current_index]
-            else:
-                n_step_values[unroll_step] = (
-                    value  # should be value or 0, maybe broken for single player
+            boot_idx = current_index + n_step
+            if boot_idx < len(values):
+                v_boot = values[boot_idx]
+                node_player = (
+                    infos[current_index].get("player", None)
+                    if current_index < len(infos)
+                    else None
                 )
-                n_step_rewards[unroll_step] = last_reward
-                n_step_policies[unroll_step] = (
-                    torch.ones(self.num_actions) / self.num_actions
-                )  # self absorbing state
-                if unroll_step < num_unroll_steps:
-                    # no action for last unroll step (since you dont act on that state)
-                    n_step_actions[unroll_step] = -1  # self absorbing state
+                boot_player = (
+                    infos[boot_idx].get("player", None)
+                    if boot_idx < len(infos)
+                    else None
+                )
+                sign_leaf = (
+                    1.0
+                    if (
+                        node_player is None
+                        or boot_player is None
+                        or node_player == boot_player
+                    )
+                    else -1.0
+                )
+                value += (self.gamma**n_step) * (sign_leaf * v_boot)
+
+            n_step_values[u] = value
+
+            # 2. reward target with first cell zeroed
+            if u == 0:
+                n_step_rewards[u] = 0.0  # root has no preceding reward
+            else:
+                reward_idx = current_index - 1
+                n_step_rewards[u] = (
+                    rewards[reward_idx] if reward_idx < len(rewards) else 0.0
+                )
+
+            # 3. policy
+            if current_index < len(policies):
+                n_step_policies[u] = policies[current_index]
+            else:
+                n_step_policies[u] = torch.ones(self.num_actions) / self.num_actions
+
+            # 4. action
+            if u < num_unroll_steps:
+                n_step_actions[u] = (
+                    actions[current_index] if current_index < len(actions) else -1
+                )
+
+            # 5. to_play (NEW): store the player id for this state (or -1 if OOB)
+            if current_index < len(infos):
+                if "player" in infos[current_index]:
+                    n_step_to_plays[u][infos[current_index]["player"]] = 1
 
         return (
-            n_step_values,  # [initial value, recurrent values]
-            n_step_policies,  # [initial policy, recurrent policies]
-            n_step_rewards,  # [initial reward (0), recurrent rewards] initial reward is useless like the first last action, but we ignore it in the learn function
-            n_step_actions,  # [recurrent actions, extra action]
-        )  # remove the last actions, as there should be one less action than other stuff
+            n_step_values,
+            n_step_policies,
+            n_step_rewards,
+            n_step_actions,
+            n_step_to_plays,
+        )
 
     def set_beta(self, beta: float):
         self.beta = beta
@@ -312,10 +438,9 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
     def clear(self):
         with self.write_lock:
             with self.priority_lock:
-                # self._size = mp.Value("i", 0)
                 self._size = torch.zeros(1, dtype=torch.int32).share_memory_()
                 self.pointer = 0
-                self.max_priority = self.initial_max_priority  # (initial) priority
+                self.max_priority = self.initial_max_priority
                 self.tree_pointer = 0
 
                 self.observation_buffer = torch.zeros(
@@ -339,6 +464,12 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                     dtype=torch.int16,
                 ).share_memory_()
 
+                # NEW: buffer for to_play IDs (one per unroll step)
+                self.n_step_to_plays_buffer = torch.zeros(
+                    (self.max_size, self.unroll_steps + 1, self.num_players),
+                    dtype=torch.int16,
+                ).share_memory_()
+
                 tree_capacity = 1
                 while tree_capacity < self.max_size:
                     tree_capacity *= 2
@@ -353,6 +484,9 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             policy=self.n_step_policies_buffer[indices],
             values=self.n_step_values_buffer[indices],
             actions=self.n_step_actions_buffer[indices],
+            to_plays=self.n_step_to_plays_buffer[
+                indices
+            ],  # NEW: included in sampled batch
             # infos=self.info_buffer[indices],
         )
 

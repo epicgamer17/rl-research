@@ -405,33 +405,33 @@ class NFSPDQN(MARLBaseAgent):
             ):
 
                 print("P1 SL Buffer Size: ", self.sl_agents[0].replay_buffer.size)
-                p1_actions_distribution = [0] * self.num_actions
-                for i in range(0, self.sl_agents[0].replay_buffer.size):
-                    p1_actions_distribution += self.sl_agents[
-                        0
-                    ].replay_buffer.target_policy_buffer[i]
+                # p1_actions_distribution = [0] * self.num_actions
+                # for i in range(0, self.sl_agents[0].replay_buffer.size):
+                #     p1_actions_distribution += self.sl_agents[
+                #         0
+                #     ].replay_buffer.target_policy_buffer[i]
 
-                print("P1 SL buffer distribution", p1_actions_distribution)
-                p1_actions_distribution = np.array(p1_actions_distribution)
-                p1_actions_distribution = p1_actions_distribution / np.sum(
-                    p1_actions_distribution
-                )
-                print("P1 actions distribution", p1_actions_distribution)
+                # print("P1 SL buffer distribution", p1_actions_distribution)
+                # p1_actions_distribution = np.array(p1_actions_distribution)
+                # p1_actions_distribution = p1_actions_distribution / np.sum(
+                #     p1_actions_distribution
+                # )
+                # print("P1 actions distribution", p1_actions_distribution)
 
                 print("P2 SL Buffer Size: ", self.sl_agents[1].replay_buffer.size)
-                p2_actions_distribution = [0] * self.num_actions
-                for i in range(0, self.sl_agents[1].replay_buffer.size):
-                    p2_actions_distribution += self.sl_agents[
-                        1
-                    ].replay_buffer.target_policy_buffer[i]
+                # p2_actions_distribution = [0] * self.num_actions
+                # for i in range(0, self.sl_agents[1].replay_buffer.size):
+                #     p2_actions_distribution += self.sl_agents[
+                #         1
+                #     ].replay_buffer.target_policy_buffer[i]
 
-                print("P2 SL buffer distribution", p2_actions_distribution)
-                p2_actions_distribution = np.array(p2_actions_distribution)
-                p2_actions_distribution = p2_actions_distribution / np.sum(
-                    p2_actions_distribution
-                )
-                print("P2 actions distribution", p2_actions_distribution)
-
+                # print("P2 SL buffer distribution", p2_actions_distribution)
+                # p2_actions_distribution = np.array(p2_actions_distribution)
+                # p2_actions_distribution = p2_actions_distribution / np.sum(
+                #     p2_actions_distribution
+                # )
+                # print("P2 actions distribution", p2_actions_distribution)
+                self.run_tests(self.stats)
                 self.save_checkpoint(save_weights=self.config.save_intermediate_weights)
 
         self.save_checkpoint(save_weights=True)

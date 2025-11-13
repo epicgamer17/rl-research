@@ -1,8 +1,9 @@
 import datetime
-from os import wait
 import sys
 
+
 sys.path.append("../")
+from custom_gym_envs.envs.catan import ACTIONS_ARRAY
 
 from time import time
 import traceback
@@ -109,6 +110,7 @@ class MuZeroAgent(MARLBaseAgent):
             observation_dtype=self.observation_dtype,
             max_size=self.config.replay_buffer_size,
             num_actions=self.num_actions,
+            num_players=self.config.game.num_players,
             batch_size=self.config.minibatch_size,
             n_step=self.config.n_step,
             num_unroll_steps=self.config.unroll_steps,
@@ -147,8 +149,10 @@ class MuZeroAgent(MARLBaseAgent):
                 "policy_loss",
                 "value_loss",
                 "reward_loss",
+                "to_play_loss",
                 "loss",
                 "test_score",
+                "episode_length",
             ]
             + test_score_keys,
             target_values={
@@ -197,8 +201,13 @@ class MuZeroAgent(MARLBaseAgent):
         self.stats.add_plot_types(
             "reward_loss", PlotType.ROLLING_AVG, rolling_window=100
         )
+        self.stats.add_plot_types(
+            "to_play_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
         self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
-
+        self.stats.add_plot_types(
+            "episode_length", PlotType.ROLLING_AVG, rolling_window=100
+        )
         self.stop_flag = mp.Value("i", 0)
 
     def worker_fn(
@@ -217,6 +226,7 @@ class MuZeroAgent(MARLBaseAgent):
                 score, num_steps = self.play_game(env=worker_env)
                 # print(f"[Worker {worker_id}] Finished a game with score {score}")
                 stats_client.append("score", score)
+                stats_client.append("episode_length", num_steps)
                 stats_client.increment_steps(num_steps)
         except Exception as e:
             # Send both exception and traceback back
@@ -278,10 +288,13 @@ class MuZeroAgent(MARLBaseAgent):
 
             if self.replay_buffer.size >= self.config.min_replay_buffer_size:
                 for minibatch in range(self.config.num_minibatches):
-                    value_loss, policy_loss, reward_loss, loss = self.learn()
+                    value_loss, policy_loss, reward_loss, to_play_loss, loss = (
+                        self.learn()
+                    )
                     self.stats.append("value_loss", value_loss)
                     self.stats.append("policy_loss", policy_loss)
                     # if self.config.game.has_intermediate_rewards:
+                    self.stats.append("to_play_loss", to_play_loss)
                     self.stats.append("reward_loss", reward_loss)
                 self.stats.append("loss", loss)
                 self.training_step += 1
@@ -364,11 +377,8 @@ class MuZeroAgent(MARLBaseAgent):
         for _ in range(self.config.num_simulations):
             node = root
             search_path = [node]
-            if self.config.game.num_players != 1:
-                to_play = env.agents.index(env.agent_selection)
-            else:
-                to_play = 1
-
+            to_play = root.to_play
+            # old_to_play = to_play
             # GO UNTIL A LEAF NODE IS REACHED
             while node.expanded():
                 action, node = node.select_child(
@@ -378,11 +388,11 @@ class MuZeroAgent(MARLBaseAgent):
                     self.config.discount_factor,
                     self.config.game.num_players,
                 )
-                # THIS NEEDS TO BE CHANGED FOR GAMES WHERE PLAYER COUNT DECREASES AS PLAYERS GET ELIMINATED, USE agent_selector.next() (clone of the current one)
-                to_play = (to_play + 1) % self.config.game.num_players
+                # old_to_play = (old_to_play + 1) % self.config.game.num_players
+                # PREDICT THE TO PLAY HERE
                 search_path.append(node)
             parent = search_path[-2]
-            reward, hidden_state, value, policy = (
+            reward, hidden_state, value, policy, to_play = (
                 self.predict_single_recurrent_inference(
                     parent.hidden_state,
                     action,  # model=model
@@ -395,6 +405,11 @@ class MuZeroAgent(MARLBaseAgent):
                 reward = reward.item()
                 value = value.item()
 
+            # onehot_to_play = to_play
+            to_play = int(to_play.argmax().item())
+            # if to_play != old_to_play and self.training_step > 1000:
+            #     print("WRONG TO PLAY", onehot_to_play)
+
             node.expand(
                 list(range(self.num_actions)),
                 to_play,
@@ -405,23 +420,93 @@ class MuZeroAgent(MARLBaseAgent):
                 ),  # for board games and games with no intermediate rewards
             )
 
-            for node in reversed(search_path):
-                node.value_sum += value if node.to_play == to_play else -value
+            # for node in reversed(search_path):
+            #     node.value_sum += value if node.to_play == to_play else -value
+            #     node.visits += 1
+            #     min_max_stats.update(
+            #         node.reward
+            #         + self.config.discount_factor
+            #         * (
+            #             node.value()
+            #             if self.config.game.num_players == 1
+            #             else -node.value()
+            #         )
+            #     )
+            #     value = (
+            #         -node.reward
+            #         if node.to_play == to_play and self.config.game.num_players > 1
+            #         else node.reward
+            #     ) + self.config.discount_factor * value
+
+            n = len(search_path)
+            if n == 0:
+                return []
+
+            # --- 1) Build per-player accumulator array acc[p] = Acc_p(i) for current i (starting from i = n-1) ---
+            # Acc_p(i) definition: discounted return from node i for a node whose player is p:
+            # Acc_p(i) = sum_{j=i+1..n-1} discount^{j-i-1} * sign(p, j) * reward_j
+            #            + discount^{n-1-i} * sign(p, leaf) * leaf_value
+            # Where sign(p, j) = +1 if acting_player_at_j (which is search_path[j-1].to_play) == p else -1.
+            #
+            # We compute Acc_p(n-1) = sign(p, leaf) * leaf_value as base, then iterate backward:
+            # Acc_p(i-1) = s(p, i) * reward_i + discount * Acc_p(i)
+
+            # Initialize acc for i = n-1 (base: discounted exponent 0 for leaf value)
+            # acc is a Python list of floats length num_players
+            acc = [0.0] * self.config.game.num_players
+            for p in range(self.config.game.num_players):
+                acc[p] = value if to_play == p else -value
+
+            # totals[i] will hold Acc_{node_player}(i)
+            totals = [0.0] * n
+
+            # Iterate from i = n-1 down to 0
+            for i in range(n - 1, -1, -1):
+                node = search_path[i]
+                node_player = node.to_play
+                # totals for this node = acc[node_player] (current Acc_p(i))
+                totals[i] = acc[node_player]
+
+                # Prepare acc for i-1 (if any)
+                if i > 0:
+                    # reward at index i belongs to acting_player = search_path[i-1].to_play
+                    r_i = search_path[i].reward
+                    acting_player = search_path[i - 1].to_play
+
+                    # Update per-player accumulators in O(num_players)
+                    # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
+                    # sign(p, i) = +1 if acting_player == p else -1
+                    # We overwrite acc[p] in-place to be Acc_p(i-1)
+                    for p in range(self.config.game.num_players):
+                        sign = 1.0 if acting_player == p else -1.0
+                        acc[p] = sign * r_i + 1.0 * acc[p]
+
+            # --- 2) Apply totals to nodes in reverse order and update MinMaxStats (parent-perspective scalar) ---
+            # We must update nodes (value_sum, visits) from the leaf back to the root so that when
+            # computing parent-perspective scalars we can use child.value() (which should reflect the
+            # just-updated child totals).
+            for i in range(n - 1, -1, -1):
+                node = search_path[i]
+
+                # apply computed discounted total for this node's player
+                node.value_sum += totals[i]
                 node.visits += 1
-                min_max_stats.update(
-                    node.reward
-                    + self.config.discount_factor
-                    * (
-                        node.value()
-                        if self.config.game.num_players == 1
-                        else -node.value()
-                    )
-                )
-                value = (
-                    -node.reward
-                    if node.to_play == to_play and self.config.game.num_players > 1
-                    else node.reward
-                ) + self.config.discount_factor * value
+
+                # compute scalar that MinMaxStats expects for this child from its parent's perspective:
+                # parent_value_contrib = child.reward + discount * (sign * child.value())
+                # sign = +1 if single-player OR child.to_play == parent.to_play else -1
+                if i > 0:
+                    parent = search_path[i - 1]
+                    if self.config.game.num_players == 1:
+                        sign = 1.0
+                    else:
+                        sign = 1.0 if node.to_play == parent.to_play else -1.0
+                else:
+                    # root: choose sign = +1 convention (root has no parent)
+                    sign = 1.0
+
+                parent_value_contrib = node.reward + 1.0 * (sign * node.value())
+                min_max_stats.update(parent_value_contrib)
 
         visit_counts = [
             (child.visits, action) for action, child in root.children.items()
@@ -436,6 +521,7 @@ class MuZeroAgent(MARLBaseAgent):
         target_values = samples["values"].to(self.device)
         target_rewards = samples["rewards"].to(self.device)
         actions = samples["actions"].to(self.device)
+        target_to_plays = samples["to_plays"].to(self.device)
         # infos = samples["infos"].to(self.device)
         inputs = self.preprocess(observations)
 
@@ -444,6 +530,7 @@ class MuZeroAgent(MARLBaseAgent):
             val_loss = 0
             pol_loss = 0
             rew_loss = 0
+            tp_loss = 0
             priorities = []
             for item in range(self.config.minibatch_size):
                 value, policy, hidden_state = self.predict_single_initial_inference(
@@ -470,6 +557,7 @@ class MuZeroAgent(MARLBaseAgent):
                     )
                 ]
                 policies = [policy]
+                to_plays = [torch.zeros((1, self.config.game.num_players))]
 
                 for action in actions[item]:
                     if action == -1:
@@ -481,19 +569,22 @@ class MuZeroAgent(MARLBaseAgent):
                         else:
                             action = self.env.action_space.sample()
                     # why do we not scale the gradient of the hidden state here?? TODO
-                    reward, hidden_state, value, policy = (
+                    reward, hidden_state, value, policy, to_play = (
                         self.predict_single_recurrent_inference(hidden_state, action)
                     )
                     gradient_scales.append(1.0 / self.config.unroll_steps)
                     values.append(value)
                     rewards.append(reward)
                     policies.append(policy)
+                    to_plays.append(to_play)
 
                     hidden_state = scale_gradient(hidden_state, 0.5)
 
+                # print(to_plays)
                 values_tensor = torch.stack([v for v in values])
                 rewards_tensor = torch.stack([r for r in rewards])
                 policies_tensor = torch.stack([p for p in policies])
+                to_plays_tensor = torch.stack([tp for tp in to_plays])
                 gradient_scales_tensor = torch.tensor(gradient_scales)
 
                 # if self.config.game.has_intermediate_rewards:
@@ -506,18 +597,22 @@ class MuZeroAgent(MARLBaseAgent):
                     value,
                     reward,
                     policy,
+                    to_play,
                     target_value,
                     target_reward,
                     target_policy,
+                    target_to_play,
                     scale,
                 ) in zip(
                     range(len(values)),
                     values_tensor,
                     rewards_tensor,
                     policies_tensor,
+                    to_plays_tensor,
                     target_values[item],
                     target_rewards[item],
                     target_policies[item],
+                    target_to_plays[item],
                     gradient_scales_tensor,
                 ):
                     if k == 0:
@@ -556,9 +651,13 @@ class MuZeroAgent(MARLBaseAgent):
                     if k == 0:  # or not self.config.game.has_intermediate_rewards:
                         # NO REWARD ON INITIAL OBSERVATION
                         reward_loss = torch.tensor(0.0)
+                        to_play_loss = torch.tensor(0.0)
                     else:
                         reward_loss = self.config.reward_loss_function(
                             reward, target_reward
+                        )
+                        to_play_loss = self.config.to_play_loss_function(
+                            to_play, target_to_play
                         )
 
                     policy_loss = self.config.policy_loss_function(
@@ -566,7 +665,9 @@ class MuZeroAgent(MARLBaseAgent):
                     )
 
                     scaled_loss = (
-                        scale_gradient(value_loss + reward_loss + policy_loss, scale)
+                        scale_gradient(
+                            value_loss + reward_loss + policy_loss + to_play_loss, scale
+                        )
                         * samples["weights"][
                             item
                         ]  # TODO: COULD DO A PRIORITY/WEIGHT FUNCTION THAT INCLUDES THE RECURRENT STEPS AS, SO IT DOESNT JUST MULIPTIY BY samples["weights"][item] but samples["weights"][item][k]
@@ -574,17 +675,27 @@ class MuZeroAgent(MARLBaseAgent):
 
                     if item == 0 and self.training_step % self.checkpoint_interval == 0:
                         print("unroll step", k)
+                        print("observation", observations)
                         print("predicted value", value)
                         print("target value", target_value)
                         print("predicted reward", reward)
                         print("target reward", target_reward)
                         print("predicted policy", policy)
                         print("target policy", target_policy)
-                        print("sample losses", value_loss, reward_loss, policy_loss)
+                        print("to_play", to_play)
+                        print("target to_player", target_to_play)
+                        print(
+                            "sample losses",
+                            value_loss,
+                            reward_loss,
+                            policy_loss,
+                            to_play_loss,
+                        )
 
                     val_loss += value_loss.item()
                     rew_loss += reward_loss.item()
                     pol_loss += policy_loss.item()
+                    tp_loss += to_play_loss.item()
                     loss += scaled_loss
 
             # compute losses
@@ -603,6 +714,7 @@ class MuZeroAgent(MARLBaseAgent):
             val_loss / self.config.minibatch_size,
             pol_loss / self.config.minibatch_size,
             rew_loss / self.config.minibatch_size,
+            tp_loss / self.config.minibatch_size,
             loss.item(),
         )
 
@@ -620,10 +732,10 @@ class MuZeroAgent(MARLBaseAgent):
         return value[0], policy[0], hidden_state
 
     def predict_single_recurrent_inference(self, hidden_state, action):
-        reward, hidden_state, value, policy = self.model.recurrent_inference(
+        reward, hidden_state, value, policy, to_play = self.model.recurrent_inference(
             hidden_state, action
         )
-        return reward[0], hidden_state, value[0], policy[0]
+        return reward[0], hidden_state, value[0], policy[0], to_play
 
     def predict(
         self,
@@ -683,8 +795,6 @@ class MuZeroAgent(MARLBaseAgent):
             done = False
             while not done:
                 # total_game_step_time = time()
-                if self.replay_buffer.size < 1000:
-                    print("Move", len(game) + 1)
                 temperature = self.config.temperatures[0]
                 for i, temperature_step in enumerate(self.config.temperature_updates):
                     if self.config.temperature_with_training_steps:
@@ -709,6 +819,10 @@ class MuZeroAgent(MARLBaseAgent):
                 # action_wait_time = time()
                 action = self.select_actions(prediction).item()
                 # print(f"Action selection took {time()-action_wait_time} seconds")
+                if self.replay_buffer.size < 100000:
+                    print(
+                        f"Turn {env.game.state.num_turns} Action {len(game) + 1}: {ACTIONS_ARRAY[action]}"
+                    )
 
                 # env_step_time = time()
                 if self.config.game.num_players != 1:

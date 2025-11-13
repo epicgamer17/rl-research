@@ -48,6 +48,13 @@ class MuZeroConfig(Config):
             "reward_dense_layer_widths", [256], tointlists
         )
 
+        self.to_play_conv_layers: list = self.parse_field(
+            "to_play_conv_layers", [(32, 3, 1)]
+        )
+        self.to_play_dense_layer_widths: int = self.parse_field(
+            "to_play_dense_layer_widths", [256], tointlists
+        )
+
         self.critic_conv_layers: list = self.parse_field(
             "critic_conv_layers", [(32, 3, 1)]
         )
@@ -89,15 +96,19 @@ class MuZeroConfig(Config):
         self.pb_c_init: float = self.parse_field("pb_c_init", 1.25)
 
         self.value_loss_function: Loss = self.parse_field(
-            "value_loss_function", MSELoss
+            "value_loss_function", MSELoss()
         )
 
         self.reward_loss_function: Loss = self.parse_field(
-            "reward_loss_function", MSELoss
+            "reward_loss_function", MSELoss()
         )
 
         self.policy_loss_function: Loss = self.parse_field(
-            "policy_loss_function", CategoricalCrossentropyLoss
+            "policy_loss_function", CategoricalCrossentropyLoss()
+        )
+
+        self.to_play_loss_function: Loss = self.parse_field(
+            "to_play_loss_function", CategoricalCrossentropyLoss()
         )
 
         self.action_function: Callable = self.parse_field(
@@ -106,7 +117,7 @@ class MuZeroConfig(Config):
 
         self.n_step: int = self.parse_field("n_step", 5)
         self.discount_factor: float = self.parse_field("discount_factor", 1.0)
-        self.unroll_steps: int = self.parse_field("unroll_steps", 500)
+        self.unroll_steps: int = self.parse_field("unroll_steps", 5)
 
         self.per_alpha: float = self.parse_field("per_alpha", 0.5)
         self.per_beta: float = self.parse_field("per_beta", 0.5)
@@ -121,7 +132,7 @@ class MuZeroConfig(Config):
 
         self.support_range: int = self.parse_field("support_range", None)
 
-        self.multi_process: bool = self.parse_field("multi_process", False)
+        self.multi_process: bool = self.parse_field("multi_process", True)
         self.num_workers: int = self.parse_field("num_workers", 4)
         self.lr_ratio: float = self.parse_field("lr_ratio", float("inf"))
 

@@ -6,6 +6,7 @@ from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 import numpy as np
 from agent_configs import RainbowConfig
+from agents.catan_player_wrapper import ACTIONS_ARRAY
 from utils import (
     update_per_beta,
     get_legal_moves,
@@ -486,6 +487,11 @@ class RainbowAgent(BaseAgent):
                             values, info
                         ).item(),
                     )
+
+                    print(
+                        f"Turn {self.env.env.env.env.game.state.num_turns} Action: {ACTIONS_ARRAY[action]}"
+                    )
+
                     # print("Action", action)
                     # print("Epislon Greedy Epsilon", self.eg_epsilon)
                     next_state, reward, terminated, truncated, next_info = (

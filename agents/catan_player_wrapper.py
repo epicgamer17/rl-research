@@ -82,15 +82,36 @@ HIGH = 19 * 5
 
 class CatanPlayerWrapper:
     def __init__(self, player_class, color):
+        # keep original initialization but we will overwrite color at decision time
         self.player = player_class(color)
         self.model_name = player_class.__name__
+        # remember the initial color (not strictly necessary, but harmless)
+        self.init_color = color
 
     def predict(self, observation, info, env=None, *args, **kwargs):
+        # pass through; env will be available in select_actions via prediction[2]
         return observation, info, env
 
     def select_actions(self, prediction, info, *args, **kwargs):
-        game = prediction[2].game
+        """
+        prediction[2] is expected to be the env (per your usage).
+        We fetch the game from the env and ensure the wrapped player's color
+        equals the game's current_color() before decision/search.
+        """
+        # Unpack env from the prediction (per your predict() return)
+        env = prediction[2]
+        game = env.game
+
+        # IMPORTANT: set the player's color to the game's current color so
+        # the AlphaBeta (or other search) uses the correct color in its logic.
+        # This ensures correctness even when the environment rotated color->agent mapping.
+        self.player.color = game.state.current_color()
+
+        # Now call the player's decision routine using the real game state.
         action = self.player.decide(game, game.state.playable_actions)
-        # go from catan action to an int
+
+        # Convert to action-space integer
         action_int = to_action_space(action)
+
+        # Return as a tensor (same as your original wrapper)
         return torch.tensor(action_int)

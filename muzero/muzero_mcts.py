@@ -6,7 +6,7 @@ import numpy as np
 
 
 class Node:
-    def __init__(self, prior_policy):
+    def __init__(self, prior_policy, parent=None):
         self.visits = 0
         self.to_play = -1
         self.prior_policy = prior_policy
@@ -14,6 +14,7 @@ class Node:
         self.children = {}
         self.hidden_state = None
         self.reward = 0
+        self.parent = parent
 
     def expand(self, legal_moves, to_play, policy, hidden_state, reward):
         self.to_play = to_play
@@ -24,7 +25,7 @@ class Node:
         policy_sum = sum(policy.values())
 
         for action, p in policy.items():
-            self.children[action] = Node((p / (policy_sum + 1e-10)).item())
+            self.children[action] = Node((p / (policy_sum + 1e-10)).item(), self)
 
     def expanded(self):
         return len(self.children) > 0
@@ -66,12 +67,13 @@ class Node:
 
         prior_score = pb_c * child.prior_policy
         if child.visits > 0:
+            if num_players == 1:
+                sign = 1.0
+            else:
+                sign = 1.0 if child.to_play == self.to_play else -1.0
+
             value_score = min_max_stats.normalize(
-                child.reward
-                + discount
-                * (
-                    child.value() if num_players == 1 else -child.value()
-                )  # (or if on the same team)
+                child.reward + discount * (sign * child.value())
             )
         else:
             value_score = 0.0

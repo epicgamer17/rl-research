@@ -4,20 +4,16 @@ import sys
 
 sys.path.append("../../")
 
-
 from typing import Any
-
 import gymnasium.spaces
 import numpy as np
-
 from pettingzoo.utils.env import ActionType, AECEnv, AgentID, ObsType
 from gymnasium.spaces import Box, Discrete
-
 from supersuit.utils.frame_stack import stack_init, stack_obs, stack_obs_space
 from collections import deque
-
 from utils import action_mask_to_legal_moves
 from pettingzoo.utils.wrappers.base import BaseWrapper
+import gymnasium as gym
 
 
 def action_mask_to_info(state, info, current_player):
@@ -119,6 +115,98 @@ class ChannelLastToFirstWrapper(BaseWrapper):
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         self.env.reset(seed=seed, options=options)
+
+
+class AppendAgentSelectionWrapper(BaseWrapper):
+    """
+    Appends the current agent selection index (0,1,2,...) to 1-D vector observations.
+
+    - If observation is a Box with shape (n,), returns shape (n+1,).
+    - If observation is a Dict containing "observation", it will take that array,
+      append the index, and return the appended array (not the full dict).
+
+    IMPORTANT: observation_space does NOT access env.agents or possible_agents,
+    because observation_space can be queried before env.reset() in PettingZoo.
+    """
+
+    def observation_space(self, agent: AgentID) -> gym.spaces.Space:
+        orig_space = self.env.observation_space(agent)
+
+        def _append_box(obs_space: gym.spaces.Box):
+            # Only support 1-D vector Boxes here — otherwise return unchanged.
+            if len(obs_space.shape) != 1:
+                return obs_space
+
+            orig_low = np.asarray(obs_space.low).reshape(-1)
+            orig_high = np.asarray(obs_space.high).reshape(-1)
+
+            # Determine a safe "max" for the appended agent-index dimension
+            dtype = np.dtype(obs_space.dtype)
+            if np.issubdtype(dtype, np.integer):
+                try:
+                    appended_high_val = np.iinfo(dtype).max
+                except Exception:
+                    appended_high_val = 2**31 - 1
+            else:
+                try:
+                    appended_high_val = np.finfo(dtype).max
+                except Exception:
+                    appended_high_val = np.finfo(np.float32).max
+
+            new_low = np.concatenate([orig_low, np.array([0], dtype=orig_low.dtype)])
+            # ensure appended high uses the same dtype as obs_space.high
+            appended_high = np.array([appended_high_val], dtype=orig_high.dtype)
+            new_high = np.concatenate([orig_high, appended_high])
+
+            new_shape = (orig_space.shape[0] + 1,)
+            return gym.spaces.Box(
+                low=new_low, high=new_high, shape=new_shape, dtype=obs_space.dtype
+            )
+
+        if (
+            isinstance(orig_space, gym.spaces.Dict)
+            and "observation" in orig_space.spaces
+        ):
+            return _append_box(orig_space["observation"])
+        elif isinstance(orig_space, gym.spaces.Box):
+            return _append_box(orig_space)
+
+        # unsupported types are returned unchanged
+        return orig_space
+
+    def observe(self, agent: AgentID) -> np.ndarray:
+        obs = self.env.observe(agent)
+
+        # extract inner observation if dict-style
+        if isinstance(obs, dict) and "observation" in obs:
+            obs = obs["observation"]
+
+        obs = np.asarray(obs)
+
+        # only append for 1-D vectors
+        if obs.ndim != 1:
+            # fallback: return original observation unchanged
+            return obs
+
+        # compute the index of the currently-selected agent (who's turn it is).
+        # observe() is normally called after reset, so accessing env.agent_selection is OK.
+        try:
+            current_sel = list(self.env.agents).index(self.env.agent_selection)
+        except Exception:
+            # fallback if for some reason it's unavailable
+            current_sel = 0
+
+        appended = np.array(
+            [current_sel],
+            dtype=obs.dtype if np.issubdtype(obs.dtype, np.number) else np.float32,
+        )
+        return np.concatenate([obs, appended], axis=0)
+
+    def reset(self, seed: int | None = None, options: dict | None = None):
+        return self.env.reset(seed=seed, options=options)
+
+    def step(self, action: ActionType) -> None:
+        return self.env.step(action)
 
 
 class TwoPlayerPlayerPlaneWrapper(BaseWrapper):

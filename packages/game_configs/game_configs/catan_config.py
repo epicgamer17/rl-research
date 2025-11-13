@@ -1,5 +1,6 @@
 from wrappers import (
     ActionMaskInInfoWrapper,
+    AppendAgentSelectionWrapper,
     FrameStackWrapper,
     TwoPlayerPlayerPlaneWrapper,
 )
@@ -16,17 +17,21 @@ def make_env(
     vps_to_win=10,
     representation="vector",
     invalid_action_reward=-10,
-    render_mode=None,
+    render_mode="rgb_array",
+    auto_play_single_action=True,
 ):
     env = catan_env(
+        render_mode=render_mode,
         num_players=num_players,
         map_type=map_type,
         vps_to_win=vps_to_win,
         representation=representation,
         invalid_action_reward=invalid_action_reward,
+        auto_play_single_action=auto_play_single_action,
     )
     env = ActionMaskInInfoWrapper(env)
     env = FrameStackWrapper(env, 4, channel_first=False)
+    env = AppendAgentSelectionWrapper(env)
     return env
 
 
