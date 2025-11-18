@@ -11,7 +11,7 @@ from wrappers import (
 from pettingzoo.classic import tictactoe_v3
 
 
-def make_env(render_mode=None):
+def make_env(render_mode="rgb_array"):
     env = tictactoe_v3.env(render_mode=render_mode)
     env = ActionMaskInInfoWrapper(env)
     env = FrameStackWrapper(env, 4, channel_first=False)

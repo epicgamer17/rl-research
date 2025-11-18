@@ -783,7 +783,7 @@ class CatanAECEnv(AECEnv):
 
         # Draw Ports (robust)
         for port_id, (x, y) in self.port_coords.items():
-            print(port_id, x, y)
+            # print(port_id, x, y)
             pygame.draw.circle(
                 self.screen,
                 (200, 200, 255),

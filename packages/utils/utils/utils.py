@@ -1108,14 +1108,6 @@ class RecordVideo(BaseWrapper):
         try:
             # Try to render as rgb_array
             frame = self.env.render()
-
-            if frame is None:
-                return None
-
-            # Convert to numpy array if needed
-            if not isinstance(frame, np.ndarray):
-                return None
-
             # Ensure frame is in correct format (BGR for OpenCV)
             if len(frame.shape) == 3 and frame.shape[2] == 3:
                 # Convert RGB to BGR for OpenCV
@@ -1128,7 +1120,6 @@ class RecordVideo(BaseWrapper):
                 frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
             else:
                 print(f"Warning: Unexpected frame shape: {frame.shape}")
-                return None
 
             return frame
 

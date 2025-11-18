@@ -73,6 +73,7 @@ class MuZeroConfig(Config):
         # Training
         self.games_per_generation: int = self.parse_field("games_per_generation", 100)
         self.value_loss_factor: float = self.parse_field("value_loss_factor", 1.0)
+        self.to_play_loss_factor: float = self.parse_field("to_play_loss_factor", 1.0)
         self.weight_decay: float = self.parse_field("weight_decay", 1e-4)
 
         # MCTS
@@ -84,7 +85,7 @@ class MuZeroConfig(Config):
         )
         self.num_simulations: int = self.parse_field("num_simulations", 800)
 
-        self.temperatures = self.parse_field("temperatures", [1.0, 0.1])
+        self.temperatures = self.parse_field("temperatures", [1.0, 0.0])
         self.temperature_updates = self.parse_field("temperature_updates", [5])
         self.temperature_with_training_steps = self.parse_field(
             "temperature_with_training_steps", False
@@ -135,6 +136,12 @@ class MuZeroConfig(Config):
         self.multi_process: bool = self.parse_field("multi_process", True)
         self.num_workers: int = self.parse_field("num_workers", 4)
         self.lr_ratio: float = self.parse_field("lr_ratio", float("inf"))
+        self.transfer_interval: int = self.parse_field("transfer_interval", 1000)
+
+        self.gumbel: bool = self.parse_field("gumbel", False)
+        self.gumbel_m = self.parse_field("gumbel_m", 16)
+        self.gumbel_cvisit = self.parse_field("gumbel_cvisit", 50)
+        self.gumbel_cscale = self.parse_field("gumbel_cscale", 1.0)
 
     def _verify_game(self):
         # override alphazero game verification since muzero can play those games

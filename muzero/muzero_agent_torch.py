@@ -1,5 +1,8 @@
 import datetime
+import math
 import sys
+
+from packages.utils.utils.utils import KLDivergenceLoss
 
 
 sys.path.append("../")
@@ -15,7 +18,7 @@ from modules.utils import scalar_to_support, support_to_scalar
 
 
 from agents.random import RandomAgent
-
+import numpy as np
 import os
 from stats.stats import PlotType, StatTracker
 
@@ -87,20 +90,22 @@ class MuZeroAgent(MARLBaseAgent):
             action_function=self.config.action_function,
         ).share_memory()
 
-        print("Layer weights:")
-        for name, param in self.model.named_parameters():
-            if "weight" in name:
-                print(f"{name}:")
-                print(param.data)
-                print(
-                    f"Shape: {param.shape}, std: {param.std():.4f}, mean: {param.mean():.4f}\n"
-                )
-            if "bias" in name:
-                print(f"{name}:")
-                print(param.data)
-                print(
-                    f"Shape: {param.shape}, std: {param.std():.4f}, mean: {param.mean():.4f}\n"
-                )
+        self.target_model = Network(
+            config=config,
+            output_size=self.num_actions,
+            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            action_function=self.config.action_function,
+        )
+        # copy weights
+        self.target_model.load_state_dict(self.model.state_dict())
+        # self.model.share_memory()
+
+        if self.config.multi_process:
+            # make sure target is placed in shared memory so worker processes can read it
+            self.target_model.share_memory()
+        else:
+            # non-multiprocess: keep target on device for faster inference
+            self.target_model.to(device)
 
         if not self.config.multi_process:
             self.model.to(device)
@@ -210,6 +215,49 @@ class MuZeroAgent(MARLBaseAgent):
         )
         self.stop_flag = mp.Value("i", 0)
 
+    def update_target_model(self):
+        """Copy parameters from the learning model to the target model.
+        This uses load_state_dict under torch.no_grad() for safety and speed.
+        """
+        with torch.no_grad():
+            # Direct load_state_dict is safe and simple.
+
+            # print("Layer weights before:")
+            # for name, param in self.target_model.named_parameters():
+            #     if "weight" in name:
+            #         print(f"{name}:")
+            #         print(param.data)
+            #         print(
+            #             f"Shape: {param.shape}, std: {param.std():.4f}, mean: {param.mean():.4f}\n"
+            #         )
+            #     if "bias" in name:
+            #         print(f"{name}:")
+            #         print(param.data)
+            #         print(
+            #             f"Shape: {param.shape}, std: {param.std():.4f}, mean: {param.mean():.4f}\n"
+            #         )
+
+            self.target_model.load_state_dict(self.model.state_dict())
+
+            # print("Layer weights after:")
+            # for name, param in self.target_model.named_parameters():
+            #     if "weight" in name:
+            #         print(f"{name}:")
+            #         print(param.data)
+            #         print(
+            #             f"Shape: {param.shape}, std: {param.std():.4f}, mean: {param.mean():.4f}\n"
+            #         )
+            #     if "bias" in name:
+            #         print(f"{name}:")
+            #         print(param.data)
+            #         print(
+            #             f"Shape: {param.shape}, std: {param.std():.4f}, mean: {param.mean():.4f}\n"
+            #         )
+
+            # If using multiprocessing, ensure target remains in shared memory.
+            if self.config.multi_process:
+                self.target_model.share_memory()
+
     def worker_fn(
         self, worker_id, stop_flag, stats_client: StatTracker, error_queue: mp.Queue
     ):
@@ -219,12 +267,25 @@ class MuZeroAgent(MARLBaseAgent):
         # torch.set_num_threads(1)
         # torch.set_grad_enabled(False)
         worker_env = self.config.game.make_env()  # each process needs its own env
-        self.model.to(self.device)
-        self.model.eval()
+        # from utils import record_video_wrapper
+
+        # worker_env.render_mode = "rgb_array"
+        # worker_env = record_video_wrapper(
+        #     worker_env, f"./videos/{self.model_name}/{worker_id}", 1
+        # )
+        # Workers should use the target model for inference so training doesn't
+        # destabilize ongoing self-play. Ensure the target model is on the worker's device
+        # and set as the inference model.
+        self.target_model.to(self.device)
+        self.target_model.eval()
+
         try:
             while not stop_flag.value:
-                score, num_steps = self.play_game(env=worker_env)
+                score, num_steps = self.play_game(
+                    env=worker_env, inference_model=self.target_model
+                )
                 # print(f"[Worker {worker_id}] Finished a game with score {score}")
+                # worker_env.close()  # for saving video
                 stats_client.append("score", score)
                 stats_client.append("episode_length", num_steps)
                 stats_client.increment_steps(num_steps)
@@ -232,6 +293,7 @@ class MuZeroAgent(MARLBaseAgent):
             # Send both exception and traceback back
             error_queue.put((e, traceback.format_exc()))
             raise  # ensures worker process exits with error
+        worker_env.close()
 
     def train(self):
         if self.config.multi_process:
@@ -250,6 +312,10 @@ class MuZeroAgent(MARLBaseAgent):
 
         start_time = time() - self.stats.get_time_elapsed()
         self.model.to(self.device)
+
+        # ensure inference uses the current target before any play in main thread
+        self.inference_model = self.target_model
+
         while self.training_step < self.config.training_steps:
             if self.config.multi_process:
                 if not error_queue.empty():
@@ -265,6 +331,28 @@ class MuZeroAgent(MARLBaseAgent):
                     raise err
 
                 self.stats.drain_queue()
+                if not (
+                    len(self.stats.stats["score"]) < 5
+                    or not all(x == 0 for x in self.stats.stats["score"][-5:])
+                ):
+                    if self.config.multi_process:
+                        self.stop_flag.value = 1
+                        for w in workers:
+                            print("Stopping workers")
+                            w.terminate()
+                        print("All workers stopped")
+
+                    if self.config.multi_process:
+                        try:
+                            testing_worker.join()
+                        except:
+                            pass
+                        self.stats.drain_queue()
+                    self.env.close()
+
+                assert len(self.stats.stats["score"]) < 5 or not all(
+                    x == 0 for x in self.stats.stats["score"][-5:]
+                ), "last 5 games are truncated (for catan)"
 
             if not self.config.multi_process:
                 for training_game in tqdm(range(self.config.games_per_generation)):
@@ -272,7 +360,7 @@ class MuZeroAgent(MARLBaseAgent):
                         print("Stopping game generation")
                         break
 
-                    score, num_steps = self.play_game()
+                    score, num_steps = self.play_game(inference_model=self.target_model)
                     self.stats.append("score", score)
                     self.stats.increment_steps(num_steps)
                 if self.stop_flag.value:
@@ -309,6 +397,12 @@ class MuZeroAgent(MARLBaseAgent):
                         self.config.per_beta,
                     )
                 )
+
+                if self.training_step % self.config.transfer_interval == 0:
+                    print(
+                        f"Transferring weights to target model at step {self.training_step}"
+                    )
+                    self.update_target_model()
 
             if self.training_step % self.test_interval == 0 and self.training_step > 0:
                 print("running tests")
@@ -352,166 +446,408 @@ class MuZeroAgent(MARLBaseAgent):
         print("Finished Training")
         self.run_tests(self.stats)
         self.save_checkpoint(save_weights=True)
+        self.env.close()
 
-    def monte_carlo_tree_search(self, env, state, info):
+    def monte_carlo_tree_search(self, env, state, info, inference_model=None):
         root = Node(0.0)
-        _, policy, hidden_state = self.predict_single_initial_inference(
+        v_pi, policy, hidden_state = self.predict_single_initial_inference(
             state,
             info,
+            model=inference_model,
         )
+
         if self.config.game.num_players != 1:
             legal_moves = get_legal_moves(info)[0]
             to_play = env.agents.index(env.agent_selection)
         else:
             legal_moves = list(range(self.num_actions))
             to_play = 1
-        root.expand(legal_moves, to_play, policy, hidden_state, 0.0)
 
-        if env == self.env:
-            root.add_noise(
-                self.config.root_dirichlet_alpha, self.config.root_exploration_fraction
+        actions = legal_moves  # list of ints
+        if self.config.gumbel:
+            # policy is a tensor/prob vector for all actions (shape num_actions)
+            logits = torch.log(policy + 1e-12).cpu()  # use numpy for gumbel math
+
+            # legal_moves is the list of available actions
+
+            # --- Gumbel sampling ---
+            k = len(actions)
+            m = min(
+                self.config.gumbel_m, k
+            )  # add config param gumbel_m, e.g., min(n,16)
+            # sample Gumbel noise
+            g = -torch.log(-torch.log(torch.rand(k)))  # shape (k,)
+            # compute g + logits (only for legal actions)
+            scores = g + logits[actions]
+            # find top-m indices (indices into 'actions')
+            top_idx = torch.argsort(scores, descending=True)[:m]
+            sampled_actions = [actions[i] for i in top_idx]
+            sampled_g_values = {
+                actions[i]: float(g[i] + logits[actions[i]]) for i in top_idx
+            }
+
+            # expand root with only sampled_actions; pass in the per-child root_score
+            root.expand(
+                sampled_actions, to_play, policy, hidden_state, 0.0, value=v_pi.item()
             )
+
+            # attach the root_score to the created children
+            for a in sampled_actions:
+                if a in root.children:
+                    root.children[a].root_score = sampled_g_values[
+                        a
+                    ]  # store Gumbel+logit
+        else:
+            root.expand(legal_moves, to_play, policy, hidden_state, 0.0)
+
+            if env == self.env:
+                root.add_noise(
+                    self.config.root_dirichlet_alpha,
+                    self.config.root_exploration_fraction,
+                )
 
         min_max_stats = MinMaxStats(self.config.known_bounds)
 
-        for _ in range(self.config.num_simulations):
-            node = root
-            search_path = [node]
-            to_play = root.to_play
-            # old_to_play = to_play
-            # GO UNTIL A LEAF NODE IS REACHED
-            while node.expanded():
-                action, node = node.select_child(
+        if self.config.gumbel:
+            best_action = self.sequential_halving(
+                root, min_max_stats, list(root.children.keys())
+            )
+        else:
+            for _ in range(self.config.num_simulations):
+                self._run_single_simulation(
+                    root,
                     min_max_stats,
-                    self.config.pb_c_base,
-                    self.config.pb_c_init,
-                    self.config.discount_factor,
-                    self.config.game.num_players,
+                    inference_model=inference_model,
+                    allowed_actions=None,
                 )
-                # old_to_play = (old_to_play + 1) % self.config.game.num_players
-                # PREDICT THE TO PLAY HERE
-                search_path.append(node)
-            parent = search_path[-2]
-            reward, hidden_state, value, policy, to_play = (
-                self.predict_single_recurrent_inference(
-                    parent.hidden_state,
-                    action,  # model=model
-                )
+
+        # visit_counts = torch.tensor(
+        #     [(child.visits, action) for action, child in root.children.items()]
+        # )
+        # print("root children", root.children.items())
+        visit_counts = torch.tensor(
+            [child.visits for action, child in root.children.items()]
+        )
+        actions = [action for action, child in root.children.items()]
+
+        # print("mcts visit counts", visit_counts)
+
+        policy = torch.zeros(self.num_actions)
+        policy[actions] = visit_counts / torch.sum(visit_counts)
+
+        if self.config.gumbel:
+            # q(a) for visited actions (empirical Q from child.value())
+            q_dict = {a: float(root.children[a].value()) for a in actions}
+
+            # sum of visits across all children (sum_b N(b))
+            sum_N = float(sum(root.children[a].visits for a in root.children.keys()))
+
+            # p_vis_sum := sum_{b in visited} pi(b)  (network policy mass on visited actions)
+            p_vis_sum = float(sum(policy[a] for a in actions))
+
+            # expected_q_vis := sum_{a in visited} pi(a) * q(a)
+            expected_q_vis = float(sum(policy[a] * q_dict[a] for a in actions))
+
+            # term := sum_b N(b) * ( p_vis_sum * expected_q_vis )
+            term = sum_N * (p_vis_sum * expected_q_vis)
+            v_mix = (v_pi + term) / (1.0 + sum_N)
+
+            # completedQ: visited actions keep q(a), unvisited set to v_mix
+            completedQ = torch.full((self.num_actions,), v_mix.item())
+            for a, qv in q_dict.items():
+                completedQ[a] = qv
+
+            # --- Build the improved policy π0 using completedQ ---
+            # Compute sigma(completedQ) exactly as you do in selection (use min_max_stats or your normalization)
+            # Here I reuse the same sigma computation you already use; replace with your exact implementation if different.
+
+            # Normalization of completedQ: use MinMaxStats if you want consistency
+            # Assuming min_max_stats exists and is the same used in search:
+            normalized_completed = torch.tensor(
+                [min_max_stats.normalize(float(x)) for x in completedQ]
             )
-            if self.config.support_range is not None:
-                reward = support_to_scalar(reward, self.config.support_range)
-                value = support_to_scalar(value, self.config.support_range)
+
+            # compute sigma per-action: sigma = (cvisit + max_visits) * cscale * normalized_completed
+            max_visits = (
+                max([ch.visits for ch in root.children.values()])
+                if len(root.children) > 0
+                else 0
+            )
+            sigma = (
+                (self.config.gumbel_cvisit + max_visits)
+                * self.config.gumbel_cscale
+                * normalized_completed
+            )  # numpy array length num_actions
+
+            # combine network logits and sigma:
+            logits = torch.log(policy + 1e-12)  # network log-probabilities
+            pi0_logits = logits + sigma  # elementwise
+            # pi0 = np.exp(pi0_logits - np.max(pi0_logits))
+            # pi0 /= pi0.sum() + 1e-12
+            pi0 = torch.softmax(pi0_logits, dim=0)
+
+            # Final target policy (torch tensor on device for training)
+            target_policy = torch.tensor(pi0, dtype=torch.float32).to(self.device)
+
+            return root.value(), policy, target_policy, best_action
+        else:
+            return root.value(), policy, policy, torch.argmax(policy)
+
+    def sequential_halving(
+        self, root: Node, min_max_stats: MinMaxStats, candidates: list
+    ):
+        """
+        Perform Sequential Halving among `candidates` (list of action ints).
+        It splits self.config.num_simulations across rounds that eliminate ~half of candidates each round.
+        Survivors remain in root.children and accumulate visits/values as usual.
+        """
+        n = len(candidates)
+        # if n <= 1:
+        #     return
+
+        # number of rounds to reduce to 1 (ceil log2)
+        rounds = max(1, math.ceil(math.log2(n)))
+        total_sims = self.config.num_simulations
+        # allocate sims per round roughly equal — you can refine this strategy
+        sims_per_round = max(1, total_sims // rounds)
+
+        survivors = candidates.copy()
+
+        def _calculate_score(action, root, child, min_max_stats, config):
+            # root_score: stored Gumbel+logit
+            root_score = child.root_score
+
+            # parent-perspective scalar (same as used in selection/backprop)
+            if config.game.num_players == 1:
+                sign = 1.0
             else:
-                reward = reward.item()
-                value = value.item()
+                sign = 1.0 if child.to_play == root.to_play else -1.0
 
-            # onehot_to_play = to_play
-            to_play = int(to_play.argmax().item())
-            # if to_play != old_to_play and self.training_step > 1000:
-            #     print("WRONG TO PLAY", onehot_to_play)
-
-            node.expand(
-                list(range(self.num_actions)),
-                to_play,
-                policy,
-                hidden_state,
-                (
-                    reward  # if self.config.game.has_intermediate_rewards else 0.0
-                ),  # for board games and games with no intermediate rewards
+            parent_value_contrib = child.reward + config.discount_factor * (
+                sign * child.value()
             )
 
-            # for node in reversed(search_path):
-            #     node.value_sum += value if node.to_play == to_play else -value
-            #     node.visits += 1
-            #     min_max_stats.update(
-            #         node.reward
-            #         + self.config.discount_factor
-            #         * (
-            #             node.value()
-            #             if self.config.game.num_players == 1
-            #             else -node.value()
-            #         )
-            #     )
-            #     value = (
-            #         -node.reward
-            #         if node.to_play == to_play and self.config.game.num_players > 1
-            #         else node.reward
-            #     ) + self.config.discount_factor * value
+            # normalize using the shared MinMaxStats
+            normalized_q = min_max_stats.normalize(parent_value_contrib)
 
-            n = len(search_path)
-            if n == 0:
-                return []
+            # visit mass scaling
+            max_visits = (
+                max([ch.visits for ch in root.children.values()])
+                if len(root.children) > 0
+                else 0
+            )
+            cvisit = config.gumbel_cvisit
+            cscale = config.gumbel_cscale
+            sigma = (cvisit + max_visits) * cscale * normalized_q
 
-            # --- 1) Build per-player accumulator array acc[p] = Acc_p(i) for current i (starting from i = n-1) ---
-            # Acc_p(i) definition: discounted return from node i for a node whose player is p:
-            # Acc_p(i) = sum_{j=i+1..n-1} discount^{j-i-1} * sign(p, j) * reward_j
-            #            + discount^{n-1-i} * sign(p, leaf) * leaf_value
-            # Where sign(p, j) = +1 if acting_player_at_j (which is search_path[j-1].to_play) == p else -1.
-            #
-            # We compute Acc_p(n-1) = sign(p, leaf) * leaf_value as base, then iterate backward:
-            # Acc_p(i-1) = s(p, i) * reward_i + discount * Acc_p(i)
+            score = float(root_score + sigma)
+            return (action, score)
 
-            # Initialize acc for i = n-1 (base: discounted exponent 0 for leaf value)
-            # acc is a Python list of floats length num_players
-            acc = [0.0] * self.config.game.num_players
-            for p in range(self.config.game.num_players):
-                acc[p] = value if to_play == p else -value
+        # Helper function for sorting scores by value (used for both priority and elimination)
+        def sort_by_score(item):
+            # item is a tuple (action, score)
+            return item[1]
 
-            # totals[i] will hold Acc_{node_player}(i)
-            totals = [0.0] * n
+        sims_used = 0
+        for r in range(rounds):
+            if len(survivors) <= 1:
+                break
 
-            # Iterate from i = n-1 down to 0
-            for i in range(n - 1, -1, -1):
-                node = search_path[i]
-                node_player = node.to_play
-                # totals for this node = acc[node_player] (current Acc_p(i))
-                totals[i] = acc[node_player]
+            # # compute a score per survivor for elimination (use visits primarily)
+            scores = []
+            for a in survivors:
+                child = root.children.get(a)
+                if child is not None:
+                    scores.append(
+                        _calculate_score(a, root, child, min_max_stats, self.config)
+                    )
+            scores.sort(key=sort_by_score, reverse=True)
+            survivors = [a for a, _ in scores]
+            num_survivors = len(survivors)
+            # run sims_per_round simulations restricted to current survivors
+            sims_used += sims_per_round
 
-                # Prepare acc for i-1 (if any)
-                if i > 0:
-                    # reward at index i belongs to acting_player = search_path[i-1].to_play
-                    r_i = search_path[i].reward
-                    acting_player = search_path[i - 1].to_play
+            for i in range(sims_per_round):
+                # The modulo operation cycles through the sorted survivors list
+                action = survivors[i % num_survivors]
 
-                    # Update per-player accumulators in O(num_players)
-                    # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
-                    # sign(p, i) = +1 if acting_player == p else -1
-                    # We overwrite acc[p] in-place to be Acc_p(i-1)
-                    for p in range(self.config.game.num_players):
-                        sign = 1.0 if acting_player == p else -1.0
-                        acc[p] = sign * r_i + 1.0 * acc[p]
+                # Run a single simulation, but ONLY allow the current `action` to be selected at the root
+                self._run_single_simulation(
+                    root, min_max_stats, allowed_actions=[action]
+                )  # recompute a score per survivor for elimination (use visits primarily)
 
-            # --- 2) Apply totals to nodes in reverse order and update MinMaxStats (parent-perspective scalar) ---
-            # We must update nodes (value_sum, visits) from the leaf back to the root so that when
-            # computing parent-perspective scalars we can use child.value() (which should reflect the
-            # just-updated child totals).
-            for i in range(n - 1, -1, -1):
-                node = search_path[i]
+            scores = []
+            for a in survivors:
+                child = root.children.get(a)
+                if child is not None:
+                    scores.append(
+                        _calculate_score(a, root, child, min_max_stats, self.config)
+                    )  # sort ascending by computed score, eliminate bottom half
+            scores.sort(key=sort_by_score)
+            survivors = [a for a, _ in scores]
+            num_survivors = len(survivors)
+            num_to_eliminate = max(1, math.ceil(len(survivors) / 2.0))
+            eliminated = [a for a, _ in scores[:num_to_eliminate]]
+            survivors = [a for a in survivors if a not in eliminated]
+            # print(survivors, scores)
 
-                # apply computed discounted total for this node's player
-                node.value_sum += totals[i]
-                node.visits += 1
+        remaining = max(0, total_sims - sims_used)
+        for _ in range(remaining):
+            # free to explore among survivors or all children (paper uses final sims to refine survivors)
+            # print("running remaining", _)
+            self._run_single_simulation(
+                root, min_max_stats, allowed_actions=set(survivors)
+            )
+        if len(survivors) > 1:
+            return scores[-1][0]
+        else:
+            return survivors[0]
 
-                # compute scalar that MinMaxStats expects for this child from its parent's perspective:
-                # parent_value_contrib = child.reward + discount * (sign * child.value())
-                # sign = +1 if single-player OR child.to_play == parent.to_play else -1
-                if i > 0:
-                    parent = search_path[i - 1]
-                    if self.config.game.num_players == 1:
-                        sign = 1.0
-                    else:
-                        sign = 1.0 if node.to_play == parent.to_play else -1.0
-                else:
-                    # root: choose sign = +1 convention (root has no parent)
+    def _run_single_simulation(
+        self,
+        root: Node,
+        min_max_stats: MinMaxStats,
+        inference_model=None,
+        allowed_actions=None,
+    ):
+        node = root
+        search_path = [node]
+        to_play = root.to_play
+        # old_to_play = to_play
+        # GO UNTIL A LEAF NODE IS REACHED
+        while node.expanded():
+            action, node = node.select_child(
+                min_max_stats,
+                self.config.pb_c_base,
+                self.config.pb_c_init,
+                self.config.discount_factor,
+                self.config.game.num_players,
+                self.config.gumbel_cvisit,
+                self.config.gumbel_cscale,
+                allowed_actions=allowed_actions,
+                gumbel=self.config.gumbel,
+            )
+            # old_to_play = (old_to_play + 1) % self.config.game.num_players
+            # PREDICT THE TO PLAY HERE
+            search_path.append(node)
+        parent = search_path[-2]
+        reward, hidden_state, value, policy, to_play = (
+            self.predict_single_recurrent_inference(
+                parent.hidden_state, action, model=inference_model
+            )
+        )
+        if self.config.support_range is not None:
+            reward = support_to_scalar(reward, self.config.support_range)
+            value = support_to_scalar(value, self.config.support_range)
+        else:
+            reward = reward.item()
+            value = value.item()
+
+        # onehot_to_play = to_play
+        to_play = int(to_play.argmax().item())
+        # if to_play != old_to_play and self.training_step > 1000:
+        #     print("WRONG TO PLAY", onehot_to_play)
+
+        node.expand(
+            list(range(self.num_actions)),
+            to_play,
+            policy,
+            hidden_state,
+            (
+                reward  # if self.config.game.has_intermediate_rewards else 0.0
+            ),  # for board games and games with no intermediate rewards
+            value=value,
+        )
+
+        # for node in reversed(search_path):
+        #     node.value_sum += value if node.to_play == to_play else -value
+        #     node.visits += 1
+        #     min_max_stats.update(
+        #         node.reward
+        #         + self.config.discount_factor
+        #         * (
+        #             node.value()
+        #             if self.config.game.num_players == 1
+        #             else -node.value()
+        #         )
+        #     )
+        #     value = (
+        #         -node.reward
+        #         if node.to_play == to_play and self.config.game.num_players > 1
+        #         else node.reward
+        #     ) + self.config.discount_factor * value
+
+        n = len(search_path)
+        if n == 0:
+            return []
+
+        # --- 1) Build per-player accumulator array acc[p] = Acc_p(i) for current i (starting from i = n-1) ---
+        # Acc_p(i) definition: discounted return from node i for a node whose player is p:
+        # Acc_p(i) = sum_{j=i+1..n-1} discount^{j-i-1} * sign(p, j) * reward_j
+        #            + discount^{n-1-i} * sign(p, leaf) * leaf_value
+        # Where sign(p, j) = +1 if acting_player_at_j (which is search_path[j-1].to_play) == p else -1.
+        #
+        # We compute Acc_p(n-1) = sign(p, leaf) * leaf_value as base, then iterate backward:
+        # Acc_p(i-1) = s(p, i) * reward_i + discount * Acc_p(i)
+
+        # Initialize acc for i = n-1 (base: discounted exponent 0 for leaf value)
+        # acc is a Python list of floats length num_players
+        acc = [0.0] * self.config.game.num_players
+        for p in range(self.config.game.num_players):
+            acc[p] = value if to_play == p else -value
+
+        # totals[i] will hold Acc_{node_player}(i)
+        totals = [0.0] * n
+
+        # Iterate from i = n-1 down to 0
+        for i in range(n - 1, -1, -1):
+            node = search_path[i]
+            node_player = node.to_play
+            # totals for this node = acc[node_player] (current Acc_p(i))
+            totals[i] = acc[node_player]
+
+            # Prepare acc for i-1 (if any)
+            if i > 0:
+                # reward at index i belongs to acting_player = search_path[i-1].to_play
+                r_i = search_path[i].reward
+                acting_player = search_path[i - 1].to_play
+
+                # Update per-player accumulators in O(num_players)
+                # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
+                # sign(p, i) = +1 if acting_player == p else -1
+                # We overwrite acc[p] in-place to be Acc_p(i-1)
+                for p in range(self.config.game.num_players):
+                    sign = 1.0 if acting_player == p else -1.0
+                    acc[p] = sign * r_i + self.config.discount_factor * acc[p]
+
+        # --- 2) Apply totals to nodes in reverse order and update MinMaxStats (parent-perspective scalar) ---
+        # We must update nodes (value_sum, visits) from the leaf back to the root so that when
+        # computing parent-perspective scalars we can use child.value() (which should reflect the
+        # just-updated child totals).
+        for i in range(n - 1, -1, -1):
+            node = search_path[i]
+
+            # apply computed discounted total for this node's player
+            node.value_sum += totals[i]
+            node.visits += 1
+
+            # compute scalar that MinMaxStats expects for this child from its parent's perspective:
+            # parent_value_contrib = child.reward + discount * (sign * child.value())
+            # sign = +1 if single-player OR child.to_play == parent.to_play else -1
+            if i > 0:
+                parent = search_path[i - 1]
+                if self.config.game.num_players == 1:
                     sign = 1.0
+                else:
+                    sign = 1.0 if node.to_play == parent.to_play else -1.0
+            else:
+                # root: choose sign = +1 convention (root has no parent)
+                sign = 1.0
 
-                parent_value_contrib = node.reward + 1.0 * (sign * node.value())
-                min_max_stats.update(parent_value_contrib)
-
-        visit_counts = [
-            (child.visits, action) for action, child in root.children.items()
-        ]
-        return root.value(), visit_counts
+            parent_value_contrib = node.reward + self.config.discount_factor * (
+                sign * node.value()
+            )
+            min_max_stats.update(parent_value_contrib)
 
     def learn(self):
         samples = self.replay_buffer.sample()
@@ -534,7 +870,7 @@ class MuZeroAgent(MARLBaseAgent):
             priorities = []
             for item in range(self.config.minibatch_size):
                 value, policy, hidden_state = self.predict_single_initial_inference(
-                    inputs[item], {}  # infos[item]
+                    inputs[item], {}, model=self.model  # infos[item]
                 )
 
                 gradient_scales = [1.0]
@@ -570,7 +906,9 @@ class MuZeroAgent(MARLBaseAgent):
                             action = self.env.action_space.sample()
                     # why do we not scale the gradient of the hidden state here?? TODO
                     reward, hidden_state, value, policy, to_play = (
-                        self.predict_single_recurrent_inference(hidden_state, action)
+                        self.predict_single_recurrent_inference(
+                            hidden_state, action, model=self.model
+                        )
                     )
                     gradient_scales.append(1.0 / self.config.unroll_steps)
                     values.append(value)
@@ -656,10 +994,15 @@ class MuZeroAgent(MARLBaseAgent):
                         reward_loss = self.config.reward_loss_function(
                             reward, target_reward
                         )
-                        to_play_loss = self.config.to_play_loss_function(
-                            to_play, target_to_play
+                        to_play_loss = (
+                            self.config.to_play_loss_factor
+                            * self.config.to_play_loss_function(to_play, target_to_play)
                         )
 
+                    # if self.config.gumbel and not isinstance(
+                    #     self.config.policy_loss_function, KLDivergenceLoss
+                    # ):
+                    #     print("Warning gumbel should us KL Divergence Loss")
                     policy_loss = self.config.policy_loss_function(
                         policy, target_policy
                     )
@@ -675,7 +1018,7 @@ class MuZeroAgent(MARLBaseAgent):
 
                     if item == 0 and self.training_step % self.checkpoint_interval == 0:
                         print("unroll step", k)
-                        print("observation", observations)
+                        print("observation", observations[item])
                         print("predicted value", value)
                         print("target value", target_value)
                         print("predicted reward", reward)
@@ -722,17 +1065,22 @@ class MuZeroAgent(MARLBaseAgent):
         self,
         state,
         info,
+        model,
     ):
+        if model == None:
+            model = self.model
         state_input = self.preprocess(state)
-        value, policy, hidden_state = self.model.initial_inference(state_input)
+        value, policy, hidden_state = model.initial_inference(state_input)
         # should we action mask the priors?
         # legal_moves = get_legal_moves(info)
         # policy = action_mask(policy, legal_moves, device=self.device)
         # policy = policy / torch.sum(policy)  # Normalize policy
         return value[0], policy[0], hidden_state
 
-    def predict_single_recurrent_inference(self, hidden_state, action):
-        reward, hidden_state, value, policy, to_play = self.model.recurrent_inference(
+    def predict_single_recurrent_inference(self, hidden_state, action, model):
+        if model == None:
+            model = self.model
+        reward, hidden_state, value, policy, to_play = model.recurrent_inference(
             hidden_state, action
         )
         return reward[0], hidden_state, value[0], policy[0], to_play
@@ -742,37 +1090,33 @@ class MuZeroAgent(MARLBaseAgent):
         state,
         info: dict = None,
         env=None,
-        temperature=1.0,
+        inference_model=None,
         *args,
         **kwargs,
     ):
-        value, visit_counts = self.monte_carlo_tree_search(
-            env,
-            state,
-            info,  # model=model
+        value, policy, target_policy, best_action = self.monte_carlo_tree_search(
+            env, state, info, inference_model=inference_model  # model=model
         )
-        actions = [action for _, action in visit_counts]
-        visit_counts = torch.tensor(
-            [count for count, _ in visit_counts], dtype=torch.float32
-        )
+        return policy, target_policy, value, best_action
 
-        temperature_visit_counts = torch.pow(visit_counts, 1 / temperature)
-        temperature_visit_counts /= torch.sum(temperature_visit_counts)
+    def select_actions(
+        self,
+        prediction,
+        temperature=0.0,
+        *args,
+        **kwargs,
+    ):
+        # print("probs", predictions[0])
+        if temperature != 0:
+            probs = prediction[0] ** temperature
+            probs /= probs.sum()
+            # print("temp probs", probs)
+            action = torch.multinomial(probs, 1)
+            return action
+        else:
+            return torch.tensor(prediction[3])
 
-        target_policy = torch.zeros(self.num_actions)
-        target_policy[actions] = visit_counts / torch.sum(visit_counts)
-
-        # SHOULD TARGET POLICY BE TEMPERATURE VISIT COUNTS???
-        return temperature_visit_counts, target_policy, actions, value
-
-    def select_actions(self, predictions, *args, **kwargs):
-        probs = torch.zeros(self.num_actions)
-        for i, action in enumerate(predictions[2]):
-            probs[action] = predictions[0][i].item()
-        action = torch.multinomial(probs, 1)
-        return action
-
-    def play_game(self, env=None):
+    def play_game(self, env=None, inference_model=None):
         if env is None:
             env = self.env
         # if model is None:
@@ -813,16 +1157,19 @@ class MuZeroAgent(MARLBaseAgent):
                     state,
                     info,
                     env=env,
-                    temperature=temperature,  # model=model
+                    inference_model=inference_model,
                 )
                 # print(f"Prediction took {time()-prediction_wait_time} seconds")
                 # action_wait_time = time()
-                action = self.select_actions(prediction).item()
+                action = self.select_actions(
+                    prediction,
+                    temperature=temperature,  # model=model
+                ).item()
                 # print(f"Action selection took {time()-action_wait_time} seconds")
-                if self.replay_buffer.size < 100000:
-                    print(
-                        f"Turn {env.game.state.num_turns} Action {len(game) + 1}: {ACTIONS_ARRAY[action]}"
-                    )
+                # if self.replay_buffer.size < 100000:
+                #     print(
+                #         f"Turn {env.game.state.num_turns} Action {len(game) + 1}: {ACTIONS_ARRAY[action]}"
+                #     )
 
                 # env_step_time = time()
                 if self.config.game.num_players != 1:
@@ -841,12 +1188,13 @@ class MuZeroAgent(MARLBaseAgent):
                 # print(f"Environment step took {time()-env_step_time} seconds")
                 done = terminated or truncated
                 # essentially storing in memory, dont store terminal states for training as they are not predicted on
+
                 game.append(
                     next_state,
                     next_info,
                     reward,
                     prediction[1],
-                    value=prediction[3],
+                    value=prediction[2],
                     action=action,
                 )
                 # game.append(
@@ -854,7 +1202,7 @@ class MuZeroAgent(MARLBaseAgent):
                 #     info,
                 #     reward,
                 #     prediction[1],
-                #     value=prediction[3],
+                #     value=prediction[2],
                 #     action=action,
                 # )
 

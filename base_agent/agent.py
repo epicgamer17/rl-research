@@ -197,7 +197,7 @@ class BaseAgent:
         """
         raise NotImplementedError
 
-    def select_actions(self, predicted, info) -> torch.Tensor:
+    def select_actions(self, prediction, info) -> torch.Tensor:
         """Return actions determined from the model output, appling postprocessing steps such as masking beforehand
 
         Args:
@@ -357,7 +357,7 @@ class BaseAgent:
                         state,
                         info,
                     )
-                    action = self.select_actions(prediction, info).item()
+                    action = self.select_actions(prediction, info=info).item()
                     state, reward, terminated, truncated, info = self.test_env.step(
                         action
                     )
@@ -455,7 +455,7 @@ class MARLBaseAgent(BaseAgent):
 
                 while not done:
                     prediction = self.predict(state, info, env=self.test_env.env)
-                    action = self.select_actions(prediction, info).item()
+                    action = self.select_actions(prediction, info=info).item()
 
                     self.test_env.step(action)
                     state, reward, terminated, truncated, info = self.test_env.last()
@@ -522,7 +522,7 @@ class MARLBaseAgent(BaseAgent):
                             prediction = self.predict(
                                 state, info, env=self.test_env.env
                             )
-                            action = self.select_actions(prediction, info).item()
+                            action = self.select_actions(prediction, info=info).item()
                             if trial == 0:
                                 print(
                                     f"Player {current_player} prediction: {prediction}"
@@ -534,7 +534,7 @@ class MARLBaseAgent(BaseAgent):
                             prediction = agent.predict(
                                 state, info, env=self.test_env.env
                             )
-                            action = agent.select_actions(prediction, info).item()
+                            action = agent.select_actions(prediction, info=info).item()
 
                             if trial == 0:
                                 print(

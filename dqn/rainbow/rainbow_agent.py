@@ -488,9 +488,9 @@ class RainbowAgent(BaseAgent):
                         ).item(),
                     )
 
-                    print(
-                        f"Turn {self.env.env.env.env.game.state.num_turns} Action: {ACTIONS_ARRAY[action]}"
-                    )
+                    # print(
+                    #     f"Turn {self.env.env.env.env.game.state.num_turns} Action: {ACTIONS_ARRAY[action]}"
+                    # )
 
                     # print("Action", action)
                     # print("Epislon Greedy Epsilon", self.eg_epsilon)
@@ -505,6 +505,12 @@ class RainbowAgent(BaseAgent):
                     state = next_state
                     info = next_info
                     score += reward
+                    # print(
+                    #     f"reward at step {self.training_step * self.config.replay_interval + _}: {reward}"
+                    # )
+                    # print(
+                    #     f"score at step {self.training_step * self.config.replay_interval + _}: {score}"
+                    # )
                     if done:
                         state, info = self.env.reset()
                         self.stats.append("score", score)

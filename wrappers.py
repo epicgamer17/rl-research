@@ -119,14 +119,14 @@ class ChannelLastToFirstWrapper(BaseWrapper):
 
 class AppendAgentSelectionWrapper(BaseWrapper):
     """
-    Appends the current agent selection index (0,1,2,...) to 1-D vector observations.
+    Appends a one-hot vector indicating the currently-selected agent to 1-D vector observations.
 
-    - If observation is a Box with shape (n,), returns shape (n+1,).
+    - If observation is a Box with shape (n,), returns shape (n + num_possible_agents,).
     - If observation is a Dict containing "observation", it will take that array,
-      append the index, and return the appended array (not the full dict).
+      append the one-hot vector, and return the appended array (not the full dict).
 
-    IMPORTANT: observation_space does NOT access env.agents or possible_agents,
-    because observation_space can be queried before env.reset() in PettingZoo.
+    NOTE: observation_space() tries to be defensive if the env hasn't populated
+    possible_agents yet (it falls back to env.agents or an empty list).
     """
 
     def observation_space(self, agent: AgentID) -> gym.spaces.Space:
@@ -140,25 +140,23 @@ class AppendAgentSelectionWrapper(BaseWrapper):
             orig_low = np.asarray(obs_space.low).reshape(-1)
             orig_high = np.asarray(obs_space.high).reshape(-1)
 
-            # Determine a safe "max" for the appended agent-index dimension
-            dtype = np.dtype(obs_space.dtype)
-            if np.issubdtype(dtype, np.integer):
-                try:
-                    appended_high_val = np.iinfo(dtype).max
-                except Exception:
-                    appended_high_val = 2**31 - 1
-            else:
-                try:
-                    appended_high_val = np.finfo(dtype).max
-                except Exception:
-                    appended_high_val = np.finfo(np.float32).max
+            # Number of possible agents (defensive: fallback to env.agents or 0)
+            num_agents = len(
+                getattr(self.env, "possible_agents", getattr(self.env, "agents", []))
+            )
 
-            new_low = np.concatenate([orig_low, np.array([0], dtype=orig_low.dtype)])
-            # ensure appended high uses the same dtype as obs_space.high
-            appended_high = np.array([appended_high_val], dtype=orig_high.dtype)
+            # If we can't determine number of agents, don't modify space.
+            if num_agents == 0:
+                return obs_space
+
+            # For the one-hot appended dimensions, lows are 0 and highs are 1.
+            appended_low = np.zeros((num_agents,), dtype=orig_low.dtype)
+            appended_high = np.ones((num_agents,), dtype=orig_high.dtype)
+
+            new_low = np.concatenate([orig_low, appended_low])
             new_high = np.concatenate([orig_high, appended_high])
 
-            new_shape = (orig_space.shape[0] + 1,)
+            new_shape = (orig_space.shape[0] + num_agents,)
             return gym.spaces.Box(
                 low=new_low, high=new_high, shape=new_shape, dtype=obs_space.dtype
             )
@@ -188,19 +186,37 @@ class AppendAgentSelectionWrapper(BaseWrapper):
             # fallback: return original observation unchanged
             return obs
 
-        # compute the index of the currently-selected agent (who's turn it is).
-        # observe() is normally called after reset, so accessing env.agent_selection is OK.
-        try:
-            current_sel = list(self.env.agents).index(self.env.agent_selection)
-        except Exception:
-            # fallback if for some reason it's unavailable
-            current_sel = 0
-
-        appended = np.array(
-            [current_sel],
-            dtype=obs.dtype if np.issubdtype(obs.dtype, np.number) else np.float32,
+        # determine number of possible agents (defensive)
+        possible_agents = list(
+            getattr(self.env, "possible_agents", getattr(self.env, "agents", []))
         )
-        return np.concatenate([obs, appended], axis=0)
+        num_agents = len(possible_agents)
+
+        # if we can't determine num_agents, fallback to original observation
+        if num_agents == 0:
+            return obs
+
+        # compute index of the currently-selected agent (who's turn it is).
+        try:
+            sel_agent = self.env.agent_selection
+            selected_index = possible_agents.index(sel_agent)
+        except Exception:
+            # fallback if for some reason it's unavailable — default to all zeros
+            selected_index = None
+
+        # build one-hot vector
+        if np.issubdtype(obs.dtype, np.integer):
+            oh_dtype = obs.dtype
+        elif np.issubdtype(obs.dtype, np.floating):
+            oh_dtype = obs.dtype
+        else:
+            oh_dtype = np.float32
+
+        one_hot = np.zeros((num_agents,), dtype=oh_dtype)
+        if selected_index is not None and 0 <= selected_index < num_agents:
+            one_hot[selected_index] = 1
+
+        return np.concatenate([obs, one_hot], axis=0)
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         return self.env.reset(seed=seed, options=options)

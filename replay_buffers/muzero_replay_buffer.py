@@ -81,6 +81,9 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             if self.size < self.max_size:
                 self.size += 1
 
+            new_id = int(self._next_id.item()) + 1
+            self._next_id[0] = new_id
+
         # Write data into buffers at reserved index WITHOUT holding the lock
         self.observation_buffer[idx] = torch.from_numpy(
             game.observation_history[position]
@@ -102,6 +105,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         self.n_step_rewards_buffer[idx] = rewards
         self.n_step_actions_buffer[idx] = actions
         self.n_step_to_plays_buffer[idx] = to_plays  # NEW: store to_play sequence
+        self.id_buffer[idx] = new_id
 
         if priority is None:
             if self.per_initial_priority_max:
@@ -148,7 +152,9 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             weights = weights / max_weight
 
         samples = self.sample_from_indices(indices)
-        samples.update(dict(weights=weights, indices=indices))
+        samples.update(
+            dict(weights=weights, indices=indices, ids=self.id_buffer[indices].clone())
+        )
         return samples
 
     def update_priorities(self, indices: list[int], priorities: list[float], ids=None):
@@ -470,6 +476,12 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                     dtype=torch.int16,
                 ).share_memory_()
 
+                # add after n_step_to_plays_buffer creation
+                self.id_buffer = torch.zeros(
+                    (self.max_size,), dtype=torch.int64
+                ).share_memory_()
+                self._next_id = torch.zeros(1, dtype=torch.int64).share_memory_()
+
                 tree_capacity = 1
                 while tree_capacity < self.max_size:
                     tree_capacity *= 2
@@ -488,6 +500,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                 indices
             ],  # NEW: included in sampled batch
             # infos=self.info_buffer[indices],
+            ids=self.id_buffer[indices],
         )
 
     def __getstate__(self):
