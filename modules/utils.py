@@ -1,7 +1,5 @@
 import torch
 
-import torch
-
 
 def support_to_scalar(probabilities, support_size):
     """

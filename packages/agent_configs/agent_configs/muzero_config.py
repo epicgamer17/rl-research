@@ -138,6 +138,18 @@ class MuZeroConfig(Config):
         self.lr_ratio: float = self.parse_field("lr_ratio", float("inf"))
         self.transfer_interval: int = self.parse_field("transfer_interval", 1000)
 
+        self.reanalyze_ratio: float = self.parse_field("reanalyze_ratio", 0.0)
+        self.reanalyze_method: bool = self.parse_field("reanalyze_method", "mcts")
+        self.injection_frac: float = self.parse_field(
+            "injection_frac", 0.0
+        )  # 0.25 for unplugged
+        self.reanalyze_noise: bool = self.parse_field(
+            "reanalyze_noise", False
+        )  # true for gumbel
+        self.reanalyze_update_priorities: bool = self.parse_field(
+            "reanalyze_update_priorities", False
+        )  # default false for most implementations
+
         self.gumbel: bool = self.parse_field("gumbel", False)
         self.gumbel_m = self.parse_field("gumbel_m", 16)
         self.gumbel_cvisit = self.parse_field("gumbel_cvisit", 50)

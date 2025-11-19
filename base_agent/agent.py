@@ -444,7 +444,7 @@ class MARLBaseAgent(BaseAgent):
                 self.test_env.video_folder = "{}/videos/{}".format(dir, self.model_name)
                 if not os.path.exists(self.test_env.video_folder):
                     os.makedirs(self.test_env.video_folder)
-            for trials in tqdm(range(num_trials)):
+            for trials in range(num_trials):
                 self.test_env.reset()
                 state, reward, terminated, truncated, info = self.test_env.last()
                 agent_id = self.test_env.agent_selection
@@ -502,7 +502,7 @@ class MARLBaseAgent(BaseAgent):
                     os.makedirs(self.test_env.video_folder)
 
             with torch.no_grad():  # No gradient computation during testing
-                for trial in tqdm(range(num_trials // self.config.game.num_players)):
+                for trial in range(num_trials // self.config.game.num_players):
                     # Reset environment
                     self.test_env.reset()
                     state, reward, termination, truncation, info = self.test_env.last()

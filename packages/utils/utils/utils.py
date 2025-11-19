@@ -49,12 +49,29 @@ def legal_moves_mask(num_actions: int, legal_moves, device="cpu"):
     # assert (
     #     len(legal_moves) == actions.shape[0]
     # ), "Legal moves should be the same length as the batch size"
-    legal_mask = torch.ones(num_actions)
-    mask = torch.zeros_like(legal_mask, dtype=torch.bool).to(device)
-    for i, legal in enumerate(legal_moves):
-        mask[i, legal] = True
-    legal_mask = torch.where(mask, legal_mask, torch.tensor(0).to(device)).to(device)
+    # print("legal moves in legal moves mask utils", legal_moves)
+    # legal_mask = torch.ones(num_actions)
+    # mask = torch.zeros_like(legal_mask, dtype=torch.bool).to(device)
+    # for i, legal in enumerate(legal_moves):
+    #     mask[i, legal] = True
+    # legal_mask = torch.where(mask, legal_mask, torch.tensor(0).to(device)).to(device)
 
+    # return legal_mask
+
+    # 1. Initialize the mask as a 1D tensor of zeros (Boolean)
+    mask = torch.zeros(num_actions, dtype=torch.bool).to(device)
+
+    # 2. Use advanced indexing (or a loop) to set the legal positions to True
+    # Convert the list of legal moves to a tensor for indexing
+    legal_indices = torch.tensor(legal_moves, dtype=torch.long).to(device)
+
+    # Advanced indexing: set the indices specified in legal_indices to True
+    mask[legal_indices] = True
+
+    # 3. Convert the boolean mask to a float mask (1.0 for legal, 0.0 for illegal)
+    legal_mask = mask.float().to(device)
+
+    # print("Resulting legal mask (1s for legal moves):", legal_mask)
     return legal_mask
 
 

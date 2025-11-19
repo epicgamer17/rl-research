@@ -2,7 +2,7 @@ from ast import Tuple
 from time import time
 import numpy as np
 import torch
-from packages.utils.utils.utils import numpy_dtype_to_torch_dtype
+from packages.utils.utils.utils import legal_moves_mask, numpy_dtype_to_torch_dtype
 from replay_buffers.base_replay_buffer import (
     BaseReplayBuffer,
     Game,
@@ -70,14 +70,18 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
 
         super().__init__(max_size=max_size, batch_size=batch_size)
 
-    def store_position(self, game: Game, position: int, priority: float = None):
+    def store_position(
+        self, game: Game, position: int, priority: float = None, game_id=None
+    ):
         # Reserve an index (atomic with write_lock) and update pointer/tree_pointer/size
         with self.write_lock:
-            idx = self.pointer
-            tree_idx = self.tree_pointer
-            # advance pointers
-            self.pointer = (self.pointer + 1) % self.max_size
-            self.tree_pointer = (self.tree_pointer + 1) % self.max_size
+            idx = int(self.pointer.item())
+            tree_idx = int(self.tree_pointer.item())  # advance pointers
+            next_ptr = (idx + 1) % self.max_size
+            next_tree_ptr = (tree_idx + 1) % self.max_size
+
+            self.pointer[0] = next_ptr
+            self.tree_pointer[0] = next_tree_ptr
             if self.size < self.max_size:
                 self.size += 1
 
@@ -87,6 +91,12 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         # Write data into buffers at reserved index WITHOUT holding the lock
         self.observation_buffer[idx] = torch.from_numpy(
             game.observation_history[position]
+        )
+        # if "legal_moves" not in game.info_history[position]:
+        #     print("warning legal moves not found in info")
+
+        self.legal_moves_mask_buffer[idx] = legal_moves_mask(
+            self.num_actions, game.info_history[position].get("legal_moves", [])
         )
 
         # _get_n_step_info now returns (values, policies, rewards, actions, to_plays)
@@ -106,6 +116,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         self.n_step_actions_buffer[idx] = actions
         self.n_step_to_plays_buffer[idx] = to_plays  # NEW: store to_play sequence
         self.id_buffer[idx] = new_id
+        self.game_id_buffer[idx] = game_id
 
         if priority is None:
             if self.per_initial_priority_max:
@@ -123,18 +134,17 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
 
     def store(self, game: Game):
         # store() simply iterates; each store_position reserves its own index so we don't need a global lock here
+        with self.write_lock:
+            game_id = int(self._next_game_id.item()) + 1
+            self._next_game_id[0] = game_id
         for i in range(len(game)):
             # dont store last position
-            self.store_position(game, i)
-        # self.throughput_time = time()
+            self.store_position(game, i, game_id=game_id)
+        # print(self.game_id_buffer)
+        # print(self.id_buffer)
         if self.size < 1000:
             print("Buffer size:", self.size)
         # print("Added a game to the buffer after {} seconds".format(elapsed_time))
-
-        # if self.size == self.max_size:
-        # print(
-        #     "Replay buffer full after {} seconds".format(time() - self.time_to_full)
-        # )
 
     def sample(self):
         # Sampling is read-only. To maximize throughput we intentionally avoid taking locks here.
@@ -152,17 +162,17 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             weights = weights / max_weight
 
         samples = self.sample_from_indices(indices)
-        samples.update(
-            dict(weights=weights, indices=indices, ids=self.id_buffer[indices].clone())
-        )
+        samples.update(dict(weights=weights))
         return samples
 
     def update_priorities(self, indices: list[int], priorities: list[float], ids=None):
         with self.priority_lock:
             # necessary for shared replay buffer
             if ids is not None:
-                assert len(priorities) == len(ids) == len(indices)
-                assert priorities.shape == ids.shape == indices.shape
+                assert (
+                    len(priorities) == len(ids) == len(indices)
+                    or priorities.shape == ids.shape == indices.shape
+                )
 
                 for index, id, priority in zip(indices, ids, priorities):
                     assert (
@@ -333,7 +343,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         n_step_policies = torch.zeros(
             (num_unroll_steps + 1, self.num_actions), dtype=torch.float32
         )
-        n_step_actions = torch.zeros(num_unroll_steps, dtype=torch.int16)
+        n_step_actions = torch.zeros(num_unroll_steps, dtype=torch.float16)
         n_step_to_plays = torch.zeros(
             (num_unroll_steps + 1, self.num_players), dtype=torch.int16
         )
@@ -412,7 +422,9 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             # 4. action
             if u < num_unroll_steps:
                 n_step_actions[u] = (
-                    actions[current_index] if current_index < len(actions) else -1
+                    actions[current_index]
+                    if current_index < len(actions)
+                    else torch.nan
                 )
 
             # 5. to_play (NEW): store the player id for this state (or -1 if OOB)
@@ -445,9 +457,9 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         with self.write_lock:
             with self.priority_lock:
                 self._size = torch.zeros(1, dtype=torch.int32).share_memory_()
-                self.pointer = 0
                 self.max_priority = self.initial_max_priority
-                self.tree_pointer = 0
+                self.pointer = torch.zeros(1, dtype=torch.int64).share_memory_()
+                self.tree_pointer = torch.zeros(1, dtype=torch.int64).share_memory_()
 
                 self.observation_buffer = torch.zeros(
                     (self.max_size,) + self.observation_dimensions,
@@ -467,7 +479,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                 ).share_memory_()
                 self.n_step_actions_buffer = torch.zeros(
                     (self.max_size, self.unroll_steps),
-                    dtype=torch.int16,
+                    dtype=torch.float16,
                 ).share_memory_()
 
                 # NEW: buffer for to_play IDs (one per unroll step)
@@ -480,7 +492,16 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                 self.id_buffer = torch.zeros(
                     (self.max_size,), dtype=torch.int64
                 ).share_memory_()
+                self.game_id_buffer = torch.zeros(
+                    (self.max_size,), dtype=torch.int64
+                ).share_memory_()
+
                 self._next_id = torch.zeros(1, dtype=torch.int64).share_memory_()
+                self._next_game_id = torch.zeros(1, dtype=torch.int64).share_memory_()
+
+                self.legal_moves_mask_buffer = torch.zeros(
+                    (self.max_size, self.num_actions), dtype=torch.bool
+                ).share_memory_()
 
                 tree_capacity = 1
                 while tree_capacity < self.max_size:
@@ -500,8 +521,83 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                 indices
             ],  # NEW: included in sampled batch
             # infos=self.info_buffer[indices],
-            ids=self.id_buffer[indices],
+            ids=self.id_buffer[indices].clone(),
+            legal_moves_masks=self.legal_moves_mask_buffer[indices],
+            indices=indices,
         )
+
+    def sample_game(self):
+        """
+        Retrieves all stored states for a specific game ID.
+        Useful for debugging or visualization, but slow (O(N) scan).
+        """
+        # Find all indices where game_id_buffer matches game_id
+        # Note: This is expensive on CPU, do not use in training loop
+        game_ids = list(set(list(self.game_id_buffer[: self.size])))
+        # print(self.game_id_buffer[: self.size])
+        # print(self.n_step_values_buffer[: self.size])
+        # print(game_ids)
+        game_id = np.random.choice(game_ids, 1)[0]
+        # print("game id", game_id)
+        mask = self.game_id_buffer[: self.size] == game_id
+        indices = torch.nonzero(mask).view(-1).tolist()
+        # print(indices)
+
+        if not indices:
+            print("game indices not found")
+            return None
+
+        # Sort indices to ensure chronological order (assuming sequential writes)
+        indices.sort()
+        return self.sample_from_indices(indices)
+
+    def reanalyze_game(
+        self,
+        indices,
+        new_policies,
+        new_values,
+        traj_rewards,
+        traj_actions,
+        traj_infos,
+        ids,
+    ):
+        for i, (idx, pid, value) in enumerate(zip(indices, new_policies, new_values)):
+            with self.write_lock:
+                # check id again
+                if int(self.id_buffer[idx].item()) != ids[indices.index(idx)]:
+                    continue
+                # print(i)
+                values, policies, rewards, actions, to_plays = self._get_n_step_info(
+                    i,
+                    new_values,
+                    new_policies,
+                    traj_rewards,
+                    traj_actions,
+                    traj_infos,
+                    self.unroll_steps,
+                    self.n_step,
+                )
+                # print("BEFORE")
+                # print("value", self.n_step_values_buffer[idx])
+                # print("policy", self.n_step_policies_buffer[idx])
+                # print("reward", self.n_step_rewards_buffer[idx])
+                # print("action", self.n_step_actions_buffer[idx])
+                # print("to_plays", self.n_step_to_plays_buffer[idx])
+
+                self.n_step_values_buffer[idx] = values
+                self.n_step_policies_buffer[idx] = policies
+                self.n_step_rewards_buffer[idx] = rewards
+                self.n_step_actions_buffer[idx] = actions
+                self.n_step_to_plays_buffer[idx] = (
+                    to_plays  # NEW: store to_play sequence
+                )
+
+                # print("AFTER")
+                # print("value", self.n_step_values_buffer[idx])
+                # print("policy", self.n_step_policies_buffer[idx])
+                # print("reward", self.n_step_rewards_buffer[idx])
+                # print("action", self.n_step_actions_buffer[idx])
+                # print("to_plays", self.n_step_to_plays_buffer[idx])
 
     def __getstate__(self):
         state = self.__dict__.copy()

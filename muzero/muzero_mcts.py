@@ -29,7 +29,6 @@ class Node:
         self.network_policy = policy.detach().cpu()
 
         self.network_value = value
-
         legal_policy = {a: policy[a] for a in legal_moves}
         legal_policy_sum = sum(legal_policy.values())
 

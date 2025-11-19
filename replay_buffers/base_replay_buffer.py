@@ -167,10 +167,12 @@ class BaseDQNReplayBuffer(BaseReplayBuffer):
         # self.info_buffer[self.pointer] = copy.deepcopy(info)
         # self.next_info_buffer[self.pointer] = copy.deepcopy(next_info)
         # self.legal_moves_mask_buffer[self.pointer] = legal_moves_mask(
-        #     self.num_actions, info.get("legal_actions", [])
+        #     self.num_actions, info.get("legal_moves", [])
         # )
+        if "legal_moves" not in info:
+            print("warning legal moves not found in info")
         self.next_legal_moves_mask_buffer[self.pointer] = legal_moves_mask(
-            self.num_actions, next_info.get("legal_actions", [])
+            self.num_actions, next_info.get("legal_moves", [])
         )
 
         self.pointer = (self.pointer + 1) % self.max_size
@@ -270,7 +272,7 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         self.log_probability_buffer[self.pointer] = log_probability
         # self.info_buffer[self.pointer] = copy.deepcopy(info)
         self.legal_moves_mask_buffer[self.pointer] = legal_moves_mask(
-            self.num_actions, info.get("legal_actions", [])
+            self.num_actions, info.get("legal_moves", [])
         )
 
         self.pointer = (self.pointer + 1) % self.max_size

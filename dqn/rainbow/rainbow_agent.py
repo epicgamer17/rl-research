@@ -264,7 +264,7 @@ class RainbowAgent(BaseAgent):
 
             next_legal_moves_masks = samples["next_legal_moves_masks"].to(self.device)
             next_infos = [
-                {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
+                {"legal_moves": torch.nonzero(mask).view(-1).tolist()}
                 for mask in next_legal_moves_masks
             ]
             # next_infos = samples["next_infos"].to(self.device)
@@ -355,7 +355,7 @@ class RainbowAgent(BaseAgent):
             # recreate legal moves from action masks samples
             next_legal_moves_masks = samples["next_legal_moves_masks"].to(self.device)
             next_infos = [
-                {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
+                {"legal_moves": torch.nonzero(mask).view(-1).tolist()}
                 for mask in next_legal_moves_masks
             ]
             next_actions = self.select_actions(

@@ -1,5 +1,6 @@
 import datetime
 import math
+import random
 import sys
 
 from packages.utils.utils.utils import KLDivergenceLoss
@@ -281,14 +282,20 @@ class MuZeroAgent(MARLBaseAgent):
 
         try:
             while not stop_flag.value:
-                score, num_steps = self.play_game(
-                    env=worker_env, inference_model=self.target_model
-                )
-                # print(f"[Worker {worker_id}] Finished a game with score {score}")
-                # worker_env.close()  # for saving video
-                stats_client.append("score", score)
-                stats_client.append("episode_length", num_steps)
-                stats_client.increment_steps(num_steps)
+                if (
+                    random.random() < self.config.reanalyze_ratio
+                    and self.replay_buffer.size > 0
+                ):
+                    self.reanalyze_game(inference_model=self.target_model)
+                else:
+                    score, num_steps = self.play_game(
+                        env=worker_env, inference_model=self.target_model
+                    )
+                    # print(f"[Worker {worker_id}] Finished a game with score {score}")
+                    # worker_env.close()  # for saving video
+                    stats_client.append("score", score)
+                    stats_client.append("episode_length", num_steps)
+                    stats_client.increment_steps(num_steps)
         except Exception as e:
             # Send both exception and traceback back
             error_queue.put((e, traceback.format_exc()))
@@ -331,28 +338,28 @@ class MuZeroAgent(MARLBaseAgent):
                     raise err
 
                 self.stats.drain_queue()
-                if not (
-                    len(self.stats.stats["score"]) < 5
-                    or not all(x == 0 for x in self.stats.stats["score"][-5:])
-                ):
-                    if self.config.multi_process:
-                        self.stop_flag.value = 1
-                        for w in workers:
-                            print("Stopping workers")
-                            w.terminate()
-                        print("All workers stopped")
+                # if not (
+                #     len(self.stats.stats["score"]) < 5
+                #     or not all(x == 0 for x in self.stats.stats["score"][-5:])
+                # ):
+                #     if self.config.multi_process:
+                #         self.stop_flag.value = 1
+                #         for w in workers:
+                #             print("Stopping workers early")
+                #             w.terminate()
+                #         print("All workers stopped early")
 
-                    if self.config.multi_process:
-                        try:
-                            testing_worker.join()
-                        except:
-                            pass
-                        self.stats.drain_queue()
-                    self.env.close()
+                #     if self.config.multi_process:
+                #         try:
+                #             testing_worker.join()
+                #         except:
+                #             pass
+                #         self.stats.drain_queue()
+                #     self.env.close()
 
-                assert len(self.stats.stats["score"]) < 5 or not all(
-                    x == 0 for x in self.stats.stats["score"][-5:]
-                ), "last 5 games are truncated (for catan)"
+                # assert len(self.stats.stats["score"]) < 5 or not all(
+                #     x == 0 for x in self.stats.stats["score"][-5:]
+                # ), "last 5 games are truncated (for catan)"
 
             if not self.config.multi_process:
                 for training_game in tqdm(range(self.config.games_per_generation)):
@@ -386,8 +393,8 @@ class MuZeroAgent(MARLBaseAgent):
                     self.stats.append("reward_loss", reward_loss)
                 self.stats.append("loss", loss)
                 self.training_step += 1
-                print("Losses", value_loss, policy_loss, reward_loss, loss)
-                print("Training Step:", self.training_step)
+                # print("Losses", value_loss, policy_loss, reward_loss, loss)
+                # print("Training Step:", self.training_step)
 
                 self.replay_buffer.set_beta(
                     update_per_beta(
@@ -399,13 +406,13 @@ class MuZeroAgent(MARLBaseAgent):
                 )
 
                 if self.training_step % self.config.transfer_interval == 0:
-                    print(
-                        f"Transferring weights to target model at step {self.training_step}"
-                    )
+                    # print(
+                    #     f"Transferring weights to target model at step {self.training_step}"
+                    # )
                     self.update_target_model()
 
             if self.training_step % self.test_interval == 0 and self.training_step > 0:
-                print("running tests")
+                # print("running tests")
                 if self.config.multi_process:
                     try:
                         testing_worker = mp.Process(
@@ -424,7 +431,7 @@ class MuZeroAgent(MARLBaseAgent):
                 and self.training_step > 0
             ):
                 self.stats.set_time_elapsed(time() - start_time)
-                print("Saving Checkpoint")
+                # print("Saving Checkpoint")
                 self.save_checkpoint(
                     save_weights=self.config.save_intermediate_weights,
                 )
@@ -448,23 +455,36 @@ class MuZeroAgent(MARLBaseAgent):
         self.save_checkpoint(save_weights=True)
         self.env.close()
 
-    def monte_carlo_tree_search(self, env, state, info, inference_model=None):
+    def monte_carlo_tree_search(
+        self, state, info, to_play, trajectory_action=None, inference_model=None
+    ):
         root = Node(0.0)
-        v_pi, policy, hidden_state = self.predict_single_initial_inference(
+        v_pi_raw, policy, hidden_state = self.predict_single_initial_inference(
             state,
             info,
             model=inference_model,
         )
 
+        if self.config.support_range is not None:
+            # support_to_scalar expects a support vector and returns a scalar tensor
+            v_pi = support_to_scalar(v_pi_raw, self.config.support_range)
+            # ensure it's a Python float where you use .item() later
+            v_pi_scalar = float(v_pi.item())
+        else:
+            v_pi_scalar = float(v_pi_raw.item())
+
         if self.config.game.num_players != 1:
-            legal_moves = get_legal_moves(info)[0]
-            to_play = env.agents.index(env.agent_selection)
+            legal_moves = get_legal_moves(info)[0]  # [0]
+            # print(legal_moves)
         else:
             legal_moves = list(range(self.num_actions))
-            to_play = 1
+            to_play = 0
 
-        actions = legal_moves  # list of ints
+        # print("traj_action", trajectory_action)
+        # print("legal moves", legal_moves)
+
         if self.config.gumbel:
+            actions = legal_moves  # list of ints
             # policy is a tensor/prob vector for all actions (shape num_actions)
             logits = torch.log(policy + 1e-12).cpu()  # use numpy for gumbel math
 
@@ -482,31 +502,67 @@ class MuZeroAgent(MARLBaseAgent):
             # find top-m indices (indices into 'actions')
             top_idx = torch.argsort(scores, descending=True)[:m]
             sampled_actions = [actions[i] for i in top_idx]
-            sampled_g_values = {
-                actions[i]: float(g[i] + logits[actions[i]]) for i in top_idx
-            }
+            if trajectory_action is None:
+                sampled_g_values = {
+                    actions[i]: float(g[i] + logits[actions[i]]) for i in top_idx
+                }
+            else:
+                if trajectory_action not in sampled_actions:
+                    sampled_actions += [trajectory_action]
+                    print(top_idx)
+                    top_idx = torch.concat(
+                        top_idx, torch.tensor([actions.index(trajectory_action)])
+                    )
+                    print(top_idx)
+
+                if self.config.reanalyze_noise:
+                    sampled_g_values = {
+                        actions[i]: float(g[i] + logits[actions[i]]) for i in top_idx
+                    }
+                else:
+                    sampled_g_values = {
+                        actions[i]: float(logits[actions[i]]) for i in top_idx
+                    }
 
             # expand root with only sampled_actions; pass in the per-child root_score
             root.expand(
-                sampled_actions, to_play, policy, hidden_state, 0.0, value=v_pi.item()
+                sampled_actions, to_play, policy, hidden_state, 0.0, value=v_pi_scalar
             )
 
             # attach the root_score to the created children
             for a in sampled_actions:
-                if a in root.children:
-                    root.children[a].root_score = sampled_g_values[
-                        a
-                    ]  # store Gumbel+logit
+                root.children[a].root_score = sampled_g_values[a]  # store Gumbel+logit
         else:
+            # TODO: add sample muzero for complex action spaces (right now just use gumbel)
+            # print("policy", policy)
             root.expand(legal_moves, to_play, policy, hidden_state, 0.0)
-
-            if env == self.env:
+            # print("root.children", root.children)
+            if trajectory_action is None or self.config.reanalyze_noise:
                 root.add_noise(
                     self.config.root_dirichlet_alpha,
                     self.config.root_exploration_fraction,
                 )
 
         min_max_stats = MinMaxStats(self.config.known_bounds)
+
+        if trajectory_action is not None:
+            # print("injecting trajectory action into distribution")
+            # ensure action exists as child
+            # print("root.children", root.children)
+            assert (
+                trajectory_action in root.children
+            ), f"trajectory_action not in root.children, make sure if there is one it is garaunteed to be in the sampled actions, trajectory action: {trajectory_action}, root.children: {root.children}, legal_moves: {legal_moves}, info: {info}, buffer size {self.replay_buffer.size}"
+            inject_frac = self.config.injection_frac  # 0.25 as paper used
+            # renormalize priors: put (1-inject_frac) of current mass on existing priors, add inject_frac on the trajectory action
+            # compute sum of current priors
+            total_prior = sum(child.prior_policy for child in root.children.values())
+            for a, child in root.children.items():
+                child.prior_policy = (1.0 - inject_frac) * (
+                    child.prior_policy / total_prior
+                )
+            # boost injected action
+            root.children[trajectory_action].prior_policy += inject_frac
+            # print("root.children after injecting", root.children)
 
         if self.config.gumbel:
             best_action = self.sequential_halving(
@@ -550,7 +606,7 @@ class MuZeroAgent(MARLBaseAgent):
 
             # term := sum_b N(b) * ( p_vis_sum * expected_q_vis )
             term = sum_N * (p_vis_sum * expected_q_vis)
-            v_mix = (v_pi + term) / (1.0 + sum_N)
+            v_mix = (v_pi_scalar + term) / (1.0 + sum_N)
 
             # completedQ: visited actions keep q(a), unvisited set to v_mix
             completedQ = torch.full((self.num_actions,), v_mix.item())
@@ -737,8 +793,8 @@ class MuZeroAgent(MARLBaseAgent):
             )
         )
         if self.config.support_range is not None:
-            reward = support_to_scalar(reward, self.config.support_range)
-            value = support_to_scalar(value, self.config.support_range)
+            reward = support_to_scalar(reward, self.config.support_range).item()
+            value = support_to_scalar(value, self.config.support_range).item()
         else:
             reward = reward.item()
             value = value.item()
@@ -798,12 +854,15 @@ class MuZeroAgent(MARLBaseAgent):
 
         # totals[i] will hold Acc_{node_player}(i)
         totals = [0.0] * n
-
+        # print("n", n)
+        # print("acc", acc)
         # Iterate from i = n-1 down to 0
         for i in range(n - 1, -1, -1):
             node = search_path[i]
             node_player = node.to_play
             # totals for this node = acc[node_player] (current Acc_p(i))
+            # print(totals[i])
+            # print(acc[node_player])
             totals[i] = acc[node_player]
 
             # Prepare acc for i-1 (if any)
@@ -896,7 +955,7 @@ class MuZeroAgent(MARLBaseAgent):
                 to_plays = [torch.zeros((1, self.config.game.num_players))]
 
                 for action in actions[item]:
-                    if action == -1:
+                    if torch.isnan(action).item():
                         # for self absorbing states
                         # self absorbing state, give a random action (legal moves not important as state is not technically valid)
                         # item_player = self.env.agents[infos[item]["player"]]
@@ -905,6 +964,8 @@ class MuZeroAgent(MARLBaseAgent):
                         else:
                             action = self.env.action_space.sample()
                     # why do we not scale the gradient of the hidden state here?? TODO
+                    else:
+                        action = int(action.item())
                     reward, hidden_state, value, policy, to_play = (
                         self.predict_single_recurrent_inference(
                             hidden_state, action, model=self.model
@@ -975,11 +1036,10 @@ class MuZeroAgent(MARLBaseAgent):
                     if self.config.support_range is not None:
                         target_value = scalar_to_support(
                             target_value, self.config.support_range
-                        )
-                        # if self.config.game.has_intermediate_rewards:
+                        ).to(self.device)
                         target_reward = scalar_to_support(
                             target_reward, self.config.support_range
-                        )
+                        ).to(self.device)
 
                     value_loss = (
                         self.config.value_loss_factor
@@ -994,10 +1054,15 @@ class MuZeroAgent(MARLBaseAgent):
                         reward_loss = self.config.reward_loss_function(
                             reward, target_reward
                         )
-                        to_play_loss = (
-                            self.config.to_play_loss_factor
-                            * self.config.to_play_loss_function(to_play, target_to_play)
-                        )
+                        if self.config.game.num_players != 1:
+                            to_play_loss = (
+                                self.config.to_play_loss_factor
+                                * self.config.to_play_loss_function(
+                                    to_play, target_to_play
+                                )
+                            )
+                        else:
+                            to_play_loss = torch.tensor(0.0)
 
                     # if self.config.gumbel and not isinstance(
                     #     self.config.policy_loss_function, KLDivergenceLoss
@@ -1016,24 +1081,24 @@ class MuZeroAgent(MARLBaseAgent):
                         ]  # TODO: COULD DO A PRIORITY/WEIGHT FUNCTION THAT INCLUDES THE RECURRENT STEPS AS, SO IT DOESNT JUST MULIPTIY BY samples["weights"][item] but samples["weights"][item][k]
                     )
 
-                    if item == 0 and self.training_step % self.checkpoint_interval == 0:
-                        print("unroll step", k)
-                        print("observation", observations[item])
-                        print("predicted value", value)
-                        print("target value", target_value)
-                        print("predicted reward", reward)
-                        print("target reward", target_reward)
-                        print("predicted policy", policy)
-                        print("target policy", target_policy)
-                        print("to_play", to_play)
-                        print("target to_player", target_to_play)
-                        print(
-                            "sample losses",
-                            value_loss,
-                            reward_loss,
-                            policy_loss,
-                            to_play_loss,
-                        )
+                    # if item == 0 and self.training_step % self.checkpoint_interval == 0:
+                    # print("unroll step", k)
+                    # print("observation", observations[item])
+                    # print("predicted value", value)
+                    # print("target value", target_value)
+                    # print("predicted reward", reward)
+                    # print("target reward", target_reward)
+                    # print("predicted policy", policy)
+                    # print("target policy", target_policy)
+                    # print("to_play", to_play)
+                    # print("target to_player", target_to_play)
+                    # print(
+                    #     "sample losses",
+                    #     value_loss,
+                    #     reward_loss,
+                    #     policy_loss,
+                    #     to_play_loss,
+                    # )
 
                     val_loss += value_loss.item()
                     rew_loss += reward_loss.item()
@@ -1050,7 +1115,9 @@ class MuZeroAgent(MARLBaseAgent):
 
             self.optimizer.step()
 
-            self.replay_buffer.update_priorities(samples["indices"], priorities)
+            self.replay_buffer.update_priorities(
+                samples["indices"], priorities, ids=samples["ids"]
+            )
 
         # Convert tensors to float for return values
         return (
@@ -1070,11 +1137,13 @@ class MuZeroAgent(MARLBaseAgent):
         if model == None:
             model = self.model
         state_input = self.preprocess(state)
+        # print("state input shape", state_input.shape)
         value, policy, hidden_state = model.initial_inference(state_input)
         # should we action mask the priors?
         # legal_moves = get_legal_moves(info)
         # policy = action_mask(policy, legal_moves, device=self.device)
         # policy = policy / torch.sum(policy)  # Normalize policy
+        # print("policy shape", policy.shape)
         return value[0], policy[0], hidden_state
 
     def predict_single_recurrent_inference(self, hidden_state, action, model):
@@ -1094,8 +1163,12 @@ class MuZeroAgent(MARLBaseAgent):
         *args,
         **kwargs,
     ):
+        if self.config.game.num_players != 1:
+            to_play = env.agents.index(env.agent_selection)
+        else:
+            to_play = 0
         value, policy, target_policy, best_action = self.monte_carlo_tree_search(
-            env, state, info, inference_model=inference_model  # model=model
+            state, info, to_play, inference_model=inference_model  # model=model
         )
         return policy, target_policy, value, best_action
 
@@ -1114,7 +1187,7 @@ class MuZeroAgent(MARLBaseAgent):
             action = torch.multinomial(probs, 1)
             return action
         else:
-            return torch.tensor(prediction[3])
+            return prediction[3]
 
     def play_game(self, env=None, inference_model=None):
         if env is None:
@@ -1213,6 +1286,92 @@ class MuZeroAgent(MARLBaseAgent):
             return env.rewards[env.agents[0]], len(game)
         else:
             return sum(game.rewards), len(game)
+
+    def reanalyze_game(self, inference_model=None):
+        # or reanalyze buffer
+        sample = self.replay_buffer.sample_game()
+        observations = sample["observations"]
+        root_values = sample["values"].to(self.device)[:, 0]
+        rewards = sample["rewards"].to(self.device)[:, 1]
+        traj_actions = sample["actions"].to(self.device)[:, 0]
+        traj_to_plays = sample["to_plays"].to(self.device)[:, 0]
+        legal_moves_masks = sample["legal_moves_masks"].to(self.device)
+        indices = sample["indices"]
+        ids = sample["ids"]
+        # print("root_values", root_values)
+        # print("traj to_plays", traj_to_plays)
+        # print("traj actions", traj_actions)
+        # print("legal move masks", legal_moves_masks)
+
+        new_policies = []
+        new_root_values = []
+        new_priorities = []
+        infos = []
+        for (
+            idx,
+            obs,
+            root_value,
+            traj_action,
+            traj_to_play,
+            mask,
+        ) in zip(
+            indices,
+            observations,
+            root_values,
+            traj_actions,
+            traj_to_plays,
+            legal_moves_masks,
+        ):
+            to_play = int(torch.argmax(traj_to_play).item())
+            info = {
+                "legal_moves": torch.nonzero(mask).view(-1).tolist(),
+                "player": to_play,
+            }
+            assert not (
+                "legal_moves" in info and len(info["legal_moves"]) == 0
+            ), f"no legal moves, invalid sample {info}"
+            infos.append(info)
+            # print("info with legal moves from nonzero mask", info)
+            # ADD INJECTING SEEN ACTION THING FROM MUZERO UNPLUGGED
+            if self.config.reanalyze_method == "mcts":
+                root_value, _, new_policy, best_ac_tion = self.monte_carlo_tree_search(
+                    obs,
+                    info,  # FOR LEGAL MOVES
+                    to_play,
+                    int(traj_action.item()),
+                    inference_model=inference_model,
+                )
+
+                new_root_value = float(root_value)
+            else:
+                value, new_policy, _ = self.predict_single_initial_inference(
+                    obs, info, model=inference_model
+                )
+                new_root_value = value
+
+            # decide value target per your config (paper default: keep stored n-step TD for Atari)
+            stored_n_step_value = float(
+                self.replay_buffer.n_step_values_buffer[idx][0].item()
+            )
+
+            new_policies.append(new_policy)
+            new_root_values.append(new_root_value)
+            new_priorities.append(
+                abs(float(root_value) - stored_n_step_value)
+                + self.replay_buffer.epsilon
+            )
+
+        # now write back under write_lock and update priorities with ids
+        # print("rewards", rewards)
+        # print("traj_actions", traj_actions)
+        # print("infos", infos)
+        self.replay_buffer.reanalyze_game(
+            indices, new_policies, new_root_values, rewards, traj_actions, infos, ids
+        )
+        if self.config.reanalyze_update_priorities:
+            self.replay_buffer.update_priorities(
+                indices, new_priorities, ids=np.array(ids)
+            )
 
     def __getstate__(self):
         state = self.__dict__.copy()

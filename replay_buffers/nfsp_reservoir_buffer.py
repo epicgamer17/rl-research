@@ -41,7 +41,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
         if self.size < self.max_size:
             self.observation_buffer[self.add_calls] = torch.from_numpy(observation)
             self.legal_moves_mask_buffer[self.add_calls] = legal_moves_mask(
-                self.num_actions, info.get("legal_actions", [])
+                self.num_actions, info.get("legal_moves", [])
             )
             self.target_policy_buffer[self.add_calls] = target_policy
             self.size = min(self.size + 1, self.max_size)
@@ -50,7 +50,7 @@ class NFSPReservoirBuffer(BaseReplayBuffer):
             if idx < self.max_size:
                 self.observation_buffer[idx] = torch.from_numpy(observation)
                 self.legal_moves_mask_buffer[idx] = legal_moves_mask(
-                    self.num_actions, info.get("legal_actions", [])
+                    self.num_actions, info.get("legal_moves", [])
                 )
                 self.target_policy_buffer[idx] = target_policy
         self.add_calls += 1

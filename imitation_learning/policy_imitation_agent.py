@@ -91,7 +91,7 @@ class PolicyImitationAgent(BaseAgent):
             legal_moves_masks = sample["legal_moves_masks"].to(self.device)
             # recreate infos from action masks
             infos = [
-                {"legal_moves": torch.nonzero(mask).squeeze().tolist()}
+                {"legal_moves": torch.nonzero(mask).view(-1).tolist()}
                 for mask in legal_moves_masks
             ]
 
