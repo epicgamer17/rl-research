@@ -2,7 +2,12 @@ import torch
 import yaml
 
 from game_configs import GameConfig
-from utils import prepare_kernel_initializers, prepare_activations, MSELoss, Loss
+from modules.utils import (
+    prepare_kernel_initializers,
+    prepare_activations,
+    MSELoss,
+    Loss,
+)
 
 
 class ConfigBase:

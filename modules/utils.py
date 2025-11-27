@@ -1,3 +1,5 @@
+import itertools
+import math
 import torch
 import torch.nn.init as init
 from torch import nn, Tensor
@@ -235,3 +237,265 @@ def zero_weights_initializer(m: nn.Module) -> None:
         init.constant_(m.weight, 0.0)
     if hasattr(m, "bias") and m.bias is not None:
         init.constant_(m.bias, 0.0)
+
+
+_epsilon = 1e-7
+
+
+def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    assert torch.allclose(
+        torch.sum(predicted, dim=axis, keepdim=True),
+        torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
+    ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
+
+    predicted = (predicted + _epsilon) / torch.sum(
+        predicted + _epsilon, dim=axis, keepdim=True
+    )
+    log_prob = torch.log(predicted)
+    return -torch.sum(log_prob * target, axis=axis)
+
+
+class CategoricalCrossentropyLoss:
+    def __init__(self, from_logits=False, axis=-1):
+        self.from_logits = from_logits
+        self.axis = axis
+
+    def __call__(self, predicted, target):
+        return categorical_crossentropy(predicted, target, self.axis)
+
+    def __eq__(self, other):
+        if not isinstance(other, CategoricalCrossentropyLoss):
+            return False
+        return self.from_logits == other.from_logits and self.axis == other.axis
+
+
+import torch.nn.functional as F
+
+
+def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
+    assert torch.allclose(
+        torch.sum(predicted, dim=axis, keepdim=True),
+        torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
+    ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
+    assert torch.allclose(
+        torch.sum(target, dim=axis, keepdim=True),
+        torch.ones_like(torch.sum(target, dim=axis, keepdim=True)),
+    ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(target, dim=axis, keepdim=True)}, for predicted = {target}"
+    # 1. Add epsilon prevents 0/0 errors
+    # 2. Normalize BOTH to ensure they sum to 1.0
+    predicted = (predicted + _epsilon) / torch.sum(
+        predicted + _epsilon, dim=axis, keepdim=True
+    )
+    target = (target + _epsilon) / torch.sum(target + _epsilon, dim=axis, keepdim=True)
+
+    # 3. Compute KL: sum(target * log(target / predicted))
+    # Splitting the log is numerically more stable: target * (log(target) - log(predicted))
+    return torch.sum(target * (torch.log(target) - torch.log(predicted)), dim=axis)
+
+
+class KLDivergenceLoss:
+    def __init__(self, from_logits=False, axis=-1):
+        self.from_logits = from_logits
+        self.axis = axis
+
+    def __call__(self, predicted, target):
+        return kl_divergence(predicted, target, self.axis)
+
+    def __eq__(self, other):
+        if not isinstance(other, KLDivergenceLoss):
+            return False
+        return self.from_logits == other.from_logits and self.axis == other.axis
+
+
+def huber(predicted: torch.Tensor, target: torch.Tensor, axis=-1, delta: float = 1.0):
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
+    diff = torch.abs(predicted - target)
+    return torch.where(
+        diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)
+    ).view(-1)
+
+
+class HuberLoss:
+    def __init__(self, axis=-1, delta: float = 1.0):
+        self.axis = axis
+        self.delta = delta
+
+    def __call__(self, predicted, target):
+        return huber(predicted, target, axis=self.axis, delta=self.delta)
+
+    def __eq__(self, other):
+        if not isinstance(other, HuberLoss):
+            return False
+        return self.axis == other.axis and self.delta == other.delta
+
+
+def mse(predicted: torch.Tensor, target: torch.Tensor):
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
+    return (predicted - target) ** 2
+
+
+class MSELoss:
+    def __init__(self):
+        pass
+
+    def __call__(self, predicted, target):
+        return mse(predicted, target)
+
+    def __eq__(self, other):
+        return isinstance(other, MSELoss)
+
+
+from typing import Callable, Tuple
+
+Loss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+
+def calculate_padding(i: int, k: int, s: int) -> Tuple[int, int]:
+    """Calculate both padding sizes along 1 dimension for a given input length, kernel length, and stride
+
+    Args:
+        i (int): input length
+        k (int): kernel length
+        s (int): stride
+
+    Returns:
+        (p_1, p_2): where p_1 = p_2 - 1 for uneven padding and p_1 == p_2 for even padding
+    """
+
+    p = (i - 1) * s - i + k
+    p_1 = p // 2
+    p_2 = (p + 1) // 2
+    return (p_1, p_2)
+
+
+def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[int]]:
+    """Create all possible combinations of widths for a given number of layers"""
+    width_combinations = []
+
+    for i in range(0, max_num_layers):
+        width_combinations.extend(itertools.combinations_with_replacement(widths, i))
+
+    return width_combinations
+
+
+def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = False):
+    if kernel_initializer == "pytorch_default":
+        return None
+    if kernel_initializer == "glorot_uniform":
+        return nn.init.xavier_uniform_
+    elif kernel_initializer == "glorot_normal":
+        return nn.init.xavier_normal_
+    elif kernel_initializer == "he_uniform":
+        # return lambda tensor: nn.init.kaiming_uniform_(tensor, nonlinearity="relu")
+        return nn.init.kaiming_uniform_
+    elif kernel_initializer == "he_normal":
+        # return lambda tensor: nn.init.kaiming_normal_(tensor, nonlinearity="relu")
+        return nn.init.kaiming_normal_
+    elif kernel_initializer == "variance_baseline":
+        return VarianceScaling()
+    elif kernel_initializer == "variance_0.1":
+        return VarianceScaling(scale=0.1)
+    elif kernel_initializer == "variance_0.3":
+        return VarianceScaling(scale=0.3)
+    elif kernel_initializer == "variance_0.8":
+        return VarianceScaling(scale=0.8)
+    elif kernel_initializer == "variance_3":
+        return VarianceScaling(scale=3)
+    elif kernel_initializer == "variance_5":
+        return VarianceScaling(scale=5)
+    elif kernel_initializer == "variance_10":
+        return VarianceScaling(scale=10)
+    # TODO
+    # elif kernel_initializer == "lecun_uniform":
+    #     return LecunUniform(seed=np.random.seed())
+    # elif kernel_initializer == "lecun_normal":
+    #     return LecunNormal(seed=np.random.seed())
+    elif kernel_initializer == "orthogonal":
+        return nn.init.orthogonal_
+
+    raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
+
+
+def prepare_activations(activation: str):
+    # print("Activation to prase: ", activation)
+    if activation == "linear":
+        return nn.Identity()
+    elif activation == "relu":
+        return nn.ReLU()
+    elif activation == "relu6":
+        return nn.ReLU6()
+    elif activation == "sigmoid":
+        return nn.Sigmoid()
+    elif activation == "softplus":
+        return nn.Softplus()
+    elif activation == "soft_sign":
+        return nn.Softsign()
+    elif activation == "silu" or activation == "swish":
+        return nn.SiLU()
+    elif activation == "tanh":
+        return nn.Tanh()
+    # elif activation == "log_sigmoid":
+    #     return nn.LogSigmoid()
+    elif activation == "hard_sigmoid":
+        return nn.Hardsigmoid()
+    # elif activation == "hard_silu" or activation == "hard_swish":
+    #     return nn.Hardswish()
+    # elif activation == "hard_tanh":
+    #     return nn.Hardtanh()
+    elif activation == "elu":
+        return nn.ELU()
+    # elif activation == "celu":
+    #     return nn.CELU()
+    elif activation == "selu":
+        return nn.SELU()
+    elif activation == "gelu":
+        return nn.GELU()
+    # elif activation == "glu":
+    #     return nn.GLU()
+
+    raise ValueError(f"Activation {activation} not recognized")
+
+
+def calc_units(shape):
+    shape = tuple(shape)
+    if len(shape) == 1:
+        return shape + shape
+    if len(shape) == 2:
+        # dense layer -> (in_channels, out_channels)
+        return shape
+    else:
+        # conv_layer (Assuming convolution kernels (2D, 3D, or more).
+        # kernel shape: (input_depth, depth, ...)
+        in_units = shape[1]
+        out_units = shape[0]
+        c = 1
+        for dim in shape[2:]:
+            c *= dim
+        return (c * in_units, c * out_units)
+
+
+class VarianceScaling:
+    def __init__(self, scale=0.1, mode="fan_in", distribution="uniform"):
+        self.scale = scale
+        self.mode = mode
+        self.distribution = distribution
+
+        assert mode == "fan_in" or mode == "fan_out" or mode == "fan_avg"
+        assert distribution == "uniform", "only uniform distribution is supported"
+
+    def __call__(self, tensor: Tensor) -> None:
+        with torch.no_grad():
+            scale = self.scale
+            shape = tensor.shape
+            in_units, out_units = calc_units(shape)
+            if self.mode == "fan_in":
+                scale /= in_units
+            elif self.mode == "fan_out":
+                scale /= out_units
+            else:
+                scale /= (in_units + out_units) / 2
+
+            limit = math.sqrt(3.0 * scale)
+            return tensor.uniform_(-limit, limit)

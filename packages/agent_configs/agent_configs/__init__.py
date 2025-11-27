@@ -24,5 +24,4 @@ from .dqn.n_step_dqn_config import NStepDQNConfig
 from .replay_config import ReplayBufferConfig
 from .dqn.nfsp_config import NFSPDQNConfig
 from .sl_config import SupervisedConfig
-from .a2c_config import A2CConfig
 from .cfr_config import CFRConfig

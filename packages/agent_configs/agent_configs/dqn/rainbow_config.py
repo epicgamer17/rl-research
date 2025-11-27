@@ -1,5 +1,6 @@
 from ..base_config import Config
-from utils import CategoricalCrossentropyLoss, tointlists
+from modules.utils import CategoricalCrossentropyLoss
+from utils import tointlists
 
 
 class RainbowConfig(Config):
@@ -64,6 +65,6 @@ class RainbowConfig(Config):
 
         if self.atom_size != 1:
             assert self.v_min != None and self.v_max != None
-        
+
     def _verify_game(self):
         assert self.game.is_discrete, "Rainbow only supports discrete action spaces"

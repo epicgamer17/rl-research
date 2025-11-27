@@ -43,9 +43,11 @@ import torch
 from stats.stats import PlotType, StatTracker
 from utils import (
     current_timestamp,
-    update_per_beta,
     epsilon_greedy_policy,
 )
+
+from replay_buffers.utils import update_per_beta
+
 
 sys.path.append("../../")
 

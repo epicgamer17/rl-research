@@ -1,6 +1,5 @@
-from utils import Loss
 from .base_config import ConfigBase, kernel_initializer_wrapper
-from utils import prepare_activations, prepare_kernel_initializers
+from modules.utils import prepare_activations, prepare_kernel_initializers, Loss
 from torch.optim import Optimizer, Adam
 
 

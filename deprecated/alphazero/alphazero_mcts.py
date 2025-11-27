@@ -2,8 +2,6 @@ from math import log, sqrt, inf
 import copy
 import numpy as np
 
-from packages.utils.utils.utils import process_petting_zoo_obs
-
 
 class Node:
     def __init__(self, prior_policy, state, info):

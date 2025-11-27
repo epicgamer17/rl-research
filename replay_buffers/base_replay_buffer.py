@@ -5,8 +5,9 @@ import torch
 from packages.utils.utils import (
     legal_moves_mask,
     numpy_dtype_to_torch_dtype,
-    discounted_cumulative_sums,
 )
+
+from replay_buffers.utils import discounted_cumulative_sums
 
 
 class BaseReplayBuffer:

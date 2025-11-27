@@ -3,7 +3,7 @@ import math
 import random
 import sys
 
-from packages.utils.utils.utils import KLDivergenceLoss
+from modules.utils import KLDivergenceLoss
 
 
 sys.path.append("../")
@@ -36,15 +36,10 @@ from muzero.muzero_network import Network
 import datetime
 
 from utils import (
-    clip_low_prob_actions,
-    normalize_policies,
-    action_mask,
     get_legal_moves,
-    CategoricalCrossentropyLoss,
-    MSELoss,
-    # process_petting_zoo_obs,
-    update_per_beta,
 )
+
+from replay_buffers.utils import update_per_beta
 
 from modules.utils import scale_gradient
 

@@ -8,22 +8,24 @@ import numpy as np
 from agent_configs import RainbowConfig
 from agents.catan_player_wrapper import ACTIONS_ARRAY
 from utils import (
-    update_per_beta,
     get_legal_moves,
     current_timestamp,
     action_mask,
     epsilon_greedy_policy,
-    CategoricalCrossentropyLoss,
-    HuberLoss,
-    KLDivergenceLoss,
-    MSELoss,
     update_inverse_sqrt_schedule,
     update_linear_schedule,
 )
 
-import sys
+from modules.utils import (
+    CategoricalCrossentropyLoss,
+    HuberLoss,
+    KLDivergenceLoss,
+    MSELoss,
+)
 
-from utils.utils import epsilon_greedy_policy
+from replay_buffers.utils import update_per_beta
+
+import sys
 
 sys.path.append("../../")
 

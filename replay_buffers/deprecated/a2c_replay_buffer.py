@@ -1,7 +1,8 @@
 from replay_buffers.base_replay_buffer import BaseReplayBuffer
 import numpy as np
-from utils.utils import discounted_cumulative_sums
+from utils import discounted_cumulative_sums
 import torch
+
 
 class A2CReplayBuffer(BaseReplayBuffer):
     def __init__(
@@ -41,11 +42,11 @@ class A2CReplayBuffer(BaseReplayBuffer):
         #     advantage_std + 1e-10
         # )  # avoid division by zero
         return dict(
-            advantages=self.advantage_buffer[:self.size],
-            values=self.value_buffer[:self.size],
-            returns=self.return_buffer[:self.size],
-            log_probabilities=self.log_probability_buffer[:self.size],
-            distributions=self.distribution_buffer[:self.size],
+            advantages=self.advantage_buffer[: self.size],
+            values=self.value_buffer[: self.size],
+            returns=self.return_buffer[: self.size],
+            log_probabilities=self.log_probability_buffer[: self.size],
+            distributions=self.distribution_buffer[: self.size],
         )
 
     def clear(self):
@@ -54,18 +55,20 @@ class A2CReplayBuffer(BaseReplayBuffer):
         self.return_buffer = np.zeros(self.max_size, dtype=np.float16)
         self.value_buffer = np.zeros(self.max_size, dtype=torch.Tensor)
         self.log_probability_buffer = np.zeros(self.max_size, dtype=torch.Tensor)
-        self.distribution_buffer = np.zeros(self.max_size, dtype=torch.distributions.Categorical)
+        self.distribution_buffer = np.zeros(
+            self.max_size, dtype=torch.distributions.Categorical
+        )
 
         self.size = 0
 
     def compute_advantage_and_returns(self, last_value: float = 0):
         path_slice = slice(0, self.size)
-        rewards = np.append(self.reward_buffer[:self.size], last_value)
-        values = np.append(self.value_buffer[:self.size], last_value)
+        rewards = np.append(self.reward_buffer[: self.size], last_value)
+        values = np.append(self.value_buffer[: self.size], last_value)
 
         deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
         self.advantage_buffer[path_slice] = discounted_cumulative_sums(
-            deltas, self.gamma 
+            deltas, self.gamma
         )
         self.return_buffer[path_slice] = discounted_cumulative_sums(
             rewards, self.gamma
@@ -73,4 +76,3 @@ class A2CReplayBuffer(BaseReplayBuffer):
         # print(discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda))
         # print(discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)[:-1])
         # print(self.advantage_buffer)
-

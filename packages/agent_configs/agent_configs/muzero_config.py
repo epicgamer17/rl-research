@@ -2,7 +2,8 @@ from typing import Callable
 
 from torch import Tensor
 from .base_config import Config
-from utils import CategoricalCrossentropyLoss, tointlists, Loss, MSELoss
+from modules.utils import CategoricalCrossentropyLoss, Loss, MSELoss
+from utils import tointlists
 import copy
 
 

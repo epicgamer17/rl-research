@@ -1,7 +1,7 @@
 from typing import Callable, Tuple
 
 from torch import nn, Tensor
-from utils import calculate_padding
+from modules.utils import calculate_padding
 
 
 def unpack(x: int | Tuple):
