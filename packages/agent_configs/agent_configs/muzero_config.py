@@ -78,7 +78,7 @@ class MuZeroConfig(Config):
 
         # MCTS
         self.root_dirichlet_alpha: float = self.parse_field(
-            "root_dirichlet_alpha", required=True
+            "root_dirichlet_alpha", 0.25
         )
         self.root_exploration_fraction: float = self.parse_field(
             "root_exploration_fraction", 0.25
@@ -112,10 +112,6 @@ class MuZeroConfig(Config):
             "to_play_loss_function", CategoricalCrossentropyLoss()
         )
 
-        self.action_function: Callable = self.parse_field(
-            "action_function", required=True
-        )
-
         self.n_step: int = self.parse_field("n_step", 5)
         self.discount_factor: float = self.parse_field("discount_factor", 1.0)
         self.unroll_steps: int = self.parse_field("unroll_steps", 5)
@@ -140,6 +136,7 @@ class MuZeroConfig(Config):
 
         self.reanalyze_ratio: float = self.parse_field("reanalyze_ratio", 0.0)
         self.reanalyze_method: bool = self.parse_field("reanalyze_method", "mcts")
+        self.reanalyze_tau: float = self.parse_field("reanalyze_tau", 0.3)
         self.injection_frac: float = self.parse_field(
             "injection_frac", 0.0
         )  # 0.25 for unplugged
@@ -154,6 +151,46 @@ class MuZeroConfig(Config):
         self.gumbel_m = self.parse_field("gumbel_m", 16)
         self.gumbel_cvisit = self.parse_field("gumbel_cvisit", 50)
         self.gumbel_cscale = self.parse_field("gumbel_cscale", 1.0)
+
+        self.consistency_loss_factor: float = self.parse_field(
+            "consistency_loss_factor", 0.0
+        )
+        self.projector_output_dim: int = self.parse_field("projector_output_dim", 128)
+        self.projector_hidden_dim: int = self.parse_field("projector_hidden_dim", 128)
+        self.predictor_output_dim: int = self.parse_field("predictor_output_dim", 128)
+        self.predictor_hidden_dim: int = self.parse_field("predictor_hidden_dim", 64)
+
+        assert self.projector_output_dim == self.predictor_output_dim
+        self.mask_absorbing = self.parse_field("mask_absorbing", True)
+
+        self.value_prefix: bool = self.parse_field("value_prefix", False)
+        self.lstm_horizon_len: int = self.parse_field("lstm_horizon_len", 5)
+        self.lstm_hidden_size: int = self.parse_field("lstm_hidden_size", 64)
+
+        self.q_estimation_method: str = self.parse_field("q_estimation_method", "v_mix")
+
+        self.stochastic: bool = self.parse_field("stochastic", False)
+        self.num_chance: int = self.parse_field("num_chance", 32)
+        self.sigma_loss = self.parse_field("sigma_loss", CategoricalCrossentropyLoss())
+        self.afterstate_residual_layers: list = self.parse_field(
+            "afterstate_residual_layers", copy.deepcopy(self.dynamics_residual_layers)
+        )
+        self.afterstate_conv_layers: list = self.parse_field(
+            "afterstate_conv_layers", copy.deepcopy(self.dynamics_conv_layers)
+        )
+        self.afterstate_dense_layer_widths: int = self.parse_field(
+            "afterstate_dense_layer_widths",
+            copy.deepcopy(self.dynamics_dense_layer_widths),
+        )
+        self.chance_conv_layers: list = self.parse_field(
+            "chance_conv_layers", [(32, 3, 1)]
+        )
+        self.chance_dense_layer_widths: int = self.parse_field(
+            "chance_dense_layer_widths", [256], tointlists
+        )
+        self.vqvae_commitment_cost_factor: float = self.parse_field(
+            "vqvae_commitment_cost_factor", 1.0
+        )
 
     def _verify_game(self):
         # override alphazero game verification since muzero can play those games

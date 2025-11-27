@@ -31,6 +31,9 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         epsilon: float = 0.0001,
         use_batch_weights: bool = False,
         initial_priority_max: bool = False,
+        lstm_horizon_len: int = 5,
+        value_prefix: bool = False,
+        tau: float = 0.3,
         # epsilon=0.01,
     ):
         assert alpha >= 0 and alpha <= 1
@@ -63,6 +66,11 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         self.use_batch_weights = use_batch_weights
         self.per_initial_priority_max = initial_priority_max
 
+        self.lstm_horizon_len = lstm_horizon_len
+        self.value_prefix = value_prefix
+
+        self.tau = tau
+
         print("Warning: for board games it is recommnded to have n_step >= game length")
         self.time_to_full = time()
         # self.throughput_time = time()
@@ -71,7 +79,12 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         super().__init__(max_size=max_size, batch_size=batch_size)
 
     def store_position(
-        self, game: Game, position: int, priority: float = None, game_id=None
+        self,
+        game: Game,
+        position: int,
+        training_step,
+        priority: float = None,
+        game_id=None,
     ):
         # Reserve an index (atomic with write_lock) and update pointer/tree_pointer/size
         with self.write_lock:
@@ -109,6 +122,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             game.info_history,
             self.unroll_steps,
             self.n_step,
+            self.lstm_horizon_len,
         )
         self.n_step_values_buffer[idx] = values
         self.n_step_policies_buffer[idx] = policies
@@ -117,6 +131,8 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         self.n_step_to_plays_buffer[idx] = to_plays  # NEW: store to_play sequence
         self.id_buffer[idx] = new_id
         self.game_id_buffer[idx] = game_id
+
+        self.training_step_buffer[idx] = training_step
 
         if priority is None:
             if self.per_initial_priority_max:
@@ -132,14 +148,14 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             if priority > self.max_priority:
                 self.max_priority = priority
 
-    def store(self, game: Game):
+    def store(self, game: Game, training_step):
         # store() simply iterates; each store_position reserves its own index so we don't need a global lock here
         with self.write_lock:
-            game_id = int(self._next_game_id.item()) + 1
+            game_id = int(self._next_game_id.item())
             self._next_game_id[0] = game_id
         for i in range(len(game)):
             # dont store last position
-            self.store_position(game, i, game_id=game_id)
+            self.store_position(game, i, training_step=training_step, game_id=game_id)
         # print(self.game_id_buffer)
         # print(self.id_buffer)
         if self.size < 1000:
@@ -325,6 +341,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         infos: list,
         num_unroll_steps: int,
         n_step: int,
+        lstm_horizon_len: int = 5,
     ):
         """
         Returns:
@@ -346,6 +363,13 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         n_step_actions = torch.zeros(num_unroll_steps, dtype=torch.float16)
         n_step_to_plays = torch.zeros(
             (num_unroll_steps + 1, self.num_players), dtype=torch.int16
+        )
+        value_prefix = 0.0
+        horizon_id = 0
+        root_player = (
+            infos[index].get("player", None)
+            if index < len(infos) and "player" in infos[index]
+            else None
         )
 
         for u in range(0, num_unroll_steps + 1):
@@ -405,13 +429,32 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             n_step_values[u] = value
 
             # 2. reward target with first cell zeroed
-            if u == 0:
-                n_step_rewards[u] = 0.0  # root has no preceding reward
+            if self.value_prefix:
+                # 2. Value Prefix (EfficientZero Logic)
+                # Reset accumulation periodically based on LSTM horizon
+                if horizon_id % lstm_horizon_len == 0:
+                    value_prefix = 0.0
+                horizon_id += 1
+
+                # Get immediate reward (root u=0 has 0 reward)
+                current_reward = 0.0
+                if u > 0:
+                    reward_idx = current_index - 1
+                    if reward_idx < len(rewards):
+                        # <-- **use raw reward directly** (no sign flipping)
+                        current_reward = rewards[reward_idx]
+
+                # Accumulate into prefix
+                value_prefix += current_reward
+                n_step_rewards[u] = value_prefix
             else:
-                reward_idx = current_index - 1
-                n_step_rewards[u] = (
-                    rewards[reward_idx] if reward_idx < len(rewards) else 0.0
-                )
+                if u == 0:
+                    n_step_rewards[u] = 0.0  # root has no preceding reward
+                else:
+                    reward_idx = current_index - 1
+                    n_step_rewards[u] = (
+                        rewards[reward_idx] if reward_idx < len(rewards) else 0.0
+                    )
 
             # 3. policy
             if current_index < len(policies):
@@ -421,12 +464,15 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
 
             # 4. action
             if u < num_unroll_steps:
-                n_step_actions[u] = (
-                    actions[current_index]
-                    if current_index < len(actions)
-                    else torch.nan
-                )
-
+                # n_step_actions[u] = (
+                # actions[current_index]
+                # if current_index < len(actions)
+                # else torch.nan
+                # )
+                if current_index < len(actions):
+                    n_step_actions[u] = actions[current_index]
+                else:
+                    n_step_actions[u] = int(torch.randint(0, self.num_actions, (1,)))
             # 5. to_play (NEW): store the player id for this state (or -1 if OOB)
             if current_index < len(infos):
                 if "player" in infos[current_index]:
@@ -503,6 +549,10 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                     (self.max_size, self.num_actions), dtype=torch.bool
                 ).share_memory_()
 
+                self.training_step_buffer = torch.zeros(
+                    (self.max_size,), dtype=torch.int64
+                ).share_memory_()
+
                 tree_capacity = 1
                 while tree_capacity < self.max_size:
                     tree_capacity *= 2
@@ -511,19 +561,125 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                 self.min_tree = MinSegmentTree(tree_capacity)
 
     def sample_from_indices(self, indices: list[int]):
+        # --- LOGIC ADDED FOR OBSERVATION ROLLOUTS ---
+        # 1. Convert indices to tensor for vectorized operations (respect device if available)
+        try:
+            device = self.observation_buffer.device
+        except Exception:
+            device = None
+        if device is not None:
+            indices_tensor = torch.tensor(indices, dtype=torch.long, device=device)
+        else:
+            indices_tensor = torch.tensor(indices, dtype=torch.long)
+
+        # 2. Create offsets for unroll steps [1, 2, ..., K]
+        offsets = torch.arange(
+            0, self.unroll_steps + 1, dtype=torch.long, device=indices_tensor.device
+        ).unsqueeze(0)
+
+        # 3. Compute target indices with circular buffer wrapping
+        # Shape: (Batch, UnrollSteps)
+        target_indices = (indices_tensor.unsqueeze(1) + offsets) % self.max_size
+
+        # 4. Validate Game IDs to prevent crossing episode boundaries or buffer overwrites
+        # Shape: (Batch, 1)
+        current_game_ids = self.game_id_buffer[indices_tensor].unsqueeze(1)
+        # Shape: (Batch, UnrollSteps)
+        target_game_ids = self.game_id_buffer[target_indices]
+
+        # Create a mask where the game ID matches (Valid transitions)
+        not_self_absorbing_mask = (
+            current_game_ids == target_game_ids
+        )  # dtype: bool, shape (B, U)
+
+        assert torch.all(
+            not_self_absorbing_mask[:, 0]
+        ), "The first step of the unroll (t -> t+1) must be valid and within the same episode."
+        # 5. Fetch unrolled observations
+        # Shape: (Batch, UnrollSteps, C, H, W)
+        unroll_observations = self.observation_buffer[target_indices].clone()
+
+        # base (t=0) observation for each sampled index
+        base_observations = self.observation_buffer[
+            indices_tensor
+        ]  # shape: (B, C, H, W)
+
+        # 6. Replace invalid frames with the last *valid* observation (absorbing-state behavior)
+        # We'll iterate along the unroll dimension and for each invalid entry set it to the previous valid frame.
+        # This handles consecutive invalid steps naturally.
+        output_unroll = unroll_observations  # already cloned above
+
+        for step in range(self.unroll_steps):
+            not_self_absorbing = not_self_absorbing_mask[:, step]  # shape: (B,)
+            self_absorbing = ~not_self_absorbing  # shape: (B,)
+            if step == 0:
+                prev_obs = (
+                    base_observations  # use t=0 observation for first step's invalids
+                )
+            else:
+                prev_obs = output_unroll[
+                    :, step - 1
+                ]  # use previously possibly-filled obs
+
+            if self_absorbing.any():
+                # Select only invalid batch elements and copy previous obs there
+                output_unroll[self_absorbing] = prev_obs[self_absorbing]
+
+        # Unroll observations should be (B, unroll_steps + 1, ...)
+        # It must contain the root (0) plus the K future steps
+        assert output_unroll.shape[1] == self.unroll_steps + 1, (
+            f"Unroll obs shape mismatch. Expected dim 1 to be {self.unroll_steps + 1} "
+            f"(Root + {self.unroll_steps} steps), but got {output_unroll.shape[1]}"
+        )
+
+        # --- Check 2: Verify Mask Topology (True...True -> False...False) ---
+        # We want to ensure we never transition from False (invalid) back to True (valid)
+        # 1. Cast mask to float/int for arithmetic: (B, Unroll+1)
+        mask_numeric = not_self_absorbing_mask.float()
+
+        # 2. Calculate difference between step t+1 and step t
+        # If True(1) -> False(0), result is -1 (Valid: episode ended)
+        # If False(0) -> False(0), result is 0 (Valid: still ended)
+        # If True(1) -> True(1), result is 0 (Valid: episode ongoing)
+        # If False(0) -> True(1), result is +1 (INVALID: Zombie state)
+        mask_diff = mask_numeric[:, 1:] - mask_numeric[:, :-1]
+
+        # 3. Assert no values are positive (meaning no 0->1 transitions)
+        if (mask_diff > 0).any():
+            invalid_indices = (mask_diff > 0).nonzero(as_tuple=False)
+            print(
+                f"CRITICAL ERROR: Found {len(invalid_indices)} Invalid Mask Sequences!"
+            )
+            print(
+                f"First invalid mask row: {not_self_absorbing_mask[invalid_indices[0][0]]}"
+            )
+            raise ValueError(
+                "Masks contain 'holes' (False -> True transitions). Indexing logic is broken."
+            )
+
+        # 4. Check Root Validity
+        # The root (step 0) must always be valid for every sample in the batch
+        if not not_self_absorbing_mask[:, 0].all():
+            invalid_roots = (~not_self_absorbing_mask[:, 0]).sum()
+            raise ValueError(
+                f"Found {invalid_roots} samples where the Root (t=0) is masked out. "
+                "You are sampling garbage/padding data from the buffer."
+            )
+
+        # 7. Return everything (including the explicit unroll_masks)
         return dict(
             observations=self.observation_buffer[indices],
+            valid_masks=not_self_absorbing_mask,
+            unroll_observations=output_unroll,  # filled with last valid obs where needed
             rewards=self.n_step_rewards_buffer[indices],
             policy=self.n_step_policies_buffer[indices],
             values=self.n_step_values_buffer[indices],
             actions=self.n_step_actions_buffer[indices],
-            to_plays=self.n_step_to_plays_buffer[
-                indices
-            ],  # NEW: included in sampled batch
-            # infos=self.info_buffer[indices],
+            to_plays=self.n_step_to_plays_buffer[indices],
             ids=self.id_buffer[indices].clone(),
             legal_moves_masks=self.legal_moves_mask_buffer[indices],
             indices=indices,
+            training_steps=self.training_step_buffer[indices],
         )
 
     def sample_game(self):
@@ -560,7 +716,29 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         traj_actions,
         traj_infos,
         ids,
+        current_training_step,
+        total_training_steps,
     ):
+        first_idx = indices[0]
+        t_st = int(self.training_step_buffer[first_idx].item())
+
+        # 2. Calculate Dynamic Horizon l (Eq 12)
+        # l = (k - floor((T_current - T_st) / (tau * T_total))).clip(1, k)
+        k = self.unroll_steps
+
+        # Avoid div by zero
+        denom = self.tau * total_training_steps
+
+        age_factor = (current_training_step - t_st) / denom
+        l_calc = k - np.floor(age_factor)
+
+        # Clip l between [1, k]
+        l = int(np.clip(l_calc, 1, k))
+
+        # Optional: Print debug info occasionally
+        # if np.random.random() < 0.01:
+        #     print(f"Reanalyze: Age={current_training_step - t_st}, Horizon l={l}")
+
         for i, (idx, pid, value) in enumerate(zip(indices, new_policies, new_values)):
             with self.write_lock:
                 # check id again
@@ -575,7 +753,8 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
                     traj_actions,
                     traj_infos,
                     self.unroll_steps,
-                    self.n_step,
+                    l,
+                    self.lstm_horizon_len,
                 )
                 # print("BEFORE")
                 # print("value", self.n_step_values_buffer[idx])

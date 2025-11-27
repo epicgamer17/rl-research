@@ -28,9 +28,10 @@ from base_agent.agent import MARLBaseAgent
 from muzero.muzero_minmax_stats import MinMaxStats
 from packages.agent_configs.agent_configs.muzero_config import MuZeroConfig
 import torch
+import torch.nn.functional as F
 import copy
 from replay_buffers.muzero_replay_buffer import MuZeroReplayBuffer, Game
-from muzero.muzero_mcts import Node
+from muzero.muzero_mcts import ChanceNode, DecisionNode
 from muzero.muzero_network import Network
 import datetime
 
@@ -88,14 +89,12 @@ class MuZeroAgent(MARLBaseAgent):
             config=config,
             output_size=self.num_actions,
             input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
-            action_function=self.config.action_function,
         ).share_memory()
 
         self.target_model = Network(
             config=config,
             output_size=self.num_actions,
             input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
-            action_function=self.config.action_function,
         )
         # copy weights
         self.target_model.load_state_dict(self.model.state_dict())
@@ -127,6 +126,9 @@ class MuZeroAgent(MARLBaseAgent):
             epsilon=self.config.per_epsilon,
             use_batch_weights=self.config.per_use_batch_weights,
             initial_priority_max=self.config.per_initial_priority_max,
+            lstm_horizon_len=self.config.lstm_horizon_len,
+            value_prefix=self.config.value_prefix,
+            tau=self.config.reanalyze_tau,
         )
 
         if self.config.optimizer == Adam:
@@ -156,9 +158,14 @@ class MuZeroAgent(MARLBaseAgent):
                 "value_loss",
                 "reward_loss",
                 "to_play_loss",
+                "cons_loss",
+                "q_loss",
+                "sigma_loss",
+                "vqvae_commitment_cost",
                 "loss",
                 "test_score",
                 "episode_length",
+                "num_codes",
             ]
             + test_score_keys,
             target_values={
@@ -209,6 +216,14 @@ class MuZeroAgent(MARLBaseAgent):
         )
         self.stats.add_plot_types(
             "to_play_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types("cons_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("q_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types(
+            "sigma_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "vqvae_commitment_cost", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types(
@@ -272,7 +287,9 @@ class MuZeroAgent(MARLBaseAgent):
 
         # worker_env.render_mode = "rgb_array"
         # worker_env = record_video_wrapper(
-        #     worker_env, f"./videos/{self.model_name}/{worker_id}", 1
+        #     worker_env,
+        #     f"./videos/{self.model_name}/{worker_id}",
+        #     self.checkpoint_interval,
         # )
         # Workers should use the target model for inference so training doesn't
         # destabilize ongoing self-play. Ensure the target model is on the worker's device
@@ -383,15 +400,27 @@ class MuZeroAgent(MARLBaseAgent):
 
             if self.replay_buffer.size >= self.config.min_replay_buffer_size:
                 for minibatch in range(self.config.num_minibatches):
-                    value_loss, policy_loss, reward_loss, to_play_loss, loss = (
-                        self.learn()
-                    )
+                    (
+                        value_loss,
+                        policy_loss,
+                        reward_loss,
+                        to_play_loss,
+                        cons_loss,
+                        q_loss,
+                        sigma_loss,
+                        vqvae_commitment_cost,
+                        loss,
+                    ) = self.learn()
                     self.stats.append("value_loss", value_loss)
                     self.stats.append("policy_loss", policy_loss)
-                    # if self.config.game.has_intermediate_rewards:
-                    self.stats.append("to_play_loss", to_play_loss)
                     self.stats.append("reward_loss", reward_loss)
-                self.stats.append("loss", loss)
+                    self.stats.append("to_play_loss", to_play_loss)
+                    self.stats.append("cons_loss", cons_loss)
+                    self.stats.append("q_loss", q_loss)
+                    self.stats.append("sigma_loss", sigma_loss)
+                    self.stats.append("vqvae_commitment_cost", vqvae_commitment_cost)
+                    self.stats.append("loss", loss)
+                    print("learned")
                 self.training_step += 1
                 # print("Losses", value_loss, policy_loss, reward_loss, loss)
                 # print("Training Step:", self.training_step)
@@ -458,12 +487,27 @@ class MuZeroAgent(MARLBaseAgent):
     def monte_carlo_tree_search(
         self, state, info, to_play, trajectory_action=None, inference_model=None
     ):
-        root = Node(0.0)
-        v_pi_raw, policy, hidden_state = self.predict_single_initial_inference(
+        root = DecisionNode(0.0)
+        ChanceNode.estimation_method = self.config.q_estimation_method
+        ChanceNode.discount = self.config.discount_factor
+        ChanceNode.value_prefix = self.config.value_prefix
+        DecisionNode.estimation_method = self.config.q_estimation_method
+        DecisionNode.discount = self.config.discount_factor
+        DecisionNode.value_prefix = self.config.value_prefix
+        DecisionNode.pb_c_init = self.config.pb_c_init
+        DecisionNode.pb_c_base = self.config.pb_c_base
+        DecisionNode.gumbel = self.config.gumbel
+        DecisionNode.cvisit = self.config.gumbel_cvisit
+        DecisionNode.cscale = self.config.gumbel_cscale
+        DecisionNode.stochastic = self.config.stochastic
+
+        v_pi_raw, policy, hidden_state = self.predict_initial_inference(
             state,
-            info,
             model=inference_model,
         )
+        policy = policy[0]
+        reward_h_state = torch.zeros(1, 1, self.config.lstm_hidden_size).to(self.device)
+        reward_c_state = torch.zeros(1, 1, self.config.lstm_hidden_size).to(self.device)
 
         if self.config.support_range is not None:
             # support_to_scalar expects a support vector and returns a scalar tensor
@@ -473,15 +517,20 @@ class MuZeroAgent(MARLBaseAgent):
         else:
             v_pi_scalar = float(v_pi_raw.item())
 
-        if self.config.game.num_players != 1:
-            legal_moves = get_legal_moves(info)[0]  # [0]
-            # print(legal_moves)
-        else:
+        # if self.config.game.num_players != 1:
+        #     legal_moves = get_legal_moves(info)[0]  # [0]
+        #     # print(legal_moves)
+        # else:
+        #     legal_moves = list(range(self.num_actions))
+        #     to_play = 0
+        legal_moves = get_legal_moves(info)[0]  # [0]
+        if legal_moves is None:
             legal_moves = list(range(self.num_actions))
             to_play = 0
 
         # print("traj_action", trajectory_action)
         # print("legal moves", legal_moves)
+        root.visits += 1
 
         if self.config.gumbel:
             actions = legal_moves  # list of ints
@@ -507,13 +556,12 @@ class MuZeroAgent(MARLBaseAgent):
                     actions[i]: float(g[i] + logits[actions[i]]) for i in top_idx
                 }
             else:
+                assert trajectory_action in actions
                 if trajectory_action not in sampled_actions:
                     sampled_actions += [trajectory_action]
-                    print(top_idx)
                     top_idx = torch.concat(
-                        top_idx, torch.tensor([actions.index(trajectory_action)])
+                        (top_idx, torch.tensor([actions.index(trajectory_action)]))
                     )
-                    print(top_idx)
 
                 if self.config.reanalyze_noise:
                     sampled_g_values = {
@@ -526,7 +574,15 @@ class MuZeroAgent(MARLBaseAgent):
 
             # expand root with only sampled_actions; pass in the per-child root_score
             root.expand(
-                sampled_actions, to_play, policy, hidden_state, 0.0, value=v_pi_scalar
+                sampled_actions,
+                to_play,
+                policy,
+                hidden_state,
+                0.0,
+                value=v_pi_scalar,
+                reward_h_state=reward_h_state,
+                reward_c_state=reward_c_state,
+                is_reset=True,
             )
 
             # attach the root_score to the created children
@@ -535,7 +591,16 @@ class MuZeroAgent(MARLBaseAgent):
         else:
             # TODO: add sample muzero for complex action spaces (right now just use gumbel)
             # print("policy", policy)
-            root.expand(legal_moves, to_play, policy, hidden_state, 0.0)
+            root.expand(
+                legal_moves,
+                to_play,
+                policy,
+                hidden_state,
+                0.0,
+                reward_h_state=reward_h_state,
+                reward_c_state=reward_c_state,
+                is_reset=True,
+            )
             # print("root.children", root.children)
             if trajectory_action is None or self.config.reanalyze_noise:
                 root.add_noise(
@@ -592,140 +657,70 @@ class MuZeroAgent(MARLBaseAgent):
         policy[actions] = visit_counts / torch.sum(visit_counts)
 
         if self.config.gumbel:
-            # q(a) for visited actions (empirical Q from child.value())
-            q_dict = {a: float(root.children[a].value()) for a in actions}
-
-            # sum of visits across all children (sum_b N(b))
-            sum_N = float(sum(root.children[a].visits for a in root.children.keys()))
-
-            # p_vis_sum := sum_{b in visited} pi(b)  (network policy mass on visited actions)
-            p_vis_sum = float(sum(policy[a] for a in actions))
-
-            # expected_q_vis := sum_{a in visited} pi(a) * q(a)
-            expected_q_vis = float(sum(policy[a] * q_dict[a] for a in actions))
-
-            # term := sum_b N(b) * ( p_vis_sum * expected_q_vis )
-            term = sum_N * (p_vis_sum * expected_q_vis)
-            v_mix = (v_pi_scalar + term) / (1.0 + sum_N)
-
-            # completedQ: visited actions keep q(a), unvisited set to v_mix
-            completedQ = torch.full((self.num_actions,), v_mix.item())
-            for a, qv in q_dict.items():
-                completedQ[a] = qv
-
-            # --- Build the improved policy π0 using completedQ ---
-            # Compute sigma(completedQ) exactly as you do in selection (use min_max_stats or your normalization)
-            # Here I reuse the same sigma computation you already use; replace with your exact implementation if different.
-
-            # Normalization of completedQ: use MinMaxStats if you want consistency
-            # Assuming min_max_stats exists and is the same used in search:
-            normalized_completed = torch.tensor(
-                [min_max_stats.normalize(float(x)) for x in completedQ]
+            target_policy = root.get_gumbel_improved_policy(min_max_stats).to(
+                self.device
             )
 
-            # compute sigma per-action: sigma = (cvisit + max_visits) * cscale * normalized_completed
-            max_visits = (
-                max([ch.visits for ch in root.children.values()])
-                if len(root.children) > 0
-                else 0
+            return (
+                root.value(),
+                policy,
+                target_policy,
+                torch.tensor(best_action),
             )
-            sigma = (
-                (self.config.gumbel_cvisit + max_visits)
-                * self.config.gumbel_cscale
-                * normalized_completed
-            )  # numpy array length num_actions
-
-            # combine network logits and sigma:
-            logits = torch.log(policy + 1e-12)  # network log-probabilities
-            pi0_logits = logits + sigma  # elementwise
-            # pi0 = np.exp(pi0_logits - np.max(pi0_logits))
-            # pi0 /= pi0.sum() + 1e-12
-            pi0 = torch.softmax(pi0_logits, dim=0)
-
-            # Final target policy (torch tensor on device for training)
-            target_policy = torch.tensor(pi0, dtype=torch.float32).to(self.device)
-
-            return root.value(), policy, target_policy, best_action
         else:
-            return root.value(), policy, policy, torch.argmax(policy)
+            return (
+                root.value(),
+                policy,
+                policy,
+                torch.argmax(policy),
+            )
 
     def sequential_halving(
-        self, root: Node, min_max_stats: MinMaxStats, candidates: list
+        self, root: DecisionNode, min_max_stats: MinMaxStats, candidates: list
     ):
         """
         Perform Sequential Halving among `candidates` (list of action ints).
         It splits self.config.num_simulations across rounds that eliminate ~half of candidates each round.
         Survivors remain in root.children and accumulate visits/values as usual.
         """
-        n = len(candidates)
-        # if n <= 1:
-        #     return
-
-        # number of rounds to reduce to 1 (ceil log2)
-        rounds = max(1, math.ceil(math.log2(n)))
-        total_sims = self.config.num_simulations
-        # allocate sims per round roughly equal — you can refine this strategy
-        sims_per_round = max(1, total_sims // rounds)
-
-        survivors = candidates.copy()
-
-        def _calculate_score(action, root, child, min_max_stats, config):
-            # root_score: stored Gumbel+logit
-            root_score = child.root_score
-
-            # parent-perspective scalar (same as used in selection/backprop)
-            if config.game.num_players == 1:
-                sign = 1.0
-            else:
-                sign = 1.0 if child.to_play == root.to_play else -1.0
-
-            parent_value_contrib = child.reward + config.discount_factor * (
-                sign * child.value()
-            )
-
-            # normalize using the shared MinMaxStats
-            normalized_q = min_max_stats.normalize(parent_value_contrib)
-
-            # visit mass scaling
-            max_visits = (
-                max([ch.visits for ch in root.children.values()])
-                if len(root.children) > 0
-                else 0
-            )
-            cvisit = config.gumbel_cvisit
-            cscale = config.gumbel_cscale
-            sigma = (cvisit + max_visits) * cscale * normalized_q
-
-            score = float(root_score + sigma)
-            return (action, score)
 
         # Helper function for sorting scores by value (used for both priority and elimination)
         def sort_by_score(item):
             # item is a tuple (action, score)
             return item[1]
 
+        m = len(candidates)
+
+        # number of rounds to reduce to 1 (ceil log2)
+        survivors = candidates.copy()
+        scores = []
+        for a in survivors:
+            child = root.children[a]
+            scores.append((a, root.get_gumbel_root_child_score(child, min_max_stats)))
+        scores.sort(key=sort_by_score, reverse=True)
+        survivors = [a for a, _ in scores]
+
         sims_used = 0
-        for r in range(rounds):
-            if len(survivors) <= 1:
-                break
+        while sims_used < self.config.num_simulations:
+            if len(survivors) > 2:
+                # TODO: should this be a min of 1 visit per thing per round?
+                sims_this_round = max(
+                    1,
+                    math.floor(
+                        self.config.num_simulations / (math.log2(m) * (len(survivors)))
+                    ),
+                ) * len(survivors)
 
-            # # compute a score per survivor for elimination (use visits primarily)
-            scores = []
-            for a in survivors:
-                child = root.children.get(a)
-                if child is not None:
-                    scores.append(
-                        _calculate_score(a, root, child, min_max_stats, self.config)
-                    )
-            scores.sort(key=sort_by_score, reverse=True)
-            survivors = [a for a, _ in scores]
-            num_survivors = len(survivors)
+            else:
+                sims_this_round = self.config.num_simulations - sims_used
+
+            if sims_used + sims_this_round > self.config.num_simulations:
+                sims_this_round = self.config.num_simulations - sims_used
             # run sims_per_round simulations restricted to current survivors
-            sims_used += sims_per_round
-
-            for i in range(sims_per_round):
+            sims_used += sims_this_round
+            for i in range(sims_this_round):
                 # The modulo operation cycles through the sorted survivors list
-                action = survivors[i % num_survivors]
+                action = survivors[i % len(survivors)]
 
                 # Run a single simulation, but ONLY allow the current `action` to be selected at the root
                 self._run_single_simulation(
@@ -734,34 +729,45 @@ class MuZeroAgent(MARLBaseAgent):
 
             scores = []
             for a in survivors:
-                child = root.children.get(a)
-                if child is not None:
-                    scores.append(
-                        _calculate_score(a, root, child, min_max_stats, self.config)
-                    )  # sort ascending by computed score, eliminate bottom half
-            scores.sort(key=sort_by_score)
+                child = root.children[a]
+                scores.append(
+                    (a, root.get_gumbel_root_child_score(child, min_max_stats))
+                )
+            scores.sort(key=sort_by_score, reverse=True)
             survivors = [a for a, _ in scores]
-            num_survivors = len(survivors)
-            num_to_eliminate = max(1, math.ceil(len(survivors) / 2.0))
-            eliminated = [a for a, _ in scores[:num_to_eliminate]]
-            survivors = [a for a in survivors if a not in eliminated]
+            # print("scores", scores)
+            # print("survivors", survivors)
+
+            num_to_eliminate = math.ceil(len(survivors) / 2.0)
+            # leave 2 survivors
+            if len(survivors) - num_to_eliminate < 2:
+                # num_to_eliminate = len(survivors) - 2
+                # print(num_to_eliminate)
+                survivors = survivors[:2]
+            else:
+                survivors = survivors[:-num_to_eliminate]
+            # eliminated = [a for a, _ in scores[:num_to_eliminate]]
+            # survivors = [a for a in survivors if a not in eliminated]
+
+            # print("survivors after elimination", survivors)
             # print(survivors, scores)
 
-        remaining = max(0, total_sims - sims_used)
-        for _ in range(remaining):
-            # free to explore among survivors or all children (paper uses final sims to refine survivors)
-            # print("running remaining", _)
-            self._run_single_simulation(
-                root, min_max_stats, allowed_actions=set(survivors)
+        # return survivors[0]
+        final_scores = []
+        for a in survivors:
+            child = root.children[a]
+            final_scores.append(
+                (a, root.get_gumbel_root_child_score(child, min_max_stats))
             )
-        if len(survivors) > 1:
-            return scores[-1][0]
-        else:
-            return survivors[0]
+
+        final_scores.sort(key=sort_by_score, reverse=True)
+
+        # Return the BEST action (Index 0), not the worst!
+        return final_scores[0][0]
 
     def _run_single_simulation(
         self,
-        root: Node,
+        root: DecisionNode,
         min_max_stats: MinMaxStats,
         inference_model=None,
         allowed_actions=None,
@@ -769,69 +775,161 @@ class MuZeroAgent(MARLBaseAgent):
         node = root
         search_path = [node]
         to_play = root.to_play
+        horizon_index = 0
         # old_to_play = to_play
         # GO UNTIL A LEAF NODE IS REACHED
-        while node.expanded():
-            action, node = node.select_child(
-                min_max_stats,
-                self.config.pb_c_base,
-                self.config.pb_c_init,
-                self.config.discount_factor,
-                self.config.game.num_players,
-                self.config.gumbel_cvisit,
-                self.config.gumbel_cscale,
-                allowed_actions=allowed_actions,
-                gumbel=self.config.gumbel,
-            )
-            # old_to_play = (old_to_play + 1) % self.config.game.num_players
-            # PREDICT THE TO PLAY HERE
-            search_path.append(node)
-        parent = search_path[-2]
-        reward, hidden_state, value, policy, to_play = (
-            self.predict_single_recurrent_inference(
-                parent.hidden_state, action, model=inference_model
-            )
-        )
-        if self.config.support_range is not None:
-            reward = support_to_scalar(reward, self.config.support_range).item()
-            value = support_to_scalar(value, self.config.support_range).item()
-        else:
-            reward = reward.item()
-            value = value.item()
+        # while node.expanded():
+        #     action, node = node.select_child(
+        #         min_max_stats=min_max_stats,
+        #         allowed_actions=allowed_actions,
+        #     )
+        #     # old_to_play = (old_to_play + 1) % self.config.game.num_players
+        #     search_path.append(node)
+        #     horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
+        # ---------------------------------------------------------------------
+        # 1. SELECTION PHASE
+        # ---------------------------------------------------------------------
+        # We descend until we hit a leaf DecisionNode OR a ChanceNode that needs a new code.
+        while True:
+            if not node.expanded():
+                break  # Reached a leaf state (DecisionNode)
+            if isinstance(node, DecisionNode):
+                # Decision -> Select Action -> ChanceNode
+                action, node = node.select_child(
+                    min_max_stats=min_max_stats,
+                    allowed_actions=allowed_actions,
+                )
+                horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
 
-        # onehot_to_play = to_play
-        to_play = int(to_play.argmax().item())
+            elif isinstance(node, ChanceNode):
+                # Chance -> Select Code -> DecisionNode
+
+                code, node = node.select_child(
+                    # TODO: Gumbel Top-K on chance nodes?
+                )
+            search_path.append(node)
+
+        parent = search_path[-2]
         # if to_play != old_to_play and self.training_step > 1000:
         #     print("WRONG TO PLAY", onehot_to_play)
+        if isinstance(node, DecisionNode):
+            if isinstance(parent, DecisionNode):
+                (
+                    reward,
+                    hidden_state,
+                    value,
+                    policy,
+                    to_play,
+                    reward_h_state,
+                    reward_c_state,
+                ) = self.predict_recurrent_inference(
+                    parent.hidden_state,
+                    torch.tensor(action).to(parent.hidden_state.device).unsqueeze(0),
+                    parent.reward_h_state,
+                    parent.reward_c_state,
+                    model=inference_model,
+                )
+                if self.config.support_range is not None:
+                    reward = support_to_scalar(reward, self.config.support_range).item()
+                    value = support_to_scalar(value, self.config.support_range).item()
+                else:
+                    reward = reward.item()
+                    value = value.item()
 
-        node.expand(
-            list(range(self.num_actions)),
-            to_play,
-            policy,
-            hidden_state,
-            (
-                reward  # if self.config.game.has_intermediate_rewards else 0.0
-            ),  # for board games and games with no intermediate rewards
-            value=value,
-        )
+                # onehot_to_play = to_play
+                to_play = int(to_play.argmax().item())
+                is_reset = horizon_index == 0
+                if self.config.value_prefix and is_reset:
+                    reward_h_state = torch.zeros_like(reward_h_state).to(self.device)
+                    reward_c_state = torch.zeros_like(reward_c_state).to(self.device)
 
-        # for node in reversed(search_path):
-        #     node.value_sum += value if node.to_play == to_play else -value
-        #     node.visits += 1
-        #     min_max_stats.update(
-        #         node.reward
-        #         + self.config.discount_factor
-        #         * (
-        #             node.value()
-        #             if self.config.game.num_players == 1
-        #             else -node.value()
-        #         )
-        #     )
-        #     value = (
-        #         -node.reward
-        #         if node.to_play == to_play and self.config.game.num_players > 1
-        #         else node.reward
-        #     ) + self.config.discount_factor * value
+                node.expand(
+                    list(range(self.num_actions)),
+                    to_play,
+                    policy[0],
+                    hidden_state,
+                    reward,
+                    value=value,
+                    reward_h_state=reward_h_state,
+                    reward_c_state=reward_c_state,
+                    is_reset=is_reset,
+                )
+            elif isinstance(parent, ChanceNode):
+                # assert (
+                #     node.value_prefix == False
+                # ), "value prefix not implemented with chance nodes"
+                # TODO: make value prefix work with chance nodes
+                # TODO: make reccurent inference work with decision nodes AND chance nodes
+                # print("code before recurrent inference", code.shape)
+                (
+                    reward,
+                    hidden_state,
+                    value,
+                    policy,
+                    to_play,
+                    reward_h_state,
+                    reward_c_state,
+                ) = self.predict_recurrent_inference(
+                    parent.afterstate,
+                    code.to(parent.afterstate.device).unsqueeze(
+                        0
+                    ),  # a sampled code instead of an action
+                    parent.reward_h_state,
+                    parent.reward_c_state,
+                    model=inference_model,
+                )
+                if self.config.support_range is not None:
+                    reward = support_to_scalar(reward, self.config.support_range).item()
+                    value = support_to_scalar(value, self.config.support_range).item()
+                else:
+                    reward = reward.item()
+                    value = value.item()
+
+                # onehot_to_play = to_play
+                to_play = int(to_play.argmax().item())
+                is_reset = horizon_index == 0
+                if self.config.value_prefix and is_reset:
+                    reward_h_state = torch.zeros_like(reward_h_state).to(self.device)
+                    reward_c_state = torch.zeros_like(reward_c_state).to(self.device)
+
+                node.expand(
+                    list(range(self.num_actions)),
+                    to_play,
+                    policy[0],
+                    hidden_state,
+                    reward,
+                    value=value,
+                    reward_h_state=reward_h_state,
+                    reward_c_state=reward_c_state,
+                    is_reset=is_reset,
+                )
+        elif isinstance(node, ChanceNode):
+            # CASE B: Stochastic Expansion (The Core Change)
+            # We are at (State, Action). We need to:
+            # 1. Get Afterstate Value & Code Priors (Expand ChanceNode)
+            # 2. Sample a Code
+            # 3. Get Next State & Reward (Create DecisionNode)
+            afterstate, value, code_priors = (
+                self.predict_afterstate_recurrent_inference(  # <--- YOU NEED THIS METHOD
+                    parent.hidden_state,
+                    torch.tensor(action).to(parent.hidden_state.device).unsqueeze(0),
+                )
+            )
+
+            if self.config.support_range:
+                value = support_to_scalar(value, self.config.support_range).item()
+            else:
+                value = value.item()
+
+            # Expand the Chance Node with these priors
+            node.expand(
+                parent.to_play,
+                afterstate,
+                value,
+                code_priors[0],
+                reward_h_state=parent.reward_h_state,
+                reward_c_state=parent.reward_c_state,
+            )
 
         n = len(search_path)
         if n == 0:
@@ -854,8 +952,6 @@ class MuZeroAgent(MARLBaseAgent):
 
         # totals[i] will hold Acc_{node_player}(i)
         totals = [0.0] * n
-        # print("n", n)
-        # print("acc", acc)
         # Iterate from i = n-1 down to 0
         for i in range(n - 1, -1, -1):
             node = search_path[i]
@@ -865,294 +961,613 @@ class MuZeroAgent(MARLBaseAgent):
             # print(acc[node_player])
             totals[i] = acc[node_player]
 
-            # Prepare acc for i-1 (if any)
-            if i > 0:
-                # reward at index i belongs to acting_player = search_path[i-1].to_play
-                r_i = search_path[i].reward
-                acting_player = search_path[i - 1].to_play
-
-                # Update per-player accumulators in O(num_players)
-                # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
-                # sign(p, i) = +1 if acting_player == p else -1
-                # We overwrite acc[p] in-place to be Acc_p(i-1)
-                for p in range(self.config.game.num_players):
-                    sign = 1.0 if acting_player == p else -1.0
-                    acc[p] = sign * r_i + self.config.discount_factor * acc[p]
-
-        # --- 2) Apply totals to nodes in reverse order and update MinMaxStats (parent-perspective scalar) ---
-        # We must update nodes (value_sum, visits) from the leaf back to the root so that when
-        # computing parent-perspective scalars we can use child.value() (which should reflect the
-        # just-updated child totals).
-        for i in range(n - 1, -1, -1):
-            node = search_path[i]
-
-            # apply computed discounted total for this node's player
             node.value_sum += totals[i]
             node.visits += 1
 
-            # compute scalar that MinMaxStats expects for this child from its parent's perspective:
-            # parent_value_contrib = child.reward + discount * (sign * child.value())
-            # sign = +1 if single-player OR child.to_play == parent.to_play else -1
+            # Prepare acc for i-1 (if any)
             if i > 0:
-                parent = search_path[i - 1]
-                if self.config.game.num_players == 1:
-                    sign = 1.0
-                else:
-                    sign = 1.0 if node.to_play == parent.to_play else -1.0
-            else:
-                # root: choose sign = +1 convention (root has no parent)
-                sign = 1.0
+                # reward at index i belongs to acting_player = search_path[i-1].to_play
+                acting_player = search_path[i - 1].to_play
+                if isinstance(search_path[i], DecisionNode):
+                    r_i = search_path[i - 1].child_reward(search_path[i])
 
-            parent_value_contrib = node.reward + self.config.discount_factor * (
-                sign * node.value()
-            )
-            min_max_stats.update(parent_value_contrib)
+                    # # Update per-player accumulators in O(num_players)
+                    # # Acc_p(i-1) = sign(p, i) * r_i + discount * Acc_p(i)
+                    # # sign(p, i) = +1 if acting_player == p else -1
+                    # # We overwrite acc[p] in-place to be Acc_p(i-1)
+                    for p in range(self.config.game.num_players):
+                        sign = 1.0 if acting_player == p else -1.0
+                        acc[p] = sign * r_i + self.config.discount_factor * acc[p]
+                elif isinstance(search_path[i], ChanceNode):
+                    for p in range(self.config.game.num_players):
+                        # sign = 1.0 if acting_player == p else -1.0
+                        # acc[p] = sign * r_i + self.config.discount_factor * acc[p]
+                        # chance nodes can be thought to have 0 reward, and no discounting (as its like the roll after the action, or another way of thinking of it is that only on decision nodes do we discount expected reward, a chance node is not a decision point)
+                        acc[p] = acc[p]
+                child_q = search_path[i - 1].get_child_q_from_parent(search_path[i])
+                min_max_stats.update(child_q)
+            else:
+                min_max_stats.update(search_path[i].value())
 
     def learn(self):
         samples = self.replay_buffer.sample()
         # print("Samples:", samples)
         observations = samples["observations"]
-        target_policies = samples["policy"].to(self.device)
-        target_values = samples["values"].to(self.device)
-        target_rewards = samples["rewards"].to(self.device)
-        actions = samples["actions"].to(self.device)
-        target_to_plays = samples["to_plays"].to(self.device)
+        target_observations = samples["unroll_observations"].to(
+            self.device
+        )  # (B, unroll + 1)
+        target_policies = samples["policy"].to(
+            self.device
+        )  # (B, unroll + 1, num_actions)
+        target_values = samples["values"].to(self.device)  # (B, unroll + 1)
+        target_rewards = samples["rewards"].to(self.device)  # (B, unroll + 1)
+        actions = samples["actions"].to(self.device)  # (B, unroll)
+        target_to_plays = samples["to_plays"].to(
+            self.device
+        )  # (B, unroll + 1, num_players)
+        masks = samples["valid_masks"].to(self.device)  # (B, unroll + 1)
+        weights = samples["weights"].to(self.device)
         # infos = samples["infos"].to(self.device)
         inputs = self.preprocess(observations)
 
-        for training_iteration in range(self.config.training_iterations):
-            loss = 0
-            val_loss = 0
-            pol_loss = 0
-            rew_loss = 0
-            tp_loss = 0
-            priorities = []
-            for item in range(self.config.minibatch_size):
-                value, policy, hidden_state = self.predict_single_initial_inference(
-                    inputs[item], {}, model=self.model  # infos[item]
+        (
+            initial_values,
+            initial_policies,
+            hidden_states,
+        ) = self.predict_initial_inference(inputs, model=self.model)
+        # This list will capture predicted latent states ŝ_{t}, ŝ_{t+1}, ..., ŝ_{t+K}
+        # `hidden_state` at this point is s_t (from initial inference)
+
+        reward_h_states = torch.zeros(
+            1, self.config.minibatch_size, self.config.lstm_hidden_size
+        ).to(self.device)
+        reward_c_states = torch.zeros(
+            1, self.config.minibatch_size, self.config.lstm_hidden_size
+        ).to(self.device)
+
+        latent_states = [hidden_states]  # length will end up being unroll_steps + 1
+        latent_afterstates = []
+        latent_code_probabilities = []
+        encoder_softmaxes = []
+        encoder_onehots = []
+        chance_values = []
+        if self.config.support_range is not None:
+            reward_shape = (
+                self.config.minibatch_size,
+                self.config.support_range * 2 + 1,
+            )
+        else:
+            reward_shape = (self.config.minibatch_size, 1)
+
+        values = [initial_values]
+        rewards = [
+            torch.zeros(reward_shape, device=self.device)
+        ]  # R_t = 0 (Placeholder)
+        policies = [initial_policies]
+        to_plays = [
+            torch.zeros(
+                (self.config.minibatch_size, self.config.game.num_players),
+                device=self.device,
+            )
+        ]
+        gradient_scales = [1.0] + [
+            1.0 / self.config.unroll_steps
+        ] * self.config.unroll_steps
+
+        for k in range(self.config.unroll_steps):
+            actions_k = actions[:, k]
+            target_observations_k_plus_1 = target_observations[:, k + 1]
+            real_obs = self.preprocess(target_observations_k_plus_1)
+            if self.config.stochastic:
+                afterstates, q_k, code_priors_k = (
+                    self.predict_afterstate_recurrent_inference(  # <--- YOU NEED THIS METHOD
+                        hidden_states, actions_k
+                    )
+                )
+                encoder_softmax_k, encoder_onehot_k = self.model.encoder(real_obs)
+
+                latent_afterstates.append(afterstates)
+                # TODO: SHOULD WE SCALE THE AFTER STATE GRADIENTS LIKE THE HIDDEN STATE ONES?
+                afterstates = scale_gradient(afterstates, 0.5)
+                latent_code_probabilities.append(code_priors_k)
+                chance_values.append(q_k)
+
+                # σ^k is trained towards the one hot chance code c_t+k+1 = one hot (argmax_i(e((o^i)≤t+k+1))) produced by the encoder.
+                encoder_onehots.append(encoder_onehot_k)
+                encoder_softmaxes.append(encoder_softmax_k)
+                # print("encoder onehot shape", encoder_onehot_k.shape)
+                # print("afterstates shape", afterstates.shape)
+                (
+                    rewards_k,
+                    hidden_states,
+                    values_k,
+                    policies_k,
+                    to_plays_k,
+                    reward_h_states,
+                    reward_c_states,
+                ) = self.predict_recurrent_inference(
+                    afterstates,
+                    encoder_onehot_k,
+                    reward_h_states,
+                    reward_c_states,
+                    model=self.model,
                 )
 
-                gradient_scales = [1.0]
-                values = [value]
-                rewards = [
-                    (
-                        torch.tensor([0.0]).to(self.device)
-                        if self.config.support_range is None
-                        else (
-                            torch.zeros(self.config.support_range * 2 + 1)
-                            .scatter(
-                                0,
-                                torch.tensor(
-                                    [(self.config.support_range * 2 + 1) // 2]
-                                ).long(),
-                                1.0,
-                            )
-                            .to(self.device)
-                        )
-                    )
-                ]
-                policies = [policy]
-                to_plays = [torch.zeros((1, self.config.game.num_players))]
+            else:
+                # WARNING ACTIONS_K COULD BE NAN
+                (
+                    rewards_k,
+                    hidden_states,
+                    values_k,
+                    policies_k,
+                    to_plays_k,
+                    reward_h_states,
+                    reward_c_states,
+                ) = self.predict_recurrent_inference(
+                    hidden_states,
+                    actions_k,
+                    reward_h_states,
+                    reward_c_states,
+                    model=self.model,
+                )
 
-                for action in actions[item]:
-                    if torch.isnan(action).item():
-                        # for self absorbing states
-                        # self absorbing state, give a random action (legal moves not important as state is not technically valid)
-                        # item_player = self.env.agents[infos[item]["player"]]
-                        if self.config.game.num_players != 1:
-                            action = self.env.action_space(self.env.agents[0]).sample()
-                        else:
-                            action = self.env.action_space.sample()
-                    # why do we not scale the gradient of the hidden state here?? TODO
-                    else:
-                        action = int(action.item())
-                    reward, hidden_state, value, policy, to_play = (
-                        self.predict_single_recurrent_inference(
-                            hidden_state, action, model=self.model
-                        )
-                    )
-                    gradient_scales.append(1.0 / self.config.unroll_steps)
-                    values.append(value)
-                    rewards.append(reward)
-                    policies.append(policy)
-                    to_plays.append(to_play)
+            latent_states.append(hidden_states)
+            # Store the predicted states and outputs
+            values.append(values_k)
+            rewards.append(rewards_k)
+            policies.append(policies_k)
+            to_plays.append(to_plays_k)
 
-                    hidden_state = scale_gradient(hidden_state, 0.5)
+            # TODO: SHOULD WE SCALE GRADIENTS BEFORE APPENDING TO LATENT STATES OR AFTER?
+            # Scale the gradient of the hidden state (applies to the whole batch)
+            # Append the predicted latent (ŝ_{t+k+1}) BEFORE scaling for the next step
+            hidden_states = scale_gradient(hidden_states, 0.5)
 
-                # print(to_plays)
-                values_tensor = torch.stack([v for v in values])
-                rewards_tensor = torch.stack([r for r in rewards])
-                policies_tensor = torch.stack([p for p in policies])
-                to_plays_tensor = torch.stack([tp for tp in to_plays])
-                gradient_scales_tensor = torch.tensor(gradient_scales)
+            # reset hidden states
+            if self.config.value_prefix and (k + 1) % self.config.lstm_horizon_len == 0:
+                # CHECK THAT THESE ARE CORRECT!!!
+                reward_h_states = torch.zeros_like(reward_h_states).to(self.device)
+                reward_c_states = torch.zeros_like(reward_c_states).to(self.device)
 
-                # if self.config.game.has_intermediate_rewards:
-                assert len(rewards) == len(target_rewards[item])
-                assert len(values) == len(target_values[item])
-                assert len(policies) == len(target_policies[item])
+        # Stack the results into (K+1, B, ...) tensors, then permute to (B, K+1, ...)
+        values_tensor = torch.stack(values).permute(
+            1, 0, *range(2, len(values[0].shape) + 1)
+        )
+        rewards_tensor = torch.stack(rewards).permute(
+            1, 0, *range(2, len(rewards[0].shape) + 1)
+        )
+        policies_tensor = torch.stack(policies).permute(
+            1, 0, *range(2, len(policies[0].shape) + 1)
+        )
+        to_plays_tensor = torch.stack(to_plays).permute(
+            1, 0, *range(2, len(to_plays[0].shape) + 1)
+        )
+        latent_states_tensor = torch.stack(latent_states).permute(
+            1, 0, *range(2, len(latent_states[0].shape) + 1)
+        )
 
-                for (
-                    k,
-                    value,
-                    reward,
-                    policy,
-                    to_play,
-                    target_value,
-                    target_reward,
-                    target_policy,
-                    target_to_play,
-                    scale,
-                ) in zip(
-                    range(len(values)),
-                    values_tensor,
-                    rewards_tensor,
-                    policies_tensor,
-                    to_plays_tensor,
-                    target_values[item],
-                    target_rewards[item],
-                    target_policies[item],
-                    target_to_plays[item],
-                    gradient_scales_tensor,
-                ):
-                    if k == 0:
-                        if self.config.support_range is not None:
-                            priority = (
-                                abs(
-                                    target_value
-                                    - support_to_scalar(
-                                        value, self.config.support_range
-                                    )
-                                ).item()
-                                + self.config.per_epsilon
-                            )
+        if self.config.stochastic:
+            latent_afterstates_tensor = torch.stack(latent_afterstates).permute(
+                1, 0, *range(2, len(latent_afterstates[0].shape) + 1)
+            )
+            latent_code_probabilities_tensor = torch.stack(
+                latent_code_probabilities
+            ).permute(1, 0, *range(2, len(latent_code_probabilities[0].shape) + 1))
+            encoder_onehots_tensor = torch.stack(encoder_onehots).permute(
+                1, 0, *range(2, len(encoder_onehots[0].shape) + 1)
+            )
+            encoder_softmaxes_tensor = torch.stack(encoder_softmaxes).permute(
+                1, 0, *range(2, len(encoder_softmaxes[0].shape) + 1)
+            )
+            chance_values_tensor = torch.stack(chance_values).permute(
+                1, 0, *range(2, len(chance_values[0].shape) + 1)
+            )
 
-                        else:
-                            priority = (
-                                abs(target_value - value.item())
-                                + self.config.per_epsilon
-                            )
-                        priorities.append(priority)
+        gradient_scales_tensor = torch.tensor(
+            gradient_scales, device=self.device
+        ).reshape(
+            1, -1
+        )  # (1, K+1)
 
+        for training_iteration in range(self.config.training_iterations):
+            total_loss = torch.tensor(0.0, device=self.device)
+            val_loss_acc = torch.tensor(0.0, device=self.device)
+            pol_loss_acc = torch.tensor(0.0, device=self.device)
+            rew_loss_acc = torch.tensor(0.0, device=self.device)
+            tp_loss_acc = torch.tensor(0.0, device=self.device)
+            cons_loss_acc = torch.tensor(0.0, device=self.device)
+
+            q_loss_acc = torch.tensor(0.0, device=self.device)
+            sigma_loss_acc = torch.tensor(0.0, device=self.device)
+            vqvae_commitment_cost_acc = torch.tensor(0.0, device=self.device)
+
+            # Initialize priorities (only needed for k=0, shape (B,))
+            priorities = torch.zeros(self.config.minibatch_size, device=self.device)
+            for k in range(self.config.unroll_steps + 1):
+                target_values_k = target_values[:, k]  # (B, ...)
+                target_rewards_k = target_rewards[:, k]  # (B, ...)
+                target_policies_k = target_policies[:, k]  # (B, policy_dim)
+                target_to_plays_k = target_to_plays[:, k]  # (B, num_players)
+                step_masks_k = masks[:, k]  # (B,)                if k > 0:
+
+                values_k = values_tensor[:, k]  # (B, ...)
+                rewards_k = rewards_tensor[:, k]  # (B, ...)
+                policies_k = policies_tensor[:, k]  # (B, policy_dim)
+                to_plays_k = to_plays_tensor[:, k]  # (B, num_players)
+                latent_states_k = latent_states_tensor[:, k]  # (B, hidden_dim)
+
+                scales_k = gradient_scales_tensor[:, k]  # (1,)
+
+                # --- 1. Priority Update (Only for k=0) ---
+                if k == 0:
                     if self.config.support_range is not None:
-                        target_value = scalar_to_support(
-                            target_value, self.config.support_range
-                        ).to(self.device)
-                        target_reward = scalar_to_support(
-                            target_reward, self.config.support_range
-                        ).to(self.device)
-
-                    value_loss = (
-                        self.config.value_loss_factor
-                        * self.config.value_loss_function(value, target_value)
-                    )
-
-                    if k == 0:  # or not self.config.game.has_intermediate_rewards:
-                        # NO REWARD ON INITIAL OBSERVATION
-                        reward_loss = torch.tensor(0.0)
-                        to_play_loss = torch.tensor(0.0)
+                        # Convert predicted value support to scalar for priority calculation
+                        pred_scalar = support_to_scalar(
+                            values_k, self.config.support_range
+                        )
+                        assert pred_scalar.shape == target_values_k.shape
+                        priority = (
+                            torch.abs(target_values_k - pred_scalar)
+                            + self.config.per_epsilon
+                        )
                     else:
-                        reward_loss = self.config.reward_loss_function(
-                            reward, target_reward
+                        priority = (
+                            torch.abs(target_values_k - values_k.squeeze(-1))
+                            + self.config.per_epsilon
                         )
-                        if self.config.game.num_players != 1:
-                            to_play_loss = (
-                                self.config.to_play_loss_factor
-                                * self.config.to_play_loss_function(
-                                    to_play, target_to_play
-                                )
+                    priorities = priority.detach()  # Keep the B-length tensor
+
+                # --- 2. Convert to Support if needed ---
+                if self.config.support_range is not None:
+                    target_values_k = scalar_to_support(
+                        target_values_k, self.config.support_range
+                    ).to(self.device)
+                    target_rewards_k = scalar_to_support(
+                        target_rewards_k, self.config.support_range
+                    ).to(self.device)
+
+                # --- 3. Loss Calculations ---
+
+                # FIX: Squeeze the predicted values_k to ensure shape consistency with target_values_k
+                # If using support, values_k is (B, support_dim) and target_values_k is (B, support_dim) - NO SQUEEZE.
+                # If NOT using support, values_k is (B, 1) and target_values_k is (B,) - SQUEEZE IS NEEDED.
+                if self.config.support_range is None:
+                    predicted_values_k = values_k.squeeze(-1)  # Convert (B, 1) -> (B,)
+                    predicted_rewards_k = rewards_k.squeeze(
+                        -1
+                    )  # Convert (B, 1) -> (B,)
+
+                    # Check for unexpected dimensionality now that we've squeezed
+                else:
+                    # When using support, both are (B, support_dim), so no squeeze needed for loss
+                    predicted_values_k = values_k
+                    predicted_rewards_k = rewards_k
+                assert (
+                    predicted_values_k.shape == target_values_k.shape
+                ), f"{predicted_values_k.shape} = {target_values_k.shape}"
+                assert (
+                    predicted_rewards_k.shape == target_rewards_k.shape
+                ), f"{predicted_rewards_k.shape} = {target_rewards_k.shape}"
+
+                # Value Loss: (B,)
+                value_loss_k = (
+                    self.config.value_loss_factor
+                    * self.config.value_loss_function(
+                        predicted_values_k, target_values_k
+                    )
+                )
+                # Policy Loss: (B,)
+                policy_loss_k = self.config.policy_loss_function(
+                    policies_k, target_policies_k
+                )
+
+                q_loss_k = torch.zeros_like(value_loss_k)
+                sigma_loss_k = torch.zeros_like(value_loss_k)
+                vqvae_commitment_cost_k = torch.zeros_like(value_loss_k)
+
+                # Reward, To-Play, and Consistency Losses (Only for k > 0)
+                reward_loss_k = torch.zeros_like(value_loss_k)
+                to_play_loss_k = torch.zeros_like(value_loss_k)
+                consistency_loss_k = torch.zeros_like(value_loss_k)
+
+                if k > 0:
+                    # Reward Loss: (B,)
+                    reward_loss_k = self.config.reward_loss_function(
+                        predicted_rewards_k, target_rewards_k
+                    )
+
+                    # To-Play Loss: (B,)
+                    if self.config.game.num_players != 1:
+                        to_play_loss_k = (
+                            self.config.to_play_loss_factor
+                            * self.config.to_play_loss_function(
+                                to_plays_k, target_to_plays_k
                             )
-                        else:
-                            to_play_loss = torch.tensor(0.0)
-
-                    # if self.config.gumbel and not isinstance(
-                    #     self.config.policy_loss_function, KLDivergenceLoss
-                    # ):
-                    #     print("Warning gumbel should us KL Divergence Loss")
-                    policy_loss = self.config.policy_loss_function(
-                        policy, target_policy
-                    )
-
-                    scaled_loss = (
-                        scale_gradient(
-                            value_loss + reward_loss + policy_loss + to_play_loss, scale
                         )
-                        * samples["weights"][
-                            item
-                        ]  # TODO: COULD DO A PRIORITY/WEIGHT FUNCTION THAT INCLUDES THE RECURRENT STEPS AS, SO IT DOESNT JUST MULIPTIY BY samples["weights"][item] but samples["weights"][item][k]
+
+                    # Consistency Loss (EfficientZero): (B,)
+                    target_observations_k = target_observations[:, k]  # (B, C, H, W)
+                    # TODO: CONSISTENCY LOSS FOR AFTERSTATES
+                    # 1. Encode the real future observation (Target)
+                    # We need to preprocess the raw target observation
+                    real_obs = self.preprocess(target_observations_k)
+                    # Use predict_initial_inference to get the latent state (s'_t+k)
+                    # It uses the representation network and the projection network
+                    # We pass model=self.model to ensure it uses the correct network instance
+                    # We use a detached real_latent for the consistency target
+                    # Note: We can reuse the `predict_initial_inference` function if it only calls the representation/project models.
+
+                    # with torch.no_grad():
+                    # real_latent = self.model.representation(real_obs)
+                    _, _, real_latents = self.predict_initial_inference(
+                        real_obs, model=self.model
+                    )
+                    # may be unecessary but better safe than sorry
+                    real_latents = real_latents.detach()
+                    # Project the target to the comparison space
+                    proj_targets = self.model.project(real_latents, grad=False)
+                    f1 = F.normalize(proj_targets, p=2.0, dim=-1, eps=1e-5)
+
+                    # 2. Process the predicted latent (Prediction)
+                    # We project, then predict (SimSiam style predictor head)
+                    # latent_states_tensor[k] is the output of the dynamics function
+                    proj_preds = self.model.project(latent_states_k, grad=True)
+                    f2 = F.normalize(proj_preds, p=2.0, dim=-1, eps=1e-5)
+
+                    # 3. Calculate Negative Cosine Similarity: (B,)
+                    current_consistency = -(f1 * f2).sum(dim=1)
+                    consistency_loss_k = (
+                        self.config.consistency_loss_factor * current_consistency
                     )
 
-                    # if item == 0 and self.training_step % self.checkpoint_interval == 0:
-                    # print("unroll step", k)
-                    # print("observation", observations[item])
-                    # print("predicted value", value)
-                    # print("target value", target_value)
-                    # print("predicted reward", reward)
-                    # print("target reward", target_reward)
-                    # print("predicted policy", policy)
-                    # print("target policy", target_policy)
-                    # print("to_play", to_play)
-                    # print("target to_player", target_to_play)
-                    # print(
-                    #     "sample losses",
-                    #     value_loss,
-                    #     reward_loss,
-                    #     policy_loss,
-                    #     to_play_loss,
-                    # )
+                    if self.config.stochastic:
+                        afterstates_k = latent_afterstates_tensor[:, k - 1]
+                        latent_code_probabilities_k = latent_code_probabilities_tensor[
+                            :, k - 1
+                        ]
+                        encoder_onehot_k_plus_1 = encoder_onehots_tensor[
+                            :, k - 1
+                        ]  # the encoder code for the next observation (so k_plus_1)
+                        encoder_softmax_k_plus_1 = encoder_softmaxes_tensor[
+                            :, k - 1
+                        ]  # the encoder embedding for the next observation
+                        chance_values_k = chance_values_tensor[:, k - 1]
 
-                    val_loss += value_loss.item()
-                    rew_loss += reward_loss.item()
-                    pol_loss += policy_loss.item()
-                    tp_loss += to_play_loss.item()
-                    loss += scaled_loss
+                        target_chance_values_k = target_values[:, k - 1]
+                        # FOR IF WE CHANGE THE VALUE IN REANALYZE TO ROOT VALUE
+                        # target_to_plays shape: (B, unroll+1, num_players)
+                        # current_player = target_to_plays[:, k].argmax(
+                        #     dim=-1
+                        # )  # Shape (B,)
+                        # next_player = target_to_plays[:, k + 1].argmax(
+                        #     dim=-1
+                        # )  # Shape (B,)
 
-            # compute losses
-            loss = loss / self.config.minibatch_size
+                        # # 2. Determine the perspective sign
+                        # # If the player is the same (single player game or double move), sign is 1.0
+                        # # If the player changes (Tic-Tac-Toe), sign is -1.0
+                        # outcome_sign = torch.where(
+                        #     current_player == next_player, 1.0, -1.0
+                        # ).to(self.device)
+
+                        # # 3. Handle Support/Scalar conversion (CRITICAL)
+                        # # You cannot multiply the 'support' distribution vector by -1 directly.
+                        # # You must convert to scalar first.
+                        # if self.config.support_range is not None:
+                        #     # Convert the NEXT value (at k+1) to a scalar
+                        #     next_value_scalar = support_to_scalar(
+                        #         target_values[:, k + 1], self.config.support_range
+                        #     )
+                        # else:
+                        #     next_value_scalar = target_values[:, k + 1].squeeze(-1)
+
+                        # # 4. Construct the Correct Bootstrap Target (Q-Value)
+                        # # Formula: r_t + (gamma * sign * v_{t+1})
+                        # target_chance_values_k = target_rewards[:, k].squeeze(-1) + (
+                        #     self.config.discount_factor * next_value_scalar * outcome_sign
+                        # )
+
+                        # # 5. Calculate the Q-Loss
+                        # if self.config.support_range is not None:
+                        #     # If using support, we need to convert our target_q_scalar BACK into a distribution
+                        #     # or just use the scalar for the loss if your loss function supports it.
+                        #     # Usually, we convert back to target support:
+                        #     target_chance_values_k = scalar_to_support(
+                        #         target_chance_values_k, self.config.support_range
+                        #     )
+
+                        if self.config.support_range is None:
+                            predicted_chance_values_k = chance_values_k.squeeze(
+                                -1
+                            )  # Convert (B, 1) -> (B,)
+                        else:
+                            # When using support, both are (B, support_dim), so no squeeze needed for loss
+                            predicted_chance_values_k = chance_values_k
+                        assert (
+                            predicted_chance_values_k.shape
+                            == target_chance_values_k.shape
+                        ), f"{predicted_values_k.shape} = {target_chance_values_k.shape}"
+
+                        q_loss_k = (
+                            self.config.value_loss_factor
+                            * self.config.value_loss_function(
+                                predicted_chance_values_k,
+                                target_chance_values_k,
+                                # + target_rewards_k,  # TODO: see if this is right/better since this would be the actual q_value
+                            )
+                        )
+
+                        # σ^k is trained towards the one hot chance code c_t+k+1 = one hot (argmax_i(e((o^i)≤t+k+1))) produced by the encoder.
+                        sigma_loss_k = self.config.sigma_loss(
+                            latent_code_probabilities_k,
+                            encoder_softmax_k_plus_1.detach(),  # or encoder_onehot_k_plus_1.detach()
+                        )
+
+                        # VQ-VAE commitment cost between c_t+k+1 and (c^e)_t+k+1 ||c_t+k+1 - (c^e)_t+k+1||^2
+                        diff = (
+                            encoder_softmax_k_plus_1 - encoder_onehot_k_plus_1.detach()
+                        )
+                        vqvae_commitment_cost_k = (
+                            self.config.vqvae_commitment_cost_factor
+                            * torch.sum(diff.pow(2), dim=-1)
+                        )
+
+                # --- 4. Apply Mask, Weights, and Gradient Scale ---
+
+                # Apply mask: (B,)
+                if self.config.mask_absorbing:
+                    value_loss_k *= step_masks_k
+                    reward_loss_k *= step_masks_k
+                    policy_loss_k *= step_masks_k  # mask policy?
+                    # TODO: make sure these line up properly
+                    q_loss_k *= step_masks_k
+                    sigma_loss_k *= step_masks_k
+                    vqvae_commitment_cost_k *= step_masks_k
+                to_play_loss_k *= step_masks_k  # always mask to_play?
+                consistency_loss_k *= step_masks_k  # always mask consistency?
+
+                # Sum the losses for this step: (B,)
+                step_loss = (
+                    value_loss_k
+                    + reward_loss_k
+                    + policy_loss_k
+                    + to_play_loss_k
+                    + consistency_loss_k
+                    + q_loss_k
+                    + sigma_loss_k
+                    + vqvae_commitment_cost_k
+                )
+
+                # Scale the gradient with the unroll scale (scalar for the whole batch)
+                scaled_loss_k = scale_gradient(step_loss, scales_k.item())
+
+                # Apply PER weights (weights are (B,), scale_k is (1,))
+                weighted_scaled_loss_k = scaled_loss_k * weights
+                # Accumulate the total loss (scalar)
+                total_loss += weighted_scaled_loss_k.sum()
+
+                # Accumulate unweighted losses for logging/return (scalar)
+                val_loss_acc += value_loss_k.sum().item()
+                rew_loss_acc += reward_loss_k.sum().item()
+                pol_loss_acc += policy_loss_k.sum().item()
+                tp_loss_acc += to_play_loss_k.sum().item()
+                cons_loss_acc += consistency_loss_k.sum().item()
+                q_loss_acc += q_loss_k.sum().item()
+                sigma_loss_acc += sigma_loss_k.sum().item()
+                vqvae_commitment_cost_acc += vqvae_commitment_cost_k.sum().item()
+
+            # --- Backpropagation and Optimization ---
+
+            # The total loss is already summed across all steps and items
+            # Divide by batch_size * (K+1) steps for the final average loss (optional, but good for scaling)
+            # The MuZero paper often divides by batch_size * unroll_steps, here we'll just divide by batch size
+            # as the losses are already weighted by the gradient scale 1/K for recurrent steps.
+            loss_mean = total_loss / self.config.minibatch_size
+
             self.optimizer.zero_grad()
-            loss.backward()
+            loss_mean.backward()
+
             if self.config.clipnorm > 0:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
 
             self.optimizer.step()
 
+            # --- Update Priorities ---
+            # priorities tensor is already of shape (B,) from k=0
             self.replay_buffer.update_priorities(
-                samples["indices"], priorities, ids=samples["ids"]
+                samples["indices"], priorities.cpu().numpy(), ids=samples["ids"]
             )
 
-        # Convert tensors to float for return values
+            # STAT TRACKING:
+            if self.config.stochastic:
+                codes = encoder_onehots_tensor.argmax(
+                    dim=-1
+                )  # shape (B, K), dtype long
+                # --- (A) Total unique codes across entire batch+time ---
+                unique_codes_all = torch.unique(
+                    codes
+                )  # 1D tensor with sorted unique indices
+                num_unique_all = unique_codes_all.numel()
+                # Optionally: convert to Python int
+                num_unique_all_int = int(num_unique_all)
+                self.stats.append("num_codes", num_unique_all_int)
+
+        # Convert accumulated sums to average loss per item/step for return values
         return (
-            val_loss / self.config.minibatch_size,
-            pol_loss / self.config.minibatch_size,
-            rew_loss / self.config.minibatch_size,
-            tp_loss / self.config.minibatch_size,
-            loss.item(),
+            val_loss_acc / self.config.minibatch_size,
+            pol_loss_acc / self.config.minibatch_size,
+            rew_loss_acc / self.config.minibatch_size,
+            tp_loss_acc / self.config.minibatch_size,
+            cons_loss_acc / self.config.minibatch_size,
+            q_loss_acc / self.config.minibatch_size,
+            sigma_loss_acc / self.config.minibatch_size,
+            vqvae_commitment_cost_acc / self.config.minibatch_size,
+            loss_mean.item(),
         )
 
-    def predict_single_initial_inference(
+    def predict_initial_inference(
         self,
-        state,
-        info,
+        states,
         model,
     ):
         if model == None:
             model = self.model
-        state_input = self.preprocess(state)
+        state_inputs = self.preprocess(states)
         # print("state input shape", state_input.shape)
-        value, policy, hidden_state = model.initial_inference(state_input)
+        values, policies, hidden_states = model.initial_inference(state_inputs)
         # should we action mask the priors?
         # legal_moves = get_legal_moves(info)
         # policy = action_mask(policy, legal_moves, device=self.device)
         # policy = policy / torch.sum(policy)  # Normalize policy
         # print("policy shape", policy.shape)
-        return value[0], policy[0], hidden_state
+        return values, policies, hidden_states
 
-    def predict_single_recurrent_inference(self, hidden_state, action, model):
+    def predict_recurrent_inference(
+        self,
+        states,
+        actions_or_codes,
+        reward_h_states=None,
+        reward_c_states=None,
+        model=None,
+    ):
         if model == None:
             model = self.model
-        reward, hidden_state, value, policy, to_play = model.recurrent_inference(
-            hidden_state, action
+        rewards, states, values, policies, to_play, reward_hidden = (
+            model.recurrent_inference(
+                states,
+                actions_or_codes,
+                reward_h_states,
+                reward_c_states,
+            )
         )
-        return reward[0], hidden_state, value[0], policy[0], to_play
+
+        # print(reward_hidden)
+        reward_h_states = reward_hidden[0]
+        reward_c_states = reward_hidden[1]
+        # print(reward_h_states)
+        # print(reward_c_states)
+
+        return (
+            rewards,
+            states,
+            values,
+            policies,
+            to_play,
+            reward_h_states,
+            reward_c_states,
+        )
+
+    def predict_afterstate_recurrent_inference(
+        self, hidden_states, actions, model=None
+    ):
+        if model == None:
+            model = self.model
+        afterstates, value, chance_probs = model.afterstate_recurrent_inference(
+            hidden_states,
+            actions,
+        )
+
+        return afterstates, value, chance_probs
 
     def predict(
         self,
@@ -1281,7 +1696,7 @@ class MuZeroAgent(MARLBaseAgent):
 
                 state = next_state
                 info = next_info
-            self.replay_buffer.store(game)
+            self.replay_buffer.store(game, self.training_step)
         if self.config.game.num_players != 1:
             return env.rewards[env.agents[0]], len(game)
         else:
@@ -1323,18 +1738,24 @@ class MuZeroAgent(MARLBaseAgent):
             legal_moves_masks,
         ):
             to_play = int(torch.argmax(traj_to_play).item())
-            info = {
-                "legal_moves": torch.nonzero(mask).view(-1).tolist(),
-                "player": to_play,
-            }
+            if self.config.game.has_legal_moves:
+                info = {
+                    "legal_moves": torch.nonzero(mask).view(-1).tolist(),
+                    "player": to_play,
+                }
+            else:
+                info = {
+                    "player": to_play,
+                }
+
             assert not (
-                "legal_moves" in info and len(info["legal_moves"]) == 0
+                self.config.game.has_legal_moves and len(info["legal_moves"]) == 0
             ), f"no legal moves, invalid sample {info}"
             infos.append(info)
             # print("info with legal moves from nonzero mask", info)
             # ADD INJECTING SEEN ACTION THING FROM MUZERO UNPLUGGED
             if self.config.reanalyze_method == "mcts":
-                root_value, _, new_policy, best_ac_tion = self.monte_carlo_tree_search(
+                root_value, _, new_policy, best_action = self.monte_carlo_tree_search(
                     obs,
                     info,  # FOR LEGAL MOVES
                     to_play,
@@ -1344,17 +1765,17 @@ class MuZeroAgent(MARLBaseAgent):
 
                 new_root_value = float(root_value)
             else:
-                value, new_policy, _ = self.predict_single_initial_inference(
-                    obs, info, model=inference_model
+                value, new_policy, _ = self.predict_initial_inference(
+                    obs, model=inference_model
                 )
-                new_root_value = value
+                new_root_value = value.item()
 
             # decide value target per your config (paper default: keep stored n-step TD for Atari)
             stored_n_step_value = float(
                 self.replay_buffer.n_step_values_buffer[idx][0].item()
             )
 
-            new_policies.append(new_policy)
+            new_policies.append(new_policy[0])
             new_root_values.append(new_root_value)
             new_priorities.append(
                 abs(float(root_value) - stored_n_step_value)
@@ -1366,7 +1787,15 @@ class MuZeroAgent(MARLBaseAgent):
         # print("traj_actions", traj_actions)
         # print("infos", infos)
         self.replay_buffer.reanalyze_game(
-            indices, new_policies, new_root_values, rewards, traj_actions, infos, ids
+            indices,
+            new_policies,
+            new_root_values,
+            rewards,
+            traj_actions,
+            infos,
+            ids,
+            self.training_step,
+            self.config.training_steps,
         )
         if self.config.reanalyze_update_priorities:
             self.replay_buffer.update_priorities(
@@ -1376,8 +1805,12 @@ class MuZeroAgent(MARLBaseAgent):
     def __getstate__(self):
         state = self.__dict__.copy()
         state["stop_flag"] = state["stop_flag"].value
+        del state["env"]
+        del state["test_env"]
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
         self.stop_flag = mp.Value("i", state["stop_flag"])
+        self.env = self.config.game.make_env()
+        self.test_env = self.config.game.make_env(render_mode="rgb_array")

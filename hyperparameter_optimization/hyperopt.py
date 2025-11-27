@@ -271,7 +271,7 @@ def test_score_evaluation(agent, eval_method, num_trials=10, last_n=10):
             np.mean(
                 [
                     stat_dict["score"]
-                    for stat_dict in agent.stats["test_score"][-last_n:]
+                    for stat_dict in agent.stats.stats["test_score"]["score"][-last_n:]
                 ]
             ),
             1,
@@ -283,7 +283,9 @@ def test_score_evaluation(agent, eval_method, num_trials=10, last_n=10):
                 np.mean(
                     [
                         stat_dict["score"]
-                        for stat_dict in agent.stats["test_score"][-last_n:-1]
+                        for stat_dict in agent.stats.stats["test_score"]["score"][
+                            -last_n:-1
+                        ]
                     ]
                 ),
                 1,

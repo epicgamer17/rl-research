@@ -495,7 +495,8 @@ def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis
     assert torch.allclose(
         torch.sum(predicted, dim=axis, keepdim=True),
         torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
-    )
+    ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
 
     # print("Predicted:", predicted)
     # predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
@@ -522,6 +523,7 @@ class CategoricalCrossentropyLoss:
 
 
 def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
     predicted = predicted / torch.sum(predicted, dim=axis, keepdim=True)
     predicted = torch.clamp(predicted, _epsilon, 1.0)
     target = torch.clamp(target, _epsilon, 1.0)
@@ -543,6 +545,7 @@ class KLDivergenceLoss:
 
 
 def huber(predicted: torch.Tensor, target: torch.Tensor, axis=-1, delta: float = 1.0):
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
     diff = torch.abs(predicted - target)
     return torch.where(
         diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)
@@ -564,8 +567,7 @@ class HuberLoss:
 
 
 def mse(predicted: torch.Tensor, target: torch.Tensor):
-    # print(predicted)
-    # print(target)
+    assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
     return (predicted - target) ** 2
 
 
