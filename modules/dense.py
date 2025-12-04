@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Literal
 
 import torch
 from torch import nn, Tensor, functional
@@ -123,62 +123,108 @@ def build_dense(in_features: int, out_features: int, sigma: float = 0):
         return NoisyDense(in_features, out_features)
 
 
-class DenseStack(nn.Module):
+# modules/dense_stack.py
+from typing import Callable
+from torch import nn, Tensor
+from modules.base_stacks import BaseStack  # Assuming new structure
+from modules.layers import build_dense  # From refactored Dense/NoisyDense
+
+
+class DenseStack(BaseStack):
     def __init__(
         self,
         initial_width: int,
         widths: list[int],
         activation: nn.Module = nn.ReLU(),
         noisy_sigma: float = 0,
+        norm_type: Literal["batch", "layer", "none"] = "none",
     ):
-        super(DenseStack, self).__init__()
-        self.dense_layers: nn.ModuleList = nn.ModuleList()
-        self.activation = activation
+        super().__init__(activation=activation, noisy_sigma=noisy_sigma)
 
-        assert len(widths) > 0
-        self.noisy = noisy_sigma != 0
+        # Use _layers from BaseStack
+        self._layers = nn.ModuleList()
+        self.norm_type = norm_type
 
         current_input_width = initial_width
-        for i in range(len(widths)):
-            layer = build_dense(
+        for width in widths:
+            # Build the layer (Dense or NoisyDense)
+            dense_layer = build_dense(
                 in_features=current_input_width,
-                out_features=widths[i],
+                out_features=width,
                 sigma=noisy_sigma,
+                norm_type=norm_type,  # Pass norm type to the layer builder
             )
-            self.dense_layers.append(layer)
-            current_input_width = widths[i]
+            self._layers.append(dense_layer)
+            current_input_width = width
 
         self.initial_width = initial_width
         self._output_len = current_input_width
 
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        for layer in self.dense_layers:
-            layer.initialize(initializer)
-
     def forward(self, inputs: Tensor) -> Tensor:
         x = inputs
-        for layer in self.dense_layers:
+        for layer in self._layers:
             x = self.activation(layer(x))
         return x
 
-    def reset_noise(self) -> None:
-        assert self.noisy
-
-        for layer in self.dense_layers:
-            layer.reset_noise()
-        return
-
-    def remove_noise(self) -> None:
-        assert self.noisy
-
-        for layer in self.dense_layers:
-            layer.remove_noise()
-        return
+    # ... (extra_repr is optional but can be kept)
 
 
-    def extra_repr(self) -> str:
-        return f"in_features={self.initial_width}, out_width={self.output_width}, noisy={self.noisy}"
+# class DenseStack(nn.Module):
+#     def __init__(
+#         self,
+#         initial_width: int,
+#         widths: list[int],
+#         activation: nn.Module = nn.ReLU(),
+#         noisy_sigma: float = 0,
+#     ):
+#         super(DenseStack, self).__init__()
+#         self.dense_layers: nn.ModuleList = nn.ModuleList()
+#         self.activation = activation
 
-    @property
-    def output_width(self):
-        return self._output_len
+#         assert len(widths) > 0
+#         self.noisy = noisy_sigma != 0
+
+#         current_input_width = initial_width
+#         for i in range(len(widths)):
+#             layer = build_dense(
+#                 in_features=current_input_width,
+#                 out_features=widths[i],
+#                 sigma=noisy_sigma,
+#             )
+#             self.dense_layers.append(layer)
+#             current_input_width = widths[i]
+
+#         self.initial_width = initial_width
+#         self._output_len = current_input_width
+
+#     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
+#         for layer in self.dense_layers:
+#             layer.initialize(initializer)
+
+#     def forward(self, inputs: Tensor) -> Tensor:
+#         x = inputs
+#         for layer in self.dense_layers:
+#             x = self.activation(layer(x))
+#         return x
+
+#     def reset_noise(self) -> None:
+#         assert self.noisy
+
+#         for layer in self.dense_layers:
+#             layer.reset_noise()
+#         return
+
+#     def remove_noise(self) -> None:
+#         assert self.noisy
+
+#         for layer in self.dense_layers:
+#             layer.remove_noise()
+#         return
+
+
+#     def extra_repr(self) -> str:
+#         return f"in_features={self.initial_width}, out_width={self.output_width}, noisy={self.noisy}"
+
+#     @property
+#     def output_width(self):
+#         return self._output_len

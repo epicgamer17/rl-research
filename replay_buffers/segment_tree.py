@@ -158,6 +158,7 @@ class SumSegmentTree(SegmentTree):
             else:
                 upperbound -= self.tree[left]
                 idx = right
+        assert (idx - self.capacity) <= self.capacity
         return idx - self.capacity
 
 

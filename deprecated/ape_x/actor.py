@@ -23,7 +23,10 @@ import sys
 sys.path.append("../../")
 from dqn.rainbow.rainbow_agent import RainbowAgent
 from dqn.rainbow.rainbow_network import RainbowNetwork
-from base_agent.distributed_agents import ActorAgent, DistreteTransition
+from base_agent.deprecated.distributed_agentsuted_agents import (
+    ActorAgent,
+    DistreteTransition,
+)
 from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
 from replay_buffers.n_step_replay_buffer import NStepReplayBuffer
 

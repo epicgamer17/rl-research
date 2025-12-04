@@ -59,7 +59,7 @@ class ChanceNode:
         num_chance = len(code_priors)
         self.code_priors = {
             # Warning non differentiable
-            F.one_hot(torch.tensor(a), num_classes=num_chance): code_priors[a]
+            a: code_priors[a]
             for a in range(num_chance)
         }
 
@@ -112,11 +112,11 @@ class ChanceNode:
         probs /= probs.sum()
 
         # Sample a code
-        idx = np.random.choice(len(codes), p=probs)
-        selected_code = codes[idx]
+        code = np.random.choice(len(codes), p=probs)
+        selected_code = F.one_hot(torch.tensor(code), num_classes=len(codes))
 
         # Check if we have a node for this code yet
-        child_node = self.children.get(selected_code)
+        child_node = self.children[code]
         # print("selected code", selected_code)
         return selected_code, child_node
 
@@ -306,7 +306,8 @@ class DecisionNode:
             action_index = np.random.choice(
                 np.where(np.isclose(child_ucbs, max(child_ucbs)))[0]
             )
-            action = list(actions)[action_index]
+            action = actions[action_index]
+        assert isinstance(action, int)
         return action, self.children[action]
 
     def child_uct_score(

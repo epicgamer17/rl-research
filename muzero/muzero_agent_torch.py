@@ -3,7 +3,7 @@ import math
 import random
 import sys
 
-from modules.utils import KLDivergenceLoss
+from modules.utils import KLDivergenceLoss, MSELoss
 
 
 sys.path.append("../")
@@ -82,14 +82,19 @@ class MuZeroAgent(MARLBaseAgent):
         # Add learning rate scheduler
         self.model = Network(
             config=config,
-            output_size=self.num_actions,
+            num_actions=self.num_actions,
             input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            # TODO: sort out when to do channel first and channel last
+            channel_first=True,
+            world_model_cls=self.config.world_model_cls,
         ).share_memory()
 
         self.target_model = Network(
             config=config,
-            output_size=self.num_actions,
+            num_actions=self.num_actions,
             input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            channel_first=True,
+            world_model_cls=self.config.world_model_cls,
         )
         # copy weights
         self.target_model.load_state_dict(self.model.state_dict())
@@ -278,7 +283,7 @@ class MuZeroAgent(MARLBaseAgent):
         # torch.set_num_threads(1)
         # torch.set_grad_enabled(False)
         worker_env = self.config.game.make_env()  # each process needs its own env
-        # from utils import record_video_wrapper
+        # from wrappers import record_video_wrapper
 
         # worker_env.render_mode = "rgb_array"
         # worker_env = record_video_wrapper(
@@ -626,7 +631,10 @@ class MuZeroAgent(MARLBaseAgent):
 
         if self.config.gumbel:
             best_action = self.sequential_halving(
-                root, min_max_stats, list(root.children.keys())
+                root,
+                min_max_stats,
+                list(root.children.keys()),
+                inference_model=inference_model,
             )
         else:
             for _ in range(self.config.num_simulations):
@@ -671,7 +679,11 @@ class MuZeroAgent(MARLBaseAgent):
             )
 
     def sequential_halving(
-        self, root: DecisionNode, min_max_stats: MinMaxStats, candidates: list
+        self,
+        root: DecisionNode,
+        min_max_stats: MinMaxStats,
+        candidates: list,
+        inference_model=None,
     ):
         """
         Perform Sequential Halving among `candidates` (list of action ints).
@@ -719,7 +731,10 @@ class MuZeroAgent(MARLBaseAgent):
 
                 # Run a single simulation, but ONLY allow the current `action` to be selected at the root
                 self._run_single_simulation(
-                    root, min_max_stats, allowed_actions=[action]
+                    root,
+                    min_max_stats,
+                    inference_model=inference_model,
+                    allowed_actions=[action],
                 )  # recompute a score per survivor for elimination (use visits primarily)
 
             scores = []
@@ -854,7 +869,6 @@ class MuZeroAgent(MARLBaseAgent):
                 #     node.value_prefix == False
                 # ), "value prefix not implemented with chance nodes"
                 # TODO: make value prefix work with chance nodes
-                # TODO: make reccurent inference work with decision nodes AND chance nodes
                 # print("code before recurrent inference", code.shape)
                 (
                     reward,
@@ -866,9 +880,9 @@ class MuZeroAgent(MARLBaseAgent):
                     reward_c_state,
                 ) = self.predict_recurrent_inference(
                     parent.afterstate,
-                    code.to(parent.afterstate.device).unsqueeze(
-                        0
-                    ),  # a sampled code instead of an action
+                    code.to(parent.afterstate.device)
+                    .unsqueeze(0)
+                    .float(),  # a sampled code instead of an action
                     parent.reward_h_state,
                     parent.reward_c_state,
                     model=inference_model,
@@ -907,7 +921,10 @@ class MuZeroAgent(MARLBaseAgent):
             afterstate, value, code_priors = (
                 self.predict_afterstate_recurrent_inference(  # <--- YOU NEED THIS METHOD
                     parent.hidden_state,
-                    torch.tensor(action).to(parent.hidden_state.device).unsqueeze(0),
+                    torch.tensor(action)
+                    .to(parent.hidden_state.device)
+                    .unsqueeze(0)
+                    .float(),
                 )
             )
 
@@ -986,23 +1003,40 @@ class MuZeroAgent(MARLBaseAgent):
 
     def learn(self):
         samples = self.replay_buffer.sample()
-        # print("Samples:", samples)
+        # --- 1. Unpack Data from New Buffer Structure ---
         observations = samples["observations"]
-        target_observations = samples["unroll_observations"].to(
-            self.device
-        )  # (B, unroll + 1)
-        target_policies = samples["policy"].to(
-            self.device
-        )  # (B, unroll + 1, num_actions)
-        target_values = samples["values"].to(self.device)  # (B, unroll + 1)
-        target_rewards = samples["rewards"].to(self.device)  # (B, unroll + 1)
-        actions = samples["actions"].to(self.device)  # (B, unroll)
-        target_to_plays = samples["to_plays"].to(
-            self.device
-        )  # (B, unroll + 1, num_players)
-        masks = samples["valid_masks"].to(self.device)  # (B, unroll + 1)
+
+        # (B, unroll + 1)
+        target_observations = samples["unroll_observations"].to(self.device)
+
+        # (B, unroll + 1, num_actions)
+        target_policies = samples["policy"].to(self.device)
+
+        # (B, unroll + 1)
+        target_values = samples["values"].to(self.device)
+
+        # (B, unroll + 1)
+        target_rewards = samples["rewards"].to(self.device)
+
+        # (B, unroll) - Actions are only needed for the transitions
+        actions = samples["actions"].to(self.device)
+
+        # (B, unroll + 1, num_players)
+        target_to_plays = samples["to_plays"].to(self.device)
+
+        # (B, unroll + 1, 1) - Ground truth chance codes from environment (optional usage)
+        target_chance_codes = samples["chance_codes"].to(self.device)
+
+        # --- MASKS ---
+        # valid_masks: (B, unroll + 1). True if state is in episode (inc. Terminal).
+        # Use for: Value, Reward, Consistency.
+        consistency_masks = samples["valid_masks"].to(self.device)
+
+        # policy_masks: (B, unroll + 1). True if state is actionable (exc. Terminal).
+        # Use for: Policy.
+        policy_masks = samples["policy_masks"].to(self.device)
+
         weights = samples["weights"].to(self.device)
-        # infos = samples["infos"].to(self.device)
         inputs = self.preprocess(observations)
 
         (
@@ -1051,19 +1085,30 @@ class MuZeroAgent(MARLBaseAgent):
 
         for k in range(self.config.unroll_steps):
             actions_k = actions[:, k]
+            target_observations_k = target_observations[:, k]
             target_observations_k_plus_1 = target_observations[:, k + 1]
-            real_obs = self.preprocess(target_observations_k_plus_1)
+            real_obs_k = self.preprocess(target_observations_k)
+            real_obs_k_plus_1 = self.preprocess(target_observations_k_plus_1)
+            encoder_input = torch.concat([real_obs_k, real_obs_k_plus_1], dim=1)
             if self.config.stochastic:
                 afterstates, q_k, code_priors_k = (
                     self.predict_afterstate_recurrent_inference(  # <--- YOU NEED THIS METHOD
-                        hidden_states, actions_k
+                        hidden_states, actions_k, model=self.model
                     )
                 )
-                encoder_softmax_k, encoder_onehot_k = self.model.encoder(real_obs)
+
+                encoder_softmax_k, encoder_onehot_k = self.model.encoder(encoder_input)
+                if self.config.use_true_chance_codes:
+                    codes_k = F.one_hot(
+                        target_chance_codes[:, k + 1].squeeze(-1).long(),
+                        self.config.num_chance,
+                    )
+                    assert (
+                        codes_k.shape == encoder_onehot_k.shape
+                    ), f"{codes_k.shape} == {encoder_onehot_k.shape}"
+                    encoder_onehot_k = codes_k.float()
 
                 latent_afterstates.append(afterstates)
-                # TODO: SHOULD WE SCALE THE AFTER STATE GRADIENTS LIKE THE HIDDEN STATE ONES?
-                afterstates = scale_gradient(afterstates, 0.5)
                 latent_code_probabilities.append(code_priors_k)
                 chance_values.append(q_k)
 
@@ -1072,6 +1117,7 @@ class MuZeroAgent(MARLBaseAgent):
                 encoder_softmaxes.append(encoder_softmax_k)
                 # print("encoder onehot shape", encoder_onehot_k.shape)
                 # print("afterstates shape", afterstates.shape)
+
                 (
                     rewards_k,
                     hidden_states,
@@ -1113,7 +1159,6 @@ class MuZeroAgent(MARLBaseAgent):
             policies.append(policies_k)
             to_plays.append(to_plays_k)
 
-            # TODO: SHOULD WE SCALE GRADIENTS BEFORE APPENDING TO LATENT STATES OR AFTER?
             # Scale the gradient of the hidden state (applies to the whole batch)
             # Append the predicted latent (ŝ_{t+k+1}) BEFORE scaling for the next step
             hidden_states = scale_gradient(hidden_states, 0.5)
@@ -1183,7 +1228,8 @@ class MuZeroAgent(MARLBaseAgent):
                 target_rewards_k = target_rewards[:, k]  # (B, ...)
                 target_policies_k = target_policies[:, k]  # (B, policy_dim)
                 target_to_plays_k = target_to_plays[:, k]  # (B, num_players)
-                step_masks_k = masks[:, k]  # (B,)                if k > 0:
+                consistency_mask_k = consistency_masks[:, k]  # For Val, Rew, Cons
+                policy_mask_k = policy_masks[:, k]  # For Policy ONLY
 
                 values_k = values_tensor[:, k]  # (B, ...)
                 rewards_k = rewards_tensor[:, k]  # (B, ...)
@@ -1329,47 +1375,12 @@ class MuZeroAgent(MARLBaseAgent):
                         chance_values_k = chance_values_tensor[:, k - 1]
 
                         target_chance_values_k = target_values[:, k - 1]
-                        # FOR IF WE CHANGE THE VALUE IN REANALYZE TO ROOT VALUE
-                        # target_to_plays shape: (B, unroll+1, num_players)
-                        # current_player = target_to_plays[:, k].argmax(
-                        #     dim=-1
-                        # )  # Shape (B,)
-                        # next_player = target_to_plays[:, k + 1].argmax(
-                        #     dim=-1
-                        # )  # Shape (B,)
 
-                        # # 2. Determine the perspective sign
-                        # # If the player is the same (single player game or double move), sign is 1.0
-                        # # If the player changes (Tic-Tac-Toe), sign is -1.0
-                        # outcome_sign = torch.where(
-                        #     current_player == next_player, 1.0, -1.0
-                        # ).to(self.device)
+                        target_chance_values_k = scalar_to_support(
+                            target_chance_values_k, self.config.support_range
+                        ).to(self.device)
 
-                        # # 3. Handle Support/Scalar conversion (CRITICAL)
-                        # # You cannot multiply the 'support' distribution vector by -1 directly.
-                        # # You must convert to scalar first.
-                        # if self.config.support_range is not None:
-                        #     # Convert the NEXT value (at k+1) to a scalar
-                        #     next_value_scalar = support_to_scalar(
-                        #         target_values[:, k + 1], self.config.support_range
-                        #     )
-                        # else:
-                        #     next_value_scalar = target_values[:, k + 1].squeeze(-1)
-
-                        # # 4. Construct the Correct Bootstrap Target (Q-Value)
-                        # # Formula: r_t + (gamma * sign * v_{t+1})
-                        # target_chance_values_k = target_rewards[:, k].squeeze(-1) + (
-                        #     self.config.discount_factor * next_value_scalar * outcome_sign
-                        # )
-
-                        # # 5. Calculate the Q-Loss
-                        # if self.config.support_range is not None:
-                        #     # If using support, we need to convert our target_q_scalar BACK into a distribution
-                        #     # or just use the scalar for the loss if your loss function supports it.
-                        #     # Usually, we convert back to target support:
-                        #     target_chance_values_k = scalar_to_support(
-                        #         target_chance_values_k, self.config.support_range
-                        #     )
+                        # TODO: HAVE WE ALREADY RECOMPUTED TARGET Q IN THE CASE OF REANALYZE? I THINK WE HAVE
 
                         if self.config.support_range is None:
                             predicted_chance_values_k = chance_values_k.squeeze(
@@ -1388,38 +1399,100 @@ class MuZeroAgent(MARLBaseAgent):
                             * self.config.value_loss_function(
                                 predicted_chance_values_k,
                                 target_chance_values_k,
-                                # + target_rewards_k,  # TODO: see if this is right/better since this would be the actual q_value
                             )
                         )
 
                         # σ^k is trained towards the one hot chance code c_t+k+1 = one hot (argmax_i(e((o^i)≤t+k+1))) produced by the encoder.
                         sigma_loss_k = self.config.sigma_loss(
                             latent_code_probabilities_k,
-                            encoder_softmax_k_plus_1.detach(),  # or encoder_onehot_k_plus_1.detach()
+                            encoder_onehot_k_plus_1.detach(),
+                            # encoder_softmax_k_plus_1.detach(),  # or encoder_onehot_k_plus_1.detach()
                         )
 
                         # VQ-VAE commitment cost between c_t+k+1 and (c^e)_t+k+1 ||c_t+k+1 - (c^e)_t+k+1||^2
-                        diff = (
-                            encoder_softmax_k_plus_1 - encoder_onehot_k_plus_1.detach()
-                        )
-                        vqvae_commitment_cost_k = (
-                            self.config.vqvae_commitment_cost_factor
-                            * torch.sum(diff.pow(2), dim=-1)
-                        )
+                        if not self.config.use_true_chance_codes:
+                            diff = (
+                                encoder_softmax_k_plus_1
+                                - encoder_onehot_k_plus_1.detach()
+                            )
+                            vqvae_commitment_cost_k = (
+                                self.config.vqvae_commitment_cost_factor
+                                * torch.sum(diff.pow(2), dim=-1)
+                            )
+                        # vqvae_commitment_cost_k = MSELoss()(
+                        #     encoder_softmax_k_plus_1, encoder_onehot_k_plus_1.detach()
+                        # )
 
                 # --- 4. Apply Mask, Weights, and Gradient Scale ---
+                if self.training_step % self.checkpoint_interval == 0:
+                    # torch.set_printoptions(profile="full")
+
+                    print("actions shape", actions.shape)
+                    print("target value shape", target_values.shape)
+                    print("predicted values shape", values_tensor.shape)
+                    print("target rewards shape", target_rewards.shape)
+                    print("predicted rewards shape", rewards_tensor.shape)
+                    if self.config.stochastic:
+                        print("target qs shape", target_values.shape)
+                        print("predicted qs shape", chance_values_tensor.shape)
+                    print("target to plays shape", target_to_plays.shape)
+                    print("predicted to_plays shape", to_plays_tensor.shape)
+                    print("masks shape", policy_masks.shape, consistency_masks.shape)
+
+                    print("actions", actions)
+                    print("target value", target_values)
+                    print("predicted values", values)
+                    print("target rewards", target_rewards)
+                    print("predicted rewards", rewards)
+                    if self.config.stochastic:
+                        print("target qs", target_values)
+                        print("predicted qs", chance_values)
+                    print("target to plays", target_to_plays)
+                    print("predicted to_plays", to_plays)
+
+                    if self.config.stochastic:
+                        print("encoder embedding", encoder_softmaxes)
+                        print("encoder onehot", encoder_onehots)
+                        print("predicted sigmas", latent_code_probabilities)
+                    print("masks", policy_masks, consistency_masks)
+                    # torch.set_printoptions(profile="default")
+
+                assert (
+                    value_loss_k.shape
+                    == reward_loss_k.shape
+                    == policy_loss_k.shape
+                    == to_play_loss_k.shape
+                    == consistency_loss_k.shape
+                    == q_loss_k.shape
+                    == sigma_loss_k.shape
+                    == vqvae_commitment_cost_k.shape
+                ), f"{value_loss_k.shape} == {reward_loss_k.shape} == {policy_loss_k.shape} == {to_play_loss_k.shape} == {consistency_loss_k.shape} == {q_loss_k.shape} == {sigma_loss_k.shape} == {vqvae_commitment_cost_k.shape}"
 
                 # Apply mask: (B,)
+                # --- D. Apply Masks ---
                 if self.config.mask_absorbing:
-                    value_loss_k *= step_masks_k
-                    reward_loss_k *= step_masks_k
-                    policy_loss_k *= step_masks_k  # mask policy?
-                    # TODO: make sure these line up properly
-                    q_loss_k *= step_masks_k
-                    sigma_loss_k *= step_masks_k
-                    vqvae_commitment_cost_k *= step_masks_k
-                to_play_loss_k *= step_masks_k  # always mask to_play?
-                consistency_loss_k *= step_masks_k  # always mask consistency?
+                    # Apply Consistency Mask to: Value, Reward, Q, Sigma, VQ, Consistency
+                    value_loss_k *= consistency_mask_k
+                    reward_loss_k *= consistency_mask_k
+                    q_loss_k *= consistency_mask_k
+                    # Consistency Loss Masking
+                    # We can't calculate consistency if the current node is absorbing
+                    # OR if it's the very last unrolled step (because we might not have a target obs for k+1 if we hit limit)
+                    # But policy_mask_k handles the absorbing part.
+                    # TODO: what should this use? consistency_mask_k if training initial on terminal, else policy?
+                    consistency_loss_k *= consistency_mask_k  # can do consistency on terminal observation -> absorbing to have value 0
+
+                # To Play Loss masking
+                to_play_loss_k *= consistency_mask_k  # important to correctly predict whos turn it is on a terminal state, but unimportant afterwards
+                vqvae_commitment_cost_k *= (
+                    policy_mask_k  # no chance nodes from terminal -> absorbing
+                )
+                sigma_loss_k *= (
+                    policy_mask_k  ## no chance nodes from terminal -> absorbing
+                )
+
+                # IMPORTANT: Policy Loss uses Policy Mask (excludes terminal)
+                policy_loss_k *= policy_mask_k
 
                 # Sum the losses for this step: (B,)
                 step_loss = (
@@ -1461,7 +1534,6 @@ class MuZeroAgent(MARLBaseAgent):
 
             self.optimizer.zero_grad()
             loss_mean.backward()
-
             if self.config.clipnorm > 0:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
 

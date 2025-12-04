@@ -402,6 +402,31 @@ class FrameStackWrapper(BaseWrapper):
         self.env.step(action)
 
 
+class InitialMovesWrapper(BaseWrapper):
+    """
+    Wrapper to stack the last k frames along the channel dimension.
+
+    Args:
+        env: The PettingZoo AECEnv to wrap.
+        k: Number of frames to stack.
+        channel_first: Whether the input is channel-first (CHW) or channel-last (HWC).
+    """
+
+    def __init__(
+        self,
+        env: AECEnv[AgentID, ObsType, ActionType],
+        initial_moves: list,
+    ):
+        super().__init__(env)
+        self.initial_moves = initial_moves
+
+    def reset(self, seed: int | None = None, options: dict | None = None):
+        self.env.reset(seed=seed, options=options)
+        # Clear stacks
+        for move in self.initial_moves:
+            self.step(move)
+
+
 import gymnasium as gym
 from gymnasium.core import Wrapper
 from typing import Any, Tuple, Dict, SupportsFloat as float_t

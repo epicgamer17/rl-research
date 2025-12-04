@@ -499,3 +499,89 @@ class VarianceScaling:
 
             limit = math.sqrt(3.0 * scale)
             return tensor.uniform_(-limit, limit)
+
+
+# modules/network_utils.py (New File)
+from torch import nn
+from typing import Literal
+
+
+def build_normalization_layer(
+    norm_type: Literal["batch", "layer", "none"], num_features: int, dim: int
+) -> nn.Module:
+    """
+    Builds the specified normalization layer.
+
+    Args:
+        norm_type: The type of normalization ('batch', 'layer', 'none').
+        num_features: The number of features (channels for conv, width for dense).
+        dim: The dimension of the input tensor (2 for conv/2D, 1 for dense/1D).
+    """
+    if norm_type == "batch":
+        if dim == 2:
+            return nn.BatchNorm2d(num_features)
+        elif dim == 1:
+            # Batch norm for 1D (Dense) layers
+            return nn.BatchNorm1d(num_features)
+        else:
+            raise ValueError(f"Batch norm for {dim}D not supported.")
+    elif norm_type == "layer":
+        # nn.LayerNorm expects a list of shape for LayerNorm on last dim(s).
+        # We assume the layer is applied across the feature dimension.
+        return nn.LayerNorm(num_features)
+    elif norm_type == "none":
+        return nn.Identity()
+    else:
+        raise ValueError(f"Unknown normalization type: {norm_type}")
+
+
+# Existing unpack function from your original code (in utils)
+def unpack(x: int | Tuple):
+    # ... (same as your original implementation)
+    if isinstance(x, Tuple):
+        assert len(x) == 2
+        return x
+    else:
+        try:
+            x = int(x)
+            return x, x
+        except Exception as e:
+            print(f"error converting {x} to int: ", e)
+
+
+def _normalize_hidden_state(S: torch.Tensor) -> torch.Tensor:
+    """Normalizes the hidden state tensor as described in the paper."""
+    # (B, *)
+    # Handles both (B, W) for dense and (B, C, H, W) for spatial
+
+    if S.dim() == 2:
+        # Case: (B, W) - Dense layer output
+        S_norm = S
+        dim = 1
+    elif S.dim() == 4:
+        # Case: (B, C, H, W) - Spatial output. Normalize over spatial dimensions (H*W) for each channel.
+        # Reshape to (B*C, H*W) or (B, C, H*W)
+        B, C, H, W = S.shape
+        S_norm = S.view(B, C, H * W)  # (B, C, H*W)
+        dim = 2  # Normalize across H*W dimension for each channel
+    else:
+        # Not a standard MuZero shape, return unnormalized to be safe
+        return S
+
+    min_hidden_state = S_norm.min(dim=dim, keepdim=True)[0]
+    max_hidden_state = S_norm.max(dim=dim, keepdim=True)[0]
+
+    if S.dim() == 4:
+        # For spatial normalization, restore original dimensions after min/max
+        min_hidden_state = min_hidden_state.unsqueeze(-1)  # (B, C, 1, 1)
+        max_hidden_state = max_hidden_state.unsqueeze(-1)
+
+    scale_hidden_state = max_hidden_state - min_hidden_state
+
+    # Handle the case where min == max
+    scale_hidden_state[scale_hidden_state < 1e-5] = (
+        1.0  # Or use += 1e-5 if that's the original intent
+    )
+
+    hidden_state = (S - min_hidden_state) / scale_hidden_state
+    return hidden_state

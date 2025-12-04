@@ -129,16 +129,14 @@ class BaseAgent:
         """Infers input dimensions for the neural network."""
         obs_space = env.observation_space
 
-        # Handle PettingZoo callable observation spaces
-        if callable(obs_space):
-            obs_space = obs_space(self.player_id)
-
         if isinstance(obs_space, gym.spaces.Box):
             return obs_space.shape, obs_space.dtype
         elif isinstance(obs_space, gym.spaces.Discrete):
             return (1,), np.int32
         elif isinstance(obs_space, gym.spaces.Tuple):
             return (len(obs_space.spaces),), np.int32
+        elif callable(obs_space):
+            return obs_space(self.player_id).shape, obs_space(self.player_id).dtype
         else:
             return obs_space.shape, obs_space.dtype
 
@@ -298,50 +296,45 @@ class BaseAgent:
 
         return agent
 
-    def test(self, num_trials, dir="./checkpoints") -> dict:
+    def test(self, num_trials, dir="./checkpoints") -> None:
         if num_trials == 0:
-            return {}
-
-        print(f"--- Starting Test: {self.model_name} ({num_trials} episodes) ---")
-
+            return
         with torch.no_grad():
+            """Test the agent."""
             average_score = 0
             max_score = float("-inf")
             min_score = float("inf")
-
-            # Setup video recording triggers if needed
-            if hasattr(self.test_env, "episode_trigger"):
-                # Ensure we record appropriately based on wrapper implementation
-                pass
-
-            for _ in range(num_trials):
+            # self.test_env.reset()
+            if self.test_env.render_mode == "rgb_array":
+                self.test_env.episode_trigger = EpisodeTrigger(num_trials)
+                self.test_env.video_folder = "{}/videos/{}".format(dir, self.model_name)
+                if not os.path.exists(self.test_env.video_folder):
+                    os.makedirs(self.test_env.video_folder)
+            for trials in range(num_trials):
                 state, info = self.test_env.reset()
+
                 done = False
                 score = 0
 
                 while not done:
-                    # For gym envs, state is usually the obs
                     prediction = self.predict(state, info)
                     action = self.select_actions(prediction, info=info).item()
-
                     state, reward, terminated, truncated, info = self.test_env.step(
                         action
                     )
+                    # self.test_env.render()
                     done = terminated or truncated
-
-                    # Handle different reward structures (vector vs scalar)
-                    r = reward[0] if isinstance(reward, (list, np.ndarray)) else reward
-                    score += r
-
+                    score += reward[0] if isinstance(reward, list) else reward
                 average_score += score
                 max_score = max(max_score, score)
                 min_score = min(min_score, score)
+                print("score: ", score)
 
+            # reset
+            # if self.test_env.render_mode != "rgb_array":
+            #     self.test_env.render()
             self.test_env.close()
-
             average_score /= num_trials
-            print(f"Test Complete. Avg Score: {average_score:.2f}")
-
             return {
                 "score": average_score,
                 "max_score": max_score,
@@ -349,16 +342,19 @@ class BaseAgent:
             }
 
     def run_tests(self, stats):
-        dir_path = Path("checkpoints", self.model_name)
-        step_dir = dir_path / f"step_{self.training_step}"
+        dir = Path("checkpoints", self.model_name)
+        training_step_dir = Path(dir, f"step_{self.training_step}")
 
-        test_score = self.test(self.test_trials, dir=step_dir)
-
+        test_score = self.test(self.test_trials, dir=training_step_dir)
+        print("Test score", test_score)
         if isinstance(test_score, float):
             stats.append("test_score", test_score)
         elif isinstance(test_score, dict):
             for key in test_score:
                 stats.append("test_score", test_score[key], subkey=key)
+        else:
+            print(test_score)
+            raise ValueError
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -395,176 +391,182 @@ class MARLBaseAgent(BaseAgent):
             f"MARL Agent '{self.model_name}' initialized. Test agents: {[a.model_name for a in self.test_agents]}"
         )
 
-    def test(self, num_trials, player=0, dir="./checkpoints") -> dict:
-        # If single player game disguised as MARL, fallback
-        if (
-            hasattr(self.config.game, "num_players")
-            and self.config.game.num_players == 1
-        ):
-            return super().test(num_trials, dir)
-
+    def test(self, num_trials, player=0, dir="./checkpoints") -> None:
+        if self.config.game.num_players == 1:
+            return super(MARLBaseAgent, self).test(num_trials, dir)
         if num_trials == 0:
-            return {}
-
+            return
         with torch.no_grad():
+            """Test the agent."""
             results = []
-
-            # Setup video path logic (simplified)
-            if hasattr(self.test_env, "video_folder"):
-                self.test_env.video_folder = str(Path(dir) / "videos" / self.model_name)
-                os.makedirs(self.test_env.video_folder, exist_ok=True)
-
-            for trial in range(num_trials):
+            max_score = float("-inf")
+            min_score = float("inf")
+            # self.test_env.reset()
+            if self.test_env.render_mode == "rgb_array":
+                self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
+                self.test_env.video_folder = "{}/videos/{}".format(dir, self.model_name)
+                if not os.path.exists(self.test_env.video_folder):
+                    os.makedirs(self.test_env.video_folder)
+            for trials in range(num_trials):
                 self.test_env.reset()
-                # Petting Zoo AEC Loop
                 state, reward, terminated, truncated, info = self.test_env.last()
+                agent_id = self.test_env.agent_selection
+                current_player = self.test_env.agents.index(agent_id)
+                # state, info = process_petting_zoo_obs(state, info, current_player)
                 done = terminated or truncated
                 score = 0
 
-                # We need to know which agent string maps to our player index
-                # This assumes standard PettingZoo agents list ["player_0", "player_1"]
-                target_agent_id = (
-                    self.test_env.agents[player]
-                    if player < len(self.test_env.agents)
-                    else "player_0"
-                )
-
                 while not done:
-                    # Determine action based on current agent selection
-                    # In self-play test, we usually play all sides, or we play one side against random?
-                    # This generic test method usually implies self-play or solo-play in MARL
-
                     prediction = self.predict(state, info, env=self.test_env.env)
                     action = self.select_actions(prediction, info=info).item()
 
                     self.test_env.step(action)
-
                     state, reward, terminated, truncated, info = self.test_env.last()
+                    agent_id = self.test_env.agent_selection
+                    current_player = self.test_env.agents.index(agent_id)
+                    # state, info = process_petting_zoo_obs(state, info, current_player)
                     done = terminated or truncated
 
-                    # Accumulate reward only for the specific player we are tracking
-                    # Note: In AEC, rewards are often stored in a dictionary attribute
-                    if hasattr(self.test_env, "rewards"):
-                        score += self.test_env.rewards.get(target_agent_id, 0)
-                    else:
-                        # Fallback for simpler envs
-                        score += reward
-
+                    if done:
+                        score += self.test_env.rewards[f"player_{player}"]
                 results.append(score)
 
+            # reset
+            # if self.test_env.render_mode != "rgb_array":
+            #     self.test_env.render()
             self.test_env.close()
+            average_score = sum(results) / num_trials
+            max_score = max(results)
+            min_score = min(results)
+            # std = np.std(results)
 
-            if not results:
-                return {"score": 0}
-
-            average_score = sum(results) / len(results)
+            print("average score:", average_score)
             return {
                 "score": average_score,
-                "max_score": max(results),
-                "min_score": min(results),
+                "max_score": max_score,
+                "min_score": min_score,
+                # "std": std,
             }
 
-    def test_vs_agent(self, num_trials, opponent_agent, dir="./checkpoints"):
+    def test_vs_agent(self, num_trials, agent, dir="./checkpoints"):
         """
-        Test the trained agent against a specific opponent agent.
-        Assumes a 2-player or multi-player setup where we rotate positions.
+        Test the trained NFSP agent against a random agent
         """
-        num_players = self.config.game.num_players
-        final_rewards = {p: [] for p in range(num_players)}
+        final_rewards = {player: [] for player in range(self.config.game.num_players)}
         results = {}
+        for player in range(self.config.game.num_players):
+            print("Testing Player {} vs Agent {}".format(player, agent.model_name))
+            if self.test_env.render_mode == "rgb_array":
+                self.test_env.episode_trigger = lambda x: (x + 1) % num_trials == 0
+                self.test_env.video_folder = "{}/videos/{}".format(
+                    dir, agent.model_name
+                )
+                if not os.path.exists(self.test_env.video_folder):
+                    os.makedirs(self.test_env.video_folder)
 
-        print(f"--- Testing: {self.model_name} vs {opponent_agent.model_name} ---")
-
-        with torch.no_grad():
-            # For each player position (0 and 1, usually)
-            for player_idx in range(num_players):
-
-                # Video setup
-                if getattr(self.test_env, "render_mode", "") == "rgb_array":
-                    video_folder = (
-                        Path(dir) / "videos" / f"vs_{opponent_agent.model_name}"
-                    )
-                    os.makedirs(video_folder, exist_ok=True)
-                    if hasattr(self.test_env, "video_folder"):
-                        self.test_env.video_folder = str(video_folder)
-
-                # Run trials for this configuration
-                trials_per_config = max(1, num_trials // num_players)
-
-                for _ in range(trials_per_config):
+            with torch.no_grad():  # No gradient computation during testing
+                for trial in range(num_trials // self.config.game.num_players):
+                    # Reset environment
                     self.test_env.reset()
-
-                    # AEC Loop
                     state, reward, termination, truncation, info = self.test_env.last()
                     done = termination or truncation
+                    agent_id = self.test_env.agent_selection
+                    current_player = self.test_env.agents.index(agent_id)
+                    # state, info = process_petting_zoo_obs(state, info, current_player)
+                    agent_names = self.test_env.agents.copy()
 
-                    while not done:
-                        agent_id = self.test_env.agent_selection
-                        # Find index of current agent_id in the agents list
-                        current_player_idx = self.test_env.agents.index(agent_id)
+                    episode_length = 0
+                    while not done and episode_length < 1000:  # Safety limit
+                        # Get current agent and player
+                        episode_length += 1
 
-                        if current_player_idx == player_idx:
-                            # It is OUR turn
+                        # Get action from average strategy
+                        if current_player == player:
                             prediction = self.predict(
                                 state, info, env=self.test_env.env
                             )
                             action = self.select_actions(prediction, info=info).item()
+                            if trial == 0:
+                                print(
+                                    f"Player {current_player} prediction: {prediction}"
+                                )
+                                print(f"action: {action}")
+
                         else:
-                            # It is OPPONENT'S turn
-                            prediction = opponent_agent.predict(
+
+                            prediction = agent.predict(
                                 state, info, env=self.test_env.env
                             )
-                            action = opponent_agent.select_actions(
-                                prediction, info=info
-                            ).item()
+                            action = agent.select_actions(prediction, info=info).item()
 
+                            if trial == 0:
+                                print(
+                                    f"Player {current_player} {agent.model_name} action: {action}"
+                                )
+
+                        # Step environment
                         self.test_env.step(action)
                         state, reward, termination, truncation, info = (
                             self.test_env.last()
                         )
+                        agent_id = self.test_env.agent_selection
+                        current_player = self.test_env.agents.index(agent_id)
+                        # state, info = process_petting_zoo_obs(
+                        #     state, info, current_player
+                        # )
                         done = termination or truncation
 
-                    # End of Episode: Record rewards
-                    for p_id in range(num_players):
-                        agent_str = self.test_env.agents[p_id]
-                        r = self.test_env.rewards.get(agent_str, 0)
-                        final_rewards[p_id].append(r)
+                    final_rewards[player].append(
+                        self.test_env.rewards[self.test_env.agents[player]]
+                    )
 
-                # Calculate stats for this player configuration
-                avg_score = sum(final_rewards[player_idx]) / len(
-                    final_rewards[player_idx]
+            test_player_average_score = sum(final_rewards[player]) / len(
+                final_rewards[player]
+            )
+            test_player_win_percentage = sum(
+                1 for r in final_rewards[player] if r > 0
+            ) / len(final_rewards[player])
+            # std = np.std(final_rewards[player])
+            results.update(
+                {
+                    "player_{}_score".format(player): test_player_average_score,
+                }
+            )
+            results.update(
+                {
+                    "player_{}_win%".format(player): test_player_win_percentage,
+                }
+            )
+            print(
+                f"Player {player} win percentage vs {agent.model_name}: {test_player_win_percentage * 100} and average score: {test_player_average_score}"
+            )
+        results.update(
+            {
+                "score": sum(
+                    results["player_{}_score".format(player)]
+                    for player in range(self.config.game.num_players)
                 )
-                win_pct = sum(1 for r in final_rewards[player_idx] if r > 0) / len(
-                    final_rewards[player_idx]
-                )
-
-                results[f"player_{player_idx}_score"] = avg_score
-                results[f"player_{player_idx}_win%"] = win_pct
-
-                print(
-                    f"As Player {player_idx}: Win% {win_pct*100:.1f} | Avg Score {avg_score:.2f}"
-                )
-
-        # Aggregate overall score
-        total_score = sum(results[f"player_{p}_score"] for p in range(num_players))
-        results["score"] = total_score / num_players
-
+                / self.config.game.num_players
+            }
+        )
         return results
 
     def run_tests(self, stats: StatTracker):
-        # 1. Run generic tests (BaseAgent)
-        # Note: We manually call the logic here because super().run_tests might not fit the vs_agent flow
-        dir_path = Path("checkpoints", self.model_name)
-        step_dir = dir_path / f"step_{self.training_step}"
+        dir = Path("checkpoints", self.model_name)
+        training_step_dir = Path(dir, f"step_{self.training_step}")
 
-        # 2. Test against specific opponents
         for test_agent in self.test_agents:
-            results = self.test_vs_agent(self.test_trials, test_agent, dir=step_dir)
+            results = self.test_vs_agent(
+                self.test_trials,
+                test_agent,
+                dir=training_step_dir,
+            )
+            print("Results vs {}: {}".format(test_agent.model_name, results))
 
-            # Log results
-            for key, value in results.items():
+            for key in results:
                 stats.append(
-                    f"test_score_vs_{test_agent.model_name}",
-                    value,
+                    "test_score_vs_{}".format(test_agent.model_name),
+                    results[key],
                     subkey=key,
                 )
+        super().run_tests(stats)
