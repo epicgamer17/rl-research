@@ -13,12 +13,12 @@ from custom_gym_envs.envs.catan import (
 
 def make_env(
     num_players=2,
-    map_type="BASE",
+    map_type="TOURNAMENT",
     vps_to_win=10,
     representation="vector",
     invalid_action_reward=-10,
     render_mode="rgb_array",
-    auto_play_single_action=True,
+    auto_play_single_action=False,
 ):
     env = catan_env(
         render_mode=render_mode,

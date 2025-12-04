@@ -396,7 +396,7 @@ class CatanAECEnv(AECEnv):
         self.vps_to_win = vps_to_win
         self.representation = representation
         self.invalid_action_reward = invalid_action_reward
-        assert self.representation in ["mixed", "vector"]
+        assert self.representation in ["mixed", "image", "vector"]
         assert 2 <= num_players <= 4, "Catan must be played with 2 to 4 players"
 
         self.auto_play_single_action = bool(auto_play_single_action)
@@ -430,6 +430,17 @@ class CatanAECEnv(AECEnv):
             core_obs_space = spaces.Dict(
                 {"board": board_tensor_space, "numeric": numeric_space}
             )
+        elif self.representation == "image":
+            # Calculate total channels: Base Board Channels + 1 Channel per Numeric Feature
+            board_channels = get_channels(len(self.possible_agents))
+            total_channels = board_channels + len(self.numeric_features)
+
+            # We use HIGH for the high bound to accommodate the numeric features,
+            # even though the board parts are only 0-1.
+            core_obs_space = spaces.Box(
+                low=0, high=HIGH, shape=(total_channels, 21, 11), dtype=np.float32
+            )
+
         else:
             core_obs_space = spaces.Box(
                 low=0, high=HIGH, shape=(len(self.features),), dtype=np.float32
@@ -1127,6 +1138,24 @@ class CatanAECEnv(AECEnv):
                 [float(sample[i]) for i in self.numeric_features], dtype=np.float32
             )
             return {"board": board_tensor, "numeric": numeric}
+        if self.representation == "image":
+            # 1. Generate the spatial board tensor
+            board_tensor = create_board_tensor(
+                self.game, agent_color, channels_first=True
+            ).astype(np.float32)
+
+            # 2. Extract numeric values
+            numeric = np.array(
+                [float(sample[i]) for i in self.numeric_features], dtype=np.float32
+            )
+
+            # 3. Broadcast numeric values to spatial planes (N, H, W)
+            # We assume board_tensor is (Channels, Height, Width) due to channels_first=True
+            _, h, w = board_tensor.shape
+            numeric_planes = np.tile(numeric[:, None, None], (1, h, w))
+
+            # 4. Concatenate board channels with numeric planes
+            return np.concatenate((board_tensor, numeric_planes), axis=0)
         else:
             return np.array([float(sample[i]) for i in self.features], dtype=np.float32)
 

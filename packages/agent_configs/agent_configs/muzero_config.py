@@ -11,7 +11,9 @@ class MuZeroConfig(Config):
     def __init__(self, config_dict, game_config):
         super(MuZeroConfig, self).__init__(config_dict, game_config)
         # SAME AS VMIN AND VMAX
-        self.known_bounds = self.parse_field("known_bounds", None)
+        self.known_bounds = self.parse_field(
+            "known_bounds", default=None, required=False
+        )
 
         # Network Arcitecture
         self.residual_layers: list = self.parse_field(
@@ -171,6 +173,9 @@ class MuZeroConfig(Config):
         self.q_estimation_method: str = self.parse_field("q_estimation_method", "v_mix")
 
         self.stochastic: bool = self.parse_field("stochastic", False)
+        self.use_true_chance_codes: bool = self.parse_field(
+            "use_true_chance_codes", False
+        )
         self.num_chance: int = self.parse_field("num_chance", 32)
         self.sigma_loss = self.parse_field("sigma_loss", CategoricalCrossentropyLoss())
         self.afterstate_residual_layers: list = self.parse_field(
@@ -192,6 +197,9 @@ class MuZeroConfig(Config):
         self.vqvae_commitment_cost_factor: float = self.parse_field(
             "vqvae_commitment_cost_factor", 1.0
         )
+
+        self.action_embedding_dim = self.parse_field("action_embedding_dim", 32)
+        self.single_action_plane = self.parse_field("single_action_plane", False)
 
     def _verify_game(self):
         # override alphazero game verification since muzero can play those games

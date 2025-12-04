@@ -61,3 +61,8 @@ register(
     entry_point="custom_gym_envs.envs:NonstationairyArmedBanditsEnv",
     kwargs={"mode": "random"},
 )
+
+register(
+    id="custom_gym_envs/Game2048-v0",
+    entry_point="custom_gym_envs.envs:Game2048Env",
+)
