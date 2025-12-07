@@ -1,6 +1,0 @@
-__init__
-atari_config
-cartpole_config
-connect4_config
-game_config
-tictactoe_config
