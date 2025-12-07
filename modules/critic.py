@@ -1,7 +1,7 @@
 from typing import Callable, Tuple
 from torch import nn, Tensor
 from modules.network_block import NetworkBlock
-from modules.heads import ValueHead
+from modules.heads import ScalarHead
 from agent_configs.base_config import Config
 
 
@@ -15,7 +15,7 @@ class CriticNetwork(nn.Module):
 
         # 2. Value Head (Handles scalar vs support automatically)
         input_width = self._get_flat_dim(self.net.output_shape)
-        self.head = ValueHead(input_width, config)
+        self.head = ScalarHead(input_width, config)
 
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
         if len(shape) == 4:

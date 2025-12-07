@@ -1,7 +1,10 @@
 from typing import Callable, Tuple
 from torch import nn, Tensor
 from modules.network_block import NetworkBlock
-from modules.heads import DiscreteActionHead, ContinuousActionHead
+from modules.heads import (
+    CategoricalHead,
+    ContinuousHead,
+)
 from agent_configs.base_config import Config
 
 
@@ -23,9 +26,9 @@ class ActorNetwork(nn.Module):
         input_width = self._get_flat_dim(self.net.output_shape)
 
         if self.config.game.is_discrete:
-            self.head = DiscreteActionHead(input_width, output_size, config)
+            self.head = CategoricalHead(input_width, output_size, config)
         else:
-            self.head = ContinuousActionHead(input_width, output_size, config)
+            self.head = ContinuousHead(input_width, output_size, config)
 
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
         if len(shape) == 4:  # (B, C, H, W)
