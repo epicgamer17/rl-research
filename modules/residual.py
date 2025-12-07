@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Tuple
+from typing import Callable, Literal, Tuple, Union
 
 from torch import nn, Tensor
 from modules.utils import calculate_padding
@@ -88,40 +88,50 @@ class ResidualStack(BaseStack):
         self,
         input_shape: tuple[int],
         filters: list[int],
-        kernel_size: int,
-        strides: list[int | Tuple[int, int]],
+        kernel_sizes: list[int],  # <--- Changed from kernel_size: int
+        strides: list[Union[int, Tuple[int, int]]],
         activation: nn.Module = nn.ReLU(),
-        noisy_sigma: float = 0,  # Noise handling is for completeness, but typically not used in Conv/Res blocks
+        noisy_sigma: float = 0,
         norm_type: Literal["batch", "layer", "none"] = "batch",
     ):
         super().__init__(activation=activation, noisy_sigma=noisy_sigma)
 
-        # ... (assertions)
+        # Sanity check to ensure configuration lists align
+        assert len(filters) == len(kernel_sizes) == len(strides), (
+            f"Length mismatch: filters({len(filters)}), "
+            f"kernel_sizes({len(kernel_sizes)}), strides({len(strides)})"
+        )
 
         current_input_channels = input_shape[1]
 
         for i in range(len(filters)):
             out_channels = filters[i]
-            stride = unpack(strides[i])[0]  # Get one stride dimension
+            k_size = kernel_sizes[
+                i
+            ]  # <--- Extract the specific kernel size for this layer
+            stride = unpack(strides[i])[0]
 
-            # Each layer is now a ResidualBlock
             layer = ResidualBlock(
                 in_channels=current_input_channels,
                 out_channels=out_channels,
-                kernel_size=kernel_size,
+                kernel_size=k_size,
                 stride=stride,
                 norm_type=norm_type,
-                activation=activation,  # Pass activation to the block
+                activation=activation,
             )
             self._layers.append(layer)
             current_input_channels = out_channels
 
         self._output_len = current_input_channels
 
+    @property
+    def output_channels(self) -> int:
+        """Returns the number of output channels (C) from the final block."""
+        return self._output_len
+
     def forward(self, inputs):
         x = inputs
         for layer in self._layers:
-            # Activation is handled inside the ResidualBlock now
             x = layer(x)
         return x
 

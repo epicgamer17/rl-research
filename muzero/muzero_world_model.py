@@ -1,18 +1,20 @@
-from ast import Dict
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Dict
 
 from torch import Tensor
 import torch
 from modules.action_encoder import ActionEncoder
+from modules.conv import Conv2dStack
 from modules.network_block import NetworkBlock
+from modules.residual import ResidualStack
 from modules.utils import _normalize_hidden_state
 from modules.world_model import WorldModelInterface
 from packages.agent_configs.agent_configs.muzero_config import MuZeroConfig
 
 from torch import nn
 import torch.nn.functional as F
-from modules.dense import build_dense
+from modules.dense import DenseStack, build_dense
 from modules.utils import zero_weights_initializer
+from packages.utils.utils.utils import to_lists
 
 
 class RewardToPlayHead(nn.Module):
@@ -20,6 +22,7 @@ class RewardToPlayHead(nn.Module):
     The head of the Dynamics network for predicting reward and 'to play'.
     """
 
+    # TODO: change configs so that this can be a MuZero config or like a MuZero Network config or something (we have a circular imports right now)
     def __init__(self, config: MuZeroConfig, input_shape: Tuple[int]):
         super().__init__()
         self.config = config
@@ -279,9 +282,10 @@ class AfterstateDynamics(BaseDynamics):
         return afterstate
 
 
-class MuzeroWorldModel(WorldModelInterface):
+class MuzeroWorldModel(WorldModelInterface, nn.Module):
     def __init__(self, config: MuZeroConfig, input_shape: Tuple[int], num_actions: int):
-        super().__init__()
+        nn.Module.__init__(self)
+        self.config = config
         # --- 1. Representation Network ---
         self.representation = Representation(config, input_shape)
         self.num_actions = num_actions
@@ -291,9 +295,9 @@ class MuzeroWorldModel(WorldModelInterface):
         print("Hidden state shape:", hidden_state_shape)
 
         # --- 3. Dynamics and Prediction Networks ---
-        if config.stochastic:
+        if self.config.stochastic:
             self.afterstate_dynamics = AfterstateDynamics(
-                config,
+                self.config,
                 self.representation.output_shape,
                 num_actions=self.num_actions,
                 action_embedding_dim=self.config.action_embedding_dim,
@@ -301,14 +305,14 @@ class MuzeroWorldModel(WorldModelInterface):
 
         if self.config.stochastic:
             self.dynamics = Dynamics(
-                config,
+                self.config,
                 self.representation.output_shape,
                 num_actions=self.num_chance,
                 action_embedding_dim=self.config.action_embedding_dim,
             )
         else:
             self.dynamics = Dynamics(
-                config,
+                self.config,
                 self.representation.output_shape,
                 num_actions=self.num_actions,
                 action_embedding_dim=self.config.action_embedding_dim,

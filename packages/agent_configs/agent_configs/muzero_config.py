@@ -1,6 +1,8 @@
 from typing import Callable
 
 from torch import Tensor
+
+# from muzero.muzero_world_model import MuzeroWorldModel
 from .base_config import Config
 from modules.utils import CategoricalCrossentropyLoss, Loss, MSELoss
 from utils import tointlists
@@ -10,7 +12,12 @@ import copy
 class MuZeroConfig(Config):
     def __init__(self, config_dict, game_config):
         super(MuZeroConfig, self).__init__(config_dict, game_config)
-        # SAME AS VMIN AND VMAX
+
+        self.world_model_cls = self.parse_field("world_model_cls", None, required=True)
+        self.norm_type: str = self.parse_field(
+            "norm_type", "batch"
+        )  # batch, layer, none
+        # SAME AS VMIN AND VMAX?
         self.known_bounds = self.parse_field(
             "known_bounds", default=None, required=False
         )
@@ -127,7 +134,7 @@ class MuZeroConfig(Config):
             "per_use_batch_weights", False
         )
         self.per_initial_priority_max: bool = self.parse_field(
-            "per_initial_priority_max", False
+            "per_initial_priority_max", True
         )
 
         self.support_range: int = self.parse_field("support_range", None)
@@ -164,7 +171,7 @@ class MuZeroConfig(Config):
         self.predictor_hidden_dim: int = self.parse_field("predictor_hidden_dim", 64)
 
         assert self.projector_output_dim == self.predictor_output_dim
-        self.mask_absorbing = self.parse_field("mask_absorbing", True)
+        self.mask_absorbing = self.parse_field("mask_absorbing", False)
 
         self.value_prefix: bool = self.parse_field("value_prefix", False)
         self.lstm_horizon_len: int = self.parse_field("lstm_horizon_len", 5)

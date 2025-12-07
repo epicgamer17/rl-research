@@ -1,14 +1,14 @@
-from ast import Tuple
 from collections.abc import Callable
+from typing import Tuple
 
 import torch
 from modules.conv import Conv2dStack
 from modules.dense import DenseStack
 from modules.residual import ResidualStack
-from packages.agent_configs.agent_configs.base_config import Config
+from agent_configs.base_config import Config
 from torch import nn
 
-from packages.utils.utils.utils import to_lists
+from utils import to_lists
 
 
 class NetworkBlock(nn.Module):

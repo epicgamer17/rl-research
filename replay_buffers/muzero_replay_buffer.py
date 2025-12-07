@@ -1,6 +1,6 @@
-from ast import Tuple
 from time import time
 import numpy as np
+from sympy import N
 import torch
 from packages.utils.utils.utils import legal_moves_mask, numpy_dtype_to_torch_dtype
 from replay_buffers.base_replay_buffer import (
@@ -144,15 +144,10 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         legal_masks_t = torch.stack(legal_masks)
 
         # 3. Priorities
-        # CRITICAL: Set priority of the terminal state (index n) to 0.0
-        # This prevents the sampler from picking the terminal state as a training root.
         if self.per_initial_priority_max:
             priorities = np.full(n_states, self.max_priority)
         else:
-            priorities = np.full(n_states, self.max_priority)  # Or compute error
-
-        # TODO: MAKE THIS NOT 0 TO TRAIN ON TERMINAL STATES FOR INITIAL INFERENCE
-        priorities[-1] = 0.0  # <--- The Magic Fix
+            raise NotImplementedError("Non initial max priority not implemented yet")
 
         # --- WRITE TO BUFFER (Standard logic, just larger N) ---
         with self.write_lock:
@@ -215,9 +210,20 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
         # Update Priorities
         with self.priority_lock:
             indices = [(start_idx + i) % self.max_size for i in range(n_states)]
-            for idx, p in zip(indices, priorities):
-                self.sum_tree[idx] = p**self.alpha
-                self.min_tree[idx] = p**self.alpha
+            for i, (idx, p) in enumerate(zip(indices, priorities)):
+                is_terminal = i == n_states - 1
+                if is_terminal:
+                    # 1. SumTree: 0.0 means probability mass is 0.
+                    # The sampler will NEVER pick this index.
+                    self.sum_tree[idx] = 0.0
+
+                    # 2. MinTree: Infinity is the neutral element for min().
+                    # This ensures min_priority is determined only by valid states.
+                    self.min_tree[idx] = float("inf")
+                else:
+                    # Standard behavior for valid states
+                    self.sum_tree[idx] = p**self.alpha
+                    self.min_tree[idx] = p**self.alpha
 
     def store(self, game: Game, training_step):
         self.store_game(game, training_step)
@@ -238,6 +244,8 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             min_priority = self.min_tree.min() / self.sum_tree.sum()
             max_weight = (min_priority * len(self)) ** (-self.beta)
             weights = weights / max_weight
+
+        assert torch.all(weights > 0), "Non-positive weights found in sampling"
 
         # Perform the heavy lifting: unpacking sequences and calculating N-step returns on the fly
         samples = self.sample_from_indices(indices)
@@ -448,6 +456,31 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
             training_steps=self.training_step_buffer[indices_tensor],
         )
 
+    def sample_game(self):
+        """
+        Retrieves all stored states for a specific game ID.
+        Useful for debugging or visualization, but slow (O(N) scan).
+        """
+        # Find all indices where game_id_buffer matches game_id
+        # Note: This is expensive on CPU, do not use in training loop
+        game_ids = list(set(list(self.game_id_buffer[: self.size])))
+        # print(self.game_id_buffer[: self.size])
+        # print(self.n_step_values_buffer[: self.size])
+        # print(game_ids)
+        game_id = np.random.choice(game_ids, 1)[0]
+        # print("game id", game_id)
+        mask = self.game_id_buffer[: self.size] == game_id
+        indices = torch.nonzero(mask).view(-1).tolist()
+        # print(indices)
+
+        if not indices:
+            print("game indices not found")
+            return None
+
+        # Sort indices to ensure chronological order (assuming sequential writes)
+        indices.sort()
+        return self.sample_from_indices(indices)
+
     def reanalyze_game(
         self,
         indices,
@@ -558,6 +591,7 @@ class MuZeroReplayBuffer(BaseReplayBuffer):
     def _calculate_weight(self, index: int):
         priority_sample = self.sum_tree[index] / self.sum_tree.sum()
         weight = (priority_sample * len(self)) ** (-self.beta)
+        assert weight > 0, "None positive weight: {}".format(weight)
         return weight
 
     def update_priorities(self, indices: list[int], priorities: list[float], ids=None):

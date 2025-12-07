@@ -87,6 +87,9 @@ class ActionEncoder(nn.Module):
                 # Multiply (B, A) * (A,) -> (B, A) then Sum -> (B,)
                 # If input is [0, 1, 0], we get scalar 1.0
                 # If input is [0.1, 0.8, 0.1] (soft), we get scalar 1.0 (weighted avg)
+                assert (
+                    action.dim() == 2
+                ), f"Action must be (B, A) for soft discrete encoding got {action.shape}"
                 scalar_action = torch.sum(action * indices, dim=1)
                 assert torch.allclose(
                     scalar_action, torch.argmax(action, dim=1).float()

@@ -2,6 +2,7 @@
 from abc import ABC, abstractmethod
 from torch import Tensor
 from typing import Tuple, Dict, Any
+from torch import nn
 
 
 class WorldModelInterface(ABC):

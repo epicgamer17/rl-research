@@ -21,7 +21,7 @@ from typing import Callable, Tuple
 from torch import nn, Tensor
 from modules.base_stack import BaseStack
 from modules.utils import (
-    calculate_same_padding_inputs,
+    calculate_same_padding,
     unpack,
 )  # Import utility
 
@@ -48,7 +48,7 @@ class Conv2dStack(BaseStack):
 
             # Use utility for padding
             h, w = input_shape[2], input_shape[3]
-            manual_padding, torch_padding = calculate_same_padding_inputs(
+            manual_padding, torch_padding = calculate_same_padding(
                 (h, w), kernel_sizes[i], strides[i]
             )
 
@@ -81,6 +81,11 @@ class Conv2dStack(BaseStack):
             current_input_channels = filters[i]
 
         self._output_len = current_input_channels
+
+    @property
+    def output_channels(self) -> int:
+        """Returns the number of output channels (C) from the final block."""
+        return self._output_len
 
     def forward(self, inputs):
         x = inputs

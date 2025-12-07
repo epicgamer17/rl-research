@@ -925,6 +925,7 @@ class MuZeroAgent(MARLBaseAgent):
                     .to(parent.hidden_state.device)
                     .unsqueeze(0)
                     .float(),
+                    model=inference_model,
                 )
             )
 
@@ -1128,7 +1129,7 @@ class MuZeroAgent(MARLBaseAgent):
                     reward_c_states,
                 ) = self.predict_recurrent_inference(
                     afterstates,
-                    encoder_onehot_k,
+                    encoder_onehot_k,  # TODO: light zero argmaxes here (effectively stopping the gradient from flowing into the encoder during the recurrent inference)
                     reward_h_states,
                     reward_c_states,
                     model=self.model,
@@ -1376,10 +1377,6 @@ class MuZeroAgent(MARLBaseAgent):
 
                         target_chance_values_k = target_values[:, k - 1]
 
-                        target_chance_values_k = scalar_to_support(
-                            target_chance_values_k, self.config.support_range
-                        ).to(self.device)
-
                         # TODO: HAVE WE ALREADY RECOMPUTED TARGET Q IN THE CASE OF REANALYZE? I THINK WE HAVE
 
                         if self.config.support_range is None:
@@ -1388,11 +1385,15 @@ class MuZeroAgent(MARLBaseAgent):
                             )  # Convert (B, 1) -> (B,)
                         else:
                             # When using support, both are (B, support_dim), so no squeeze needed for loss
+                            target_chance_values_k = scalar_to_support(
+                                target_chance_values_k, self.config.support_range
+                            ).to(self.device)
+
                             predicted_chance_values_k = chance_values_k
                         assert (
                             predicted_chance_values_k.shape
                             == target_chance_values_k.shape
-                        ), f"{predicted_values_k.shape} = {target_chance_values_k.shape}"
+                        ), f"{predicted_chance_values_k.shape} = {target_chance_values_k.shape}"
 
                         q_loss_k = (
                             self.config.value_loss_factor
@@ -1411,17 +1412,15 @@ class MuZeroAgent(MARLBaseAgent):
 
                         # VQ-VAE commitment cost between c_t+k+1 and (c^e)_t+k+1 ||c_t+k+1 - (c^e)_t+k+1||^2
                         if not self.config.use_true_chance_codes:
+                            # If using true chance codes, we can use them directly
                             diff = (
                                 encoder_softmax_k_plus_1
-                                - encoder_onehot_k_plus_1.detach()
+                                - encoder_onehot_k_plus_1.detach()  # TODO: lightzero does not detach here, try both
                             )
                             vqvae_commitment_cost_k = (
                                 self.config.vqvae_commitment_cost_factor
                                 * torch.sum(diff.pow(2), dim=-1)
                             )
-                        # vqvae_commitment_cost_k = MSELoss()(
-                        #     encoder_softmax_k_plus_1, encoder_onehot_k_plus_1.detach()
-                        # )
 
                 # --- 4. Apply Mask, Weights, and Gradient Scale ---
                 if self.training_step % self.checkpoint_interval == 0:
@@ -1507,10 +1506,13 @@ class MuZeroAgent(MARLBaseAgent):
                 )
 
                 # Scale the gradient with the unroll scale (scalar for the whole batch)
+                # print("step_loss", step_loss)
                 scaled_loss_k = scale_gradient(step_loss, scales_k.item())
 
                 # Apply PER weights (weights are (B,), scale_k is (1,))
+                # print("weights", weights)
                 weighted_scaled_loss_k = scaled_loss_k * weights
+                # print("weighted_scaled_loss_k", weighted_scaled_loss_k)
                 # Accumulate the total loss (scalar)
                 total_loss += weighted_scaled_loss_k.sum()
 

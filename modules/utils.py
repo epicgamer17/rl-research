@@ -370,6 +370,30 @@ def calculate_padding(i: int, k: int, s: int) -> Tuple[int, int]:
     return (p_1, p_2)
 
 
+def calculate_same_padding(i, k, s) -> Tuple[None | Tuple[int], None | str | Tuple]:
+    """Calculate pytorch inputs for same padding
+    Args:
+        i (int, int) or int: (h, w) or (w, w)
+        k (int, int) or int: (k_h, k_w) or (k, k)
+        s (int, int) or int: (s_h, s_w) or (s, s)
+    Returns:
+        Tuple[manual_pad_padding, torch_conv2d_padding_input]: Either the manual padding that must be applied (first element of tuple) or the input to the torch padding argument of the Conv2d layer
+    """
+
+    if s == 1:
+        return None, "same"
+    h, w = unpack(i)
+    k_h, k_w = unpack(k)
+    s_h, s_w = unpack(s)
+    p_h = calculate_padding(h, k_h, s_h)
+    p_w = calculate_padding(w, k_w, s_w)
+    if p_h[0] == p_h[1] and p_w[0] == p_w[1]:
+        return None, (p_h[0], p_w[0])
+    else:
+        # not torch compatiable, manually pad with torch.nn.functional.pad
+        return (*p_w, *p_h), None
+
+
 def generate_layer_widths(widths: list[int], max_num_layers: int) -> list[Tuple[int]]:
     """Create all possible combinations of widths for a given number of layers"""
     width_combinations = []

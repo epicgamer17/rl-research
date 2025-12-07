@@ -16,6 +16,9 @@ from modules.dense import DenseStack, build_dense
 from modules.residual import ResidualStack
 import torch
 import torch.nn.functional as F
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 # class Representation(nn.Module):
@@ -956,11 +959,6 @@ class Prediction(nn.Module):
         return self.head(S)
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-
 class Encoder(nn.Module):
     def __init__(
         self,
@@ -1050,22 +1048,21 @@ class Encoder(nn.Module):
             x = self.fc3(x)
 
         # 2. Softmax
-        # TODO: LIKE LIGHT ZERO NO SOFTMAX
-        # probs = x.softmax(dim=-1)
-        probs = x
-
-        # 3. Hard Quantization (One-Hot)
-        # (B, 1) tensor containing the index of the max value
-        # quantized_indices = probs.argmax(dim=-1, keepdim=True)
+        probs = x.softmax(dim=-1)
 
         # Convert to one-hot (B, num_codes)
-        # one_hot = torch.zeros_like(probs).scatter_(-1, quantized_indices, 1.0)
+        one_hot = torch.zeros_like(probs).scatter_(
+            -1, torch.argmax(probs, dim=-1, keepdim=True), 1.0
+        )
 
         # # 4. Straight-Through Estimator
         # # Forward: use one_hot
         # # Backward: use gradients of probs
-        # one_hot_st = (one_hot - probs).detach() + probs
-        one_hot_st = OnehotArgmax.apply(probs)
+        one_hot_st = (one_hot - probs).detach() + probs
+
+        # TODO: LIKE LIGHT ZERO NO SOFTMAX?
+        # probs = x
+        # one_hot_st = OnehotArgmax.apply(probs)
         return probs, one_hot_st
 
 
@@ -1154,7 +1151,7 @@ class Network(nn.Module):
         )
 
     def initial_inference(self, obs):
-        hidden_state = self.world_model.representation(obs)
+        hidden_state = self.world_model.initial_inference(obs)
         value, policy = self.prediction(hidden_state)
         return value, policy, hidden_state
 
@@ -1165,8 +1162,10 @@ class Network(nn.Module):
         reward_h_states,
         reward_c_states,
     ):
-        reward, next_hidden_state, to_play, reward_hidden = self.world_model.dynamics(
-            hidden_state, action, (reward_h_states, reward_c_states)
+        reward, next_hidden_state, to_play, reward_hidden = (
+            self.world_model.recurrent_inference(
+                hidden_state, action, reward_h_states, reward_c_states
+            )
         )
 
         value, policy = self.prediction(next_hidden_state)
@@ -1177,7 +1176,9 @@ class Network(nn.Module):
         hidden_state,
         action,
     ):
-        afterstate = self.world_model.afterstate_dynamics(hidden_state, action)
+        afterstate = self.world_model.afterstate_recurrent_inference(
+            hidden_state, action
+        )
         value, sigma = self.afterstate_prediction(afterstate)
         return afterstate, value, sigma
 

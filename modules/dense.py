@@ -126,8 +126,7 @@ def build_dense(in_features: int, out_features: int, sigma: float = 0):
 # modules/dense_stack.py
 from typing import Callable
 from torch import nn, Tensor
-from modules.base_stacks import BaseStack  # Assuming new structure
-from modules.layers import build_dense  # From refactored Dense/NoisyDense
+from modules.base_stack import BaseStack  # Assuming new structure
 
 
 class DenseStack(BaseStack):
@@ -152,13 +151,17 @@ class DenseStack(BaseStack):
                 in_features=current_input_width,
                 out_features=width,
                 sigma=noisy_sigma,
-                norm_type=norm_type,  # Pass norm type to the layer builder
             )
             self._layers.append(dense_layer)
             current_input_width = width
 
         self.initial_width = initial_width
         self._output_len = current_input_width
+
+    @property
+    def output_width(self) -> int:
+        """Returns the output width of the final layer."""
+        return self._output_len
 
     def forward(self, inputs: Tensor) -> Tensor:
         x = inputs
