@@ -20,9 +20,9 @@ from utils.utils import clip_low_prob_actions, normalize_policies
 sys.path.append("../")
 
 import datetime
-from ppo.ppo_network import Network
+from modules.ppo import Network
 from replay_buffers.base_replay_buffer import BasePPOReplayBuffer
-from base_agent.agent import BaseAgent
+from agents.agent import BaseAgent
 
 
 class PPOAgent(BaseAgent):

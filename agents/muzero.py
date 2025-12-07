@@ -23,8 +23,8 @@ import numpy as np
 import os
 from stats.stats import PlotType, StatTracker
 
-from base_agent import agent
-from base_agent.agent import MARLBaseAgent
+from agents import agent
+from agents.agent import MARLBaseAgent
 from muzero.muzero_minmax_stats import MinMaxStats
 from packages.agent_configs.agent_configs.muzero_config import MuZeroConfig
 import torch
@@ -32,7 +32,7 @@ import torch.nn.functional as F
 import copy
 from replay_buffers.muzero_replay_buffer import MuZeroReplayBuffer, Game
 from muzero.muzero_mcts import ChanceNode, DecisionNode
-from muzero.muzero_network import Network
+from modules.muzero import Network
 import datetime
 
 from utils import (

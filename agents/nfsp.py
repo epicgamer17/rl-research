@@ -51,13 +51,13 @@ from replay_buffers.utils import update_per_beta
 
 sys.path.append("../../")
 
-from dqn.rainbow.rainbow_agent import RainbowAgent
+from agents.rainbow_dqn import RainbowAgent
 
 
 import random
-from base_agent.agent import MARLBaseAgent
+from agents.agent import MARLBaseAgent
 from agent_configs.dqn.nfsp_config import NFSPDQNConfig
-from imitation_learning.policy_imitation_agent import PolicyImitationAgent
+from agents.policy_imitation import PolicyImitationAgent
 
 
 class NFSPDQN(MARLBaseAgent):

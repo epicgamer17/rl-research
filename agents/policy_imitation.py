@@ -1,11 +1,11 @@
 import torch
 from utils import action_mask, normalize_policies, current_timestamp, get_legal_moves
 from utils.utils import clip_low_prob_actions
-from base_agent.agent import BaseAgent
+from agents.agent import BaseAgent
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam, SGD
 
-from imitation_learning.supervised_network import SupervisedNetwork
+from modules.policy_imitation import SupervisedNetwork
 from replay_buffers.nfsp_reservoir_buffer import NFSPReservoirBuffer
 
 

@@ -8,7 +8,7 @@ from modules.critic import CriticNetwork
 from modules.network_block import NetworkBlock
 from modules.sim_siam_projector_predictor import Projector
 from modules.utils import _normalize_hidden_state, zero_weights_initializer
-from muzero.muzero_world_model import MuzeroWorldModel
+from modules.muzero_world_model import MuzeroWorldModel
 from utils.utils import to_lists
 
 from modules.conv import Conv2dStack

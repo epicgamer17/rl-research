@@ -1,11 +1,8 @@
-from modules.action_heads import ContinuousActionHead, DiscreteActionHead
-from modules.conv import Conv2dStack
-from packages.agent_configs.agent_configs.base_config import Config
-from packages.utils.utils.utils import to_lists
-from torch import nn, Tensor
 from typing import Callable, Tuple
-from modules.dense import DenseStack, build_dense
-from modules.utils import zero_weights_initializer
+from torch import nn, Tensor
+from modules.network_block import NetworkBlock
+from modules.heads import DiscreteActionHead, ContinuousActionHead
+from agent_configs.base_config import Config
 
 
 class ActorNetwork(nn.Module):
@@ -14,110 +11,47 @@ class ActorNetwork(nn.Module):
         config: Config,
         input_shape: Tuple[int],
         output_size: int,
-        *args,
-        **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.config = config
-        self.has_conv_layers = len(config.actor_conv_layers) > 0
-        self.has_dense_layers = len(config.actor_dense_layer_widths) > 0
 
-        current_shape = input_shape
-        B = current_shape[0]
-        if self.has_conv_layers:
-            # WITH BATCHNORM FOR EVERY CONV LAYER
-            assert len(current_shape) == 4
-            filters, kernel_sizes, strides = to_lists(config.actor_conv_layers)
+        # 1. Backbone (ResNet -> Conv -> Dense)
+        self.net = NetworkBlock(config, input_shape, layer_prefix="actor")
 
-            # (B, C_in, H, W) -> (B, C_out H, W)
-            self.conv_layers = Conv2dStack(
-                input_shape=current_shape,
-                filters=filters,
-                kernel_sizes=kernel_sizes,
-                strides=strides,
-                activation=self.config.activation,
-                noisy_sigma=config.noisy_sigma,
-                norm_type=config.norm_type,
-            )
-            current_shape = (
-                B,
-                self.conv_layers.output_channels,
-                current_shape[2],
-                current_shape[3],
-            )
-
-        if self.has_dense_layers:
-            if len(current_shape) == 4:
-                initial_width = current_shape[1] * current_shape[2] * current_shape[3]
-            else:
-                assert (
-                    len(current_shape) == 2
-                ), "Input shape should be (B, width), got {}".format(current_shape)
-                initial_width = current_shape[1]
-
-            # (B, width_in) -> (B, width_out)
-            self.dense_layers = DenseStack(
-                initial_width=initial_width,
-                widths=self.config.actor_dense_layer_widths,
-                activation=self.config.activation,
-                noisy_sigma=self.config.noisy_sigma,
-                norm_type=config.norm_type,
-            )
-
-            current_shape = (
-                B,
-                self.dense_layers.output_width,
-            )
-
-        if len(current_shape) == 4:
-            initial_width = current_shape[1] * current_shape[2] * current_shape[3]
-        else:
-            assert len(current_shape) == 2
-            initial_width = current_shape[1]
+        # 2. Output Head
+        # Note: NetworkBlock calculates the correct flattened output width automatically
+        input_width = self._get_flat_dim(self.net.output_shape)
 
         if self.config.game.is_discrete:
-            self.actions = DiscreteActionHead(
-                config,
-                input_width=initial_width,
-                output_size=output_size,
-            )
+            self.head = DiscreteActionHead(input_width, output_size, config)
         else:
-            self.actions = ContinuousActionHead(
-                config,
-                input_width=initial_width,
-                output_size=output_size,
-            )
+            self.head = ContinuousActionHead(input_width, output_size, config)
+
+    def _get_flat_dim(self, shape: Tuple[int]) -> int:
+        if len(shape) == 4:  # (B, C, H, W)
+            return shape[1] * shape[2] * shape[3]
+        elif len(shape) == 2:  # (B, D)
+            return shape[1]
+        raise ValueError(f"Unknown shape {shape}")
 
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        if self.has_conv_layers:
-            self.conv_layers.initialize(initializer)
-        if self.has_dense_layers:
-            self.dense_layers.initialize(initializer)
-        # Policy (actions) is the main categorical output, initialize it to zero weights.
-        if self.config.game.is_discrete:
-            self.actions.apply(zero_weights_initializer)
-        else:
-            self.actions.initialize(initializer)
+        self.net.initialize(initializer)
+        self.head.initialize(initializer)
 
     def forward(self, inputs: Tensor):
-        if self.has_conv_layers:
-            assert (
-                inputs.dim() == 4
-            ), "Input shape should be (B, C, H, W), got {}".format(inputs.shape)
+        # Backbone
+        x = self.net(inputs)
 
-        x = inputs
-        if self.has_conv_layers:
-            x = self.conv_layers(x)
-
+        # Flatten for the head if necessary
         x = x.flatten(1, -1)
-        if self.has_dense_layers:
-            x = self.dense_layers(x)
-        actions = self.actions(x)
-        return actions
+
+        # Head
+        return self.head(x)
 
     def reset_noise(self):
-        if self.has_conv_layers:
-            self.conv_layers.reset_noise()
-        if self.has_dense_layers:
-            self.dense_layers.reset_noise()
-        self.actions.reset_noise()
+        # NetworkBlock handles recursion for reset_noise if layers support it
+        if hasattr(self.net, "reset_noise"):
+            self.net.apply(
+                lambda m: m.reset_noise() if hasattr(m, "reset_noise") else None
+            )
+        self.head.reset_noise()

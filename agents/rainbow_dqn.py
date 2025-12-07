@@ -29,9 +29,9 @@ import sys
 
 sys.path.append("../../")
 
-from base_agent.agent import BaseAgent
+from agents.agent import BaseAgent
 from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
-from dqn.rainbow.rainbow_network import RainbowNetwork
+from modules.rainbow_dqn import RainbowNetwork
 from stats.stats import PlotType, StatTracker
 
 
