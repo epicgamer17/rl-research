@@ -1,9 +1,10 @@
 from typing import Callable, Tuple
 from torch import nn, Tensor
-from agent_configs import RainbowConfig
+from agent_configs.dqn.rainbow_config import RainbowConfig
 from modules.dense import DenseStack, build_dense
-from packages.utils.utils.utils import to_lists  # Assuming this import path
-from modules.network_block import NetworkBlock  # Import the generalized block
+from modules.network_block import NetworkBlock
+from modules.residual import ResidualStack
+from utils.utils import to_lists  # Import the generalized block
 
 
 class RainbowNetwork(nn.Module):
@@ -22,7 +23,7 @@ class RainbowNetwork(nn.Module):
 
         # 1. Core Feature Extraction (Uses Rainbow's default layers)
         # Assumes config has: residual_layers, conv_layers, dense_layer_widths
-        self.feature_block = NetworkBlock(config, input_shape, layer_prefix="")
+        self.feature_block = NetworkBlock(config, input_shape)
 
         # Determine the final feature width
         current_shape = self.feature_block.output_shape

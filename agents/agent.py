@@ -17,7 +17,7 @@ import pettingzoo
 # Assuming these are custom modules provided in your project structure
 from agents.random import RandomAgent
 from stats.stats import StatTracker
-from agent_configs import Config
+from agent_configs.base_config import Config
 from wrappers import record_video_wrapper, EpisodeTrigger
 
 

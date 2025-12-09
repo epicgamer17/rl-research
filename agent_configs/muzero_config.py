@@ -5,7 +5,7 @@ from torch import Tensor
 # from muzero.muzero_world_model import MuzeroWorldModel
 from .base_config import Config
 from modules.utils import CategoricalCrossentropyLoss, Loss, MSELoss
-from utils import tointlists
+from utils.utils import tointlists
 import copy
 
 
@@ -133,8 +133,8 @@ class MuZeroConfig(Config):
         self.per_use_batch_weights: bool = self.parse_field(
             "per_use_batch_weights", False
         )
-        self.per_initial_priority_max: bool = self.parse_field(
-            "per_initial_priority_max", True
+        self.per_use_initial_max_priority: bool = self.parse_field(
+            "per_use_initial_max_priority", True
         )
 
         self.support_range: int = self.parse_field("support_range", None)

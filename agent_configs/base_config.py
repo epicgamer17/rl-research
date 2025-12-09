@@ -1,7 +1,7 @@
 import torch
 import yaml
 
-from game_configs import GameConfig
+from game_configs.game_config import GameConfig
 from modules.utils import (
     prepare_kernel_initializers,
     prepare_activations,
@@ -124,6 +124,8 @@ class Config(ConfigBase):
             "training_iterations", 1, wrapper=int
         )
         self.print_interval: int = self.parse_field("print_interval", 100, wrapper=int)
+
+        self.norm_type: str = self.parse_field("norm_type", "none")
 
     def _verify_game(self):
         raise NotImplementedError

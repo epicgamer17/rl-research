@@ -5,9 +5,14 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 import numpy as np
-from agent_configs import RainbowConfig
+from agent_configs.dqn.rainbow_config import RainbowConfig
 from agents.catan_player_wrapper import ACTIONS_ARRAY
-from utils import (
+from replay_buffers.base_replay_buffer import BaseDQNReplayBuffer
+from replay_buffers.buffer_factories import create_dqn_buffer
+from replay_buffers.processors import NStepInputProcessor, StandardOutputProcessor
+from replay_buffers.samplers import PrioritizedSampler
+from replay_buffers.writers import CircularWriter
+from utils.utils import (
     get_legal_moves,
     current_timestamp,
     action_mask,
@@ -30,7 +35,6 @@ import sys
 sys.path.append("../../")
 
 from agents.agent import BaseAgent
-from replay_buffers.prioritized_n_step_replay_buffer import PrioritizedNStepReplayBuffer
 from modules.rainbow_dqn import RainbowNetwork
 from stats.stats import PlotType, StatTracker
 
@@ -89,22 +93,58 @@ class RainbowAgent(BaseAgent):
                 weight_decay=self.config.weight_decay,
             )
 
-        self.replay_buffer = PrioritizedNStepReplayBuffer(
+        # self.replay_buffer = PrioritizedNStepReplayBuffer(
+        #     observation_dimensions=self.observation_dimensions,
+        #     observation_dtype=self.observation_dtype,
+        #     max_size=self.config.replay_buffer_size,
+        #     num_actions=self.num_actions,
+        #     batch_size=self.config.minibatch_size,
+        #     max_priority=1.0,
+        #     alpha=self.config.per_alpha,
+        #     beta=self.config.per_beta,
+        #     # epsilon=config["per_epsilon"],
+        #     n_step=self.config.n_step,
+        #     gamma=self.config.discount_factor,
+        #     compressed_observations=(
+        #         self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
+        #     ),
+        #     num_players=self.config.game.num_players,
+        # )
+
+        # self.replay_buffer = BaseDQNReplayBuffer(
+        #     observation_dimensions=self.observation_dimensions,
+        #     observation_dtype=self.observation_dtype,
+        #     max_size=self.config.replay_buffer_size,
+        #     num_actions=self.num_actions,
+        #     batch_size=self.config.minibatch_size,
+        #     compressed_observations=(
+        #         self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
+        #     ),
+        #     sampler=PrioritizedSampler(
+        #         self.config.replay_buffer_size,
+        #         self.config.per_alpha,
+        #         self.config.per_beta,
+        #         self.config.per_epsilon,
+        #         1.0,
+        #         self.config.use_batch_weights,
+        #         self.config.use_initial_max_priority,
+        #     ),
+        #     writer=CircularWriter(self.config.replay_buffer_size),
+        #     input_processor=NStepInputProcessor(
+        #         self.config.n_step,
+        #         self.config.discount_factor,
+        #         self.config.game.num_players,
+        #     ),
+        #     output_processor=StandardOutputProcessor(),
+        # )
+
+        self.replay_buffer = create_dqn_buffer(
             observation_dimensions=self.observation_dimensions,
-            observation_dtype=self.observation_dtype,
             max_size=self.config.replay_buffer_size,
             num_actions=self.num_actions,
             batch_size=self.config.minibatch_size,
-            max_priority=1.0,
-            alpha=self.config.per_alpha,
-            beta=self.config.per_beta,
-            # epsilon=config["per_epsilon"],
-            n_step=self.config.n_step,
-            gamma=self.config.discount_factor,
-            compressed_observations=(
-                self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
-            ),
-            num_players=self.config.game.num_players,
+            observation_dtype=self.observation_dtype,
+            config=self.config,
         )
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?)
@@ -432,7 +472,12 @@ class RainbowAgent(BaseAgent):
                 done = terminated or truncated
                 # print(state)
                 self.replay_buffer.store(
-                    state, info, action, reward, next_state, next_info, done
+                    observations=state,
+                    actions=action,
+                    rewards=reward,
+                    next_observations=next_state,
+                    next_infos=next_info,
+                    dones=done,
                 )
                 # print(self.replay_buffer.observation_buffer[0])
                 state = next_state
@@ -502,7 +547,12 @@ class RainbowAgent(BaseAgent):
                     done = terminated or truncated
                     # print("State", state)
                     self.replay_buffer.store(
-                        state, info, action, reward, next_state, next_info, done
+                        observations=state,
+                        actions=action,
+                        rewards=reward,
+                        next_observations=next_state,
+                        next_infos=next_info,
+                        dones=done,
                     )
                     state = next_state
                     info = next_info
@@ -518,6 +568,7 @@ class RainbowAgent(BaseAgent):
                         self.stats.append("score", score)
                         score = 0
             self.replay_buffer.set_beta(
+                # TODO: MOVE THIS LOGIC INTO SAMPLER
                 update_per_beta(
                     self.replay_buffer.beta,
                     self.config.per_beta_final,

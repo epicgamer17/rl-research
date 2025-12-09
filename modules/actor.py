@@ -26,9 +26,13 @@ class ActorNetwork(nn.Module):
         input_width = self._get_flat_dim(self.net.output_shape)
 
         if self.config.game.is_discrete:
-            self.head = CategoricalHead(input_width, output_size, config)
+            self.head = CategoricalHead(
+                config, (self.net.output_shape[0], input_width), output_size
+            )
         else:
-            self.head = ContinuousHead(input_width, output_size, config)
+            self.head = ContinuousHead(
+                config, (self.net.output_shape[0], input_width), output_size
+            )
 
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
         if len(shape) == 4:  # (B, C, H, W)

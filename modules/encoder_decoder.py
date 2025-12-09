@@ -5,7 +5,7 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.distributions as td
 
-from packages.agent_configs.agent_configs.base_config import Config
+from agent_configs.base_config import Config
 from modules.conv import Conv2dStack, ConvTranspose2dStack
 from modules.dense import DenseStack
 from modules.rssm import RSSM

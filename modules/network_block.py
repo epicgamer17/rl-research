@@ -8,7 +8,7 @@ from modules.residual import ResidualStack
 from agent_configs.base_config import Config
 from torch import nn
 
-from utils import to_lists
+from utils.utils import to_lists
 
 
 class NetworkBlock(nn.Module):
@@ -17,7 +17,9 @@ class NetworkBlock(nn.Module):
     It handles initialization and output shape calculation.
     """
 
-    def __init__(self, config: Config, input_shape: Tuple[int], layer_prefix: str):
+    def __init__(
+        self, config: Config, input_shape: Tuple[int], layer_prefix: str = "default"
+    ):
         super().__init__()
         self.config = config
         self.input_shape = input_shape
@@ -25,9 +27,16 @@ class NetworkBlock(nn.Module):
         B = current_shape[0]  # Batch size is kept symbolic
 
         # Dynamically fetch layer configurations
-        residual_layers = getattr(config, f"{layer_prefix}_residual_layers", [])
-        conv_layers = getattr(config, f"{layer_prefix}_conv_layers", [])
-        dense_layer_widths = getattr(config, f"{layer_prefix}_dense_layer_widths", [])
+        if layer_prefix == "default":
+            residual_layers = getattr(config, f"residual_layers", [])
+            conv_layers = getattr(config, f"conv_layers", [])
+            dense_layer_widths = getattr(config, f"dense_layer_widths", [])
+        else:
+            residual_layers = getattr(config, f"{layer_prefix}_residual_layers", [])
+            conv_layers = getattr(config, f"{layer_prefix}_conv_layers", [])
+            dense_layer_widths = getattr(
+                config, f"{layer_prefix}_dense_layer_widths", []
+            )
 
         self.has_residual_layers = len(residual_layers) > 0
         self.has_conv_layers = len(conv_layers) > 0
@@ -122,3 +131,11 @@ class NetworkBlock(nn.Module):
             x = self.dense_layers(x)
 
         return x
+
+    def reset_noise(self) -> None:
+        if self.has_residual_layers:
+            self.residual_layers.reset_noise()
+        if self.has_conv_layers:
+            self.conv_layers.reset_noise()
+        if self.has_dense_layers:
+            self.dense_layers.reset_noise()

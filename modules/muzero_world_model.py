@@ -3,6 +3,7 @@ from typing import Callable, Optional, Tuple, Dict
 from torch import Tensor
 import torch
 from modules.action_encoder import ActionEncoder
+from modules.dense import build_dense
 from modules.heads import CategoricalHead, ScalarHead
 from modules.network_block import NetworkBlock
 from modules.utils import _normalize_hidden_state
@@ -58,6 +59,7 @@ class BaseDynamics(nn.Module):
             single_action_plane=(
                 layer_prefix == "dynamics"
             ),  # Assuming standard dynamics uses single_action_plane=True
+            # TODO: FIX THIS AND DONT MAKE THIS ASSUMPTION
         )
 
         # 2. Fusion Layer (Move from ActionEncoder to Dynamics)
@@ -139,10 +141,10 @@ class Dynamics(BaseDynamics):
                 hidden_size=self.config.lstm_hidden_size,
             )
             # Re-build reward output layer to match LSTM size
-            self.reward_head.output_layer = self.reward_head.output_layer.__class__(
-                in_features=self.config.lstm_hidden_size,
-                out_features=self.reward_head.output_size,
-                sigma=config.noisy_sigma,
+            self.reward_head.output_layer = self.reward_head.output_layer = build_dense(
+                self.config.lstm_hidden_size,
+                self.reward_head.output_size,
+                self.config.noisy_sigma,
             )
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:

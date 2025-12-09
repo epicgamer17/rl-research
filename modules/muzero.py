@@ -946,7 +946,7 @@ class Prediction(nn.Module):
         self.config = config
 
         self.net = NetworkBlock(
-            config, input_shape, ""
+            config, input_shape
         )  # Uses default layers (config.residual_layers etc.)
         self.head = PredictionHead(config, self.net.output_shape, output_size)
 

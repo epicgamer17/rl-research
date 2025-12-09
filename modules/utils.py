@@ -270,9 +270,6 @@ class CategoricalCrossentropyLoss:
         return self.from_logits == other.from_logits and self.axis == other.axis
 
 
-import torch.nn.functional as F
-
-
 def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
     assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
     assert torch.allclose(

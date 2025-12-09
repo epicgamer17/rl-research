@@ -1,6 +1,6 @@
 from ..base_config import Config
 from modules.utils import CategoricalCrossentropyLoss
-from utils import tointlists
+from utils.utils import tointlists
 
 
 class RainbowConfig(Config):
@@ -41,6 +41,10 @@ class RainbowConfig(Config):
         self.per_beta: float = self.parse_field("per_beta", 0.5)
         self.per_beta_final: float = self.parse_field("per_beta_final", 1.0)
         self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
+        self.use_batch_weights: bool = self.parse_field("per_use_batch_weights", False)
+        self.use_initial_max_priority: bool = self.parse_field(
+            "per_use_initial_max_priority", True
+        )
         self.n_step: int = self.parse_field("n_step", 3)
         self.atom_size: int = self.parse_field("atom_size", 51, wrapper=int)
         # assert (

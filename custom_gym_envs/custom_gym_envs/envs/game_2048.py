@@ -18,7 +18,7 @@ from easydict import EasyDict
 from gymnasium import spaces
 from gymnasium.utils import seeding
 
-from packages.utils.utils.utils import action_mask_to_legal_moves, get_legal_moves
+from utils.utils import action_mask_to_legal_moves, get_legal_moves
 
 BaseEnvTimestep = namedtuple("BaseEnvTimestep", ["obs", "reward", "done", "info"])
 

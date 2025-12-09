@@ -15,7 +15,7 @@ class CriticNetwork(nn.Module):
 
         # 2. Value Head (Handles scalar vs support automatically)
         input_width = self._get_flat_dim(self.net.output_shape)
-        self.head = ScalarHead(input_width, config)
+        self.head = ScalarHead(config, (self.net.output_shape[0], input_width), config)
 
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
         if len(shape) == 4:
