@@ -3,8 +3,8 @@ import torch
 import math
 
 from modules.utils import support_to_scalar
-from search.muzero_mcts import ChanceNode, DecisionNode
-from search.muzero_minmax_stats import MinMaxStats
+from search.search_nodes import ChanceNode, DecisionNode
+from search.min_max_stats import MinMaxStats
 from utils.utils import get_legal_moves
 
 
