@@ -461,20 +461,20 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
 
         # 3. Consistency Mask
         base_game_ids = raw_game_ids[:, 0].unsqueeze(1)
-        consistency_mask = raw_game_ids == base_game_ids
+        dynamics_mask = raw_game_ids == base_game_ids
 
         # assert that the non unrolled indices have no terminal states
         # assert not torch.any(
-        #     ~consistency_mask[:, : self.unroll_steps]
+        #     ~dynamics_mask[:, : self.unroll_steps]
         # ), "Non-unrolled indices contain terminal states"
 
         # 4. Policy Mask
         has_legal_moves = raw_legal_masks.sum(dim=-1) > 0
-        policy_mask = consistency_mask & has_legal_moves
+        policy_mask = dynamics_mask & has_legal_moves
 
         # 5. Compute N-Step Targets
         target_values, target_rewards = self._compute_n_step_targets(
-            batch_size, raw_rewards, raw_values, raw_to_plays, consistency_mask, device
+            batch_size, raw_rewards, raw_values, raw_to_plays, dynamics_mask, device
         )
 
         # 6. Prepare Unroll Targets
@@ -499,7 +499,7 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         )
 
         for u in range(self.unroll_steps + 1):
-            is_consistent = consistency_mask[:, u]
+            is_consistent = dynamics_mask[:, u]
             is_policy_valid = policy_mask[:, u]
 
             target_policies[is_consistent, u] = raw_policies[is_consistent, u]
@@ -522,7 +522,7 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
 
         # 7. Unroll Observations
         obs_indices = all_indices[:, : self.unroll_steps + 1]
-        obs_valid_mask = consistency_mask[:, : self.unroll_steps + 1]
+        obs_valid_mask = dynamics_mask[:, : self.unroll_steps + 1]
         unroll_observations = buffers["observations"][obs_indices].clone()
 
         for step in range(1, self.unroll_steps + 1):

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import itertools
 import math
 import torch
@@ -344,7 +345,7 @@ class MSELoss:
         return isinstance(other, MSELoss)
 
 
-from typing import Callable, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 Loss = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
@@ -606,3 +607,18 @@ def _normalize_hidden_state(S: torch.Tensor) -> torch.Tensor:
 
     hidden_state = (S - min_hidden_state) / scale_hidden_state
     return hidden_state
+
+
+@dataclass
+class NetworkOutput:
+    """
+    Standardized output class for the network.
+    Now includes q_values for MaxQSelectionStrategy.
+    """
+
+    value: float
+    reward: float
+    policy_logits: torch.Tensor
+    hidden_state: Any
+    # Explicit Q-values output by the network (if available) for value-based selection
+    q_values: Optional[torch.Tensor] = None

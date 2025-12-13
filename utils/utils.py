@@ -58,7 +58,7 @@ def action_mask(
     # assert (
     #     len(legal_moves) == actions.shape[0]
     # ), "Legal moves should be the same length as the batch size"
-
+    # print(legal_moves, actions.shape)
     mask = torch.zeros_like(actions, dtype=torch.bool).to(device)
     for i, legal in enumerate(legal_moves):
         mask[i, legal] = True

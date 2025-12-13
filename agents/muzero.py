@@ -3,7 +3,7 @@ import random
 import sys
 
 from replay_buffers.buffer_factories import create_muzero_buffer
-from replay_buffers.game import TimeStep
+from replay_buffers.game import Game, TimeStep
 from search.search_factories import create_mcts
 
 
@@ -401,19 +401,6 @@ class MuZeroAgent(MARLBaseAgent):
         self.run_tests(self.stats)
         self.save_checkpoint(save_weights=True)
         self.env.close()
-
-    def monte_carlo_tree_search(
-        self, state, info, to_play, trajectory_action=None, inference_model=None
-    ):
-        inference_fns = {
-            "initial": self.predict_initial_inference,
-            "recurrent": self.predict_recurrent_inference,
-            "afterstate": self.predict_afterstate_recurrent_inference,
-        }
-
-        return self.search.run(
-            state, info, to_play, inference_fns, trajectory_action, inference_model
-        )
 
     def learn(self):
         samples = self.replay_buffer.sample()
@@ -835,40 +822,6 @@ class MuZeroAgent(MARLBaseAgent):
                                 * torch.sum(diff.pow(2), dim=-1)
                             )
 
-                # --- 4. Apply Mask, Weights, and Gradient Scale ---
-                if self.training_step % self.checkpoint_interval == 0:
-                    # torch.set_printoptions(profile="full")
-
-                    print("actions shape", actions.shape)
-                    print("target value shape", target_values.shape)
-                    print("predicted values shape", values_tensor.shape)
-                    print("target rewards shape", target_rewards.shape)
-                    print("predicted rewards shape", rewards_tensor.shape)
-                    if self.config.stochastic:
-                        print("target qs shape", target_values.shape)
-                        print("predicted qs shape", chance_values_tensor.shape)
-                    print("target to plays shape", target_to_plays.shape)
-                    print("predicted to_plays shape", to_plays_tensor.shape)
-                    print("masks shape", policy_masks.shape, consistency_masks.shape)
-
-                    print("actions", actions)
-                    print("target value", target_values)
-                    print("predicted values", values)
-                    print("target rewards", target_rewards)
-                    print("predicted rewards", rewards)
-                    if self.config.stochastic:
-                        print("target qs", target_values)
-                        print("predicted qs", chance_values)
-                    print("target to plays", target_to_plays)
-                    print("predicted to_plays", to_plays)
-
-                    if self.config.stochastic:
-                        print("encoder embedding", encoder_softmaxes)
-                        print("encoder onehot", encoder_onehots)
-                        print("predicted sigmas", latent_code_probabilities)
-                    print("masks", policy_masks, consistency_masks)
-                    # torch.set_printoptions(profile="default")
-
                 assert (
                     value_loss_k.shape
                     == reward_loss_k.shape
@@ -938,6 +891,40 @@ class MuZeroAgent(MARLBaseAgent):
                 q_loss_acc += q_loss_k.sum().item()
                 sigma_loss_acc += sigma_loss_k.sum().item()
                 vqvae_commitment_cost_acc += vqvae_commitment_cost_k.sum().item()
+
+            # --- 4. Apply Mask, Weights, and Gradient Scale ---
+            if self.training_step % self.checkpoint_interval == 0:
+                # torch.set_printoptions(profile="full")
+                print(self.training_step)
+                print("actions shape", actions.shape)
+                print("target value shape", target_values.shape)
+                print("predicted values shape", values_tensor.shape)
+                print("target rewards shape", target_rewards.shape)
+                print("predicted rewards shape", rewards_tensor.shape)
+                if self.config.stochastic:
+                    print("target qs shape", target_values.shape)
+                    print("predicted qs shape", chance_values_tensor.shape)
+                print("target to plays shape", target_to_plays.shape)
+                print("predicted to_plays shape", to_plays_tensor.shape)
+                print("masks shape", policy_masks.shape, consistency_masks.shape)
+
+                print("actions", actions)
+                print("target value", target_values)
+                print("predicted values", values)
+                print("target rewards", target_rewards)
+                print("predicted rewards", rewards)
+                if self.config.stochastic:
+                    print("target qs", target_values)
+                    print("predicted qs", chance_values)
+                print("target to plays", target_to_plays)
+                print("predicted to_plays", to_plays)
+
+                if self.config.stochastic:
+                    print("encoder embedding", encoder_softmaxes)
+                    print("encoder onehot", encoder_onehots)
+                    print("predicted sigmas", latent_code_probabilities)
+                print("masks", policy_masks, consistency_masks)
+                # torch.set_printoptions(profile="default")
 
             # --- Backpropagation and Optimization ---
 
@@ -1058,10 +1045,18 @@ class MuZeroAgent(MARLBaseAgent):
             to_play = env.agents.index(env.agent_selection)
         else:
             to_play = 0
-        value, policy, target_policy, best_action = self.monte_carlo_tree_search(
-            state, info, to_play, inference_model=inference_model  # model=model
+
+        inference_fns = {
+            "initial": self.predict_initial_inference,
+            "recurrent": self.predict_recurrent_inference,
+            "afterstate": self.predict_afterstate_recurrent_inference,
+        }
+
+        root_value, policy, target_policy, best_action = self.search.run(
+            state, info, to_play, inference_fns, inference_model=inference_model
         )
-        return policy, target_policy, value, best_action
+
+        return policy, target_policy, root_value, best_action
 
     def select_actions(
         self,
@@ -1070,11 +1065,9 @@ class MuZeroAgent(MARLBaseAgent):
         *args,
         **kwargs,
     ):
-        # print("probs", predictions[0])
         if temperature != 0:
             probs = prediction[0] ** temperature
             probs /= probs.sum()
-            # print("temp probs", probs)
             action = torch.multinomial(probs, 1)
             return action
         else:
@@ -1092,9 +1085,9 @@ class MuZeroAgent(MARLBaseAgent):
             else:
                 state, info = env.reset()
 
-            game = Game(self.config.game.num_players)
+            game: Game = Game(self.config.game.num_players)
 
-            game.append(TimeStep(observation=state, info=info))
+            game.append(state, info)
 
             done = False
             while not done:
@@ -1135,15 +1128,23 @@ class MuZeroAgent(MARLBaseAgent):
                 done = terminated or truncated
                 # essentially storing in memory, dont store terminal states for training as they are not predicted on
 
+                # game.append(
+                #     TimeStep(
+                #         observation=next_state,
+                #         info=next_info,
+                #         action=action,
+                #         reward=reward,
+                #         policy=prediction[1],
+                #         value=prediction[2],
+                #     )
+                # )
                 game.append(
-                    TimeStep(
-                        observation=next_state,
-                        info=next_info,
-                        action=action,
-                        reward=reward,
-                        prediction=prediction[1],
-                        value=prediction[2],
-                    )
+                    observation=next_state,
+                    info=next_info,
+                    action=action,
+                    reward=reward,
+                    policy=prediction[1],
+                    value=prediction[2],
                 )
 
                 state = next_state
@@ -1204,14 +1205,19 @@ class MuZeroAgent(MARLBaseAgent):
                     # print("info with legal moves from nonzero mask", info)
                     # ADD INJECTING SEEN ACTION THING FROM MUZERO UNPLUGGED
                     if self.config.reanalyze_method == "mcts":
-                        root_value, _, new_policy, best_action = (
-                            self.monte_carlo_tree_search(
-                                obs,
-                                info,  # FOR LEGAL MOVES
-                                to_play,
-                                int(traj_action.item()),
-                                inference_model=inference_model,
-                            )
+                        inference_fns = {
+                            "initial": self.predict_initial_inference,
+                            "recurrent": self.predict_recurrent_inference,
+                            "afterstate": self.predict_afterstate_recurrent_inference,
+                        }
+
+                        root_value, _, new_policy, best_action = self.search.run(
+                            obs,
+                            info,
+                            to_play,
+                            inference_fns,
+                            trajectory_action=int(traj_action.item()),
+                            inference_model=inference_model,
                         )
 
                         new_root_value = float(root_value)

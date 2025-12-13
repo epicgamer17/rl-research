@@ -3,9 +3,8 @@ import torch
 import numpy as np
 import torch.multiprocessing as mp
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Optional, Any
 
-from replay_buffers.base_replay_buffer import BaseReplayBuffer
 from replay_buffers.processors import IdentityInputProcessor, StandardOutputProcessor
 from replay_buffers.writers import CircularWriter
 from replay_buffers.samplers import UniformSampler
