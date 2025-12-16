@@ -6,6 +6,7 @@ from modules.heads import (
     ContinuousHead,
 )
 from agent_configs.base_config import Config
+from modules.utils import NetworkOutput
 
 
 class ActorNetwork(nn.Module):

@@ -20,10 +20,10 @@ class ChanceNode:
     discount = None
     value_prefix = None
 
-    def __init__(self, prior_policy, parent):
+    def __init__(self, prob, parent):
         # assert isinstance(parent, DecisionNode)
         self.parent = parent  # DecisionNode
-        self.prior_policy = prior_policy  # P(a|s) from Policy
+        self.prob = prob  # P(a|s) from Policy
 
         self.visits = 0
         self.value_sum = 0.0
@@ -32,7 +32,7 @@ class ChanceNode:
         self.network_value = None
 
         # NEW: The distribution P(c|as) predicted by the Dynamics Network
-        self.code_priors = {}
+        self.code_probs = {}
 
         # Children are DecisionNodes, indexed by code
         self.children = {}
@@ -42,7 +42,7 @@ class ChanceNode:
         to_play,
         afterstate,
         network_value,
-        code_priors,
+        code_probs,
         reward_h_state=None,
         reward_c_state=None,
     ):
@@ -55,15 +55,15 @@ class ChanceNode:
         self.reward_c_state = reward_c_state
 
         self.network_value = network_value
-        # code_priors should be a dict or array mapping code_index -> probability
-        num_chance = len(code_priors)
-        self.code_priors = {
+        # code_probs should be a dict or array mapping code_index -> probability
+        num_chance = len(code_probs)
+        self.code_probs = {
             # Warning non differentiable
-            a: code_priors[a]
+            a: code_probs[a]
             for a in range(num_chance)
         }
 
-        for code, p in self.code_priors.items():
+        for code, p in self.code_probs.items():
             self.children[code] = DecisionNode(
                 p.item(),  # TODO: IS THIS RIGHT?
                 self,
@@ -72,9 +72,9 @@ class ChanceNode:
     def expanded(self):
         # We are expanded if we have populated our priors/value
         assert (
-            (len(self.children) > 0) == (self.visits > 0) == (len(self.code_priors) > 0)
+            (len(self.children) > 0) == (self.visits > 0) == (len(self.code_probs) > 0)
         )
-        return len(self.code_priors) > 0
+        return len(self.code_probs) > 0
 
     def value(self):
         """
@@ -98,21 +98,6 @@ class ChanceNode:
         else:
             value = 0.0
         return value
-
-    # def select_child(self):
-    #     """
-    #     Text says: "a code is selected by sampling the prior distribution".
-    #     """
-    #     # Get all potential codes and their probs from the network output
-    #     codes = list(self.code_priors.keys())
-    #     probs = list(self.code_priors.values())
-
-    #     code = self._sample_code(codes, probs)
-    #     selected_code = F.one_hot(torch.tensor(code), num_classes=len(codes))
-
-    #     # Check if we have a node for this code yet
-    #     child_node = self.children[code]
-    #     return selected_code, child_node
 
     def _sample_code(self, codes, probs):
         """Helper to sample a single code index from probabilities."""
@@ -158,7 +143,7 @@ class DecisionNode:
     cscale = None
     stochastic = None
 
-    def __init__(self, prior_policy, parent=None):
+    def __init__(self, prior, parent=None):
         assert (
             (self.stochastic and isinstance(parent, ChanceNode))
             or (parent is None)
@@ -166,7 +151,7 @@ class DecisionNode:
         )
         self.visits = 0
         self.to_play = -1
-        self.prior_policy = prior_policy
+        self.prior = prior
         self.value_sum = 0
         self.children = {}
         self.hidden_state = None
@@ -183,7 +168,8 @@ class DecisionNode:
         self,
         allowed_actions,
         to_play,
-        policy,
+        priors,
+        network_policy,
         hidden_state,
         reward,
         value=None,
@@ -198,21 +184,22 @@ class DecisionNode:
         self.reward_c_state = reward_c_state
         self.is_reset = is_reset
 
-        self.network_policy = policy.detach().cpu()
+        self.network_policy = network_policy.detach().cpu()
         self.network_value = value
 
-        self._populate_children(allowed_actions, policy)
+        self._populate_children(allowed_actions, priors)
 
-    def _populate_children(self, allowed_actions, policy):
+    def _populate_children(self, allowed_actions, priors):
         """Helper to create child nodes based on policy and allowed actions."""
-        allowed_policy = {a: policy[a] for a in allowed_actions}
-        allowed_policy_sum = sum(allowed_policy.values())
+        allowed_priors = {a: priors[a] for a in allowed_actions}
+        allowed_priors_sum = sum(allowed_priors.values())
 
         NodeType = ChanceNode if self.stochastic else DecisionNode
 
-        for action, p in allowed_policy.items():
-            normalized_p = (p / (allowed_policy_sum + 1e-10)).item()
-            self.children[action] = NodeType(normalized_p, self)
+        for action, p in allowed_priors.items():
+            # normalized_p = (p / (allowed_priors_sum + 1e-10)).item()
+            # TODO: SHOULD I NORMALIZE PRIORS OR SHOULD THIS BE DONE BEFOREHAND?? I THINK WE SHOULD NOT NORMALIZE PRIORS FOR THINGS LIKE SAMPLE MUZERO BUT IM NOT SURE
+            self.children[action] = NodeType(p, self)
 
     def expanded(self):
         assert (len(self.children) > 0) == (self.visits > 0)
@@ -241,6 +228,7 @@ class DecisionNode:
     def child_reward(self, child):
         # assert isinstance(child, DecisionNode)
         if self.value_prefix:
+            assert child.expanded()
             if child.is_reset:
                 return child.reward
             else:
@@ -274,18 +262,17 @@ class DecisionNode:
         """Calculates the weighted value term for v_mix based on visited actions."""
         q_vals = torch.zeros(len(self.network_policy))
         # q(a) for visited actions (use child.value() empirical)
-        for action, child in self.children.items():
-            if child.expanded():  # visits ? 0
-                q_vals[action] = self.get_child_q_from_parent(child)
-
-        p_vis_sum = float(
-            self.network_policy[visited_actions].sum()
-        )  # pi mass on visited actions
+        p_vis_sum = 0
+        for action in visited_actions:
+            child = self.children[action]
+            q_vals[action] = self.get_child_q_from_parent(child)
+            p_vis_sum += self.network_policy[action]
         expected_q_vis = float(
             (self.network_policy * q_vals).sum()
         )  # sum_pi(a) * q(a) but q(a)=0 for unvisited
 
-        return sum_N * (expected_q_vis / p_vis_sum)
+        term = sum_N * (expected_q_vis / p_vis_sum)
+        return term
 
     def get_child_q_from_parent(self, child):
         if isinstance(child, DecisionNode):

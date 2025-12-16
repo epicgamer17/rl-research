@@ -616,9 +616,9 @@ class NetworkOutput:
     Now includes q_values for MaxQSelectionStrategy.
     """
 
-    value: float
-    reward: float
-    policy_logits: torch.Tensor
-    hidden_state: Any
-    # Explicit Q-values output by the network (if available) for value-based selection
+    value: Optional[float] = None
+    reward: Optional[float] = None
+    to_play: Optional[float] = None
+    policy_logits: Optional[torch.Tensor] = None
+    hidden_state: Optional[torch.Tensor] = None
     q_values: Optional[torch.Tensor] = None

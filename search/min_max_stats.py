@@ -3,6 +3,8 @@ from typing import Optional, List
 
 MAXIMUM_FLOAT_VALUE = float("inf")
 
+# TODO: EFFICIENT ZERO SOFT MINMAX STATS
+
 
 class MinMaxStats(object):
     def __init__(

@@ -91,9 +91,16 @@ def clip_low_prob_actions(actions: Tensor, low_prob: float = 0.01) -> Tensor:
 
 def get_legal_moves(info: dict | list[dict]):
     # FIX: Handle both single dict and list of dicts (Batch support)
+    # print("info", info)
     if isinstance(info, list):
-        return [i.get("legal_moves", None) for i in info]
-    return [info.get("legal_moves", None)]
+        legal_moves = [i.get("legal_moves", None) for i in info]
+        for legal_list in legal_moves:
+            assert len(legal_list) > 0
+    else:
+        legal_moves = [info.get("legal_moves", None)]
+        # print("legal moves", legal_moves)
+        assert len(legal_moves[0]) > 0
+    return legal_moves
 
 
 def normalize_images(image: Tensor) -> Tensor:

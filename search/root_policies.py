@@ -2,6 +2,14 @@ from abc import ABC, abstractmethod
 import torch
 import numpy as np
 
+from search.utils import (
+    calculate_gumbel_sigma,
+    get_completed_q,
+    get_completed_q_improved_policy,
+)
+
+from search.scoring_methods import QValueScoring
+
 
 class RootPolicyStrategy(ABC):
     def __init__(self, config, device, num_actions):
@@ -49,48 +57,18 @@ class VisitFrequencyPolicy(RootPolicyStrategy):
         elif self.temperature == 1.0:
             # Standard Proportional
             sum_visits = torch.sum(visits)
-            if sum_visits > 0:
-                return visits / sum_visits
-            else:
-                # Fallback if no visits (should not happen in expanded root)
-                return torch.ones_like(visits) / self.num_actions
-
+            assert sum_visits > 0
+            return visits / sum_visits
         else:
             # Temperature Adjusted
             # prevent numerical instability with 0 visits by adding epsilon or masking
             visits_powered = torch.pow(visits, 1.0 / self.temperature)
             sum_powered = torch.sum(visits_powered)
-            if sum_powered > 0:
-                return visits_powered / sum_powered
-            return torch.ones_like(visits) / self.num_actions
+            assert sum_powered > 0
+            return visits_powered / sum_powered
 
 
-class GreedyValuePolicy(RootPolicyStrategy):
-    """
-    Selects the action with the highest Q-value (Mean Value) at the root.
-    Useful for evaluation if you want to trust value over counts.
-    """
-
-    def get_policy(self, root, min_max_stats):
-        q_values = torch.full((self.num_actions,), -float("inf"), device=self.device)
-
-        for action, child in root.children.items():
-            if child.expanded():
-                # Get normalized Q-value
-                q_values[action] = min_max_stats.normalize(
-                    root.get_child_q_from_parent(child)
-                )
-            else:
-                # Handle unexpanded children (should be rare for root choices)
-                q_values[action] = min_max_stats.normalize(root.value())
-
-        # Argmax
-        max_q = torch.max(q_values)
-        mask = (q_values == max_q).float()
-        return mask / mask.sum()
-
-
-class GumbelRootPolicy(RootPolicyStrategy):
+class CompletedQValuesRootPolicy(RootPolicyStrategy):
     """
     Gumbel MuZero Policy:
     Calculates the 'Improved Policy' (pi0) using the Completed Q-values and Sigma transformation.
@@ -98,52 +76,29 @@ class GumbelRootPolicy(RootPolicyStrategy):
     """
 
     def get_policy(self, root, min_max_stats):
-        # 1. Compute Completed Q-values
-        completed_q = self._get_completed_q(root, min_max_stats)
+        return get_completed_q_improved_policy(self.config, root, min_max_stats)
 
-        # 2. Compute Sigma
-        sigma = self._calculate_gumbel_sigma(root, completed_q)
 
-        # 3. Compute Improved Policy (pi0)
-        # Note: We must use the raw logits from the root's stored network policy
-        # If root.network_policy is probabilities, we convert to logits.
-        eps = 1e-12
-        # root.network_policy is usually on CPU or Device, ensure consistency
-        policy_tensor = root.network_policy.to(self.device)
-        logits = torch.log(policy_tensor + eps)
+class BestActionRootPolicy(RootPolicyStrategy):
+    """
+    Returns a policy selecting the action with the highest Q-value.
+    """
 
-        pi0_logits = logits + sigma
-        pi0 = torch.softmax(pi0_logits, dim=0)
+    def get_policy(self, root, min_max_stats):
+        scorer = QValueScoring()
+        best_val = -float("inf")
+        best_action = None
 
-        return pi0
+        for action, child in root.children.items():
+            val = scorer.score(root, child, min_max_stats)
+            if val > best_val:
+                best_val = val
+                best_action = action
 
-    # --- Self-Contained Gumbel Helpers ---
+        policy = torch.zeros(self.num_actions, device=self.device)
+        if best_action is not None:
+            policy[best_action] = 1.0
+        elif len(root.children) > 0:
+            policy[list(root.children.keys())[0]] = 1.0
 
-    def _get_completed_q(self, node, min_max_stats):
-        v_mix = node.get_v_mix()
-
-        # Initialize with v_mix (value of unvisited actions)
-        completedQ = torch.full(
-            (self.num_actions,), min_max_stats.normalize(v_mix), device=self.device
-        )
-
-        for action, child in node.children.items():
-            if child.expanded():
-                completedQ[action] = min_max_stats.normalize(
-                    node.get_child_q_from_parent(child)
-                )
-        return completedQ
-
-    def _calculate_gumbel_sigma(self, node, completedQ):
-        # Find max visits among children
-        if len(node.children) > 0:
-            max_visits = max([ch.visits for ch in node.children.values()])
-        else:
-            max_visits = 0
-
-        # Sigma formula: (c_visit + max_N) * c_scale * Q(a)
-        return (
-            (self.config.gumbel_cvisit + max_visits)
-            * self.config.gumbel_cscale
-            * completedQ
-        )
+        return policy

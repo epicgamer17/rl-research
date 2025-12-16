@@ -17,15 +17,15 @@ class PriorInjector(ABC):
 
 
 class DirichletInjector(PriorInjector):
-    def inject(self, policy, config, trajectory_action=None):
+    def inject(self, policy, legal_moves, config, trajectory_action=None):
         # Only apply noise to legal moves
-        noise = np.random.dirichlet([config.root_dirichlet_alpha] * len(policy))
+        noise = np.random.dirichlet([config.root_dirichlet_alpha] * len(legal_moves))
         frac = config.root_exploration_fraction
 
         # Map noise back to the full policy tensor (or just relevant indices)
         # Note: We operate on the policy probabilities
         new_policy = policy.clone()
-        for i, action in enumerate(policy):
+        for i, action in enumerate(legal_moves):
             new_policy[action] = (1 - frac) * policy[action] + frac * noise[i]
 
         return policy
@@ -37,7 +37,7 @@ class ActionTargetInjector(PriorInjector):
     Boosts the prior of the trajectory_action.
     """
 
-    def inject(self, policy, config, trajectory_action=None):
+    def inject(self, policy, legal_moves, config, trajectory_action=None):
         # TODO: a clean way of properly ensuring policy is masked here using legal moves
         if trajectory_action is None:
             return policy
@@ -63,20 +63,24 @@ class ActionTargetInjector(PriorInjector):
 
 class GumbelInjector(PriorInjector):
     """
-    Injects Gumbel noise into the SCORES (logits), used for Gumbel MuZero selection.
-    Does not modify the 'policy' probabilities (which remain the raw network output),
-    but calculates the 'root_score' values.
+    Injects Gumbel noise into the logits, used for Gumbel MuZero selection.
     """
 
-    def inject(self, policy, config, trajectory_action=None):
+    def inject(self, policy, legal_moves, config, trajectory_action=None):
+        assert legal_moves and len(legal_moves) > 0
         # Gumbel noise: g = -log(-log(uniform))
-        g = -torch.log(-torch.log(torch.rand(len(policy))))
+        g = -torch.log(-torch.log(torch.rand(len(legal_moves))))
 
         # Update scores: Score = g + logits
         # We map these back to the full actions space in context.scores
         # TODO: MUST STORE NETWORK PRIOR AND PRIOR IS ESSENTIALLY PRIOR SCORE NOT NETWORK PRIOR
         logits = torch.log(policy + 1e-12).cpu()
-        noisy_scores = g + logits
+        current_logits = logits[legal_moves]
+        noisy_scores = g + current_logits
+
+        new_logits = logits.clone()
+        new_logits[legal_moves] = noisy_scores
 
         # TODO: RETURN NOISY SCORES POLICY, TURN LOGITS INTO POLICY, IS BELOW RIGHT?
-        return torch.softmax(noisy_scores, dim=-1)
+        assert not torch.all(torch.isclose(new_logits, logits))
+        return torch.softmax(new_logits, dim=-1)

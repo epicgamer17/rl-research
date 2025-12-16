@@ -26,9 +26,10 @@ class SelectTopK(ActionSet):
         """using the priors should work the same as using logits, as priors for gumbel would be g + logits softmaxed, so top k are the same as top k of g + logits"""
         assert legal_moves
 
+        # TODO: SOMEHOW MAKE SURE THESE ONLY PICK LEGAL ACTIONS. RIGHT NOW I DONT.
+
         # Determine K
         k = min(count, len(legal_moves))
-
         selected_actions = torch.argsort(priors, descending=True)[:k]
         # selected_actions = [legal_moves[i] for i in top_indices]
 
@@ -42,4 +43,5 @@ class SelectTopK(ActionSet):
             # selected_actions.append(trajectory_action)
             selected_actions[-1] = trajectory_action
 
-        return selected_actions
+        # print("selected actions", selected_actions)
+        return selected_actions.tolist()

@@ -1052,11 +1052,11 @@ class MuZeroAgent(MARLBaseAgent):
             "afterstate": self.predict_afterstate_recurrent_inference,
         }
 
-        root_value, policy, target_policy, best_action = self.search.run(
+        root_value, exploratory_policy, target_policy, best_action = self.search.run(
             state, info, to_play, inference_fns, inference_model=inference_model
         )
 
-        return policy, target_policy, root_value, best_action
+        return exploratory_policy, target_policy, root_value, best_action
 
     def select_actions(
         self,
@@ -1069,8 +1069,10 @@ class MuZeroAgent(MARLBaseAgent):
             probs = prediction[0] ** temperature
             probs /= probs.sum()
             action = torch.multinomial(probs, 1)
+            # print("action", action)
             return action
         else:
+            # print("prediction[2]", prediction[2])
             return prediction[3]
 
     def play_game(self, env=None, inference_model=None):
