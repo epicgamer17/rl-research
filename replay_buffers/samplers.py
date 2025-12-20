@@ -123,6 +123,7 @@ class PrioritizedSampler(Sampler):
         self.max_priority = max(self.max_priority, priority)
 
     def update_priorities(self, indices, priorities, ids=None, buffer_ids=None):
+        priorities = priorities + self.epsilon
         if ids is not None:
             assert (
                 len(priorities) == len(ids) == len(indices)

@@ -170,7 +170,9 @@ def update_inverse_sqrt_schedule(
 def default_plot_func(
     axs, key: str, values: list[dict], targets: dict, row: int, col: int
 ):
-    axs[row][col].set_title("{} | rolling average: {}".format(key, np.mean(values[-5:])))
+    axs[row][col].set_title(
+        "{} | rolling average: {}".format(key, np.mean(values[-5:]))
+    )
     x = np.arange(1, len(values) + 1)
     axs[row][col].plot(x, values)
     if key in targets and targets[key] is not None:
@@ -678,7 +680,9 @@ def augment_game(game, flip_y: bool = False, flip_x: bool = False, rot90: bool =
             augemented_games[5].observation_history[i] = np.flipud(
                 np.rot90(np.rot90(board))
             )
-            augemented_games[5].policy_history[i] = np.flipud(np.rot90(np.rot90(policy)))
+            augemented_games[5].policy_history[i] = np.flipud(
+                np.rot90(np.rot90(policy))
+            )
             augemented_games[6].observation_history[i] = np.rot90(np.flipud(board))
             augemented_games[6].policy_history[i] = np.rot90(np.flipud(policy))
     elif rot90 and not flip_y and not flip_x:
@@ -876,7 +880,9 @@ class KLDivergenceLoss:
 
 def huber(predicted: torch.Tensor, target: torch.Tensor, axis=-1, delta: float = 1.0):
     diff = torch.abs(predicted - target)
-    return torch.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)).view(-1)
+    return torch.where(
+        diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta)
+    ).view(-1)
 
 
 class HuberLoss:
@@ -1443,7 +1449,9 @@ class Config(ConfigBase):
         )
 
         # ADD LEARNING RATE SCHEDULES
-        self.training_steps: int = self.parse_field("training_steps", 10000, wrapper=int)
+        self.training_steps: int = self.parse_field(
+            "training_steps", 10000, wrapper=int
+        )
 
         self.adam_epsilon: float = self.parse_field("adam_epsilon", 1e-6)
         self.momentum = self.parse_field("momentum", 0.9)
@@ -1453,7 +1461,7 @@ class Config(ConfigBase):
             "optimizer", torch.optim.Adam
         )
         self.weight_decay: float = self.parse_field("weight_decay", 0.0)
-        self.loss_function: Loss = self.parse_field("loss_function", required=True)
+        self.loss_function = self.parse_field("loss_function", required=True)
         self.activation = self.parse_field(
             "activation", "relu", wrapper=prepare_activations
         )
@@ -1810,8 +1818,8 @@ class BaseAgent:
                     action = self.select_actions(
                         prediction, info, self.config.game.has_legal_moves
                     ).item()
-                    next_state, reward, terminated, truncated, info = self.test_env.step(
-                        action
+                    next_state, reward, terminated, truncated, info = (
+                        self.test_env.step(action)
                     )
                     # self.test_env.render()
                     done = terminated or truncated
@@ -2024,7 +2032,9 @@ class NoisyDense(nn.Module):
 
         self.mu_w = nn.Parameter(torch.empty(out_features, in_features))
         self.sigma_w = nn.Parameter(torch.empty(out_features, in_features))
-        self.eps_w = self.register_buffer("eps_w", torch.empty(out_features, in_features))
+        self.eps_w = self.register_buffer(
+            "eps_w", torch.empty(out_features, in_features)
+        )
         if self.use_bias:
             self.mu_b = nn.Parameter(torch.empty(out_features))
             self.sigma_b = nn.Parameter(torch.empty(out_features))
@@ -3132,9 +3142,9 @@ class BasePPOReplayBuffer(BaseReplayBuffer):
         self.advantage_buffer[path_slice] = discounted_cumulative_sums(
             deltas, self.gamma * self.gae_lambda
         )
-        self.return_buffer[path_slice] = discounted_cumulative_sums(rewards, self.gamma)[
-            :-1
-        ]
+        self.return_buffer[path_slice] = discounted_cumulative_sums(
+            rewards, self.gamma
+        )[:-1]
         # print(discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda))
         # print(discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)[:-1])
         # print(self.advantage_buffer)
@@ -3215,7 +3225,9 @@ class NStepReplayBuffer(BaseDQNReplayBuffer):
 
     def clear(self):
         super().clear()
-        self.n_step_buffers = [deque(maxlen=self.n_step) for q in range(self.num_players)]
+        self.n_step_buffers = [
+            deque(maxlen=self.n_step) for q in range(self.num_players)
+        ]
 
     def _get_n_step_info(self, player: int = 0):
         reward, next_observation, next_info, done = self.n_step_buffers[player][-1][-4:]
@@ -3375,7 +3387,9 @@ class PrioritizedNStepReplayBuffer(NStepReplayBuffer):
             assert priorities.shape == ids.shape == indices.shape
 
             for index, id, priority in zip(indices, ids, priorities):
-                assert priority > 0, "Negative priority: {} \n All priorities {}".format(
+                assert (
+                    priority > 0
+                ), "Negative priority: {} \n All priorities {}".format(
                     priority, priorities
                 )
                 assert 0 <= index < len(self)
@@ -3654,7 +3668,9 @@ class RainbowAgent(BaseAgent):
         q_distribution: torch.Tensor = self.target_model(state_input)
         return q_distribution
 
-    def select_actions(self, distribution, info: dict = None, mask_actions: bool = True):
+    def select_actions(
+        self, distribution, info: dict = None, mask_actions: bool = True
+    ):
         assert info is not None if mask_actions else True, "Need info to mask actions"
         # print(info)
         if self.config.atom_size > 1:
@@ -3706,7 +3722,9 @@ class RainbowAgent(BaseAgent):
         # print(online_predictions)
         # (B, atom_size)
         if self.config.atom_size > 1:
-            assert isinstance(self.config.loss_function, KLDivergenceLoss) or isinstance(
+            assert isinstance(
+                self.config.loss_function, KLDivergenceLoss
+            ) or isinstance(
                 self.config.loss_function, CategoricalCrossentropyLoss
             ), "Only KLDivergenceLoss and CategoricalCrossentropyLoss are supported for atom_size > 1, recieved {}".format(
                 self.config.loss_function
@@ -3899,7 +3917,9 @@ class RainbowAgent(BaseAgent):
             )
         else:
             raise ValueError(
-                "Invalid epsilon decay type: {}".format(self.config.eg_epsilon_decay_type)
+                "Invalid epsilon decay type: {}".format(
+                    self.config.eg_epsilon_decay_type
+                )
             )
 
     def train(self):
@@ -3929,8 +3949,8 @@ class RainbowAgent(BaseAgent):
                     )
                     # print("Action", action)
                     # print("Epislon Greedy Epsilon", self.eg_epsilon)
-                    next_state, reward, terminated, truncated, next_info = self.env.step(
-                        action
+                    next_state, reward, terminated, truncated, next_info = (
+                        self.env.step(action)
                     )
                     done = terminated or truncated
                     # print("State", state)

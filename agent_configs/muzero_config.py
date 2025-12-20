@@ -3,20 +3,32 @@ from typing import Callable
 from torch import Tensor
 
 # from muzero.muzero_world_model import MuzeroWorldModel
-from .base_config import Config
-from modules.utils import CategoricalCrossentropyLoss, Loss, MSELoss
+from .base_config import (
+    Config,
+    SearchConfig,
+    ValuePrefixConfig,
+    ConsistencyConfig,
+    DistributionalConfig,
+    NoisyConfig,
+)
+from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
 from utils.utils import tointlists
 import copy
 
 
-class MuZeroConfig(Config):
+class MuZeroConfig(
+    Config,
+    SearchConfig,
+    ValuePrefixConfig,
+    ConsistencyConfig,
+    DistributionalConfig,
+    NoisyConfig,
+):
     def __init__(self, config_dict, game_config):
         super(MuZeroConfig, self).__init__(config_dict, game_config)
 
         self.world_model_cls = self.parse_field("world_model_cls", None, required=True)
-        self.norm_type: str = self.parse_field(
-            "norm_type", "batch"
-        )  # batch, layer, none
+        # self.norm_type parsed in Config
         # SAME AS VMIN AND VMAX?
         self.known_bounds = self.parse_field(
             "known_bounds", default=None, required=False
@@ -78,22 +90,17 @@ class MuZeroConfig(Config):
             "actor_dense_layer_widths", [256], tointlists
         )
 
-        self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.0)
+        # Mixin: Noisy
+        self.parse_noisy_params()
 
         # Training
         self.games_per_generation: int = self.parse_field("games_per_generation", 100)
         self.value_loss_factor: float = self.parse_field("value_loss_factor", 1.0)
         self.to_play_loss_factor: float = self.parse_field("to_play_loss_factor", 1.0)
-        self.weight_decay: float = self.parse_field("weight_decay", 1e-4)
+        # self.weight_decay parsed in Config
 
-        # MCTS
-        self.root_dirichlet_alpha: float = self.parse_field(
-            "root_dirichlet_alpha", 0.25
-        )
-        self.root_exploration_fraction: float = self.parse_field(
-            "root_exploration_fraction", 0.25
-        )
-        self.num_simulations: int = self.parse_field("num_simulations", 800)
+        # Mixin: Search (MCTS)
+        self.parse_search_params()
 
         self.temperatures = self.parse_field("temperatures", [1.0, 0.0])
         self.temperature_updates = self.parse_field("temperature_updates", [5])
@@ -103,41 +110,27 @@ class MuZeroConfig(Config):
         assert len(self.temperatures) == len(self.temperature_updates) + 1
 
         self.clip_low_prob: float = self.parse_field("clip_low_prob", 0.0)
-        self.pb_c_base: int = self.parse_field("pb_c_base", 19652)
-        self.pb_c_init: float = self.parse_field("pb_c_init", 1.25)
 
-        self.value_loss_function: Loss = self.parse_field(
-            "value_loss_function", MSELoss()
-        )
+        self.value_loss_function = self.parse_field("value_loss_function", MSELoss())
 
-        self.reward_loss_function: Loss = self.parse_field(
-            "reward_loss_function", MSELoss()
-        )
+        self.reward_loss_function = self.parse_field("reward_loss_function", MSELoss())
 
-        self.policy_loss_function: Loss = self.parse_field(
+        self.policy_loss_function = self.parse_field(
             "policy_loss_function", CategoricalCrossentropyLoss()
         )
 
-        self.to_play_loss_function: Loss = self.parse_field(
+        self.to_play_loss_function = self.parse_field(
             "to_play_loss_function", CategoricalCrossentropyLoss()
         )
 
-        self.n_step: int = self.parse_field("n_step", 5)
-        self.discount_factor: float = self.parse_field("discount_factor", 1.0)
+        # self.n_step parsed in Config
+        # self.discount_factor parsed in Config
         self.unroll_steps: int = self.parse_field("unroll_steps", 5)
 
-        self.per_alpha: float = self.parse_field("per_alpha", 0.5)
-        self.per_beta: float = self.parse_field("per_beta", 0.5)
-        self.per_beta_final: float = self.parse_field("per_beta_final", 1.0)
-        self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
-        self.per_use_batch_weights: bool = self.parse_field(
-            "per_use_batch_weights", False
-        )
-        self.per_use_initial_max_priority: bool = self.parse_field(
-            "per_use_initial_max_priority", True
-        )
+        # self.per_alpha, beta, epsilon etc parsed in Config
 
-        self.support_range: int = self.parse_field("support_range", None)
+        # Mixin: Distributional (Support Range)
+        self.parse_distributional_params()
 
         self.multi_process: bool = self.parse_field("multi_process", True)
         self.num_workers: int = self.parse_field("num_workers", 4)
@@ -157,25 +150,13 @@ class MuZeroConfig(Config):
             "reanalyze_update_priorities", False
         )  # default false for most implementations
 
-        self.gumbel: bool = self.parse_field("gumbel", False)
-        self.gumbel_m = self.parse_field("gumbel_m", 16)
-        self.gumbel_cvisit = self.parse_field("gumbel_cvisit", 50)
-        self.gumbel_cscale = self.parse_field("gumbel_cscale", 1.0)
+        # Mixin: Consistency
+        self.parse_consistency_params()
 
-        self.consistency_loss_factor: float = self.parse_field(
-            "consistency_loss_factor", 0.0
-        )
-        self.projector_output_dim: int = self.parse_field("projector_output_dim", 128)
-        self.projector_hidden_dim: int = self.parse_field("projector_hidden_dim", 128)
-        self.predictor_output_dim: int = self.parse_field("predictor_output_dim", 128)
-        self.predictor_hidden_dim: int = self.parse_field("predictor_hidden_dim", 64)
-
-        assert self.projector_output_dim == self.predictor_output_dim
         self.mask_absorbing = self.parse_field("mask_absorbing", False)
 
-        self.value_prefix: bool = self.parse_field("value_prefix", False)
-        self.lstm_horizon_len: int = self.parse_field("lstm_horizon_len", 5)
-        self.lstm_hidden_size: int = self.parse_field("lstm_hidden_size", 64)
+        # Mixin: Value Prefix
+        self.parse_value_prefix_params()
 
         self.q_estimation_method: str = self.parse_field("q_estimation_method", "v_mix")
 

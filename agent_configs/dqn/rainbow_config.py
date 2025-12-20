@@ -1,9 +1,9 @@
-from ..base_config import Config
-from modules.utils import CategoricalCrossentropyLoss
+from ..base_config import Config, DistributionalConfig, NoisyConfig, EpsilonGreedyConfig
+from losses.basic_losses import CategoricalCrossentropyLoss
 from utils.utils import tointlists
 
 
-class RainbowConfig(Config):
+class RainbowConfig(Config, DistributionalConfig, NoisyConfig, EpsilonGreedyConfig):
     def __init__(self, config_dict: dict, game_config):
         super(RainbowConfig, self).__init__(config_dict, game_config)
         print("RainbowConfig")
@@ -19,34 +19,31 @@ class RainbowConfig(Config):
             "advantage_hidden_layer_widths", [], tointlists
         )
 
-        self.noisy_sigma: float = self.parse_field("noisy_sigma", 0.5)
-        self.eg_epsilon: float = self.parse_field("eg_epsilon", 0.00)
-        self.eg_epsilon_final: float = self.parse_field("eg_epsilon_final", 0.00)
-        self.eg_epsilon_decay_type: str = self.parse_field(
-            "eg_epsilon_decay_type", "linear"
-        )
-        self.eg_epsilon_final_step: int = self.parse_field(
-            "eg_epsilon_final_step", self.training_steps
-        )
+        # Mixin: Noisy
+        self.parse_noisy_params()  # Default 0.5 in code below, careful with mixin default
+
+        # Mixin: Epsilon Greedy
+        self.parse_epsilon_greedy_params()
 
         self.dueling: bool = self.parse_field("dueling", True)
-        self.discount_factor: float = self.parse_field("discount_factor", 0.99)
+
+        # self.discount_factor parsed in Config
         self.soft_update: bool = self.parse_field("soft_update", False)
         self.transfer_interval: int = self.parse_field(
             "transfer_interval", 512, wrapper=int
         )
         self.ema_beta: float = self.parse_field("ema_beta", 0.99)
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
-        self.per_alpha: float = self.parse_field("per_alpha", 0.6)
-        self.per_beta: float = self.parse_field("per_beta", 0.5)
-        self.per_beta_final: float = self.parse_field("per_beta_final", 1.0)
-        self.per_epsilon: float = self.parse_field("per_epsilon", 1e-6)
-        self.use_batch_weights: bool = self.parse_field("per_use_batch_weights", False)
-        self.use_initial_max_priority: bool = self.parse_field(
-            "per_use_initial_max_priority", True
-        )
-        self.n_step: int = self.parse_field("n_step", 3)
-        self.atom_size: int = self.parse_field("atom_size", 51, wrapper=int)
+
+        # self.per_alpha etc parsed in Config
+
+        # Mixin: Distributional (Atom Size)
+        self.parse_distributional_params()
+
+        # Overwriting default parse behavior for Noisy to match Rainbow default 0.5 if not present
+        if "noisy_sigma" not in self.config_dict:
+            self.noisy_sigma = 0.5  # Restore Rainbow Default
+
         # assert (
         #     self.atom_size > 1
         # ), "Atom size must be greater than 1, as softmax and Q distribution to Q value calculation requires more than 1 atom"
@@ -64,6 +61,7 @@ class RainbowConfig(Config):
 
         # could use a MuZero min-max config and just constantly update the suport size (would this break the model?) <- might mean this is not in the config but just a part of the model
 
+        # Logic moved to DistributionalConfig, but verifying assignment
         self.v_min = game_config.min_score
         self.v_max = game_config.max_score
 

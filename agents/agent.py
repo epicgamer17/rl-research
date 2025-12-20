@@ -5,6 +5,7 @@ import random
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from abc import ABC, abstractmethod
 
 import dill as pickle
 import numpy as np
@@ -21,7 +22,7 @@ from agent_configs.base_config import Config
 from wrappers import record_video_wrapper, EpisodeTrigger
 
 
-class BaseAgent:
+class BaseAgent(ABC):
     """
     Base Agent class handling generic RL training loops, checkpointing, and testing.
     """
@@ -169,17 +170,43 @@ class BaseAgent:
         return prepared_state
 
     # --- Abstract Methods ---
+    @abstractmethod
     def train(self):
         raise NotImplementedError
 
+    @abstractmethod
     def predict(self, state: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         raise NotImplementedError
 
+    @abstractmethod
     def select_actions(self, prediction, info) -> torch.Tensor:
         raise NotImplementedError
 
     def learn(self):
         pass
+
+    def update_replay_priorities(self, indices, priorities, ids):
+        self.replay_buffer.update_priorities(indices, priorities, ids=ids)
+
+    def update_target_model(self):
+        """Copy parameters from the learning model to the target model.
+        This uses load_state_dict under torch.no_grad() for safety and speed.
+        """
+        with torch.no_grad():
+
+            if self.config.soft_update:
+                for wt, wp in zip(
+                    self.target_model.parameters(), self.model.parameters()
+                ):
+                    wt.copy_(
+                        self.config.ema_beta * wt + (1 - self.config.ema_beta) * wp
+                    )
+            else:
+                self.target_model.load_state_dict(self.model.state_dict())
+
+            # If using multiprocessing, ensure target remains in shared memory.
+            if self.config.multi_process:
+                self.target_model.share_memory()
 
     # --- Checkpointing ---
     def load_optimizer_state(self, checkpoint):

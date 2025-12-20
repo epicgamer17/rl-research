@@ -1,16 +1,22 @@
-from .base_config import ConfigBase, kernel_initializer_wrapper
-from modules.utils import prepare_activations, prepare_kernel_initializers, Loss
+from .base_config import (
+    ConfigBase,
+    OptimizationConfig,
+    ReplayConfig,
+    kernel_initializer_wrapper,
+)
+from modules.utils import prepare_activations, prepare_kernel_initializers
 from torch.optim import Optimizer, Adam
 
 
-class SupervisedConfig(ConfigBase):
+# TODO: MAKE THIS CLEANER AND DONT HAVE THE PREFIX EVERYWHERE
+class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
     def __init__(self, config_dict):
         super().__init__(config_dict)
         print("SupervisedConfig")
         self.adam_epsilon = self.parse_field("sl_adam_epsilon", 1e-7)
         self.learning_rate = self.parse_field("sl_learning_rate", 0.005)
         self.momentum = self.parse_field("sl_momentum", 0.9)
-        self.loss_function: Loss = self.parse_field("sl_loss_function", required=True)
+        self.loss_function = self.parse_field("sl_loss_function", required=True)
         self.clipnorm = self.parse_field("sl_clipnorm", 0)
         self.optimizer: Optimizer = self.parse_field("sl_optimizer", Adam)
         self.weight_decay = self.parse_field("sl_weight_decay", 0.0)
@@ -42,3 +48,9 @@ class SupervisedConfig(ConfigBase):
         self.dense_layers_widths = self.parse_field("sl_dense_layer_widths", [128])
 
         self.game = None
+
+        # Backward compatibility for buffer factories if they look for standard names (without sl_ prefix)
+        # We manually map them here so `create_standard_buffer` works
+        self.n_step = 1
+        self.discount_factor = 1.0
+        self.per_alpha = 0

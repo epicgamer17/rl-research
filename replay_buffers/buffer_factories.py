@@ -101,8 +101,8 @@ def create_dqn_buffer(
             beta=config.per_beta,
             epsilon=config.per_epsilon,
             max_priority=1.0,
-            use_batch_weights=config.use_batch_weights,
-            use_initial_max_priority=config.use_initial_max_priority,
+            use_batch_weights=config.per_use_batch_weights,
+            use_initial_max_priority=config.per_use_initial_max_priority,
         )
     else:
         # Standard DQN Stack

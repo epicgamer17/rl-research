@@ -10,6 +10,8 @@ class DQNConfig(RainbowConfig):
 
         self.soft_update: bool = False
         self.transfer_interval: int = 1
+
+        # Zeroing out PER/N-step params inherited from Config/Rainbow
         self.per_alpha: float = 0
         self.per_beta: float = 0
         self.per_epsilon: float = 0.001

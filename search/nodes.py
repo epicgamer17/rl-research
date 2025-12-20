@@ -20,10 +20,10 @@ class ChanceNode:
     discount = None
     value_prefix = None
 
-    def __init__(self, prob, parent):
+    def __init__(self, prior, parent):
         # assert isinstance(parent, DecisionNode)
         self.parent = parent  # DecisionNode
-        self.prob = prob  # P(a|s) from Policy
+        self.prior = prior  # P(a|s) from Policy
 
         self.visits = 0
         self.value_sum = 0.0
@@ -88,7 +88,6 @@ class ChanceNode:
 
     def _get_bootstrap_value(self):
         """Helper to determine value when visits are 0 based on estimation method."""
-        assert self.network_value is not None
         if self.estimation_method == "v_mix":
             value = self.parent.get_v_mix()
         elif self.estimation_method == "mcts_value":

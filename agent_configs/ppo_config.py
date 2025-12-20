@@ -63,13 +63,16 @@ class PPOConfig(Config):
 
         self.clip_param = self.parse_field("clip_param", 0.2)
         self.steps_per_epoch = self.parse_field("steps_per_epoch", 4800)
+
+        # Override ReplayConfig params
         self.replay_buffer_size = self.parse_field(
             "replay_buffer_size", self.steps_per_epoch
         )
+
         self.train_policy_iterations = self.parse_field("train_policy_iterations", 5)
         self.train_value_iterations = self.parse_field("train_value_iterations", 5)
         self.target_kl = self.parse_field("target_kl", 0.02)
-        self.discount_factor = self.parse_field("discount_factor", 0.99)
+        # self.discount_factor parsed in Config
         self.gae_lambda = self.parse_field("gae_lambda", 0.98)
         self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)

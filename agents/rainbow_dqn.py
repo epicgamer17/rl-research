@@ -7,7 +7,6 @@ from torch.optim.adam import Adam
 import numpy as np
 from agent_configs.dqn.rainbow_config import RainbowConfig
 from agents.catan_player_wrapper import ACTIONS_ARRAY
-from replay_buffers.base_replay_buffer import BaseDQNReplayBuffer
 from replay_buffers.buffer_factories import create_dqn_buffer
 from replay_buffers.processors import NStepInputProcessor, StandardOutputProcessor
 from replay_buffers.samplers import PrioritizedSampler
@@ -21,12 +20,13 @@ from utils.utils import (
     update_linear_schedule,
 )
 
-from modules.utils import (
+from losses.basic_losses import (
     CategoricalCrossentropyLoss,
     HuberLoss,
     KLDivergenceLoss,
     MSELoss,
 )
+from losses.losses import LossPipeline, StandardDQNLoss, C51Loss
 
 from replay_buffers.utils import update_per_beta
 
@@ -77,6 +77,19 @@ class RainbowAgent(BaseAgent):
         self.target_model.load_state_dict(self.model.state_dict())
         self.target_model.eval()
 
+        loss_modules = []
+
+        # Logic to decide which "Main" loss to use
+        if self.config.atom_size > 1:
+            # If config asks for distributional RL, use C51
+            loss_modules.append(C51Loss(self.config, self.device))
+        else:
+            # Otherwise, use Standard DQN
+            loss_modules.append(StandardDQNLoss(self.config, self.device))
+
+        # Finalize the pipeline
+        self.loss_pipeline = LossPipeline(loss_modules)
+
         if self.config.optimizer == Adam:
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
                 params=self.model.parameters(),
@@ -92,51 +105,6 @@ class RainbowAgent(BaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
-
-        # self.replay_buffer = PrioritizedNStepReplayBuffer(
-        #     observation_dimensions=self.observation_dimensions,
-        #     observation_dtype=self.observation_dtype,
-        #     max_size=self.config.replay_buffer_size,
-        #     num_actions=self.num_actions,
-        #     batch_size=self.config.minibatch_size,
-        #     max_priority=1.0,
-        #     alpha=self.config.per_alpha,
-        #     beta=self.config.per_beta,
-        #     # epsilon=config["per_epsilon"],
-        #     n_step=self.config.n_step,
-        #     gamma=self.config.discount_factor,
-        #     compressed_observations=(
-        #         self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
-        #     ),
-        #     num_players=self.config.game.num_players,
-        # )
-
-        # self.replay_buffer = BaseDQNReplayBuffer(
-        #     observation_dimensions=self.observation_dimensions,
-        #     observation_dtype=self.observation_dtype,
-        #     max_size=self.config.replay_buffer_size,
-        #     num_actions=self.num_actions,
-        #     batch_size=self.config.minibatch_size,
-        #     compressed_observations=(
-        #         self.env.lz4_compress if hasattr(self.env, "lz4_compress") else False
-        #     ),
-        #     sampler=PrioritizedSampler(
-        #         self.config.replay_buffer_size,
-        #         self.config.per_alpha,
-        #         self.config.per_beta,
-        #         self.config.per_epsilon,
-        #         1.0,
-        #         self.config.use_batch_weights,
-        #         self.config.use_initial_max_priority,
-        #     ),
-        #     writer=CircularWriter(self.config.replay_buffer_size),
-        #     input_processor=NStepInputProcessor(
-        #         self.config.n_step,
-        #         self.config.discount_factor,
-        #         self.config.game.num_players,
-        #     ),
-        #     output_processor=StandardOutputProcessor(),
-        # )
 
         self.replay_buffer = create_dqn_buffer(
             observation_dimensions=self.observation_dimensions,
@@ -237,7 +205,6 @@ class RainbowAgent(BaseAgent):
             q_values = action_mask(
                 q_values, legal_moves, mask_value=-float("inf"), device=self.device
             )
-        # print("Q Values", q_values)
         # q_values with argmax ties
         # selected_actions = torch.stack(
         #     [
@@ -245,210 +212,48 @@ class RainbowAgent(BaseAgent):
         #         for x in q_values
         #     ]
         # )
-        # print(selected_actions)
         selected_actions = q_values.argmax(1, keepdim=False)
         return selected_actions
 
     def learn(self) -> np.ndarray:
         losses = np.zeros(self.config.training_iterations)
+
         for i in range(self.config.training_iterations):
-            samples = self.replay_buffer.sample()
-            loss = self.learn_from_sample(samples)
-            losses[i] = loss
+            # 1. Get Samples (Initialize Context)
+            # The context dict starts with just the raw batch data
+            context = self.replay_buffer.sample()
+
+            # 2. Run Pipeline
+            # This handles ensure_predictions -> ensure_targets -> compute_loss
+            # It returns the sum of all losses and the primary elementwise loss for PER
+            loss, elementwise_loss = self.loss_pipeline.run(self, context)
+
+            # 3. Optimization
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            if self.config.clipnorm > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self.config.clipnorm
+                )
+
+            self.optimizer.step()
+
+            # 4. Update Priorities (PER)
+            # elementwise_loss is detached inside the pipeline logic if needed,
+            # but usually safe to detach again here.
+            self.update_replay_priorities(
+                indices=context["indices"],
+                priorities=elementwise_loss.detach(),
+                ids=None,
+            )
+
+            # 5. Housekeeping
+            losses[i] = loss.detach().item()
+            self.model.reset_noise()
+            self.target_model.reset_noise()
+
         return losses
-
-    def learn_from_sample(self, samples: dict):
-        observations, weights, actions = (
-            samples["observations"],
-            samples["weights"],
-            # torch.from_numpy(samples["actions"]).to(self.device).long(),
-            samples["actions"].to(self.device).long(),
-        )
-        # print("actions", actions)
-
-        # print("Observations", observations)
-        # (B, outputs, atom_size) -[index action dimension by actions]> (B, atom_size)
-        online_predictions = self.predict(observations)[
-            range(self.config.minibatch_size), actions
-        ]
-        # for param in self.model.parameters():
-        #     print(param)
-        # print(self.predict(observations))
-        # print(online_predictions)
-        # (B, atom_size)
-        if self.config.atom_size > 1:
-            # print("using categorical dqn loss")
-            assert isinstance(
-                self.config.loss_function, KLDivergenceLoss
-            ) or isinstance(
-                self.config.loss_function, CategoricalCrossentropyLoss
-            ), "Only KLDivergenceLoss and CategoricalCrossentropyLoss are supported for atom_size > 1, recieved {}".format(
-                self.config.loss_function
-            )
-            target_predictions = self.compute_target_distributions(samples)
-        else:
-            # print("using default dqn loss")
-            assert isinstance(self.config.loss_function, HuberLoss) or isinstance(
-                self.config.loss_function, MSELoss
-            ), "Only HuberLoss or MSELoss are supported for atom_size = 1, recieved {}".format(
-                self.config.loss_function
-            )
-            # next_observations, rewards, dones = (
-            #     torch.from_numpy(samples["next_observations"]).to(self.device),
-            #     torch.from_numpy(samples["rewards"]).to(self.device),
-            #     torch.from_numpy(samples["dones"]).to(self.device),
-            # )
-            next_observations, rewards, dones = (
-                samples["next_observations"].to(self.device),
-                samples["rewards"].to(self.device),
-                samples["dones"].to(self.device),
-            )
-
-            next_legal_moves_masks = samples["next_legal_moves_masks"].to(self.device)
-            next_infos = [
-                {"legal_moves": torch.nonzero(mask).view(-1).tolist()}
-                for mask in next_legal_moves_masks
-            ]
-            # next_infos = samples["next_infos"].to(self.device)
-            target_predictions = self.predict_target(next_observations)  # next q values
-            # print("Next q values", target_predictions)
-            # print("Current q values", online_predictions)
-            # print(self.predict(next_observations))
-            next_actions = self.select_actions(
-                self.predict(next_observations),  # current q values
-                info=next_infos,
-            )
-
-            # print("RL Learning Summary")
-            # print("Online Predictions:", online_predictions)
-            # print("Target Predictions:", target_predictions)
-            # print("Next Actions:", next_actions)
-            # print("Rewards:", rewards)
-            # print("Dones:", dones)
-
-            target_predictions = target_predictions[
-                range(self.config.minibatch_size), next_actions
-            ]  # this might not work
-            # print(target_predictions)
-            target_predictions = (
-                rewards + self.config.discount_factor * (~dones) * target_predictions
-            )
-            # print(target_predictions)
-
-        # print("predicted", online_distributions)
-        # print("target", target_distributions)
-
-        # weights_cuda = torch.from_numpy(weights).to(torch.float32).to(self.device)
-        weights_cuda = weights.to(torch.float32).to(self.device)
-        # (B)
-        elementwise_loss = self.config.loss_function(
-            online_predictions, target_predictions
-        )
-        # print("Loss", elementwise_loss.mean())
-        assert torch.all(elementwise_loss) >= 0, "Elementwise Loss: {}".format(
-            elementwise_loss
-        )
-        assert (
-            elementwise_loss.shape == weights_cuda.shape
-        ), "Loss Shape: {}, Weights Shape: {}".format(
-            elementwise_loss.shape, weights_cuda.shape
-        )
-        loss = elementwise_loss * weights_cuda
-        self.optimizer.zero_grad()
-        loss.mean().backward()
-        if self.config.clipnorm > 0:
-            # print("clipnorm", self.config.clipnorm)
-            clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-
-        self.optimizer.step()
-        self.update_replay_priorities(
-            samples=samples,
-            priorities=elementwise_loss.detach() + self.config.per_epsilon,
-        )
-        self.model.reset_noise()
-        self.target_model.reset_noise()
-        return loss.detach().to("cpu").mean().item()
-
-    def update_replay_priorities(self, samples, priorities):
-        self.replay_buffer.update_priorities(samples["indices"], priorities)
-
-    def compute_target_distributions(self, samples):
-        # print("computing target distributions")
-        with torch.no_grad():
-            discount_factor = self.config.discount_factor**self.config.n_step
-            delta_z = (self.config.v_max - self.config.v_min) / (
-                self.config.atom_size - 1
-            )
-            # next_observations, rewards, dones = (
-            #     samples["next_observations"],
-            #     torch.from_numpy(samples["rewards"]).to(self.device).view(-1, 1),
-            #     torch.from_numpy(samples["dones"]).to(self.device).view(-1, 1),
-            # )
-            next_observations, rewards, dones = (
-                samples["next_observations"],
-                samples["rewards"].to(self.device).view(-1, 1),
-                samples["dones"].to(self.device).view(-1, 1),
-            )
-
-            online_distributions = self.predict(next_observations)
-            target_distributions = self.predict_target(next_observations)
-
-            # print(samples["next_infos"])
-            # recreate legal moves from action masks samples
-            next_legal_moves_masks = samples["next_legal_moves_masks"].to(self.device)
-            next_infos = [
-                {"legal_moves": torch.nonzero(mask).view(-1).tolist()}
-                for mask in next_legal_moves_masks
-            ]
-            next_actions = self.select_actions(
-                online_distributions,
-                info=next_infos,
-            )  # {} is the info but we are not doing action masking yet
-            # (B, outputs, atom_size) -[index by [0..B-1, a_0..a_B-1]]> (B, atom_size)
-            probabilities = target_distributions[
-                range(self.config.minibatch_size), next_actions
-            ]
-            # print(probabilities)
-
-            # (B, 1) + k(B, atom_size) * (B, atom_size) -> (B, atom_size)
-            Tz = (rewards + discount_factor * (~dones) * self.support).clamp(
-                self.config.v_min, self.config.v_max
-            )
-            # print("Tz", Tz)
-
-            # all elementwise
-            b: torch.Tensor = (Tz - self.config.v_min) / delta_z
-            l, u = (
-                torch.clamp(b.floor().long(), 0, self.config.atom_size - 1),
-                torch.clamp(b.ceil().long(), 0, self.config.atom_size - 1),
-            )
-            # print("b", b)
-            # print("l", l)
-            # print("u", u)
-
-            # Fix disappearing probability mass when l = b = u (b is int)
-            l[(u > 0) * (l == u)] -= 1
-            u[(l < (self.config.atom_size - 1)) * (l == u)] += 1
-            # print("fixed l", l)
-            # print("fixed u", u)
-            # dones = dones.squeeze()
-            # masked_probs = torch.ones_like(probabilities) / self.config.atom_size
-            # masked_probs[~dones] = probabilities[~dones]
-
-            m = torch.zeros_like(probabilities)
-            m.scatter_add_(dim=1, index=l, src=probabilities * ((u.float()) - b))
-            m.scatter_add_(dim=1, index=u, src=probabilities * ((b - l.float())))
-            # print("old_m", (m * self.support).sum(-1))
-
-            # projected_distribution = torch.zeros_like(probabilities)
-            # projected_distribution.scatter_add_(
-            #     dim=1, index=l, src=masked_probs * (u.float() - b)
-            # )
-            # projected_distribution.scatter_add_(
-            #     dim=1, index=u, src=masked_probs * (b - l.float())
-            # )
-            # print("m", (projected_distribution * self.support).sum(-1))
-            return m
 
     def fill_replay_buffer(self):
         print("replay buffer size:", self.replay_buffer.size)
@@ -486,16 +291,8 @@ class RainbowAgent(BaseAgent):
                     state, info = self.env.reset()
                 # gc.collect()
 
-    def update_target_model(self):
-        if self.config.soft_update:
-            for wt, wp in zip(self.target_model.parameters(), self.model.parameters()):
-                wt.copy_(self.config.ema_beta * wt + (1 - self.config.ema_beta) * wp)
-        else:
-            self.target_model.load_state_dict(self.model.state_dict())
-
     def update_eg_epsilon(self, training_step):
         if self.config.eg_epsilon_decay_type == "linear":
-            # print("decaying eg epsilon linearly")
             self.eg_epsilon = update_linear_schedule(
                 self.config.eg_epsilon_final,
                 self.config.eg_epsilon_final_step,
@@ -525,7 +322,6 @@ class RainbowAgent(BaseAgent):
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):
                     values = self.predict(state)
-                    # print(values)
                     action = epsilon_greedy_policy(
                         values,
                         info,
@@ -535,12 +331,6 @@ class RainbowAgent(BaseAgent):
                         ).item(),
                     )
 
-                    # print(
-                    #     f"Turn {self.env.env.env.env.game.state.num_turns} Action: {ACTIONS_ARRAY[action]}"
-                    # )
-
-                    # print("Action", action)
-                    # print("Epislon Greedy Epsilon", self.eg_epsilon)
                     next_state, reward, terminated, truncated, next_info = (
                         self.env.step(action)
                     )
@@ -557,12 +347,6 @@ class RainbowAgent(BaseAgent):
                     state = next_state
                     info = next_info
                     score += reward
-                    # print(
-                    #     f"reward at step {self.training_step * self.config.replay_interval + _}: {reward}"
-                    # )
-                    # print(
-                    #     f"score at step {self.training_step * self.config.replay_interval + _}: {score}"
-                    # )
                     if done:
                         state, info = self.env.reset()
                         self.stats.append("score", score)
@@ -578,12 +362,10 @@ class RainbowAgent(BaseAgent):
             )
 
             self.update_eg_epsilon(self.training_step + 1)
-            # print("replay buffer size", len(self.replay_buffer))
             for minibatch in range(self.config.num_minibatches):
                 if len(self.replay_buffer) < self.config.min_replay_buffer_size:
                     break
                 losses = self.learn()
-                # print(losses)
                 loss_mean = losses.mean()
                 # could do things other than taking the mean here
                 self.stats.append("loss", loss_mean)

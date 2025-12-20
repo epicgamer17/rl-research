@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 import numpy as np
-from regex import F
 import torch
 from search.nodes import ChanceNode, DecisionNode
 from search.scoring_methods import PriorScoring, ScoringMethod
+import torch.nn.functional as F
 
 
 class SelectionStrategy(ABC):
@@ -118,8 +118,8 @@ class SamplingSelection(SelectionStrategy):
 
         elif isinstance(node, ChanceNode):
             # TODO MAKE THIS USE SCORING METHODS TOO
-            codes = list(node.code_priors.keys())
-            probs = list(node.code_priors.values())
+            codes = list(node.code_probs.keys())
+            probs = list(node.code_probs.values())
             code = node._sample_code(codes, probs)
             selected_code = F.one_hot(torch.tensor(code), num_classes=len(codes))
             child_node = node.children[code]
