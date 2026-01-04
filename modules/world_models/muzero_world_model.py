@@ -1,4 +1,4 @@
-from typing import Callable, Optional, Tuple, Dict
+from typing import Callable, List, Optional, Tuple, Dict
 
 from torch import Tensor
 import torch
@@ -6,12 +6,14 @@ from modules.action_encoder import ActionEncoder
 from modules.dense import build_dense
 from modules.heads import CategoricalHead, ScalarHead
 from modules.network_block import NetworkBlock
-from modules.utils import _normalize_hidden_state
-from modules.world_model import WorldModelInterface
+from modules.utils import _normalize_hidden_state, scale_gradient
+from modules.world_models.world_model import WorldModelInterface
 from agent_configs.muzero_config import MuZeroConfig
 
 from torch import nn
 import torch.nn.functional as F
+
+from modules.world_models.world_model import WorldModelOutput
 
 
 # --- Refactored Primary Modules ---
@@ -149,7 +151,8 @@ class Dynamics(BaseDynamics):
 
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         super().initialize(initializer)
-        self.reward_to_play_head.initialize(initializer)
+        self.reward_head.initialize(initializer)
+        self.to_play_head.initialize(initializer)
 
     def forward(
         self,
@@ -243,7 +246,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
 
     def initial_inference(self, observation: Tensor) -> Tensor:
         hidden_state = self.representation(observation)
-        return hidden_state
+        return WorldModelOutput(features=hidden_state)
 
     def recurrent_inference(
         self,
@@ -267,7 +270,12 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
             hidden_state, action, (reward_h_states, reward_c_states)
         )
 
-        return reward, next_hidden_state, to_play, reward_hidden
+        return WorldModelOutput(
+            features=next_hidden_state,
+            reward=reward,
+            to_play=to_play,
+            reward_hidden=reward_hidden,
+        )
 
     def afterstate_recurrent_inference(
         self,
@@ -284,7 +292,156 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         )
 
         afterstate = self.afterstate_dynamics(hidden_state, action)
-        return afterstate
+        return WorldModelOutput(afterstate_features=afterstate)
+
+    def unroll_sequence(
+        self,
+        agent,
+        initial_hidden_state: Tensor,
+        initial_values: Tensor,
+        initial_policies: Tensor,
+        actions: Tensor,
+        target_observations: Tensor,
+        target_chance_codes: Tensor,
+        reward_h_states: Tensor,
+        reward_c_states: Tensor,
+        preprocess_fn: Callable[[Tensor], Tensor],
+    ) -> Dict[str, List[Tensor]]:
+        """
+        Performs the unrolling loop (Step 4 of learn).
+        """
+        # --- 3. Initialize Storage Lists ---
+        hidden_states = initial_hidden_state
+        latent_states = [hidden_states]  # length will end up being unroll_steps + 1
+        latent_afterstates = []
+        latent_code_probabilities = []
+        encoder_softmaxes = []
+        encoder_onehots = []
+        chance_values = []
+
+        if self.config.support_range is not None:
+            reward_shape = (
+                self.config.minibatch_size,
+                self.config.support_range * 2 + 1,
+            )
+        else:
+            reward_shape = (self.config.minibatch_size, 1)
+
+        values = [initial_values]
+        rewards = [
+            torch.zeros(reward_shape, device=initial_hidden_state.device)
+        ]  # R_t = 0 (Placeholder)
+        policies = [initial_policies]
+        to_plays = [
+            torch.zeros(
+                (self.config.minibatch_size, self.config.game.num_players),
+                device=initial_hidden_state.device,
+            )
+        ]
+
+        # --- 4. Unroll Loop ---
+        for k in range(self.config.unroll_steps):
+            actions_k = actions[:, k]
+            target_observations_k = target_observations[:, k]
+            target_observations_k_plus_1 = target_observations[:, k + 1]
+            real_obs_k = preprocess_fn(target_observations_k)
+            real_obs_k_plus_1 = preprocess_fn(target_observations_k_plus_1)
+            encoder_input = torch.concat([real_obs_k, real_obs_k_plus_1], dim=1)
+
+            if self.config.stochastic:
+                # 1. Afterstate Inference
+                afterstates, q_k, code_priors_k = (
+                    agent.predict_afterstate_recurrent_inference(
+                        hidden_states, actions_k
+                    )
+                )
+
+                # 3. Encoder Inference
+                encoder_softmax_k, encoder_onehot_k = self.encoder(encoder_input)
+
+                if self.config.use_true_chance_codes:
+                    codes_k = F.one_hot(
+                        target_chance_codes[:, k + 1].squeeze(-1).long(),
+                        self.config.num_chance,
+                    )
+                    assert (
+                        codes_k.shape == encoder_onehot_k.shape
+                    ), f"{codes_k.shape} == {encoder_onehot_k.shape}"
+                    encoder_onehot_k = codes_k.float()
+
+                latent_afterstates.append(afterstates)
+                latent_code_probabilities.append(code_priors_k)
+                chance_values.append(q_k)
+
+                # σ^k is trained towards the one hot chance code c_t+k+1
+                encoder_onehots.append(encoder_onehot_k)
+                encoder_softmaxes.append(encoder_softmax_k)
+
+                # 4. Dynamics Inference (using chance code as action)
+                # Note: light zero argmaxes here (effectively stopping the gradient
+                # from flowing into the encoder during the recurrent inference)
+                (
+                    rewards_k,
+                    hidden_states,
+                    values_k,
+                    policies_k,
+                    to_plays_k,
+                    reward_h_states,
+                    reward_c_states,
+                ) = agent.predict_recurrent_inference(
+                    afterstates,
+                    encoder_onehot_k,
+                    reward_h_states,
+                    reward_c_states,
+                )
+            else:
+                (
+                    rewards_k,
+                    hidden_states,
+                    values_k,
+                    policies_k,
+                    to_plays_k,
+                    reward_h_states,
+                    reward_c_states,
+                ) = agent.predict_recurrent_inference(
+                    hidden_states,
+                    actions_k,
+                    reward_h_states,
+                    reward_c_states,
+                )
+
+            latent_states.append(hidden_states)
+            # Store the predicted states and outputs
+            values.append(values_k)
+            rewards.append(rewards_k)
+            policies.append(policies_k)
+            to_plays.append(to_plays_k)
+
+            # Scale the gradient of the hidden state (applies to the whole batch)
+            # Append the predicted latent (ŝ_{t+k+1}) BEFORE scaling for the next step
+            hidden_states = scale_gradient(hidden_states, 0.5)
+
+            # reset hidden states
+            if self.config.value_prefix and (k + 1) % self.config.lstm_horizon_len == 0:
+                reward_h_states = torch.zeros_like(reward_h_states).to(
+                    hidden_states.device
+                )
+                reward_c_states = torch.zeros_like(reward_c_states).to(
+                    hidden_states.device
+                )
+
+        return {
+            "values": values,
+            "rewards": rewards,
+            "policies": policies,
+            "to_plays": to_plays,
+            "latent_states": latent_states,
+            "latent_afterstates": latent_afterstates,
+            "latent_code_probabilities": latent_code_probabilities,
+            "encoder_softmaxes": encoder_softmaxes,
+            "encoder_onehots": encoder_onehots,
+            "chance_values": chance_values,
+        }
 
     def get_networks(self) -> Dict[str, nn.Module]:
         return {

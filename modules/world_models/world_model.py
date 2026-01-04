@@ -1,8 +1,29 @@
 # modules/world_model_interface.py (Revised)
 from abc import ABC, abstractmethod
+from attr import dataclass
 from torch import Tensor
 from typing import Tuple, Dict, Any
 from torch import nn
+import torch
+
+
+@dataclass
+class WorldModelOutput:
+    """
+    Represents the Agent's Hypothesis (Predictions).
+    Shape: (B, Unroll+1, ...)
+    """
+
+    # Core MuZero
+    features: torch.Tensor
+    reward: torch.Tensor = None
+    to_play: torch.Tensor = None
+    done: torch.Tensor = None
+    rnn_hidden: torch.Tensor = None
+
+    reward_hidden: torch.Tensor = None
+
+    afterstate_features: torch.Tensor = None
 
 
 class WorldModelInterface(ABC):
@@ -29,6 +50,16 @@ class WorldModelInterface(ABC):
         from a hidden state and an action.
 
         Returns: (next_hidden_state, reward)
+        """
+        pass
+
+    @abstractmethod
+    def unroll_sequence(
+        self,
+        actions,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """
+        Unrolls a sequence of actions from the current hidden state. Returns all network output seqeunces from this unrolling.
         """
         pass
 

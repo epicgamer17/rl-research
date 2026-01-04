@@ -590,6 +590,169 @@ class VQVAECommitmentLoss(LossModule):
         return vqvae_commitment_cost
 
 
+class VAELoss(LossModule):
+    """
+    Loss for training the VAE (V Model).
+    Combines reconstruction loss and KL divergence.
+    """
+
+    def __init__(self, config, device, kl_weight: float = 1.0):
+        super().__init__(config, device)
+        self.sequence_loss = False
+        self.kl_weight = kl_weight
+        self.name = "VAELoss"
+
+    def ensure_predictions(self, agent, context: dict):
+        if "vae_reconstruction" in context:
+            return
+
+        observations = context["observations"]
+
+        # Forward through VAE
+        # TODO: make this efficient when doing rollouts for muzero etc.
+        recon, mu, logvar = agent.world_model.vae(observations)
+
+        context["vae_reconstruction"] = recon
+        context["vae_mu"] = mu
+        context["vae_logvar"] = logvar
+
+    def ensure_targets(self, agent, context: dict):
+        # Targets are just the original observations
+        if "vae_target" not in context:
+            context["vae_target"] = context["observations"]
+
+    def compute_loss(
+        self,
+        agent=None,
+        context: dict = None,
+        k: int = None,
+        predictions: dict = None,
+        targets: dict = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """VAE loss: Returns (scalar_loss, elementwise_loss)"""
+
+        recon = context["vae_reconstruction"]
+        target = context["vae_target"]
+        mu = context["vae_mu"]
+        logvar = context["vae_logvar"]
+
+        # Reconstruction loss (MSE, per-sample)
+        recon_loss = F.mse_loss(recon, target, reduction="none")
+        recon_loss = recon_loss.view(recon.size(0), -1).sum(dim=1)  # Sum over pixels
+
+        # KL divergence loss (per-sample)
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
+
+        # Combined elementwise loss
+        elementwise = recon_loss + self.kl_weight * kl_loss
+
+        # Mean for backprop
+        loss = elementwise.mean()
+
+        return loss
+
+
+class MDNRNNLoss(LossModule):
+    """
+    Loss for training the MDN-RNN (M Model).
+    Combines mixture density loss and done prediction loss.
+    """
+
+    def __init__(self, config, device):
+        super().__init__(config, device)
+        self.sequence_loss = False
+        self.name = "MDNRNNLoss"
+
+    def ensure_predictions(self, agent, context: dict):
+        if "mdn_pi" in context:
+            return
+
+        # Current latent state and action
+        z_t = context["latent_states"]
+        a_t = context["actions"]
+
+        # Get RNN hidden state if available
+        hidden = context.get("rnn_hidden", None)
+
+        # Forward through MDN-RNN
+        # TODO: make this efficient when doing rollouts for muzero etc.
+        pi, mu, sigma, done_logit, hidden = agent.world_model.mdn_rnn(z_t, a_t, hidden)
+
+        context["mdn_pi"] = pi
+        context["mdn_mu"] = mu
+        context["mdn_sigma"] = sigma
+        context["mdn_done_logit"] = done_logit
+        context["rnn_hidden"] = hidden
+
+    def ensure_targets(self, agent, context: dict):
+        if "target_latent_next" in context:
+            return
+
+        # Target is next latent state and done flag
+        # These should be provided in the context
+        # If not, we need to encode next observation
+        if "next_observations" in context:
+            with torch.no_grad():
+                # TODO: make this efficient when doing rollouts for muzero etc.
+                z_next = agent.world_model.vae.sample_latent(
+                    context["next_observations"]
+                )
+                context["target_latent_next"] = z_next
+
+        if "dones" in context:
+            context["target_done"] = context["dones"]
+
+    def compute_loss(
+        self,
+        agent=None,
+        context: dict = None,
+        k: int = None,
+        predictions: dict = None,
+        targets: dict = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """MDN-RNN loss: Returns (scalar_loss, elementwise_loss)"""
+
+        pi = context["mdn_pi"]
+        mu = context["mdn_mu"]
+        sigma = context["mdn_sigma"]
+        done_logit = context["mdn_done_logit"]
+
+        z_next = context["target_latent_next"]
+        done_target = context["target_done"]
+
+        # MDN loss (negative log likelihood)
+        # Expand z_next for broadcasting with mixtures
+        z_next_expanded = z_next.unsqueeze(1).expand_as(
+            mu
+        )  # (B, num_mixtures, latent_dim)
+
+        # Gaussian log likelihood for each mixture component
+        var = sigma.pow(2) + 1e-8
+        log_prob = -0.5 * (
+            torch.log(2 * np.pi * var) + (z_next_expanded - mu).pow(2) / var
+        )
+        log_prob = log_prob.sum(dim=-1)  # Sum over latent dimensions: (B, num_mixtures)
+
+        # Weight by mixture coefficients
+        log_prob_weighted = log_prob + torch.log(pi + 1e-8)
+
+        # Mixture negative log likelihood (per sample)
+        mdn_loss = -torch.logsumexp(log_prob_weighted, dim=-1)  # (B,)
+
+        # Done prediction loss (per sample)
+        done_loss = F.binary_cross_entropy_with_logits(
+            done_logit.squeeze(-1), done_target.float(), reduction="none"
+        )
+
+        # Combined elementwise loss
+        elementwise = mdn_loss + done_loss
+
+        # Mean for backprop
+        loss = elementwise.mean()
+
+        return loss
+
+
 # ============================================================================
 # UNIFIED LOSS PIPELINE
 # ============================================================================
@@ -826,223 +989,3 @@ def create_muzero_loss_pipeline(
         )
 
     return LossPipeline(modules)
-
-
-# import torch
-# import torch.nn.functional as F
-# from abc import ABC, abstractmethod
-# import numpy as np
-
-# from losses.basic_losses import HuberLoss, MSELoss
-# from modules.utils import scalar_to_support
-
-
-# class LossModule(ABC):
-#     def __init__(self, config, device):
-#         self.config = config
-#         self.device = device
-#         self.sequence_loss = True
-
-#     @abstractmethod
-#     def ensure_predictions(self, agent, context: dict):
-#         """Check context for predictions; if missing, compute and add them."""
-#         pass
-
-#     @abstractmethod
-#     def ensure_targets(self, agent, context: dict):
-#         """Check context for targets; if missing, compute and add them."""
-#         pass
-
-#     @abstractmethod
-#     def compute_loss(self, agent, context: dict, k: int = None) -> torch.Tensor:
-#         """Returns elementwise loss tensor (B,) for the given step k"""
-#         pass
-
-
-# class LossPipeline:
-#     def __init__(self, modules: list[LossModule]):
-#         self.modules = modules
-
-#     def run(self, agent, context: dict):
-#         """
-#         For non-sequence losses (DQN, C51, etc.)
-#         Runs the full pipeline: Preparation -> Target Calc -> Loss Calc
-#         Returns combined loss and the elementwise loss of the *primary* (first) module.
-#         """
-#         # 1. Prepare all Predictions (Iterative check & populate)
-#         for module in self.modules:
-#             module.ensure_predictions(agent, context)
-
-#         # 2. Prepare all Targets (Iterative check & populate)
-#         for module in self.modules:
-#             module.ensure_targets(agent, context)
-
-#         # 3. Compute Losses
-#         total_loss = 0
-#         primary_elementwise = None
-
-#         for idx, module in enumerate(self.modules):
-#             loss, elementwise = module.compute_loss(agent, context)
-#             total_loss += loss
-
-#             # We use the first module's elementwise loss for PER priorities
-#             if idx == 0:
-#                 primary_elementwise = elementwise
-
-#         return total_loss, primary_elementwise
-
-
-# class StandardDQNLoss(LossModule):
-#     def __init__(self, config, device):
-#         super().__init__(config, device)
-#         self.sequence_loss = False
-
-#     def ensure_predictions(self, agent, context: dict):
-#         # IF EXISTS: Skip
-#         if "online_q_values" in context:
-#             return
-
-#         # PREPARE
-#         observations = context["observations"]
-#         actions = context["actions"].to(self.device).long()
-
-#         # COMPUTE
-#         # (B, num_actions)
-#         all_q_values = agent.predict(observations)
-#         # (B) - Select Q-value for specific action taken
-#         selected_q_values = all_q_values[range(self.config.minibatch_size), actions]
-
-#         # POPULATE
-#         context["online_q_values"] = selected_q_values
-
-#     def ensure_targets(self, agent, context: dict):
-#         # IF EXISTS: Skip
-#         if "target_q_values" in context:
-#             return
-
-#         # PREPARE
-#         with torch.no_grad():
-#             next_obs = context["next_observations"]
-#             rewards = context["rewards"].to(self.device)
-#             dones = context["dones"].to(self.device)
-
-#             # Action Masking Logic
-#             next_masks = context["next_legal_moves_masks"].to(self.device)
-#             next_infos = [
-#                 {"legal_moves": torch.nonzero(m).view(-1).tolist()} for m in next_masks
-#             ]
-
-#             # COMPUTE (Double DQN)
-#             # 1. Select best action using Online Network
-#             curr_next_q = agent.predict(next_obs)
-#             next_actions = agent.select_actions(curr_next_q, info=next_infos)
-
-#             # 2. Evaluate that action using Target Network
-#             target_next_q = agent.predict_target(next_obs)
-#             max_q_next = target_next_q[range(self.config.minibatch_size), next_actions]
-
-#             # 3. Bellman Calculation
-#             targets = rewards + self.config.discount_factor * (~dones) * max_q_next
-
-#         # POPULATE
-#         context["target_q_values"] = targets
-
-#     def compute_loss(self, agent, context: dict, k: int = None):
-#         preds = context["online_q_values"]
-#         targets = context["target_q_values"]
-#         weights = context["weights"].to(torch.float32).to(self.device)
-
-#         assert isinstance(self.config.loss_function, HuberLoss) or isinstance(
-#             self.config.loss_function, MSELoss
-#         )
-
-#         # Calculate Elementwise (MSE or Huber)
-#         elementwise = self.config.loss_function(preds, targets)
-
-#         # Apply PER weights
-#         loss = (elementwise * weights).mean()
-
-#         return loss, elementwise
-
-
-# class C51Loss(LossModule):
-#     def __init__(self, config, device):
-#         super().__init__(config, device)
-#         self.support = torch.linspace(config.v_min, config.v_max, config.atom_size).to(
-#             device
-#         )
-#         self.sequence_loss = False
-
-#     def ensure_predictions(self, agent, context: dict):
-#         if "online_dist" in context:
-#             return
-
-#         observations = context["observations"]
-#         actions = context["actions"].to(self.device).long()
-
-#         # (B, outputs, atom_size) -> Index by Action -> (B, atom_size)
-#         all_dists = agent.predict(observations)
-#         selected_dist = all_dists[range(self.config.minibatch_size), actions]
-
-#         context["online_dist"] = selected_dist
-
-#     def ensure_targets(self, agent, context: dict):
-#         if "target_dist" in context:
-#             return
-
-#         with torch.no_grad():
-#             # Setup
-#             next_obs = context["next_observations"]
-#             rewards = context["rewards"].to(self.device).view(-1, 1)
-#             dones = context["dones"].to(self.device).view(-1, 1)
-
-#             # Masking
-#             next_masks = context["next_legal_moves_masks"].to(self.device)
-#             next_infos = [
-#                 {"legal_moves": torch.nonzero(m).view(-1).tolist()} for m in next_masks
-#             ]
-
-#             # 1. Select Actions (Online Net)
-#             online_next_dist = agent.predict(next_obs)
-#             next_actions = agent.select_actions(online_next_dist, info=next_infos)
-
-#             # 2. Get Target Distributions (Target Net)
-#             target_next_dist = agent.predict_target(next_obs)
-#             probabilities = target_next_dist[
-#                 range(self.config.minibatch_size), next_actions
-#             ]
-
-#             # 3. Project Distribution (C51 Logic)
-#             discount = self.config.discount_factor**self.config.n_step
-#             delta_z = (self.config.v_max - self.config.v_min) / (
-#                 self.config.atom_size - 1
-#             )
-
-#             Tz = (rewards + discount * (~dones) * self.support).clamp(
-#                 self.config.v_min, self.config.v_max
-#             )
-#             b = (Tz - self.config.v_min) / delta_z
-#             l = b.floor().long().clamp(0, self.config.atom_size - 1)
-#             u = b.ceil().long().clamp(0, self.config.atom_size - 1)
-
-#             # Distribute probability mass
-#             l[(u > 0) * (l == u)] -= 1
-#             u[(l < (self.config.atom_size - 1)) * (l == u)] += 1
-
-#             m = torch.zeros_like(probabilities)
-#             m.scatter_add_(dim=1, index=l, src=probabilities * (u.float() - b))
-#             m.scatter_add_(dim=1, index=u, src=probabilities * (b - l.float()))
-
-#         context["target_dist"] = m
-
-#     def compute_loss(self, agent, context: dict, k: int = None):
-#         preds = context["online_dist"]
-#         targets = context["target_dist"]
-#         weights = context["weights"].to(torch.float32).to(self.device)
-
-#         # Cross Entropy: -Sum(target * log(pred))
-#         elementwise = -torch.sum(targets * torch.log(preds + 1e-8), dim=1)
-
-#         loss = (elementwise * weights).mean()
-
-#         return loss, elementwise
