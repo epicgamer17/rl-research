@@ -590,169 +590,6 @@ class VQVAECommitmentLoss(LossModule):
         return vqvae_commitment_cost
 
 
-class VAELoss(LossModule):
-    """
-    Loss for training the VAE (V Model).
-    Combines reconstruction loss and KL divergence.
-    """
-
-    def __init__(self, config, device, kl_weight: float = 1.0):
-        super().__init__(config, device)
-        self.sequence_loss = False
-        self.kl_weight = kl_weight
-        self.name = "VAELoss"
-
-    def ensure_predictions(self, agent, context: dict):
-        if "vae_reconstruction" in context:
-            return
-
-        observations = context["observations"]
-
-        # Forward through VAE
-        # TODO: make this efficient when doing rollouts for muzero etc.
-        recon, mu, logvar = agent.world_model.vae(observations)
-
-        context["vae_reconstruction"] = recon
-        context["vae_mu"] = mu
-        context["vae_logvar"] = logvar
-
-    def ensure_targets(self, agent, context: dict):
-        # Targets are just the original observations
-        if "vae_target" not in context:
-            context["vae_target"] = context["observations"]
-
-    def compute_loss(
-        self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """VAE loss: Returns (scalar_loss, elementwise_loss)"""
-
-        recon = context["vae_reconstruction"]
-        target = context["vae_target"]
-        mu = context["vae_mu"]
-        logvar = context["vae_logvar"]
-
-        # Reconstruction loss (MSE, per-sample)
-        recon_loss = F.mse_loss(recon, target, reduction="none")
-        recon_loss = recon_loss.view(recon.size(0), -1).sum(dim=1)  # Sum over pixels
-
-        # KL divergence loss (per-sample)
-        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
-
-        # Combined elementwise loss
-        elementwise = recon_loss + self.kl_weight * kl_loss
-
-        # Mean for backprop
-        loss = elementwise.mean()
-
-        return loss
-
-
-class MDNRNNLoss(LossModule):
-    """
-    Loss for training the MDN-RNN (M Model).
-    Combines mixture density loss and done prediction loss.
-    """
-
-    def __init__(self, config, device):
-        super().__init__(config, device)
-        self.sequence_loss = False
-        self.name = "MDNRNNLoss"
-
-    def ensure_predictions(self, agent, context: dict):
-        if "mdn_pi" in context:
-            return
-
-        # Current latent state and action
-        z_t = context["latent_states"]
-        a_t = context["actions"]
-
-        # Get RNN hidden state if available
-        hidden = context.get("rnn_hidden", None)
-
-        # Forward through MDN-RNN
-        # TODO: make this efficient when doing rollouts for muzero etc.
-        pi, mu, sigma, done_logit, hidden = agent.world_model.mdn_rnn(z_t, a_t, hidden)
-
-        context["mdn_pi"] = pi
-        context["mdn_mu"] = mu
-        context["mdn_sigma"] = sigma
-        context["mdn_done_logit"] = done_logit
-        context["rnn_hidden"] = hidden
-
-    def ensure_targets(self, agent, context: dict):
-        if "target_latent_next" in context:
-            return
-
-        # Target is next latent state and done flag
-        # These should be provided in the context
-        # If not, we need to encode next observation
-        if "next_observations" in context:
-            with torch.no_grad():
-                # TODO: make this efficient when doing rollouts for muzero etc.
-                z_next = agent.world_model.vae.sample_latent(
-                    context["next_observations"]
-                )
-                context["target_latent_next"] = z_next
-
-        if "dones" in context:
-            context["target_done"] = context["dones"]
-
-    def compute_loss(
-        self,
-        agent=None,
-        context: dict = None,
-        k: int = None,
-        predictions: dict = None,
-        targets: dict = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """MDN-RNN loss: Returns (scalar_loss, elementwise_loss)"""
-
-        pi = context["mdn_pi"]
-        mu = context["mdn_mu"]
-        sigma = context["mdn_sigma"]
-        done_logit = context["mdn_done_logit"]
-
-        z_next = context["target_latent_next"]
-        done_target = context["target_done"]
-
-        # MDN loss (negative log likelihood)
-        # Expand z_next for broadcasting with mixtures
-        z_next_expanded = z_next.unsqueeze(1).expand_as(
-            mu
-        )  # (B, num_mixtures, latent_dim)
-
-        # Gaussian log likelihood for each mixture component
-        var = sigma.pow(2) + 1e-8
-        log_prob = -0.5 * (
-            torch.log(2 * np.pi * var) + (z_next_expanded - mu).pow(2) / var
-        )
-        log_prob = log_prob.sum(dim=-1)  # Sum over latent dimensions: (B, num_mixtures)
-
-        # Weight by mixture coefficients
-        log_prob_weighted = log_prob + torch.log(pi + 1e-8)
-
-        # Mixture negative log likelihood (per sample)
-        mdn_loss = -torch.logsumexp(log_prob_weighted, dim=-1)  # (B,)
-
-        # Done prediction loss (per sample)
-        done_loss = F.binary_cross_entropy_with_logits(
-            done_logit.squeeze(-1), done_target.float(), reduction="none"
-        )
-
-        # Combined elementwise loss
-        elementwise = mdn_loss + done_loss
-
-        # Mean for backprop
-        loss = elementwise.mean()
-
-        return loss
-
-
 # ============================================================================
 # UNIFIED LOSS PIPELINE
 # ============================================================================
@@ -921,6 +758,7 @@ class LossPipeline:
         step_data = {}
         for key, tensor in tensor_dict.items():
             if tensor is not None:
+                assert tensor.shape[1] > k, f"Tensor for {key} has insufficient steps."
                 step_data[key] = tensor[:, k]
         return step_data
 
@@ -947,7 +785,7 @@ def create_c51_loss_pipeline(config, device):
 
 
 def create_muzero_loss_pipeline(
-    config, device, predict_initial_inference_fn=None, preprocess_fn=None, model=None
+    config, device, predict_initial_inference_fn, preprocess_fn, model
 ):
     """
     Factory function to create the standard MuZero loss pipeline.
@@ -972,12 +810,11 @@ def create_muzero_loss_pipeline(
     if config.game.num_players != 1:
         modules.append(ToPlayLoss(config, device))
 
-    if predict_initial_inference_fn and preprocess_fn and model:
-        modules.append(
-            ConsistencyLoss(
-                config, device, predict_initial_inference_fn, preprocess_fn, model
-            )
+    modules.append(
+        ConsistencyLoss(
+            config, device, predict_initial_inference_fn, preprocess_fn, model
         )
+    )
 
     if config.stochastic:
         modules.extend(

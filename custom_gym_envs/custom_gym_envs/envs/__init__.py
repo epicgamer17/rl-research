@@ -15,3 +15,4 @@ from custom_gym_envs.envs.matching_pennies import (
 from custom_gym_envs.envs.catan import CatanAECEnv
 
 from custom_gym_envs.envs.game_2048 import Game2048Env
+from custom_gym_envs.envs.slippery_grid_world import SlipperyGridEnv

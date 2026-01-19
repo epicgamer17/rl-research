@@ -46,7 +46,7 @@ class TopScoreSelection(SelectionStrategy):
         scores_dict = self.scoring_method.get_scores(node, min_max_stats)
 
         # Filter scores for allowed actions
-        relevant_scores = {a: scores_dict[a] for a in actions}
+        relevant_scores = {a: float(scores_dict[a]) for a in actions}
 
         # Find max score
         max_score = max(relevant_scores.values())

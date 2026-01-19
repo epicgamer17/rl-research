@@ -93,7 +93,7 @@ class ActionEncoder(nn.Module):
                 scalar_action = torch.sum(action * indices, dim=1)
                 assert torch.allclose(
                     scalar_action, torch.argmax(action, dim=1).float()
-                )
+                ), f"{scalar_action} vs {torch.argmax(action, dim=1).float()}"
 
                 # 3. Normalize (Optional but recommended)
                 # Keeps values between 0.0 and 1.0

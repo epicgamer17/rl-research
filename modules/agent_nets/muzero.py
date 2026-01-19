@@ -166,7 +166,23 @@ class Encoder(nn.Module):
         # TODO: LIKE LIGHT ZERO NO SOFTMAX?
         # probs = x
         # one_hot_st = OnehotArgmax.apply(probs)
+
+        # one_hot_st = F.gumbel_softmax(x, tau=1.0, hard=True, dim=-1)
+        # probs = F.softmax(x, dim=-1)
+        probs = x
         return probs, one_hot_st
+
+    def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
+        if self.use_conv:
+            initializer(self.conv1.weight)
+            initializer(self.conv2.weight)
+            initializer(self.conv3.weight)
+            # zero initializer for fc
+            zero_weights_initializer(self.fc)
+        else:
+            initializer(self.fc1.weight)
+            initializer(self.fc2.weight)
+            zero_weights_initializer(self.fc3)
 
 
 class OnehotArgmax(torch.autograd.Function):

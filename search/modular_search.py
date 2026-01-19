@@ -75,10 +75,10 @@ class SearchAlgorithm:
         legal_moves = get_legal_moves(info)
         # print("legal smoves", legal_moves)
         if legal_moves is None:
-            legal_moves = list(range(self.num_actions))
+            legal_moves = [list(range(self.num_actions))]
 
         # TODO: should i action mask?
-        policy = action_mask(policy, legal_moves)
+        policy = action_mask(policy, legal_moves, device=self.device)
 
         legal_moves = legal_moves[0]
         policy = policy[0]

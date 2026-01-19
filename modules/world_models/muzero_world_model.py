@@ -313,11 +313,37 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
         # --- 3. Initialize Storage Lists ---
         hidden_states = initial_hidden_state
         latent_states = [hidden_states]  # length will end up being unroll_steps + 1
-        latent_afterstates = []
-        latent_code_probabilities = []
-        encoder_softmaxes = []
-        encoder_onehots = []
-        chance_values = []
+        if self.config.stochastic:
+            latent_afterstates = [
+                torch.zeros_like(hidden_states).to(hidden_states.device)
+            ]  # Placeholder for initial afterstate
+            latent_code_probabilities = [
+                torch.zeros(
+                    (self.config.minibatch_size, self.config.num_chance),
+                    device=initial_hidden_state.device,
+                )
+            ]
+            encoder_softmaxes = [
+                torch.zeros(
+                    (self.config.minibatch_size, self.config.num_chance),
+                    device=initial_hidden_state.device,
+                )
+            ]
+            encoder_onehots = [
+                torch.zeros(
+                    (self.config.minibatch_size, self.config.num_chance),
+                    device=initial_hidden_state.device,
+                )
+            ]
+            chance_values = [
+                torch.zeros_like(initial_values).to(initial_hidden_state.device)
+            ]
+        else:
+            latent_afterstates = []
+            latent_code_probabilities = []
+            encoder_softmaxes = []
+            encoder_onehots = []
+            chance_values = []
 
         if self.config.support_range is not None:
             reward_shape = (
@@ -357,7 +383,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                 )
 
                 # 3. Encoder Inference
-                encoder_softmax_k, encoder_onehot_k = self.encoder(encoder_input)
+                encoder_softmax_k, encoder_onehot_k = agent.model.encoder(encoder_input)
 
                 if self.config.use_true_chance_codes:
                     codes_k = F.one_hot(
@@ -390,7 +416,7 @@ class MuzeroWorldModel(WorldModelInterface, nn.Module):
                     reward_c_states,
                 ) = agent.predict_recurrent_inference(
                     afterstates,
-                    encoder_onehot_k,
+                    encoder_onehot_k,  # TODO: lightzero detaches here
                     reward_h_states,
                     reward_c_states,
                 )

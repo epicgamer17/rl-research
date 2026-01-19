@@ -15,7 +15,7 @@ class WorldModelOutput:
     """
 
     # Core MuZero
-    features: torch.Tensor
+    features: torch.Tensor = None
     reward: torch.Tensor = None
     to_play: torch.Tensor = None
     done: torch.Tensor = None

@@ -51,6 +51,7 @@ class MuZeroAgent(MARLBaseAgent):
             )
         ),
         from_checkpoint=False,
+        loss_pipeline=None,
     ):
         super(MuZeroAgent, self).__init__(
             env,
@@ -93,13 +94,16 @@ class MuZeroAgent(MARLBaseAgent):
         if not self.config.multi_process:
             self.model.to(device)
 
-        self.loss_pipeline = create_muzero_loss_pipeline(
-            config=self.config,
-            device=self.device,
-            predict_initial_inference_fn=self.predict_initial_inference,
-            preprocess_fn=self.preprocess,
-            model=self.model,
-        )
+        if loss_pipeline is None:
+            self.loss_pipeline = create_muzero_loss_pipeline(
+                config=self.config,
+                device=self.device,
+                predict_initial_inference_fn=self.predict_initial_inference,
+                preprocess_fn=self.preprocess,
+                model=self.model,
+            )
+        else:
+            self.loss_pipeline = loss_pipeline
 
         self.search = create_mcts(config, self.device, self.num_actions)
 
@@ -151,15 +155,20 @@ class MuZeroAgent(MARLBaseAgent):
                 "reward_loss",
                 "to_play_loss",
                 "cons_loss",
-                "q_loss",
-                "sigma_loss",
-                "vqvae_commitment_cost",
                 "loss",
                 "test_score",
                 "episode_length",
-                "num_codes",
+            "num_codes",
             ]
-            + test_score_keys,
+            + test_score_keys
+            + (
+                ["chance_probs", "chance_entropy",                 "q_loss",
+                "sigma_loss",
+                "vqvae_commitment_cost",
+]
+                if self.config.stochastic
+                else []
+            ),
             target_values={
                 "score": (
                     self.env.spec.reward_threshold
@@ -171,6 +180,7 @@ class MuZeroAgent(MARLBaseAgent):
                     if hasattr(self.env, "spec") and self.env.spec.reward_threshold
                     else None
                 ),
+                "num_codes": 1 if self.config.game.is_deterministic else None,
             },
             use_tensor_dicts={
                 "test_score": ["score", "max_score", "min_score"],
@@ -221,6 +231,9 @@ class MuZeroAgent(MARLBaseAgent):
         self.stats.add_plot_types(
             "episode_length", PlotType.ROLLING_AVG, rolling_window=100
         )
+        if self.config.stochastic:
+            self.stats.add_plot_types("chance_probs", PlotType.BAR)
+            self.stats.add_plot_types("chance_entropy", PlotType.ROLLING_AVG, rolling_window=100)
         self.stop_flag = mp.Value("i", 0)
 
     def worker_fn(
@@ -485,7 +498,11 @@ class MuZeroAgent(MARLBaseAgent):
 
         # Add stochastic targets (indexed at k-1)
         if self.config.stochastic:
-            targets_tensor["chance_values"] = target_values[:, :-1]  # k-1 indexing
+            # ensure chance_values have k + 1 steps for indexing consistency, first index is invalid so should be 0
+            targets_tensor["chance_values"] = torch.zeros_like(target_values)
+            targets_tensor["chance_values"][:, 1:] = target_values[
+                :, :-1
+            ]  # TODO: LightZero this is the value of the next state (ie offset by one step)
             targets_tensor["encoder_onehots"] = predictions_tensor["encoder_onehots"]
 
         gradient_scales_tensor = torch.tensor(
@@ -526,6 +543,7 @@ class MuZeroAgent(MARLBaseAgent):
                     predictions_tensor["to_plays"],
                     policy_masks,
                     consistency_masks,
+                    targets_tensor,
                     predictions_tensor if self.config.stochastic else None,
                 )
 
@@ -544,7 +562,10 @@ class MuZeroAgent(MARLBaseAgent):
 
             # --- 11. STAT TRACKING ---
             if self.config.stochastic:
-                self._track_stochastic_stats(predictions_tensor["encoder_onehots"])
+                self._track_stochastic_stats(
+                    predictions_tensor["encoder_onehots"],
+                    predictions_tensor["latent_code_probabilities"],
+                )
 
         # --- 12. Return Losses for Logging ---
         return self._prepare_return_losses(loss_dict, loss_mean.item())
@@ -579,6 +600,7 @@ class MuZeroAgent(MARLBaseAgent):
         predicted_to_plays,
         policy_masks,
         consistency_masks,
+        targets_tensor,
         stochastic_preds,
     ):
         """Log training step information at checkpoint intervals."""
@@ -602,7 +624,7 @@ class MuZeroAgent(MARLBaseAgent):
         print("target rewards", target_rewards)
         print("predicted rewards", predicted_rewards)
         if self.config.stochastic:
-            print("target qs", target_values)
+            print("target qs", targets_tensor["chance_values"])
             print("predicted qs", stochastic_preds["chance_values"])
         print("target to plays", target_to_plays)
         print("predicted to_plays", predicted_to_plays)
@@ -614,7 +636,7 @@ class MuZeroAgent(MARLBaseAgent):
         print("masks", policy_masks, consistency_masks)
         # torch.set_printoptions(profile="default")
 
-    def _track_stochastic_stats(self, encoder_onehots_tensor):
+    def _track_stochastic_stats(self, encoder_onehots_tensor, latent_code_probs_tensor):
         """Track statistics for stochastic MuZero."""
         codes = encoder_onehots_tensor.argmax(dim=-1)  # shape (B, K), dtype long
         # --- (A) Total unique codes across entire batch+time ---
@@ -623,6 +645,30 @@ class MuZeroAgent(MARLBaseAgent):
         # Optionally: convert to Python int
         num_unique_all_int = int(num_unique_all)
         self.stats.append("num_codes", num_unique_all_int)
+
+        # Track chance probability statistics (mean over batch and time)
+        latent_node_probs = latent_code_probs_tensor  # (B, K+1, NumCodes) or (B, K, NumCodes)
+        
+        # Calculate mean probabilities for each code across batch and unroll steps
+        # Result shape: (NumCodes,)
+        if latent_node_probs.ndim == 3:
+             mean_probs = latent_node_probs.mean(dim=0).mean(dim=0)
+        else:
+             # Fallback if dimensions are unexpected
+             mean_probs = latent_node_probs.mean(dim=0)
+
+        # Append to stats as a 2D tensor (1, NumCodes) so we can stack them
+        self.stats.append("chance_probs", mean_probs.unsqueeze(0))
+
+        # --- (C) Track Entropy of Chance Probabilities ---
+        # latent_code_probs_tensor: (B, K, NumCodes)
+        probs = latent_code_probs_tensor
+        # Avoid log(0)
+        entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)  # (B, K)
+        mean_entropy = entropy.mean().item()
+        self.stats.append("chance_entropy", mean_entropy)
+
+
 
     def _prepare_return_losses(self, loss_dict, total_loss):
         """Prepare loss values for return."""

@@ -13,6 +13,7 @@ class PlotType(Enum):
     BEST_FIT_LINE = auto()
     LOG_Y = auto()
     EXPONENTIAL_AVG = auto()
+    BAR = auto()
 
 
 class StatTracker:
@@ -89,14 +90,25 @@ class StatTracker:
             # Host executes the command directly
             if key not in self.stats:
                 self._init_key(key)
+            
+            # Prepare the new value as a tensor
+            if isinstance(value, torch.Tensor):
+                new_val = value.detach().cpu()
+            else:
+                new_val = torch.tensor([value])
+
+            # Helper to append to a tensor
+            def append_to_tensor(current_tensor, new_data):
+                if current_tensor.numel() == 0:
+                    return new_data
+                return torch.cat((current_tensor, new_data))
+
             if isinstance(self.stats[key], Dict):
                 if subkey is None:
                     raise ValueError(f"Stat '{key}' requires a subkey")
-                self.stats[key][subkey] = torch.cat(
-                    (self.stats[key][subkey], torch.tensor([value]))
-                )
+                self.stats[key][subkey] = append_to_tensor(self.stats[key][subkey], new_val)
             else:
-                self.stats[key] = torch.cat((self.stats[key], torch.tensor([value])))
+                self.stats[key] = append_to_tensor(self.stats[key], new_val)
 
     def increment_steps(self, n: int = 1):
         if self._is_client:
@@ -180,6 +192,17 @@ class StatTracker:
             else:
                 self._plot_tensor(ax, tensor, key, config)
 
+            # Plot target line if exists as a horizontal line
+            if key in self.targets and self.targets[key] is not None:
+                target_value = self.targets[key]
+                ax.axhline(
+                    y=target_value,
+                    color="r",
+                    linestyle="--",
+                    label=f"Target: {target_value}",
+                )
+                ax.legend()
+
         plt.tight_layout()
         if dir:
             plt.savefig(f"{dir}/{self.model_name}_stats.png")
@@ -203,7 +226,8 @@ class StatTracker:
                 mask &= x <= params["x_end"]
             x, data = x[mask], data[mask]
 
-        ax.plot(x, data, label=label)
+        if PlotType.BAR not in types:
+             ax.plot(x, data, label=label)
 
         # Rolling average
         if PlotType.ROLLING_AVG in types:
@@ -247,6 +271,28 @@ class StatTracker:
             coeffs = np.polyfit(x, data, 1)
             fit = np.polyval(coeffs, x)
             ax.plot(x, fit, linestyle="--", label=f"{label} fit")
+
+        # Bar chart for the last step
+        if PlotType.BAR in types:
+            # We want to plot the values of the *last* step as a bar chart.
+            # 'data' here is likely a 2D array: (steps, num_classes) or 1D (steps,)
+            # But the 'append' logic for vector stats creates a 2D tensor: (steps, vector_dim).
+            # When we pull it out as numpy, it's (steps, vector_dim).
+            
+            # If we are doing a bar chart, we assume we want to visualize the distribution
+            # at the latest time step.
+            if len(data.shape) > 1:
+                latest_data = data[-1]
+                indices = np.arange(len(latest_data))
+                ax.bar(indices, latest_data, label=f"{label} (latest)")
+                ax.set_xticks(indices)
+                ax.set_xlabel("Index")
+            else:
+                # If it's just scalar data over time, a bar chart might mean
+                # plotting the history as bars? Usually not what's intended if combined with line plots.
+                # But let's support plotting the history as bars if requested for 1D data.
+                ax.bar(x, data, label=label)
+
 
         # Logarithmic scale
         if PlotType.LOG_Y in types:

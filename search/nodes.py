@@ -101,6 +101,7 @@ class ChanceNode:
     def _sample_code(self, codes, probs):
         """Helper to sample a single code index from probabilities."""
         # Normalize probs just in case
+        probs = [float(p) for p in probs]
         probs = np.array(probs)
         probs /= probs.sum()
         return np.random.choice(len(codes), p=probs)

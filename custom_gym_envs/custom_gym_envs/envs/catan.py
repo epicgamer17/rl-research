@@ -620,6 +620,7 @@ class CatanAECEnv(AECEnv):
         elif is_truncated:
             for agent in self.agents:
                 self.truncations[agent] = True
+                self.rewards[agent] = 0  # -1
 
         if not (is_terminated or is_truncated):
             self.agent_selection = self.agent_map[self.game.state.current_color()]

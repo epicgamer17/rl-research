@@ -340,8 +340,7 @@ class PPOAgent(BaseAgent):
 
         while self.training_step < self.config.training_steps:
             with torch.no_grad():
-                if self.training_step % self.config.print_interval == 0:
-                    self.print_training_progress()
+
                 num_episodes = 0
                 score = 0
                 for timestep in range(self.config.steps_per_epoch):

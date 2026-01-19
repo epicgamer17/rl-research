@@ -283,7 +283,7 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig):
             wrapper=kernel_initializer_wrapper,
         )
 
-        self.print_interval: int = self.parse_field("print_interval", 100, wrapper=int)
+
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.soft_update: bool = self.parse_field("soft_update", False)
 

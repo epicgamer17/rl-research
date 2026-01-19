@@ -1,99 +1,13 @@
-from typing import Tuple, Dict
+from typing import Tuple
 import numpy as np
 import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 import torch.distributions as td
 
-from agent_configs.base_config import Config
 from modules.conv import Conv2dStack, ConvTranspose2dStack
 from modules.dense import DenseStack
-from modules.rssm import RSSM
 from modules.distributions import TanhBijector, SampleDist
-
-
-class VAE(nn.Module):
-    """
-    Variational Autoencoder (V Model) from World Models.
-    Encodes observations into latent vectors z.
-    """
-
-    def __init__(self, input_channels: int = 3, latent_dim: int = 32):
-        super().__init__()
-        self.latent_dim = latent_dim
-
-        # Encoder: 64x64x3 -> latent_dim
-        self.encoder = nn.Sequential(
-            # 64x64x3 -> 32x32x32
-            nn.Conv2d(input_channels, 32, 4, stride=2, padding=1),
-            nn.ReLU(),
-            # 32x32x32 -> 16x16x64
-            nn.Conv2d(32, 64, 4, stride=2, padding=1),
-            nn.ReLU(),
-            # 16x16x64 -> 8x8x128
-            nn.Conv2d(64, 128, 4, stride=2, padding=1),
-            nn.ReLU(),
-            # 8x8x128 -> 4x4x256
-            nn.Conv2d(128, 256, 4, stride=2, padding=1),
-            nn.ReLU(),
-        )
-
-        # Latent space parameters
-        self.fc_mu = nn.Linear(256 * 4 * 4, latent_dim)
-        self.fc_logvar = nn.Linear(256 * 4 * 4, latent_dim)
-
-        # Decoder: latent_dim -> 64x64x3
-        self.fc_decode = nn.Linear(latent_dim, 256 * 4 * 4)
-
-        self.decoder = nn.Sequential(
-            # 4x4x256 -> 8x8x128
-            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
-            nn.ReLU(),
-            # 8x8x128 -> 16x16x64
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
-            nn.ReLU(),
-            # 16x16x64 -> 32x32x32
-            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),
-            nn.ReLU(),
-            # 32x32x32 -> 64x64x3
-            nn.ConvTranspose2d(32, input_channels, 4, stride=2, padding=1),
-            nn.Sigmoid(),  # Output in [0, 1]
-        )
-
-    def encode(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        """Encode input to mu and logvar."""
-        h = self.encoder(x)
-        h = h.view(h.size(0), -1)
-        mu = self.fc_mu(h)
-        logvar = self.fc_logvar(h)
-        return mu, logvar
-
-    def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
-        """Reparameterization trick for sampling."""
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
-    def decode(self, z: Tensor) -> Tensor:
-        """Decode latent vector to image."""
-        h = self.fc_decode(z)
-        h = h.view(h.size(0), 256, 4, 4)
-        return self.decoder(h)
-
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-        """
-        Forward pass through VAE.
-        Returns: (reconstruction, mu, logvar)
-        """
-        mu, logvar = self.encode(x)
-        z = self.reparameterize(mu, logvar)
-        recon = self.decode(z)
-        return recon, mu, logvar
-
-    def sample_latent(self, x: Tensor) -> Tensor:
-        """Sample latent vector z from input."""
-        mu, logvar = self.encode(x)
-        return self.reparameterize(mu, logvar)
 
 
 class ConvEncoder(nn.Module):

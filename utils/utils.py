@@ -99,6 +99,8 @@ def get_legal_moves(info: dict | list[dict]):
     else:
         legal_moves = [info.get("legal_moves", None)]
         # print("legal moves", legal_moves)
+        if legal_moves[0] is None:
+            return None
         assert len(legal_moves[0]) > 0
     return legal_moves
 

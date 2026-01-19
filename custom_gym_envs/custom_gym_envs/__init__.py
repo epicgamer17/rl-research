@@ -66,3 +66,8 @@ register(
     id="custom_gym_envs/Game2048-v0",
     entry_point="custom_gym_envs.envs:Game2048Env",
 )
+
+register(
+    id="custom_gym_envs/SlipperyGrid-v0",
+    entry_point="custom_gym_envs.envs:SlipperyGridEnv",
+)
