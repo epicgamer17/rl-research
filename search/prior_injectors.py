@@ -19,7 +19,12 @@ class PriorInjector(ABC):
 class DirichletInjector(PriorInjector):
     def inject(self, policy, legal_moves, config, trajectory_action=None):
         # Only apply noise to legal moves
-        noise = np.random.dirichlet([config.root_dirichlet_alpha] * len(legal_moves))
+        if config.root_dirichlet_alpha_adaptive:
+            alpha = 1.0 / np.sqrt(len(legal_moves))
+        else:
+            alpha = config.root_dirichlet_alpha
+        
+        noise = np.random.dirichlet([alpha] * len(legal_moves))
         frac = config.root_exploration_fraction
 
         # Map noise back to the full policy tensor (or just relevant indices)

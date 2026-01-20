@@ -153,6 +153,9 @@ class SearchConfig:
         self.root_exploration_fraction: float = self.parse_field(
             "root_exploration_fraction", 0.25
         )
+        self.root_dirichlet_alpha_adaptive: bool = self.parse_field(
+            "root_dirichlet_alpha_adaptive", False
+        )
 
         # Gumbel parameters
         self.gumbel: bool = self.parse_field("gumbel", False)
@@ -295,6 +298,7 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig):
 
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.soft_update: bool = self.parse_field("soft_update", False)
+        self.min_max_epsilon: float = self.parse_field("min_max_epsilon", 0.01)
 
     def _verify_game(self):
         raise NotImplementedError

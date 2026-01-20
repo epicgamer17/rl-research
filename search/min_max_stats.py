@@ -8,8 +8,13 @@ MAXIMUM_FLOAT_VALUE = float("inf")
 
 class MinMaxStats(object):
     def __init__(
-        self, known_bounds: Optional[List[float]]
-    ):  # might need to say known_bounds=None
+        self,
+        known_bounds: Optional[List[float]],
+        soft_update: bool = False,
+        min_max_epsilon: float = 0.01,
+    ):
+        self.soft_update = soft_update
+        self.min_max_epsilon = min_max_epsilon
         self.max = known_bounds[1] if known_bounds else -MAXIMUM_FLOAT_VALUE
         self.min = known_bounds[0] if known_bounds else MAXIMUM_FLOAT_VALUE
 
@@ -20,7 +25,10 @@ class MinMaxStats(object):
     def normalize(self, value: float) -> float:
         if self.max > self.min:
             # We normalize only when we have at a max and min value
-            return (value - self.min) / (self.max - self.min)
+            denom = self.max - self.min
+            if self.soft_update:
+                denom = max(denom, self.min_max_epsilon)
+            return (value - self.min) / denom
         return value
 
     def __repr__(self):

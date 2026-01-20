@@ -161,11 +161,11 @@ class MuZeroAgent(MARLBaseAgent):
                 "loss",
                 "test_score",
                 "episode_length",
-            "num_codes",
             ]
             + test_score_keys
             + (
-                ["chance_probs", "chance_entropy",                 "q_loss",
+                [            "num_codes",
+"chance_probs", "chance_entropy",                 "q_loss",
                 "sigma_loss",
                 "vqvae_commitment_cost",
 ]
@@ -223,6 +223,10 @@ class MuZeroAgent(MARLBaseAgent):
             "to_play_loss", PlotType.ROLLING_AVG, rolling_window=100
         )
         self.stats.add_plot_types("cons_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types(
+            "num_codes", PlotType.ROLLING_AVG, rolling_window=100
+        )
+
         self.stats.add_plot_types("q_loss", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types(
             "sigma_loss", PlotType.ROLLING_AVG, rolling_window=100

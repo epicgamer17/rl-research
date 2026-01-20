@@ -123,7 +123,11 @@ class SearchAlgorithm:
             is_reset=True,
         )
 
-        min_max_stats = MinMaxStats(self.config.known_bounds)
+        min_max_stats = MinMaxStats(
+            self.config.known_bounds,
+            soft_update=self.config.soft_update,
+            min_max_epsilon=self.config.min_max_epsilon,
+        )
 
         # Initialize pruning state (e.g. Sequential Halving budget)
         # pruning_state = self.pruning_method.initialize(root, self.config)
