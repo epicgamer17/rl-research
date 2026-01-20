@@ -33,8 +33,8 @@ class LossModule(ABC):
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
         """Get the mask to apply for this loss at step k. For sequence losses only."""
-        if "consistency_masks" in context:
-            return context["consistency_masks"][:, k]
+        if "has_valid_obs_mask" in context:
+            return context["has_valid_obs_mask"][:, k]
         return torch.ones(self.config.minibatch_size, device=self.device)
 
     # === Unified Compute Interface ===
@@ -302,7 +302,7 @@ class PolicyLoss(LossModule):
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
         # IMPORTANT: Policy Loss uses Policy Mask (excludes terminal)
-        return context["policy_masks"][:, k]
+        return context["has_valid_action_mask"][:, k]
 
     def compute_loss(
         self,
@@ -315,7 +315,8 @@ class PolicyLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         policies_k = predictions["policies"]
         target_policies_k = targets["policies"]
-
+        print("LOSS POLICIES", policies_k)
+        print("TARGET POLICIES", target_policies_k)
         # Policy Loss: (B,)
         policy_loss = self.config.policy_loss_function(policies_k, target_policies_k)
 
@@ -415,6 +416,10 @@ class ConsistencyLoss(LossModule):
     def should_compute(self, k: int, context: dict) -> bool:
         return k > 0  # Only for k > 0
 
+    def get_mask(self, k: int, context: dict) -> torch.Tensor:
+        # Consistency valid if policy is valid (step is not terminal)
+        return context["has_valid_action_mask"][:, k]
+
     def compute_loss(
         self,
         agent=None,
@@ -510,7 +515,7 @@ class ChanceQLoss(LossModule):
         return q_loss
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
-        return context["consistency_masks"][:, k]
+        return context["has_valid_obs_mask"][:, k]
 
 
 class SigmaLoss(LossModule):
@@ -525,7 +530,7 @@ class SigmaLoss(LossModule):
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
         # no chance nodes from terminal -> absorbing
-        return context["policy_masks"][:, k]
+        return context["has_valid_action_mask"][:, k]
 
     def compute_loss(
         self,
@@ -563,7 +568,7 @@ class VQVAECommitmentLoss(LossModule):
 
     def get_mask(self, k: int, context: dict) -> torch.Tensor:
         # no chance nodes from terminal -> absorbing
-        return context["policy_masks"][:, k]
+        return context["has_valid_action_mask"][:, k]
 
     def compute_loss(
         self,

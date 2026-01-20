@@ -442,15 +442,19 @@ class MuZeroAgent(MARLBaseAgent):
 
         # (B, unroll + 1, 1) - Ground truth chance codes from environment (optional usage)
         target_chance_codes = samples["chance_codes"].to(self.device)
+        dones = samples["dones"].to(self.device)
 
         # --- MASKS ---
-        # valid_masks: (B, unroll + 1). True if state is in episode (inc. Terminal).
-        # Use for: Value, Reward, Consistency.
-        consistency_masks = samples["valid_masks"].to(self.device)
+        # 1. Action Mask: Valid if not done (terminal states have no valid policy)
+        has_valid_action_mask = ~dones
 
-        # policy_masks: (B, unroll + 1). True if state is actionable (exc. Terminal).
-        # Use for: Policy.
-        policy_masks = samples["policy_masks"].to(self.device)
+        # 2. Obs Mask: Valid if previous step was not done (if done, next obs is invalid/next game)
+        # Shift dones right: If t-1 was done, t is invalid.
+        shifted_dones = torch.roll(dones, 1, dims=1)
+        shifted_dones[:, 0] = False
+        has_valid_obs_mask = ~shifted_dones
+
+
 
         weights = samples["weights"].to(self.device)
         inputs = self.preprocess(observations)
@@ -516,8 +520,8 @@ class MuZeroAgent(MARLBaseAgent):
 
         # --- 6. Create Context for Loss Computation ---
         context = {
-            "consistency_masks": consistency_masks,
-            "policy_masks": policy_masks,
+            "has_valid_obs_mask": has_valid_obs_mask,
+            "has_valid_action_mask": has_valid_action_mask,
             "target_observations": target_observations,
         }
 
@@ -544,8 +548,8 @@ class MuZeroAgent(MARLBaseAgent):
                     predictions_tensor["rewards"],
                     target_to_plays,
                     predictions_tensor["to_plays"],
-                    policy_masks,
-                    consistency_masks,
+                    has_valid_action_mask,
+                    has_valid_obs_mask,
                     targets_tensor,
                     predictions_tensor if self.config.stochastic else None,
                 )
@@ -558,7 +562,7 @@ class MuZeroAgent(MARLBaseAgent):
             self.optimizer.step()
             self.lr_scheduler.step()
             
-            if self.device.type == "mps":
+            if self.device == "mps":
                 torch.mps.empty_cache()
 
             # --- 10. Update Priorities ---
@@ -605,8 +609,8 @@ class MuZeroAgent(MARLBaseAgent):
         predicted_rewards,
         target_to_plays,
         predicted_to_plays,
-        policy_masks,
-        consistency_masks,
+        has_valid_action_mask,
+        has_valid_obs_mask,
         targets_tensor,
         stochastic_preds,
     ):
@@ -623,7 +627,7 @@ class MuZeroAgent(MARLBaseAgent):
             print("predicted qs shape", stochastic_preds["chance_values"].shape)
         print("target to plays shape", target_to_plays.shape)
         print("predicted to_plays shape", predicted_to_plays.shape)
-        print("masks shape", policy_masks.shape, consistency_masks.shape)
+        print("masks shape", has_valid_action_mask.shape, has_valid_obs_mask.shape)
 
         print("actions", actions)
         print("target value", target_values)
@@ -640,14 +644,30 @@ class MuZeroAgent(MARLBaseAgent):
             print("encoder embedding", stochastic_preds["encoder_softmaxes"])
             print("encoder onehot", stochastic_preds["encoder_onehots"])
             print("predicted sigmas", stochastic_preds["latent_code_probabilities"])
-        print("masks", policy_masks, consistency_masks)
+        print("masks", has_valid_action_mask, has_valid_obs_mask)
         # torch.set_printoptions(profile="default")
 
     def _track_stochastic_stats(self, encoder_onehots_tensor, latent_code_probs_tensor):
         """Track statistics for stochastic MuZero."""
+        # Calculate validity mask from probs (sum > 0.001)
+        # latent_code_probs_tensor: (B, K, NumCodes) or (B, K+1, NumCodes)
+        if latent_code_probs_tensor.ndim == 3:
+             prob_sums = latent_code_probs_tensor.sum(dim=-1) # (B, K)
+             mask = prob_sums > 0.001
+        else:
+             mask = torch.ones_like(codes, dtype=torch.bool)
+
         codes = encoder_onehots_tensor.argmax(dim=-1)  # shape (B, K), dtype long
+        
+        # Filter codes using the mask
+        if mask.shape == codes.shape:
+             valid_codes = codes[mask]
+        else:
+             # Fallback if shapes mismatch (e.g. if K vs K+1 issue arises)
+             valid_codes = codes.flatten()
+
         # --- (A) Total unique codes across entire batch+time ---
-        unique_codes_all = torch.unique(codes)  # 1D tensor with sorted unique indices
+        unique_codes_all = torch.unique(valid_codes)  # 1D tensor with sorted unique indices
         num_unique_all = unique_codes_all.numel()
         # Optionally: convert to Python int
         num_unique_all_int = int(num_unique_all)
@@ -659,7 +679,11 @@ class MuZeroAgent(MARLBaseAgent):
         # Calculate mean probabilities for each code across batch and unroll steps
         # Result shape: (NumCodes,)
         if latent_node_probs.ndim == 3:
-             mean_probs = latent_node_probs.mean(dim=0).mean(dim=0)
+             valid_probs = latent_node_probs[mask] # (N_valid, NumCodes)
+             if valid_probs.shape[0] > 0:
+                 mean_probs = valid_probs.mean(dim=0)
+             else:
+                 mean_probs = torch.zeros(latent_node_probs.shape[-1], device=latent_node_probs.device)
         else:
              # Fallback if dimensions are unexpected
              mean_probs = latent_node_probs.mean(dim=0)
@@ -672,7 +696,19 @@ class MuZeroAgent(MARLBaseAgent):
         probs = latent_code_probs_tensor
         # Avoid log(0)
         entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)  # (B, K)
-        mean_entropy = entropy.mean().item()
+        
+        if mask is not None:
+             if entropy.shape == mask.shape:
+                  entropy = entropy[mask]
+             else:
+                  # shape mismatch fallback
+                  entropy = entropy.flatten()
+
+        if entropy.numel() > 0:
+             mean_entropy = entropy.mean().item()
+        else:
+             mean_entropy = 0.0
+             
         self.stats.append("chance_entropy", mean_entropy)
 
 

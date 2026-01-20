@@ -242,6 +242,7 @@ def create_muzero_buffer(
         BufferConfig("game_ids", shape=(), dtype=torch.int64, is_shared=True),
         BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=True),
         BufferConfig("training_steps", shape=(), dtype=torch.int64, is_shared=True),
+        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=True),
         BufferConfig(
             "legal_masks", shape=(num_actions,), dtype=torch.bool, is_shared=True
         ),

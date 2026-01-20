@@ -40,7 +40,7 @@ def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
     assert torch.allclose(
         torch.sum(target, dim=axis, keepdim=True),
         torch.ones_like(torch.sum(target, dim=axis, keepdim=True)),
-    ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(target, dim=axis, keepdim=True)}, for predicted = {target}"
+    ), f"Target probabilities do not sum to 1: sum = {torch.sum(target, dim=axis, keepdim=True)}, for predicted = {target}"
     # 1. Add epsilon prevents 0/0 errors
     # 2. Normalize BOTH to ensure they sum to 1.0
     predicted = (predicted + _epsilon) / torch.sum(
