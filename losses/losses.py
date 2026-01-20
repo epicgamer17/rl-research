@@ -315,8 +315,6 @@ class PolicyLoss(LossModule):
         """MuZero-style: Returns elementwise_loss of shape (B,)"""
         policies_k = predictions["policies"]
         target_policies_k = targets["policies"]
-        print("LOSS POLICIES", policies_k)
-        print("TARGET POLICIES", target_policies_k)
         # Policy Loss: (B,)
         policy_loss = self.config.policy_loss_function(policies_k, target_policies_k)
 
