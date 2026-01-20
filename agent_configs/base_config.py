@@ -108,6 +108,9 @@ class OptimizationConfig:
         self.training_iterations: int = self.parse_field(
             "training_iterations", 1, wrapper=int
         )
+        self.lr_schedule_type: str = self.parse_field("lr_schedule_type", "none")
+        self.lr_schedule_steps: list = self.parse_field("lr_schedule_steps", [])
+        self.lr_schedule_values: list = self.parse_field("lr_schedule_values", [])
 
 
 class ReplayConfig:
@@ -278,6 +281,12 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig):
         )
         self.kernel_initializer = self.parse_field(
             "kernel_initializer",
+            None,
+            required=False,
+            wrapper=kernel_initializer_wrapper,
+        )
+        self.prob_layer_initializer = self.parse_field(
+            "prob_layer_initializer",
             None,
             required=False,
             wrapper=kernel_initializer_wrapper,

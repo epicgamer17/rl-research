@@ -18,6 +18,7 @@ from utils.utils import (
     epsilon_greedy_policy,
     update_inverse_sqrt_schedule,
     update_linear_schedule,
+    get_lr_scheduler,
 )
 
 from losses.basic_losses import (
@@ -61,12 +62,12 @@ class RainbowAgent(BaseAgent):
         self.model = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
         )
         self.target_model = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
         )
 
         if not self.config.kernel_initializer == None:
@@ -105,6 +106,8 @@ class RainbowAgent(BaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
+        
+        self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
         self.replay_buffer = create_dqn_buffer(
             observation_dimensions=self.observation_dimensions,
@@ -238,6 +241,7 @@ class RainbowAgent(BaseAgent):
                 )
 
             self.optimizer.step()
+            self.lr_scheduler.step()
 
             # 4. Update Priorities (PER)
             # elementwise_loss is detached inside the pipeline logic if needed,

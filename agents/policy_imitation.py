@@ -1,6 +1,6 @@
 import torch
 from utils import action_mask, normalize_policies, current_timestamp, get_legal_moves
-from utils.utils import clip_low_prob_actions
+from utils.utils import clip_low_prob_actions, get_lr_scheduler
 from agents.agent import BaseAgent
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam, SGD
@@ -40,7 +40,7 @@ class PolicyImitationAgent(BaseAgent):
         self.model = SupervisedNetwork(
             config,
             self.num_actions,
-            (self.config.minibatch_size,) + self.observation_dimensions,
+            torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
         ).to(self.device)
 
         if self.config.optimizer == Adam:
@@ -57,6 +57,8 @@ class PolicyImitationAgent(BaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
+        
+        self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
     def select_actions(self, predictions):
         distribution = torch.distributions.Categorical(probs=predictions)
@@ -103,6 +105,7 @@ class PolicyImitationAgent(BaseAgent):
             if self.config.clipnorm > 0:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
             self.optimizer.step()
+            self.lr_scheduler.step()
 
             # RESET NOISE IF IM DOING THAT
         return loss.detach()

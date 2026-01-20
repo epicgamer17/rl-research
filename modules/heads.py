@@ -41,7 +41,13 @@ class BaseHead(nn.Module):
         # Initialize the final output layer
         # If probabilistic, we often zero-init to start with uniform probability
         if getattr(self, "is_probabilistic", False):
-            self.output_layer.apply(zero_weights_initializer)
+            if (
+                hasattr(self.config, "prob_layer_initializer")
+                and self.config.prob_layer_initializer is not None
+            ):
+                self.output_layer.apply(self.config.prob_layer_initializer)
+            else:
+                self.output_layer.apply(zero_weights_initializer)
         elif hasattr(self.output_layer, "initialize"):
             self.output_layer.initialize(initializer)
         else:

@@ -15,7 +15,7 @@ from utils import (
     get_legal_moves,
     update_linear_schedule,
 )
-from utils.utils import clip_low_prob_actions, normalize_policies
+from utils.utils import clip_low_prob_actions, normalize_policies, get_lr_scheduler
 
 sys.path.append("../")
 
@@ -49,7 +49,7 @@ class PPOAgent(BaseAgent):
         self.model = Network(
             config=config,
             output_size=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
         ).to(self.device)
 
@@ -83,6 +83,9 @@ class PPOAgent(BaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
+        
+        self.actor_scheduler = get_lr_scheduler(self.actor_optimizer, self.config)
+        self.critic_scheduler = get_lr_scheduler(self.critic_optimizer, self.config)
 
         # self.actor = ActorNetwork(
         #     input_shape=self.observation_dimensions,
@@ -119,11 +122,17 @@ class PPOAgent(BaseAgent):
     def checkpoint_optimizer_state(self, checkpoint):
         checkpoint["actor_optimizer"] = self.actor_optimizer.state_dict()
         checkpoint["critic_optimizer"] = self.critic_optimizer.state_dict()
+        checkpoint["actor_scheduler"] = self.actor_scheduler.state_dict()
+        checkpoint["critic_scheduler"] = self.critic_scheduler.state_dict()
         return checkpoint
 
     def load_optimizer_state(self, checkpoint):
         self.actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
         self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
+        if "actor_scheduler" in checkpoint:
+            self.actor_scheduler.load_state_dict(checkpoint["actor_scheduler"])
+        if "critic_scheduler" in checkpoint:
+            self.critic_scheduler.load_state_dict(checkpoint["critic_scheduler"])
 
     def predict(self, state, info: dict = None, mask_actions: bool = True):
         assert info is not None if mask_actions else True, "Need info to mask actions"
@@ -271,12 +280,7 @@ class PPOAgent(BaseAgent):
         for iteration in range(self.config.train_policy_iterations):
             # actor_scheduler.step()
             # print(actor_scheduler.get_last_lr())
-            self.actor_optimizer.param_groups[0]["lr"] = update_linear_schedule(
-                self.config.actor.learning_rate,
-                0,
-                self.config.train_policy_iterations,
-                iteration,
-            )
+
             for start in range(0, len(observations), minibatch_size):
                 end = start + minibatch_size
                 batch_indices = indices[start:end]
@@ -312,12 +316,7 @@ class PPOAgent(BaseAgent):
         for iteration in range(self.config.train_value_iterations):
             # critic_scheduler.step()
             # print(critic_scheduler.get_last_lr())
-            self.critic_optimizer.param_groups[0]["lr"] = update_linear_schedule(
-                self.config.critic.learning_rate,
-                0,
-                self.config.train_value_iterations,
-                iteration,
-            )
+
             for start in range(0, len(observations), minibatch_size):
                 end = start + minibatch_size
                 batch_indices = indices[start:end]
@@ -378,6 +377,8 @@ class PPOAgent(BaseAgent):
                         score = 0
 
             self.learn()
+            self.actor_scheduler.step()
+            self.critic_scheduler.step()
 
             # self.old_actor.set_weights(self.actor.get_weights())
             if self.training_step % self.checkpoint_interval == 0:

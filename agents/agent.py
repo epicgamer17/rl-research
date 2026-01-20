@@ -55,6 +55,7 @@ class BaseAgent(ABC):
         # 2. Placeholders for Child Classes
         self.model: nn.Module = None
         self.optimizer: optim.Optimizer = None
+        self.lr_scheduler: optim.lr_scheduler.LRScheduler = None
         self.replay_buffer = None  # Placeholder
 
         # 3. Training Params
@@ -131,15 +132,15 @@ class BaseAgent(ABC):
         obs_space = env.observation_space
 
         if isinstance(obs_space, gym.spaces.Box):
-            return obs_space.shape, obs_space.dtype
+            return torch.Size(obs_space.shape), obs_space.dtype
         elif isinstance(obs_space, gym.spaces.Discrete):
-            return (1,), np.int32
+            return torch.Size((1,)), np.int32
         elif isinstance(obs_space, gym.spaces.Tuple):
-            return (len(obs_space.spaces),), np.int32
+            return torch.Size((len(obs_space.spaces),)), np.int32
         elif callable(obs_space):
-            return obs_space(self.player_id).shape, obs_space(self.player_id).dtype
+            return torch.Size(obs_space(self.player_id).shape), obs_space(self.player_id).dtype
         else:
-            return obs_space.shape, obs_space.dtype
+            return torch.Size(obs_space.shape), obs_space.dtype
 
     def preprocess(self, states) -> torch.Tensor:
         """
@@ -212,6 +213,8 @@ class BaseAgent(ABC):
     def load_optimizer_state(self, checkpoint):
         if self.optimizer and "optimizer" in checkpoint:
             self.optimizer.load_state_dict(checkpoint["optimizer"])
+        if self.lr_scheduler and "lr_scheduler" in checkpoint:
+            self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
 
     def load_replay_buffers(self, checkpoint):
         if "replay_buffer" in checkpoint:
@@ -228,6 +231,8 @@ class BaseAgent(ABC):
         }
         if self.optimizer:
             checkpoint["optimizer"] = self.optimizer.state_dict()
+        if self.lr_scheduler:
+            checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
         if self.replay_buffer:
             checkpoint["replay_buffer"] = self.replay_buffer
         if self.model:

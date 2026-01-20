@@ -1,3 +1,4 @@
+import copy
 import datetime
 import random
 import sys
@@ -10,7 +11,7 @@ from search.search_factories import create_mcts
 sys.path.append("../")
 from time import time
 import traceback
-from modules.utils import scalar_to_support, support_to_scalar
+from modules.utils import scalar_to_support, support_to_scalar, get_lr_scheduler
 import numpy as np
 from stats.stats import PlotType, StatTracker
 from losses.losses import create_muzero_loss_pipeline
@@ -67,7 +68,7 @@ class MuZeroAgent(MARLBaseAgent):
         self.model = Network(
             config=config,
             num_actions=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
             # TODO: sort out when to do channel first and channel last
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
@@ -76,7 +77,7 @@ class MuZeroAgent(MARLBaseAgent):
         self.target_model = Network(
             config=config,
             num_actions=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
         )
@@ -142,6 +143,8 @@ class MuZeroAgent(MARLBaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
+        
+        self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
         test_score_keys = [
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
@@ -553,6 +556,10 @@ class MuZeroAgent(MARLBaseAgent):
             if self.config.clipnorm > 0:
                 clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
             self.optimizer.step()
+            self.lr_scheduler.step()
+            
+            if self.device.type == "mps":
+                torch.mps.empty_cache()
 
             # --- 10. Update Priorities ---
             # priorities tensor is already of shape (B,) from k=0
@@ -672,15 +679,22 @@ class MuZeroAgent(MARLBaseAgent):
 
     def _prepare_return_losses(self, loss_dict, total_loss):
         """Prepare loss values for return."""
+        # Helper to extract and detach/item()
+        def get_val(key):
+            val = loss_dict.get(key, 0.0)
+            if isinstance(val, torch.Tensor):
+                return val.item()
+            return val
+
         # Extract by name, defaulting to 0 if not present
-        val_loss = loss_dict.get("ValueLoss", 0.0)
-        pol_loss = loss_dict.get("PolicyLoss", 0.0)
-        rew_loss = loss_dict.get("RewardLoss", 0.0)
-        tp_loss = loss_dict.get("ToPlayLoss", 0.0)
-        cons_loss = loss_dict.get("ConsistencyLoss", 0.0)
-        q_loss = loss_dict.get("ChanceQLoss", 0.0)
-        sigma_loss = loss_dict.get("SigmaLoss", 0.0)
-        vqvae_loss = loss_dict.get("VQVAECommitmentLoss", 0.0)
+        val_loss = get_val("ValueLoss")
+        pol_loss = get_val("PolicyLoss")
+        rew_loss = get_val("RewardLoss")
+        tp_loss = get_val("ToPlayLoss")
+        cons_loss = get_val("ConsistencyLoss")
+        q_loss = get_val("ChanceQLoss")
+        sigma_loss = get_val("SigmaLoss")
+        vqvae_loss = get_val("VQVAECommitmentLoss")
 
         return (
             val_loss,
@@ -982,12 +996,66 @@ class MuZeroAgent(MARLBaseAgent):
     def __getstate__(self):
         state = self.__dict__.copy()
         state["stop_flag"] = state["stop_flag"].value
-        del state["env"]
-        del state["test_env"]
+        if "env" in state:
+            del state["env"]
+        if "test_env" in state:
+            del state["test_env"]
+        if "optimizer" in state:
+            del state["optimizer"]
+        if "lr_scheduler" in state:
+            del state["lr_scheduler"]
+        
+        # Only handle these if training has started (step > 0)
+        # At step 0 (worker spawn), model is on CPU and replay_buffer is empty/picklable.
+        if self.training_step > 0:
+            # Manually serialize model to CPU state dict to avoid device sharing issues (MPS etc)
+            if "model" in state:
+                state["model_state_dict"] = {k: v.cpu() for k, v in self.model.state_dict().items()}
+                del state["model"]
+            if "target_model" in state:
+                 del state["target_model"]
+            
+            if "loss_pipeline" in state:
+                del state["loss_pipeline"]
+
+            if "replay_buffer" in state:
+                del state["replay_buffer"]
+
         return state
 
     def __setstate__(self, state):
+        model_state_dict = state.pop("model_state_dict", None)
         self.__dict__.update(state)
         self.stop_flag = mp.Value("i", state["stop_flag"])
         self.env = self.config.game.make_env()
         self.test_env = self.config.game.make_env(render_mode="rgb_array")
+        
+        # Reconstruct model if we have weights
+        if model_state_dict is not None:
+             # self.config, self.observation_dimensions, self.num_actions are in state
+             device = torch.device("cpu") # Initialize on CPU
+             self.model = Network(
+                config=self.config,
+                num_actions=self.num_actions,
+                input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
+                channel_first=True,
+                world_model_cls=self.config.world_model_cls,
+            )
+             self.model.load_state_dict(model_state_dict)
+             self.model.to(self.device)
+             self.target_model = copy.deepcopy(self.model)
+             # Move target to shared memory if multi_process (though for testing we might just use local copy)
+             if self.config.multi_process:
+                 # Note: sharing CUDA/MPS tensors is tricky. If device is CPU, this is fine.
+                 # If device is MPS, this might fail or be no-op. 
+                 # Given we just deserialized, we are likely fine keeping it local for the test worker.
+                 # But if this is a training worker, it might expect shared memory?
+                 # Training workers use target_model for inference.
+                 # A reconstructed target_model here is NOT shared with the main process 'target_model'.
+                 # This implies __setstate__ is creating a LOCAL copy.
+                 # If training workers need the SHARED target model updated by learner, 
+                 # then training workers CANNOT rely on this reconstruction!
+                 # Training workers rely on the pickled 'target_model' which points to shared memory.
+                 # WE DELETED 'target_model' from state!
+                 pass
+

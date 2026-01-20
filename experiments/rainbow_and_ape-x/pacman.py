@@ -1483,7 +1483,7 @@ class Config(ConfigBase):
         self.training_iterations: int = self.parse_field(
             "training_iterations", 1, wrapper=int
         )
-        self.print_interval: int = self.parse_field("print_interval", 100, wrapper=int)
+
 
     def _verify_game(self):
         raise NotImplementedError
@@ -1556,11 +1556,11 @@ class BaseAgent:
 
     def determine_observation_dimensions(self, env: gym.Env):
         if isinstance(env.observation_space, gym.spaces.Box):
-            return env.observation_space.shape
+            return torch.Size(env.observation_space.shape)
         elif isinstance(env.observation_space, gym.spaces.Discrete):
-            return (1,)
+            return torch.Size((1,))
         elif isinstance(env.observation_space, gym.spaces.Tuple):
-            return (len(env.observation_space.spaces),)  # for tuple of discretes
+            return torch.Size((len(env.observation_space.spaces),))  # for tuple of discretes
         else:
             raise ValueError("Observation space not supported")
 
@@ -3573,12 +3573,12 @@ class RainbowAgent(BaseAgent):
         self.model = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
         )
         self.target_model = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
-            input_shape=(self.config.minibatch_size,) + self.observation_dimensions,
+            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
         )
 
         if not self.config.kernel_initializer == None:
@@ -3932,8 +3932,7 @@ class RainbowAgent(BaseAgent):
         state, info = self.env.reset()
 
         while self.training_step < self.config.training_steps:
-            if self.training_step % self.config.print_interval == 0:
-                self.print_training_progress()
+
 
             with torch.no_grad():
                 for _ in range(self.config.replay_interval):

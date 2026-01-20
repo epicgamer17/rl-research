@@ -1,9 +1,60 @@
-from dataclasses import dataclass
 import itertools
 import math
+import bisect
 import torch
 import torch.nn.init as init
-from torch import nn, Tensor
+from torch import nn, Tensor, optim
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from agent_configs.base_config import Config
+
+def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
+    """
+    Returns a learning rate scheduler based on the config parameters.
+    Supports: "linear", "step_wise", "none".
+    """
+    schedule_type = getattr(config, "lr_schedule_type", "none")
+
+    if schedule_type == "linear":
+        # Linear decay from initial LR to 0 (or small epsilon) over training steps
+        # LambdaLR is flexible.
+        training_steps = getattr(config, "training_steps", 10000)
+        
+        def lr_lambda(current_step: int):
+            return max(0.0, float(training_steps - current_step) / float(max(1, training_steps)))
+            
+        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    elif schedule_type == "step_wise":
+        # Step-wise decay: at step x, LR becomes value y
+        # We assume lr_schedule_steps and lr_schedule_values are lists
+        # We need to map steps to multipliers relative to initial LR
+        steps = getattr(config, "lr_schedule_steps", [])
+        values = getattr(config, "lr_schedule_values", [])
+        initial_lr = config.learning_rate
+        
+        assert len(steps) == len(values), "Length of steps and values must match for step_wise scheduler"
+        
+        # Sort just in case
+        combined = sorted(zip(steps, values), key=lambda x: x[0])
+        steps, values = zip(*combined) if combined else ([], [])
+        
+        def lr_lambda(current_step: int):
+            # Find the largest step <= current_step
+            idx = bisect.bisect_right(steps, current_step)
+            if idx == 0:
+                return 1.0 # Before first step, use initial LR
+            else:
+                # Use the value corresponding to the step we passed
+                # The value is the absolute LR, so divide by initial_lr to get lambda
+                return values[idx - 1] / initial_lr
+
+        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    else:
+        # No scheduling (constant LR)
+        return optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+
 
 
 def support_to_scalar(
@@ -240,6 +291,14 @@ def zero_weights_initializer(m: nn.Module) -> None:
         init.constant_(m.bias, 0.0)
 
 
+def one_hundredth_initializer(m: nn.Module) -> None:
+    """Initializes the weights to uniform(-0.01, 0.01)."""
+    if hasattr(m, "weight") and m.weight is not None:
+        init.uniform_(m.weight, -0.01, 0.01)
+    if hasattr(m, "bias") and m.bias is not None:
+        init.constant_(m.bias, 0.0)
+
+
 _epsilon = 1e-7
 
 from typing import Any, Callable, Optional, Tuple
@@ -333,6 +392,8 @@ def prepare_kernel_initializers(kernel_initializer: str, output_layer: bool = Fa
     #     return LecunNormal(seed=np.random.seed())
     elif kernel_initializer == "orthogonal":
         return nn.init.orthogonal_
+    elif kernel_initializer == "one_hundredth":
+        return one_hundredth_initializer
 
     raise ValueError(f"Invalid kernel initializer: {kernel_initializer}")
 
