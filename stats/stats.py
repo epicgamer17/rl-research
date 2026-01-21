@@ -5,7 +5,12 @@ from queue import Empty
 from typing import Dict, Optional, List, Any
 import matplotlib.pyplot as plt
 from enum import Enum, auto
-
+from stats.latent_pca import LatentPCAVisualizer
+from stats.latent_tsne import LatentTSNEVisualizer
+try:
+    from stats.latent_umap import LatentUMAPVisualizer
+except ImportError:
+    LatentUMAPVisualizer = None
 
 class PlotType(Enum):
     ROLLING_AVG = auto()
@@ -48,6 +53,7 @@ class StatTracker:
             self.targets = target_values or {}
             use_tensor_dicts = use_tensor_dicts or {}
             self.plot_configs = {}
+            self.latent_viz_data = {}
 
             if stat_keys:
                 for key in stat_keys:
@@ -160,6 +166,34 @@ class StatTracker:
         self.plot_configs[key]["types"].update(plot_types)
         self.plot_configs[key]["params"].update(params)
 
+    def add_latent_visualization(
+        self, 
+        key: str, 
+        latents: torch.Tensor, 
+        labels: Optional[torch.Tensor] = None, 
+        method: str = 'pca', 
+        **kwargs
+    ):
+        """
+        Updates the latent visualization data for a given key.
+        Only the latest batch is kept.
+        """
+        # Detach and move to CPU immediately to avoid holding GPU memory in buffer
+        if isinstance(latents, torch.Tensor):
+            latents = latents.detach().cpu()
+        if isinstance(labels, torch.Tensor):
+            labels = labels.detach().cpu()
+
+        if self._is_client:
+            self.queue.put(("add_latent_visualization", key, latents, labels, method, kwargs))
+        else:
+            self.latent_viz_data[key] = {
+                "latents": latents,
+                "labels": labels,
+                "method": method,
+                "kwargs": kwargs
+            }
+
     def plot_graphs(self, dir: Optional[str] = None):
         if self._is_client:
             raise RuntimeError("Cannot plot graphs from a client instance.")
@@ -176,37 +210,83 @@ class StatTracker:
             )
         }
 
-        fig, axs = plt.subplots(
-            len(collected_stats), 1, figsize=(10, 5 * len(collected_stats))
-        )
-        if len(collected_stats) == 1:
-            axs = [axs]
+        if len(collected_stats) > 0:
+            fig, axs = plt.subplots(
+                len(collected_stats), 1, figsize=(10, 5 * len(collected_stats))
+            )
+            if len(collected_stats) == 1:
+                axs = [axs]
 
-        for ax, (key, tensor) in zip(axs, collected_stats.items()):
-            config = self.plot_configs.get(key, {"types": set(), "params": {}})
-            print("plotting {}".format(key))
-            if isinstance(tensor, Dict):
-                for subkey, subtensor in tensor.items():
-                    print("  subkey {}".format(subkey))
-                    self._plot_tensor(ax, subtensor, f"{key}:{subkey}", config)
+            for ax, (key, tensor) in zip(axs, collected_stats.items()):
+                config = self.plot_configs.get(key, {"types": set(), "params": {}})
+                print("plotting {}".format(key))
+                if isinstance(tensor, Dict):
+                    for subkey, subtensor in tensor.items():
+                        print("  subkey {}".format(subkey))
+                        self._plot_tensor(ax, subtensor, f"{key}:{subkey}", config)
+                else:
+                    self._plot_tensor(ax, tensor, key, config)
+
+                # Plot target line if exists as a horizontal line
+                if key in self.targets and self.targets[key] is not None:
+                    target_value = self.targets[key]
+                    ax.axhline(
+                        y=target_value,
+                        color="r",
+                        linestyle="--",
+                        label=f"Target: {target_value}",
+                    )
+                    ax.legend()
+            
+            plt.tight_layout()
+            if dir:
+                fig.savefig(f"{dir}/{self.model_name}_stats.png")
+            plt.close(fig)
+        else:
+            fig = None
+
+        # Plot latent visualizations
+        for key, data in self.latent_viz_data.items():
+            print(f"plotting latent viz {key} using {data['method']}")
+            method = data['method'].lower()
+            latents = data['latents']
+            labels = data['labels']
+            kwargs = data['kwargs']
+            
+            visualizer = None
+            if method == 'pca':
+                visualizer = LatentPCAVisualizer(**kwargs)
+            elif method == 'tsne':
+                visualizer = LatentTSNEVisualizer(**kwargs)
+            elif method == 'umap':
+                if LatentUMAPVisualizer is None:
+                    print(f"Skipping UMAP for {key}: umap-learn not installed.")
+                    continue
+                visualizer = LatentUMAPVisualizer(**kwargs)
             else:
-                self._plot_tensor(ax, tensor, key, config)
+                print(f"Unknown latent visualization method: {method}")
+                continue
+            
+            if visualizer:
+                save_path = None
+                if dir:
+                    save_path = f"{dir}/{self.model_name}_{key}_{method}.png"
+                
+                # Check dimensionality before plotting
+                # flatten if needed is handled by visualizer, but let's be safe on input type
+                try:
+                    visualizer.plot(
+                        latents, 
+                        labels=labels, 
+                        save_path=save_path, 
+                        title=f"{self.model_name} - {key} ({method.upper()})",
+                        show=False
+                    )
+                except Exception as e:
+                    print(f"Error plotting latent viz {key}: {e}")
 
-            # Plot target line if exists as a horizontal line
-            if key in self.targets and self.targets[key] is not None:
-                target_value = self.targets[key]
-                ax.axhline(
-                    y=target_value,
-                    color="r",
-                    linestyle="--",
-                    label=f"Target: {target_value}",
-                )
-                ax.legend()
-
-        plt.tight_layout()
-        if dir:
-            plt.savefig(f"{dir}/{self.model_name}_stats.png")
-        plt.close(fig)
+        if fig:
+            plt.close(fig)
         return fig
 
     def _plot_tensor(self, ax, tensor: torch.Tensor, label: str, config: Dict):

@@ -189,6 +189,9 @@ class MuZeroConfig(
         self.action_embedding_dim = self.parse_field("action_embedding_dim", 32)
         self.single_action_plane = self.parse_field("single_action_plane", False)
 
+        self.latent_viz_method = self.parse_field("latent_viz_method", "pca")
+        self.latent_viz_interval = self.parse_field("latent_viz_interval", 1)  # how often within learn() to update buffer
+
     def _verify_game(self):
         # override alphazero game verification since muzero can play those games
         # assert self.game.is_image, "MuZero only supports image-based games right now"

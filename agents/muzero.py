@@ -581,9 +581,32 @@ class MuZeroAgent(MARLBaseAgent):
                     predictions_tensor["encoder_onehots"],
                     predictions_tensor["latent_code_probabilities"],
                 )
+            
+            # Categorize latent space by action
+            if self.training_step % self.config.latent_viz_interval == 0:
+                self._track_latent_visualization(
+                    predictions_tensor["latent_states"],
+                    actions,
+                )
 
         # --- 12. Return Losses for Logging ---
         return self._prepare_return_losses(loss_dict, loss_mean.item())
+
+    def _track_latent_visualization(self, latent_states, actions):
+        """Track latent space representations categorized by action."""
+        # Use root states (s0) and the first action (a0)
+        # latent_states: (B, K+1, ...)
+        # actions: (B, K)
+        s0 = latent_states[:, 0]
+        a0 = actions[:, 0]
+        
+        self.stats.add_latent_visualization(
+            "latent_root", 
+            s0, 
+            labels=a0, 
+            method=self.config.latent_viz_method
+        )
+
 
     def _stack_predictions(self, network_output_sequences):
         """Stack prediction lists into (B, K+1, ...) tensors."""
