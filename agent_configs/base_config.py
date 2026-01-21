@@ -147,6 +147,9 @@ class SearchConfig:
 
     def parse_search_params(self):
         self.num_simulations: int = self.parse_field("num_simulations", 800)
+        self.search_batch_size: int = self.parse_field("search_batch_size", 0)
+        self.use_virtual_mean: bool = self.parse_field("use_virtual_mean", False)
+        self.virtual_loss: float = self.parse_field("virtual_loss", 3.0)
         self.root_dirichlet_alpha: float = self.parse_field(
             "root_dirichlet_alpha", 0.25
         )
