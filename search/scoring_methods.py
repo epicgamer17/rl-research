@@ -51,8 +51,19 @@ class UCBScoring(ScoringMethod):
         # check if value_score is nan
         assert value_score == value_score, "value_score is nan"
         assert prior_score == prior_score, "prior_score is nan"
+        
+        # DEBUG: Print score components for comparison
+        if node.visits > 350:
+             q_val = node.get_child_q_from_parent(child) if child.expanded() else child.value()
+             # Identify A2 (High Q) vs A0 (Low Q)
+             label = "UNKNOWN"
+             if q_val > 1.5: label = "ACTION_2"
+             if q_val < 1.0: label = "ACTION_others"
+             
+             print(f"DEBUG SCORE [{label}]: N={child.visits} Q={q_val:.3f} ValScore={value_score:.3f} PScore={prior_score:.3f} Total={prior_score+value_score:.3f} Bounds=[{min_max_stats.min:.3f}, {min_max_stats.max:.3f}]")
 
         return prior_score + value_score
+
 
 
 class GumbelScoring(ScoringMethod):

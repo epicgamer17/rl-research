@@ -62,7 +62,7 @@ class BaseAgent(ABC):
         self.player_id = "player_0"
         self.training_step = 0
         # Safety checks for config values
-        total_steps = getattr(self.config, "training_steps", 1000)
+        total_steps = self.config.training_steps
         self.checkpoint_interval = max(total_steps // 30, 1)
         self.test_interval = max(total_steps // 30, 1)
         self.test_trials = 5

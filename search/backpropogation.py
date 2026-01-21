@@ -46,9 +46,8 @@ class AverageDiscountedReturnBackpropagator(Backpropagator):
             node_player = node.to_play
             # totals for this node = acc[node_player] (current Acc_p(i))
             # print(totals[i])
-            # print(acc[node_player])
             totals[i] = acc[node_player]
-
+            
             node.value_sum += totals[i]
             node.visits += 1
 

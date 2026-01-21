@@ -33,7 +33,7 @@ class DirichletInjector(PriorInjector):
         for i, action in enumerate(legal_moves):
             new_policy[action] = (1 - frac) * policy[action] + frac * noise[i]
 
-        return policy
+        return new_policy
 
 
 class ActionTargetInjector(PriorInjector):

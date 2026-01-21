@@ -202,7 +202,7 @@ class DecisionNode:
             self.children[action] = NodeType(p, self)
 
     def expanded(self):
-        assert (len(self.children) > 0) == (self.visits > 0)
+        # assert (len(self.children) > 0) == (self.visits > 0)
         return len(self.children) > 0
 
     def value(self):
@@ -271,11 +271,19 @@ class DecisionNode:
             (self.network_policy * q_vals).sum()
         )  # sum_pi(a) * q(a) but q(a)=0 for unvisited
 
+        if p_vis_sum == 0:
+            return 0.0
+
         term = sum_N * (expected_q_vis / p_vis_sum)
         return term
 
     def get_child_q_from_parent(self, child):
         if isinstance(child, DecisionNode):
+            if not child.expanded():
+                # For unexpanded nodes (e.g. during pruning of candidates),
+                # we rely on the bootstrap value (value()) which handles the estimation method.
+                return float(child.value())
+
             r = float(self.child_reward(child))
             # child.value() if visited else v_mix
             v = float(child.value())
