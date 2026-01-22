@@ -551,18 +551,20 @@ class CatanAECEnv(AECEnv):
 
         self.invalid_actions_count = {agent: 0 for agent in self.possible_agents}
 
-        original_colors = [self.color_map[agent] for agent in self.possible_agents]
-        start_color = self.game.state.current_color()
-        if start_color in original_colors:
-            start_idx = original_colors.index(start_color)
-            rotated_colors = original_colors[start_idx:] + original_colors[:start_idx]
-            self.color_map = {
-                agent: rotated_colors[i] for i, agent in enumerate(self.possible_agents)
-            }
-            self.agent_map = {color: agent for agent, color in self.color_map.items()}
-            self.catan_players = [
-                Player(color) for agent, color in self.color_map.items()
-            ]
+        # Map agents directly to the seating order (colors) decided by catanatron after the shuffle
+        # this ensures player_0 is always the first player, player_1 the second, etc.
+        shuffled_colors = self.game.state.colors
+        self.color_map = {
+            agent: shuffled_colors[i] for i, agent in enumerate(self.possible_agents)
+        }
+        self.agent_map = {color: agent for agent, color in self.color_map.items()}
+        # Re-initialize catan_players to match the new mapping if necessary
+        # However, catanatron already has the player objects, we just need to know which agent is which.
+        # But for consistency with __init__:
+        self.catan_players = [
+            next(p for p in self.game.state.players if p.color == self.color_map[agent])
+            for agent in self.possible_agents
+        ]
 
         self.agents = self.possible_agents[:]
         self._agent_selector = agent_selector(self.agents)
@@ -579,7 +581,13 @@ class CatanAECEnv(AECEnv):
 
         for agent in self.agents:
             self._cumulative_rewards[agent] += self.rewards.get(agent, 0)
-            self.infos[agent] = {"turn": self.game.state.num_turns}
+            self.infos[agent] = {
+                "turn": self.game.state.num_turns,
+                "player": self.possible_agents.index(agent),
+                "legal_moves": list(self._get_valid_action_indices())
+                if agent == self.agent_selection
+                else [],
+            }
 
         if self.render_mode == "human":
             self.render()
@@ -631,7 +639,13 @@ class CatanAECEnv(AECEnv):
 
         for agent in self.agents:
             self._cumulative_rewards[agent] += self.rewards[agent]
-            self.infos[agent] = {"turn": self.game.state.num_turns}
+            self.infos[agent] = {
+                "turn": self.game.state.num_turns,
+                "player": self.possible_agents.index(agent),
+                "legal_moves": list(self._get_valid_action_indices())
+                if agent == self.agent_selection
+                else [],
+            }
 
         if self.render_mode == "human":
             self.render()
@@ -761,6 +775,9 @@ class CatanAECEnv(AECEnv):
                     tile = map_tile
                     break
 
+            if tile is None:
+                continue
+
             # Determine tile color based on resource (None for desert)
             color = self.tile_colors.get(
                 getattr(tile, "resource", None), pygame.Color(200, 200, 200)
@@ -783,7 +800,7 @@ class CatanAECEnv(AECEnv):
                         tile = map_tile
                         break
 
-            if tile.resource is not None:  # Don't draw number on desert
+            if tile is not None and tile.resource is not None:  # Don't draw number on desert
                 number = tile.number
                 text = str(number)
                 color = (
@@ -802,7 +819,9 @@ class CatanAECEnv(AECEnv):
                 (int(x), int(y)),
                 10,
             )
-            port = board.map.ports_by_id[port_id]
+            port = board.map.ports_by_id.get(port_id)
+            if port is None:
+                continue
             text = port.resource if port.resource else "3:1"
             self._draw_text(
                 text,

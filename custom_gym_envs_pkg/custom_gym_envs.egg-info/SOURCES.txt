@@ -15,5 +15,6 @@ custom_gym_envs/envs/leduc_holdem.py
 custom_gym_envs/envs/matching_pennies.py
 custom_gym_envs/envs/mississippi_marbles.py
 custom_gym_envs/envs/nonstationary_armed_bandits.py
+custom_gym_envs/envs/slippery_grid_world.py
 custom_gym_envs/envs/tictactoe.py
 custom_gym_envs/envs/wardrobe.py
