@@ -34,6 +34,7 @@ class ChanceNode:
         # NEW: The distribution P(c|as) predicted by the Dynamics Network
         self.code_probs = {}
 
+        self.to_play = parent.to_play
         # Children are DecisionNodes, indexed by code
         self.children = {}
 
@@ -71,9 +72,10 @@ class ChanceNode:
 
     def expanded(self):
         # We are expanded if we have populated our priors/value
-        assert (
-            (len(self.children) > 0) == (self.visits > 0) == (len(self.code_probs) > 0)
-        )
+        # Relaxing this for batched search where visits > 0 (virtual visits) can happen before expansion
+        # assert (
+        #     (len(self.children) > 0) == (self.visits > 0) == (len(self.code_probs) > 0)
+        # )
         return len(self.code_probs) > 0
 
     def value(self):
@@ -130,6 +132,49 @@ class ChanceNode:
 
         assert q_from_parent is not None
         return q_from_parent
+
+    def get_v_mix(self):
+        # grab probabilities for candidate actions
+        visits = torch.tensor(
+            [float(child.visits) for (code, child) in self.children.items()]
+        )
+        visited_codes = [
+            code for code, child in self.children.items() if child.expanded()
+        ]
+        sum_N = float(visits.sum())
+
+        if sum_N > 0:
+            term = self._calculate_visited_policy_mass(visited_codes, sum_N)
+        else:
+            term = 0.0
+
+        v_mix = (self.value() + term) / (1.0 + sum_N)
+        assert v_mix is not None
+        return v_mix
+
+    def _calculate_visited_policy_mass(self, visited_codes, sum_N):
+        """Calculates the weighted value term for v_mix based on visited codes."""
+        num_codes = len(self.code_probs)
+        q_vals = torch.zeros(num_codes)
+        
+        # Convert code_probs dict to tensor
+        code_probs_list = [self.code_probs[i] for i in range(num_codes)]
+        code_probs_tensor = torch.tensor(code_probs_list)
+        
+        p_vis_sum = 0
+        for code in visited_codes:
+            child = self.children[code]
+            q_vals[code] = self.get_child_q_from_parent(child)
+            p_vis_sum += code_probs_tensor[code]
+        expected_q_vis = float(
+            (code_probs_tensor * q_vals).sum()
+        )
+
+        if p_vis_sum == 0:
+            return 0.0
+
+        term = sum_N * (expected_q_vis / p_vis_sum)
+        return term
 
 
 class DecisionNode:

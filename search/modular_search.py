@@ -187,6 +187,12 @@ class SearchAlgorithm:
             target_policy,
             # TODO: BEST ACTION SELECTION, WHERE? WHAT, HOW?
             torch.argmax(target_policy),
+            {
+                "network_policy": network_policy,
+                "network_value": v_pi_scalar,
+                "search_policy": target_policy,
+                "search_value": root.value(),
+            },
         )
 
     def _set_node_configs(self):
@@ -672,13 +678,18 @@ class SearchAlgorithm:
             for x in recurrent_inputs:
                 d = sim_data[x["idx"]]
                 is_chance_parent = isinstance(d["parent"], ChanceNode)
-                val = torch.tensor(x["action"]).to(self.device).detach() # Added detach for safety
+                raw_action = x["action"]
+                if isinstance(raw_action, torch.Tensor):
+                    val = raw_action.to(self.device).detach().clone()
+                else:
+                    val = torch.tensor(raw_action, device=self.device)
+
                 if is_chance_parent:
                      act_list.append(val.float().unsqueeze(0))
                 else:
                      act_list.append(val.unsqueeze(0))
 
-            actions = torch.cat(act_list, dim=0).unsqueeze(1) # (B, 1)
+            actions = torch.cat(act_list, dim=0)
 
             rhs = torch.cat([x["rh"] for x in recurrent_inputs], dim=0)
             rcs = torch.cat([x["rc"] for x in recurrent_inputs], dim=0)
