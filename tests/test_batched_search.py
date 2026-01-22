@@ -168,7 +168,7 @@ def test_equivalence_iterative_vs_batched_basics(batch_size):
     config_iter.root_exploration_fraction = 0.0 
     mcts_iter = create_mcts(config_iter, "cpu", config_iter.num_actions)
     
-    val_iter, policy_iter, target_iter, action_iter = mcts_iter.run(state, info, 0, inference_fns)
+    val_iter, policy_iter, target_iter, action_iter, _ = mcts_iter.run(state, info, 0, inference_fns)
     
     # 2. Batched
     torch.manual_seed(42)
@@ -179,7 +179,7 @@ def test_equivalence_iterative_vs_batched_basics(batch_size):
     config_batch.root_exploration_fraction = 0.0
     mcts_batch = create_mcts(config_batch, "cpu", config_batch.num_actions)
     
-    val_batch, policy_batch, target_batch, action_batch = mcts_batch.run(state, info, 0, inference_fns)
+    val_batch, policy_batch, target_batch, action_batch, _ = mcts_batch.run(state, info, 0, inference_fns)
 
     print(f"\nIter Val: {val_iter}, Batch Val: {val_batch}")
     print(f"Iter Action: {action_iter}, Batch Action: {action_batch}")
@@ -219,7 +219,7 @@ def test_batched_convergence_consistency(batch_size, virtual_loss):
     config.root_exploration_fraction = 0.0
     
     mcts = create_mcts(config, "cpu", config.num_actions)
-    val, _, target_policy, best_action = mcts.run(state, info, 0, inference_fns)
+    val, _, target_policy, best_action, _ = mcts.run(state, info, 0, inference_fns)
     
     assert best_action == 2, f"Failed to converge to action 2 with batch_size={batch_size}, VL={virtual_loss}. Policy: {target_policy}"
     
@@ -244,13 +244,13 @@ def test_gumbel_batched_vs_iterative():
     torch.manual_seed(42)
     config_iter = MockConfig(batch_size=0, gumbel=True)
     mcts_iter = create_mcts(config_iter, "cpu", 4)
-    _, _, target_iter, action_iter = mcts_iter.run(state, info, 0, inference_fns)
+    _, _, target_iter, action_iter, _ = mcts_iter.run(state, info, 0, inference_fns)
 
     # 2. Batched Gumbel
     torch.manual_seed(42)
     config_batch = MockConfig(batch_size=8, gumbel=True)
     mcts_batch = create_mcts(config_batch, "cpu", 4)
-    _, _, target_batch, action_batch = mcts_batch.run(state, info, 0, inference_fns)
+    _, _, target_batch, action_batch, _ = mcts_batch.run(state, info, 0, inference_fns)
     
     # assert action_iter == 2
     assert action_batch == 2, f"Action mismatch: {action_iter} vs {action_batch} vs target: 2. Policies: {target_iter} vs {target_batch}"
@@ -341,7 +341,7 @@ def test_randomized_stress_batching(iteration):
     
     batch_size = random.choice([1, 2, 4, 8, 16])
     gumbel = random.choice([True, False])
-    stochastic = False 
+    stochastic = random.choice([True, False])
     
     config = MockConfig(batch_size=batch_size, gumbel=gumbel, stochastic=stochastic)
     config.num_simulations = random.randint(10, 50)
@@ -355,7 +355,7 @@ def test_randomized_stress_batching(iteration):
     print(f"Stress Iter {iteration}: BS={batch_size}, Gumbel={gumbel}")
     
     try:
-        val, policy, _, action = mcts.run(state, info, 0, mocker.get_fns())
+        val, policy, _, action, _ = mcts.run(state, info, 0, mocker.get_fns())
         assert action in [0, 1, 2, 3]
     except Exception as e:
         import traceback
