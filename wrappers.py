@@ -509,7 +509,7 @@ class CatanatronWrapper(Wrapper):
         return obs, info
 
 
-import cv2
+import imageio
 import numpy as np
 import os
 from typing import Optional, Dict, Any, Callable
@@ -548,7 +548,6 @@ class RecordVideo(BaseWrapper):
         video_length: int = 0,
         name_prefix: str = "episode",
         fps: int = 30,
-        codec: str = "mp4v",
     ):
         super().__init__(env)
 
@@ -557,7 +556,6 @@ class RecordVideo(BaseWrapper):
         self.video_length = video_length
         self.name_prefix = name_prefix
         self.fps = fps
-        self.codec = codec
 
         # Create video directory
         os.makedirs(self.video_folder, exist_ok=True)
@@ -636,33 +634,23 @@ class RecordVideo(BaseWrapper):
 
         # Get a frame to determine video dimensions
         frame = self._get_frame()
-        if frame is None:
-            print(
-                f"Warning: Could not get frame for recording episode {self.episode_id}"
+        # Initialize imageio writer
+        try:
+            self.video_writer = imageio.get_writer(
+                video_path, fps=self.fps, macro_block_size=1
             )
-            return
-
-        height, width = frame.shape[:2]
-
-        # Initialize video writer
-        fourcc = cv2.VideoWriter_fourcc(*self.codec)
-        self.video_writer = cv2.VideoWriter(
-            video_path, fourcc, self.fps, (width, height)
-        )
-
-        if not self.video_writer.isOpened():
-            print(f"Warning: Could not open video writer for {video_path}")
+            self.recording = True
+            self.frames_recorded = 0
+            print(f"Started recording episode {self.episode_id} to {video_path}")
+        except Exception as e:
+            print(f"Warning: Could not open video writer for {video_path}: {e}")
             self.video_writer = None
             return
-
-        self.recording = True
-        self.frames_recorded = 0
-        print(f"Started recording episode {self.episode_id} to {video_path}")
 
     def _stop_recording(self):
         """Stop video recording and save file"""
         if self.video_writer is not None:
-            self.video_writer.release()
+            self.video_writer.close()
             self.video_writer = None
             print(
                 f"Stopped recording episode {self.episode_id}. Recorded {self.frames_recorded} frames."
@@ -676,19 +664,13 @@ class RecordVideo(BaseWrapper):
         try:
             # Try to render as rgb_array
             frame = self.env.render()
-            # Ensure frame is in correct format (BGR for OpenCV)
-            if len(frame.shape) == 3 and frame.shape[2] == 3:
-                # Convert RGB to BGR for OpenCV
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            elif len(frame.shape) == 3 and frame.shape[2] == 4:
-                # Convert RGBA to BGR
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
-            elif len(frame.shape) == 2:
-                # Convert grayscale to BGR
-                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            else:
-                print(f"Warning: Unexpected frame shape: {frame.shape}")
-
+            # imageio/ffmpeg expects RGB (PettingZoo/Pygame already provides this usually)
+            # If the frame has an alpha channel, we'll keep it or strip it depending on needs, 
+            # but usually for MP4 we want RGB.
+            if len(frame.shape) == 3 and frame.shape[2] == 4:
+                # Convert RGBA to RGB
+                frame = frame[:, :, :3]
+            
             return frame
 
         except Exception as e:
@@ -702,7 +684,7 @@ class RecordVideo(BaseWrapper):
 
         frame = self._get_frame()
         if frame is not None:
-            self.video_writer.write(frame)
+            self.video_writer.append_data(frame)
             self.frames_recorded += 1
 
     def close(self):
