@@ -3,6 +3,7 @@ import sys
 from time import time
 
 import torch
+from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 
 from agent_configs import PPOConfig
@@ -10,7 +11,6 @@ from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 
 from utils import (
-    normalize_policy,
     action_mask,
     get_legal_moves,
     update_linear_schedule,
@@ -20,8 +20,8 @@ from utils.utils import clip_low_prob_actions, normalize_policies, get_lr_schedu
 sys.path.append("../")
 
 import datetime
-from modules.ppo import Network
-from replay_buffers.base_replay_buffer import BasePPOReplayBuffer
+from modules.agent_nets.ppo import PPONetwork as Network
+from replay_buffers.buffer_factories import create_ppo_buffer
 from agents.agent import BaseAgent
 
 
@@ -104,12 +104,13 @@ class PPOAgent(BaseAgent):
         #     config=config,
         # )
 
-        self.replay_buffer = BasePPOReplayBuffer(
+        self.replay_buffer = create_ppo_buffer(
             observation_dimensions=self.observation_dimensions,
             observation_dtype=self.env.observation_space.dtype,
             max_size=self.config.replay_buffer_size,
             gamma=self.config.discount_factor,
             gae_lambda=self.config.gae_lambda,
+            num_actions=self.num_actions,
         )
 
         self.stats = {
@@ -170,10 +171,10 @@ class PPOAgent(BaseAgent):
         actions,
         log_probabilities,
         advantages,
-        info: dict = None,
+        legal_moves_mask: Tensor = None,
         mask_actions: bool = True,
     ):
-        assert info is not None if mask_actions else True, "Need info to mask actions"
+        assert legal_moves_mask is not None if mask_actions else True, "Need legal_moves_mask to mask actions"
         # print("Training Actor")
         inputs = inputs.to(self.device)
         actions = actions.to(self.device)
@@ -185,8 +186,7 @@ class PPOAgent(BaseAgent):
                 if self.discrete_action_space:
                     probabilities = self.model.actor(inputs)
                     if mask_actions:
-                        legal_moves = get_legal_moves(info)
-                        probabilities = action_mask(probabilities, legal_moves, mask_value=0)
+                        probabilities = torch.where(legal_moves_mask, probabilities, torch.tensor(0.0, device=self.device))
                         probabilities = normalize_policies(probabilities)
                     distribution = torch.distributions.Categorical(probabilities)
                 else:
@@ -221,8 +221,7 @@ class PPOAgent(BaseAgent):
             if self.discrete_action_space:
                 probabilities = self.model.actor(inputs)
                 if mask_actions:
-                    legal_moves = get_legal_moves(info)
-                    probabilities = action_mask(probabilities, legal_moves, mask_value=0)
+                    probabilities = torch.where(legal_moves_mask, probabilities, torch.tensor(0.0, device=self.device))
                     probabilities = normalize_policies(probabilities)
                 distribution = torch.distributions.Categorical(probabilities)
             else:
@@ -323,7 +322,7 @@ class PPOAgent(BaseAgent):
         log_probabilities = samples["log_probabilities"].to(self.device)
         advantages = samples["advantages"].to(self.device)
         returns = samples["returns"].to(self.device)
-        infos = samples["infos"].to(self.device)
+        legal_moves_masks = samples["legal_moves_masks"].to(self.device)
         inputs = self.preprocess(observations)
 
         indices = torch.randperm(len(observations))
@@ -347,13 +346,13 @@ class PPOAgent(BaseAgent):
                 batch_actions = actions[batch_indices]
                 batch_log_probabilities = log_probabilities[batch_indices]
                 batch_advantages = advantages[batch_indices]
-                batch_info = infos[batch_indices]
+                batch_mask = legal_moves_masks[batch_indices]
                 kl_divergence = self.actor_learn(
                     batch_observations,
                     batch_actions,
                     batch_log_probabilities,
                     batch_advantages,
-                    batch_info,
+                    batch_mask,
                 )
                 self.stats["actor_loss"].append(kl_divergence)
             if kl_divergence > 1.5 * self.config.target_kl:
@@ -390,6 +389,9 @@ class PPOAgent(BaseAgent):
                 # stat_critic_loss.append(critic_loss)
                 # stat_loss.append(critic_loss)
 
+        # Clear buffer after learning (On-Policy)
+        self.replay_buffer.clear()
+
     def train(self):
         super().train()
 
@@ -414,7 +416,12 @@ class PPOAgent(BaseAgent):
                     value = value[0][0]
 
                     self.replay_buffer.store(
-                        state, info, action, value, log_probability, reward
+                        observations=state,
+                        info=info,
+                        actions=action,
+                        values=value,
+                        log_probabilities=log_probability,
+                        rewards=reward
                     )
 
                     done = terminated or truncated
@@ -428,7 +435,7 @@ class PPOAgent(BaseAgent):
                             if done
                             else self.model.critic(self.preprocess(next_state))
                         )
-                        self.replay_buffer.finish_trajectory(last_value)
+                        self.replay_buffer.finalize_trajectory(last_value)
                         num_episodes += 1
                         state, info = self.env.reset()
                         score_dict = {"score": score}

@@ -20,7 +20,6 @@ class SupervisedConfig(ConfigBase, OptimizationConfig, ReplayConfig):
         self.clipnorm = self.parse_field("sl_clipnorm", 0)
         self.optimizer: Optimizer = self.parse_field("sl_optimizer", Adam)
         self.weight_decay = self.parse_field("sl_weight_decay", 0.0)
-        self.use_mixed_precision: bool = self.parse_field("use_mixed_precision", False)
         self.training_steps = self.parse_field("training_steps", required=True)
         self.training_iterations = self.parse_field("sl_training_iterations", 1)
         self.num_minibatches = self.parse_field("sl_num_minibatches", 1)

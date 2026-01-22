@@ -145,6 +145,7 @@ class PPOWriter(Writer):
     def __init__(self, max_size: int):
         super().__init__(max_size)
         self.pointer = 0
+        self.path_start_idx = 0
 
     def store(self) -> int | None:
         if self.size >= self.max_size:
@@ -160,6 +161,14 @@ class PPOWriter(Writer):
     def store_batch(self, batch_size):
         raise NotImplementedError("Batch store not implemented for PPOWriter.")
 
+    def start_new_path(self):
+        self.path_start_idx = self.pointer
+
+    @property
+    def path_slice(self):
+        return slice(self.path_start_idx, self.pointer)
+
     def clear(self):
         super().clear()
         self.pointer = 0
+        self.path_start_idx = 0

@@ -36,7 +36,7 @@ import sys
 sys.path.append("../../")
 
 from agents.agent import BaseAgent
-from modules.rainbow_dqn import RainbowNetwork
+from modules.agent_nets.rainbow_dqn import RainbowNetwork
 from stats.stats import PlotType, StatTracker
 
 

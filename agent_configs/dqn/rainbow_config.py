@@ -35,8 +35,6 @@ class RainbowConfig(Config, DistributionalConfig, NoisyConfig, EpsilonGreedyConf
         self.ema_beta: float = self.parse_field("ema_beta", 0.99)
         self.replay_interval: int = self.parse_field("replay_interval", 1, wrapper=int)
 
-        self.use_mixed_precision: bool = self.parse_field("use_mixed_precision", False)
-
         # self.per_alpha etc parsed in Config
 
         # Mixin: Distributional (Atom Size)

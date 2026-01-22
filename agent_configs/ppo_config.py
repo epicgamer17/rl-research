@@ -57,7 +57,9 @@ class PPOConfig(Config):
         # COULD SET ALL ACTOR STUFF IN ACTOR CONFIG AND CRITIC STUFF IN CRITIC CONFIG FOR NETWORK ARCHITECTURE
         self.noisy_sigma = self.parse_field("noisy_sigma", 0.0)
         self.critic_conv_layers = self.parse_field("conv_layers", [])
+        self.critic_conv_layers = self.parse_field("conv_layers", [])
         self.actor_conv_layers = self.parse_field("conv_layers", [])
+        self.support_range = self.parse_field("support_range", None, required=False)
         self.critic_dense_layer_widths = self.parse_field("critic_dense_layers", [])
         self.actor_dense_layer_widths = self.parse_field("actor_dense_layers", [])
 
@@ -76,8 +78,6 @@ class PPOConfig(Config):
         self.gae_lambda = self.parse_field("gae_lambda", 0.98)
         self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
-
-        self.use_mixed_precision: bool = self.parse_field("use_mixed_precision", False)
 
         self.clip_low_prob = self.parse_field("clip_low_prob", 0.00)
 

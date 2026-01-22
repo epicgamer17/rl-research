@@ -41,6 +41,8 @@ class BaseAgent(ABC):
 
         # 1. Device Setup
         if device:
+            if isinstance(device, str):
+                device = torch.device(device)
             self.device = device
         else:
             if torch.cuda.is_available():

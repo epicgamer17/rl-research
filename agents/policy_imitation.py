@@ -5,7 +5,7 @@ from agents.agent import BaseAgent
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam, SGD
 
-from modules.policy_imitation import SupervisedNetwork
+from modules.agent_nets.policy_imitation import SupervisedNetwork
 from replay_buffers.nfsp_reservoir_buffer import NFSPReservoirBuffer
 
 

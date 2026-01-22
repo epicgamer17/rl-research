@@ -152,9 +152,44 @@ class ModularReplayBuffer:
                 self.priority_lock.release()
 
         if self.size <= 1000:
-            print("Size:", self.size)
+            pass # print("Size:", self.size)
 
         return idx
+
+    def finalize_trajectory(self, last_value=0):
+        """
+        Signals the end of a trajectory for on-policy buffers (PPO).
+        Triggers GAE calculation via InputProcessor.
+        """
+        if not hasattr(self.writer, "path_slice"):
+            # Not a PPOWriter or doesn't support path tracking
+            return
+
+        path_slice = self.writer.path_slice
+        
+        # Call input processor to compute advantages/returns
+        if hasattr(self.input_processor, "finish_trajectory"):
+            result = self.input_processor.finish_trajectory(
+                self.buffers, path_slice, last_value
+            )
+            
+            if result is not None:
+                advantages, returns = result
+                # Assign back to buffers
+                # Assuming buffers 'advantages' and 'returns' exist
+                if "advantages" in self.buffers:
+                     if isinstance(advantages, np.ndarray):
+                        advantages = torch.from_numpy(advantages)
+                     self.buffers["advantages"][path_slice] = advantages
+                
+                if "returns" in self.buffers:
+                     if isinstance(returns, np.ndarray):
+                        returns = torch.from_numpy(returns)
+                     self.buffers["returns"][path_slice] = returns
+
+        # Advance path start index for next trajectory
+        if hasattr(self.writer, "start_new_path"):
+            self.writer.start_new_path()
 
     def store_aggregate(self, game_object, **kwargs):
         """

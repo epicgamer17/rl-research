@@ -110,6 +110,19 @@ class StackedInputProcessor(InputProcessor):
         for p in self.processors:
             p.clear()
 
+    def finish_trajectory(self, *args, **kwargs):
+        """
+        Delegates to any sub-processor that implements finish_trajectory.
+        Most useful for PPO GAE calculation.
+        """
+        # We might have multiple processors that do post-processing?
+        # Typically PPO only has one. Return the result of the first one found.
+        # Or construct a pipeline? For PPOInputProcessor it returns advantages/returns.
+        for p in self.processors:
+            if hasattr(p, "finish_trajectory"):
+                return p.finish_trajectory(*args, **kwargs)
+        return None
+
 
 class StackedOutputProcessor(OutputProcessor):
     """
@@ -379,7 +392,7 @@ class PPOInputProcessor(InputProcessor):
 
     def process_single(self, *args, **kwargs):
         # PPO usually stores directly, then post-processes at end of trajectory.
-        return args
+        return kwargs
 
     def finish_trajectory(self, buffers, trajectory_slice, last_value=0):
         """
@@ -400,8 +413,14 @@ class PPOInputProcessor(InputProcessor):
 
         deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
 
-        advantages = discounted_cumulative_sums(deltas, self.gamma * self.gae_lambda)
-        returns = discounted_cumulative_sums(rewards, self.gamma)[:-1]
+        deltas_np = deltas.detach().cpu().numpy()
+        rewards_np = rewards.detach().cpu().numpy()
+
+        advantages_np = discounted_cumulative_sums(deltas_np, self.gamma * self.gae_lambda)
+        returns_np = discounted_cumulative_sums(rewards_np, self.gamma)[:-1]
+
+        advantages = torch.tensor(advantages_np.copy(), dtype=torch.float32)
+        returns = torch.tensor(returns_np.copy(), dtype=torch.float32)
 
         return advantages, returns
 
@@ -680,9 +699,9 @@ class PPOOutputProcessor(OutputProcessor):
         # In PPO 'indices' usually implies the whole buffer, or this is called after shuffling.
 
         # 1. Normalize Advantages
-        adv_buffer = buffers["adv"]
-        advantage_mean = torch.mean(torch.tensor(adv_buffer, dtype=torch.float32))
-        advantage_std = torch.std(torch.tensor(adv_buffer, dtype=torch.float32))
+        adv_buffer = buffers["advantages"]
+        advantage_mean = torch.mean(adv_buffer)
+        advantage_std = torch.std(adv_buffer)
 
         normalized_advantages = (adv_buffer - advantage_mean) / (advantage_std + 1e-10)
 
@@ -695,12 +714,12 @@ class PPOOutputProcessor(OutputProcessor):
             sl = indices
 
         return dict(
-            observations=buffers["obs"][sl],
-            actions=buffers["act"][sl],
+            observations=buffers["observations"][sl],
+            actions=buffers["actions"][sl],
             advantages=normalized_advantages[sl],
-            returns=buffers["ret"][sl],
-            log_probabilities=buffers["log_prob"][sl],
-            legal_moves_masks=buffers["legal_mask"][sl],
+            returns=buffers["returns"][sl],
+            log_probabilities=buffers["log_probabilities"][sl],
+            legal_moves_masks=buffers["legal_moves_masks"][sl],
         )
 
 

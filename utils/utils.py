@@ -429,3 +429,11 @@ def numpy_dtype_to_torch_dtype(np_dtype):
     temp_np_array = np.empty([], dtype=np_dtype)
     # Convert it to a PyTorch tensor and extract its dtype
     return torch.from_numpy(temp_np_array).dtype
+
+
+def get_lr_scheduler(optimizer: torch.optim.Optimizer, config):
+    if config.lr_schedule_type == "none":
+        return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0)
+    
+    print(f"Warning: Unknown lr_schedule_type {config.lr_schedule_type}, using ConstantLR")
+    return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0)
