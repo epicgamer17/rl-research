@@ -60,6 +60,10 @@ class PolicyImitationAgent(BaseAgent):
         
         self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
+        if self.config.use_mixed_precision:
+            self.scaler = torch.amp.GradScaler(device=self.device.type)
+
+
     def select_actions(self, predictions):
         distribution = torch.distributions.Categorical(probs=predictions)
         # print("Probabilities", predictions)
@@ -97,14 +101,28 @@ class PolicyImitationAgent(BaseAgent):
                 for mask in legal_moves_masks
             ]
 
-            policy = self.predict(observations, infos)
-            loss = self.config.loss_function(policy, targets).mean()
+            if self.config.use_mixed_precision:
+                with torch.amp.autocast(device_type=self.device.type):
+                    policy = self.predict(observations, infos)
+                    loss = self.config.loss_function(policy, targets).mean()
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            if self.config.clipnorm > 0:
-                clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-            self.optimizer.step()
+                self.optimizer.zero_grad()
+                self.scaler.scale(loss).backward()
+                if self.config.clipnorm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                policy = self.predict(observations, infos)
+                loss = self.config.loss_function(policy, targets).mean()
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                if self.config.clipnorm > 0:
+                    clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+                self.optimizer.step()
+
             self.lr_scheduler.step()
 
             # RESET NOISE IF IM DOING THAT

@@ -109,6 +109,10 @@ class RainbowAgent(BaseAgent):
         
         self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
+        if self.config.use_mixed_precision:
+            self.scaler = torch.amp.GradScaler(device=self.device.type)
+
+
         self.replay_buffer = create_dqn_buffer(
             observation_dimensions=self.observation_dimensions,
             max_size=self.config.replay_buffer_size,
@@ -229,18 +233,36 @@ class RainbowAgent(BaseAgent):
             # 2. Run Pipeline
             # This handles ensure_predictions -> ensure_targets -> compute_loss
             # It returns the sum of all losses and the primary elementwise loss for PER
-            loss, elementwise_loss = self.loss_pipeline.run(self, context)
+            if self.config.use_mixed_precision:
+                with torch.amp.autocast(device_type=self.device.type):
+                    loss, elementwise_loss = self.loss_pipeline.run(self, context)
+            
+                # 3. Optimization
+                self.optimizer.zero_grad()
+                self.scaler.scale(loss).backward()
 
-            # 3. Optimization
-            self.optimizer.zero_grad()
-            loss.backward()
+                if self.config.clipnorm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.config.clipnorm
+                    )
 
-            if self.config.clipnorm > 0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.config.clipnorm
-                )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss, elementwise_loss = self.loss_pipeline.run(self, context) # run handles devices
+                
+                # 3. Optimization
+                self.optimizer.zero_grad()
+                loss.backward()
 
-            self.optimizer.step()
+                if self.config.clipnorm > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.config.clipnorm
+                    )
+
+                self.optimizer.step()
+            
             self.lr_scheduler.step()
 
             # 4. Update Priorities (PER)

@@ -66,6 +66,9 @@ class PrioritizedSampler(Sampler):
     def sample(self, buffer_size: int, batch_size: int):
         indices = self._sample_proportional(buffer_size, batch_size)
 
+        # Safety clamp for floating point artifacts
+        indices = [min(idx, buffer_size - 1) for idx in indices]
+
         assert all(
             idx < buffer_size for idx in indices
         ), f"Sampled index exceeds current buffer size, indices: {indices}, sum_tree: {self.sum_tree}, min_tree: {self.min_tree}"
@@ -97,6 +100,10 @@ class PrioritizedSampler(Sampler):
         for i in range(batch_size):
             a = priority_segment * i
             b = priority_segment * (i + 1)
+            # Fix floating point precision overshooting
+            if b > total_priority:
+                b = total_priority
+            
             upperbound = np.random.uniform(a, b)
             idx = self.sum_tree.retrieve(upperbound)
             indices.append(idx)

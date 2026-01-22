@@ -146,6 +146,10 @@ class MuZeroAgent(MARLBaseAgent):
         
         self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
+        if self.config.use_mixed_precision:
+            self.scaler = torch.amp.GradScaler(device=self.device.type)
+
+
         test_score_keys = [
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
         ]
@@ -438,83 +442,84 @@ class MuZeroAgent(MARLBaseAgent):
         inputs = self.preprocess(observations)
 
         # --- 2. Initial Inference ---
-        (
-            initial_values,
-            initial_policies,
-            hidden_states,
-        ) = self.predict_initial_inference(inputs, model=self.model)
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.config.use_mixed_precision):
+            (
+                initial_values,
+                initial_policies,
+                hidden_states,
+            ) = self.predict_initial_inference(inputs, model=self.model)
 
-        # This list will capture predicted latent states ŝ_{t}, ŝ_{t+1}, ..., ŝ_{t+K}
-        # `hidden_state` at this point is s_t (from initial inference)
+            # This list will capture predicted latent states ŝ_{t}, ŝ_{t+1}, ..., ŝ_{t+K}
+            # `hidden_state` at this point is s_t (from initial inference)
 
-        reward_h_states = torch.zeros(
-            1, self.config.minibatch_size, self.config.lstm_hidden_size
-        ).to(self.device)
-        reward_c_states = torch.zeros(
-            1, self.config.minibatch_size, self.config.lstm_hidden_size
-        ).to(self.device)
+            reward_h_states = torch.zeros(
+                1, self.config.minibatch_size, self.config.lstm_hidden_size
+            ).to(self.device)
+            reward_c_states = torch.zeros(
+                1, self.config.minibatch_size, self.config.lstm_hidden_size
+            ).to(self.device)
 
-        gradient_scales = [1.0] + [
-            1.0 / self.config.unroll_steps
-        ] * self.config.unroll_steps
+            gradient_scales = [1.0] + [
+                1.0 / self.config.unroll_steps
+            ] * self.config.unroll_steps
 
-        network_output_sequences = self.model.world_model.unroll_sequence(
-            agent=self,
-            initial_hidden_state=hidden_states,
-            initial_values=initial_values,
-            initial_policies=initial_policies,
-            actions=actions,
-            target_observations=target_observations,
-            target_chance_codes=target_chance_codes,
-            reward_h_states=reward_h_states,
-            reward_c_states=reward_c_states,
-            preprocess_fn=self.preprocess,
-        )
-
-        # --- 5. Stack Results into (B, K+1, ...) Tensors ---
-        predictions_tensor = self._stack_predictions(network_output_sequences)
-
-        targets_tensor = {
-            "values": target_values,
-            "rewards": target_rewards,
-            "policies": target_policies,
-            "to_plays": target_to_plays,
-        }
-
-        # Add stochastic targets (indexed at k-1)
-        if self.config.stochastic:
-            # ensure chance_values have k + 1 steps for indexing consistency, first index is invalid so should be 0
-            targets_tensor["chance_values"] = torch.zeros_like(target_values)
-            targets_tensor["chance_values"][:, 1:] = target_values[
-                :, :-1
-            ]  # TODO: LightZero this is the value of the next state (ie offset by one step)
-            targets_tensor["encoder_onehots"] = predictions_tensor["encoder_onehots"]
-
-        gradient_scales_tensor = torch.tensor(
-            gradient_scales, device=self.device
-        ).reshape(
-            1, -1
-        )  # (1, K+1)
-
-        # --- 6. Create Context for Loss Computation ---
-        context = {
-            "has_valid_obs_mask": has_valid_obs_mask,
-            "has_valid_action_mask": has_valid_action_mask,
-            "target_observations": target_observations,
-        }
-
-        # --- 7. Train for Multiple Iterations ---
-        for training_iteration in range(self.config.training_iterations):
-            # Run the modular loss pipeline
-            loss_mean, loss_dict, priorities = self.loss_pipeline.run(
-                predictions_tensor=predictions_tensor,
-                targets_tensor=targets_tensor,
-                context=context,
-                weights=weights,
-                gradient_scales=gradient_scales_tensor,
-                config=self.config,
-                device=self.device,
+            network_output_sequences = self.model.world_model.unroll_sequence(
+                agent=self,
+                initial_hidden_state=hidden_states,
+                initial_values=initial_values,
+                initial_policies=initial_policies,
+                actions=actions,
+                target_observations=target_observations,
+                target_chance_codes=target_chance_codes,
+                reward_h_states=reward_h_states,
+                reward_c_states=reward_c_states,
+                preprocess_fn=self.preprocess,
             )
+
+            # --- 5. Stack Results into (B, K+1, ...) Tensors ---
+            predictions_tensor = self._stack_predictions(network_output_sequences)
+
+            targets_tensor = {
+                "values": target_values,
+                "rewards": target_rewards,
+                "policies": target_policies,
+                "to_plays": target_to_plays,
+            }
+
+            # Add stochastic targets (indexed at k-1)
+            if self.config.stochastic:
+                # ensure chance_values have k + 1 steps for indexing consistency, first index is invalid so should be 0
+                targets_tensor["chance_values"] = torch.zeros_like(target_values)
+                targets_tensor["chance_values"][:, 1:] = target_values[
+                    :, :-1
+                ]  # TODO: LightZero this is the value of the next state (ie offset by one step)
+                targets_tensor["encoder_onehots"] = predictions_tensor["encoder_onehots"]
+
+            gradient_scales_tensor = torch.tensor(
+                gradient_scales, device=self.device
+            ).reshape(
+                1, -1
+            )  # (1, K+1)
+
+            # --- 6. Create Context for Loss Computation ---
+            context = {
+                "has_valid_obs_mask": has_valid_obs_mask,
+                "has_valid_action_mask": has_valid_action_mask,
+                "target_observations": target_observations,
+            }
+
+            # --- 7. Train for Multiple Iterations ---
+            for training_iteration in range(self.config.training_iterations):
+                # Run the modular loss pipeline
+                loss_mean, loss_dict, priorities = self.loss_pipeline.run(
+                    predictions_tensor=predictions_tensor,
+                    targets_tensor=targets_tensor,
+                    context=context,
+                    weights=weights,
+                    gradient_scales=gradient_scales_tensor,
+                    config=self.config,
+                    device=self.device,
+                )
 
             # --- 8. Logging at Checkpoint ---
             if self.training_step % self.checkpoint_interval == 0:
@@ -534,10 +539,20 @@ class MuZeroAgent(MARLBaseAgent):
 
             # --- 9. Backpropagation and Optimization ---
             self.optimizer.zero_grad()
-            loss_mean.backward()
-            if self.config.clipnorm > 0:
-                clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-            self.optimizer.step()
+            
+            if self.config.use_mixed_precision:
+                self.scaler.scale(loss_mean).backward()
+                if self.config.clipnorm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss_mean.backward()
+                if self.config.clipnorm > 0:
+                    clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+                self.optimizer.step()
+            
             self.lr_scheduler.step()
             
             if self.device == "mps":

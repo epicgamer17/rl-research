@@ -85,7 +85,12 @@ class PPOAgent(BaseAgent):
             )
         
         self.actor_scheduler = get_lr_scheduler(self.actor_optimizer, self.config)
+        self.actor_scheduler = get_lr_scheduler(self.actor_optimizer, self.config)
         self.critic_scheduler = get_lr_scheduler(self.critic_optimizer, self.config)
+
+        if self.config.use_mixed_precision:
+            self.scaler = torch.amp.GradScaler(device=self.device.type)
+
 
         # self.actor = ActorNetwork(
         #     input_shape=self.observation_dimensions,
@@ -175,51 +180,90 @@ class PPOAgent(BaseAgent):
         log_probabilities = log_probabilities.to(self.device)
         advantages = advantages.to(self.device)
 
-        if self.discrete_action_space:
-            probabilities = self.model.actor(inputs)
-            if mask_actions:
-                legal_moves = get_legal_moves(info)
-                probabilities = action_mask(probabilities, legal_moves, mask_value=0)
-                probabilities = normalize_policies(probabilities)
-            distribution = torch.distributions.Categorical(probabilities)
+        if self.config.use_mixed_precision:
+            with torch.amp.autocast(device_type=self.device.type):
+                if self.discrete_action_space:
+                    probabilities = self.model.actor(inputs)
+                    if mask_actions:
+                        legal_moves = get_legal_moves(info)
+                        probabilities = action_mask(probabilities, legal_moves, mask_value=0)
+                        probabilities = normalize_policies(probabilities)
+                    distribution = torch.distributions.Categorical(probabilities)
+                else:
+                    mean, std = self.model.actor(inputs)
+                    distribution = torch.distributions.Normal(mean, std)
+
+                log_ratios = distribution.log_prob(actions) - log_probabilities
+
+                probability_ratios = torch.exp(log_ratios)
+
+                clipped_probability_ratios = torch.clamp(
+                    probability_ratios,
+                    1 - self.config.clip_param,
+                    1 + self.config.clip_param,
+                )
+
+                actor_loss = torch.max(
+                    -probability_ratios * advantages, -clipped_probability_ratios * advantages
+                ).mean()
+
+                entropy_loss = distribution.entropy().mean()
+                actor_loss = actor_loss - (self.config.entropy_coefficient * entropy_loss)
+            
+            self.actor_optimizer.zero_grad()
+            self.scaler.scale(actor_loss).backward()
+            if self.config.actor.clipnorm > 0:
+                self.scaler.unscale_(self.actor_optimizer)
+                clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
+            self.scaler.step(self.actor_optimizer)
+            self.scaler.update()
         else:
-            mean, std = self.model.actor(inputs)
-            distribution = torch.distributions.Normal(mean, std)
+            if self.discrete_action_space:
+                probabilities = self.model.actor(inputs)
+                if mask_actions:
+                    legal_moves = get_legal_moves(info)
+                    probabilities = action_mask(probabilities, legal_moves, mask_value=0)
+                    probabilities = normalize_policies(probabilities)
+                distribution = torch.distributions.Categorical(probabilities)
+            else:
+                mean, std = self.model.actor(inputs)
+                distribution = torch.distributions.Normal(mean, std)
 
-        # tensor_actions = (
-        #     torch.clone(actions).to(torch.float16).detach().requires_grad_(True)
-        # )
+            # tensor_actions = (
+            #     torch.clone(actions).to(torch.float16).detach().requires_grad_(True)
+            # )
 
-        log_ratios = distribution.log_prob(actions) - log_probabilities
+            log_ratios = distribution.log_prob(actions) - log_probabilities
 
-        probability_ratios = torch.exp(log_ratios)
-        # min_advantages = tf.where(
-        #     advantages > 0,
-        #     (1 + self.clip_param) * advantages,
-        #     (1 - self.clip_param) * advantages,
-        # )
+            probability_ratios = torch.exp(log_ratios)
+            # min_advantages = tf.where(
+            #     advantages > 0,
+            #     (1 + self.clip_param) * advantages,
+            #     (1 - self.clip_param) * advantages,
+            # )
 
-        clipped_probability_ratios = torch.clamp(
-            probability_ratios,
-            1 - self.config.clip_param,
-            1 + self.config.clip_param,
-        )
+            clipped_probability_ratios = torch.clamp(
+                probability_ratios,
+                1 - self.config.clip_param,
+                1 + self.config.clip_param,
+            )
 
-        # print((probability_ratios * advantages).shape)
-        # print((clipped_probability_ratios * advantages).shape)
+            # print((probability_ratios * advantages).shape)
+            # print((clipped_probability_ratios * advantages).shape)
 
-        actor_loss = torch.max(
-            -probability_ratios * advantages, -clipped_probability_ratios * advantages
-        ).mean()
+            actor_loss = torch.max(
+                -probability_ratios * advantages, -clipped_probability_ratios * advantages
+            ).mean()
 
-        entropy_loss = distribution.entropy().mean()
-        actor_loss = actor_loss - (self.config.entropy_coefficient * entropy_loss)
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        if self.config.actor.clipnorm > 0:
-            clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
+            entropy_loss = distribution.entropy().mean()
+            actor_loss = actor_loss - (self.config.entropy_coefficient * entropy_loss)
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            if self.config.actor.clipnorm > 0:
+                clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
 
-        self.actor_optimizer.step()
+            self.actor_optimizer.step()
+
         with torch.no_grad():
             kl_divergence = torch.mean(
                 log_probabilities - distribution.log_prob(actions)
@@ -238,18 +282,33 @@ class PPOAgent(BaseAgent):
         inputs = inputs.to(self.device)
         returns = returns.to(self.device)
 
-        critic_loss = (
-            self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
-        ).mean()
+        if self.config.use_mixed_precision:
+            with torch.amp.autocast(device_type=self.device.type):
+                critic_loss = (
+                    self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
+                ).mean()
 
-        print("critic loss", critic_loss)
-        print(critic_loss.requires_grad)
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        if self.config.critic.clipnorm > 0:
-            clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
+            print("critic loss", critic_loss)
+            self.critic_optimizer.zero_grad()
+            self.scaler.scale(critic_loss).backward()
+            if self.config.critic.clipnorm > 0:
+                self.scaler.unscale_(self.critic_optimizer)
+                clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
+            self.scaler.step(self.critic_optimizer)
+            self.scaler.update()
+        else:
+            critic_loss = (
+                self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
+            ).mean()
 
-        self.critic_optimizer.step()
+            print("critic loss", critic_loss)
+            print(critic_loss.requires_grad)
+            self.critic_optimizer.zero_grad()
+            critic_loss.backward()
+            if self.config.critic.clipnorm > 0:
+                clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
+
+            self.critic_optimizer.step()
         return critic_loss.detach()
 
     def learn(self):

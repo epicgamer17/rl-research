@@ -59,7 +59,14 @@ class BaseAgent(ABC):
         self.replay_buffer = None  # Placeholder
 
         # 3. Training Params
-        self.player_id = "player_0"
+        if hasattr(env, "possible_agents") and env.possible_agents:
+            self.player_id = env.possible_agents[0]
+            assert self.player_id == "player_0"
+        elif hasattr(env, "agents") and env.agents:
+            self.player_id = env.agents[0]
+            assert self.player_id == "player_0"
+        else:
+            self.player_id = "player_0"
         self.training_step = 0
         # Safety checks for config values
         total_steps = self.config.training_steps

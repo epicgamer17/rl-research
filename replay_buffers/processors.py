@@ -589,7 +589,11 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
         target_rewards = torch.zeros(
             (batch_size, self.unroll_steps + 1), dtype=torch.float32, device=device
         )
-        lookahead_window = self.unroll_steps + self.n_step
+        
+        # Max index for rewards is raw_rewards.shape[1] - 1
+        # Max index for values is raw_values.shape[1] - 1
+        num_rewards = raw_rewards.shape[1]
+        num_values = raw_values.shape[1]
 
         value_prefix = 0.0
         horizon_id = 0  # Initialize horizon_id
@@ -630,12 +634,14 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
 
             for k in range(self.n_step):
                 r_idx = u + k
-                if r_idx >= lookahead_window:
+                if r_idx >= num_rewards:
                     break
                 
                 # Valid step: Game ID match AND not explicitly ended via dones
                 r_is_valid = valid_mask[:, r_idx] & (~has_ended)
                 
+                # Use the player who earned the reward (acting player at step r_idx)
+                # If raw_to_plays[r_idx] is the player at state r_idx, this is correct.
                 step_player = raw_to_plays[:, r_idx]
                 sign = torch.where(current_player == step_player, 1.0, -1.0)
                 reward_chunk = (self.gamma**k) * raw_rewards[:, r_idx] * sign
@@ -643,12 +649,12 @@ class MuZeroUnrollOutputProcessor(OutputProcessor):
                     r_is_valid, reward_chunk, torch.tensor(0.0, device=device)
                 )
                 
-                # If current step is done, mark as ended for *future* steps
-                # (current reward is the final transition reward)
-                has_ended = has_ended | (raw_dones[:, r_idx] & valid_mask[:, r_idx])
+                # If NEXT state is done, mark as ended for *future* steps
+                # raw_rewards[r_idx] is the reward for transition r_idx -> r_idx + 1
+                has_ended = has_ended | (raw_dones[:, r_idx + 1] & (r_idx + 1 < raw_dones.shape[1]))
 
             boot_idx = u + self.n_step
-            if boot_idx < lookahead_window:
+            if boot_idx < num_values:
                 b_is_valid = valid_mask[:, boot_idx] & (~has_ended)
                 boot_player = raw_to_plays[:, boot_idx]
                 sign_boot = torch.where(current_player == boot_player, 1.0, -1.0)

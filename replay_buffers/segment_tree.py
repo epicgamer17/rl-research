@@ -104,7 +104,7 @@ class SegmentTree:
     def __setitem__(self, idx: int, val: float):
         """Set value in tree."""
         idx += self.capacity
-        self.tree[idx] = val
+        self.tree[idx] = float(val)
 
         idx //= 2
         while idx >= 1:

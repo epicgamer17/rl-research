@@ -77,6 +77,8 @@ class PPOConfig(Config):
         self.entropy_coefficient = self.parse_field("entropy_coefficient", 0.001)
         self.critic_coefficient = self.parse_field("critic_coefficient", 0.5)
 
+        self.use_mixed_precision: bool = self.parse_field("use_mixed_precision", False)
+
         self.clip_low_prob = self.parse_field("clip_low_prob", 0.00)
 
         assert not (

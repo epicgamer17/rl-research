@@ -134,6 +134,7 @@ class MuZeroConfig(
 
         self.multi_process: bool = self.parse_field("multi_process", True)
         self.num_workers: int = self.parse_field("num_workers", 4)
+        self.use_mixed_precision: bool = self.parse_field("use_mixed_precision", False)
         self.lr_ratio: float = self.parse_field("lr_ratio", float("inf"))
         self.transfer_interval: int = self.parse_field("transfer_interval", 1000)
 
@@ -153,7 +154,7 @@ class MuZeroConfig(
         # Mixin: Consistency
         self.parse_consistency_params()
 
-        self.mask_absorbing = self.parse_field("mask_absorbing", False)
+        self.mask_absorbing = self.parse_field("mask_absorbing", True)
 
         # Mixin: Value Prefix
         self.parse_value_prefix_params()

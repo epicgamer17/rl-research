@@ -151,6 +151,9 @@ class ModularReplayBuffer:
             if self.is_shared:
                 self.priority_lock.release()
 
+        if self.size <= 1000:
+            print("Size:", self.size)
+
         return idx
 
     def store_aggregate(self, game_object, **kwargs):
@@ -161,6 +164,9 @@ class ModularReplayBuffer:
         # 1. Process Game
         # Expecting a dictionary of tensors: {'observations': ..., 'actions': ...}
         data = self.input_processor.process_game(game_object, **kwargs)
+
+        if self.size <= 1000:
+            print("Size:", self.size)
 
         # We need to know how many items to write to reserve space
         # We assume the input processor returns a dict where values are arrays/tensors of equal length
