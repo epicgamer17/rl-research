@@ -54,6 +54,7 @@ class StatTracker:
             use_tensor_dicts = use_tensor_dicts or {}
             self.plot_configs = {}
             self.latent_viz_data = {}
+            self.custom_viz_data = {}
 
             if stat_keys:
                 for key in stat_keys:
@@ -62,6 +63,22 @@ class StatTracker:
                         target_value=self.targets.get(key),
                         subkeys=use_tensor_dicts.get(key),
                     )
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # Ensure new attributes exist even in legacy objects
+        if not hasattr(self, 'custom_viz_data'):
+            self.custom_viz_data = {}
+        if not hasattr(self, 'latent_viz_data'):
+            self.latent_viz_data = {}
+        if not hasattr(self, 'plot_configs'):
+            self.plot_configs = {}
+        if not hasattr(self, 'targets'):
+            self.targets = {}
+        if not hasattr(self, 'time_elapsed'):
+            self.time_elapsed = 0.0
+        if not hasattr(self, 'num_steps'):
+            self.num_steps = 0
 
     def get_client(self) -> "StatTracker":
         """Returns a lightweight client instance for passing to a worker process."""
@@ -194,6 +211,25 @@ class StatTracker:
                 "kwargs": kwargs
             }
 
+    def add_custom_visualization(
+        self, 
+        key: str, 
+        data: Any, 
+        visualizer: Any = None, 
+        **kwargs
+    ):
+        """
+        Updates custom visualization data for a given key.
+        """
+        if self._is_client:
+            self.queue.put(("add_custom_visualization", key, data, visualizer, kwargs))
+        else:
+            self.custom_viz_data[key] = {
+                "data": data,
+                "visualizer": visualizer,
+                "kwargs": kwargs
+            }
+
     def plot_graphs(self, dir: Optional[str] = None):
         if self._is_client:
             raise RuntimeError("Cannot plot graphs from a client instance.")
@@ -285,6 +321,28 @@ class StatTracker:
                 except Exception as e:
                     print(f"Error plotting latent viz {key}: {e}")
 
+        # Plot custom visualizations
+        for key, data in self.custom_viz_data.items():
+            print(f"plotting custom viz {key}")
+            visualizer = data['visualizer']
+            viz_data = data['data']
+            kwargs = data['kwargs']
+            
+            if visualizer and hasattr(visualizer, 'plot'):
+                save_path = None
+                if dir:
+                    save_path = f"{dir}/{self.model_name}_{key}_custom.png"
+                
+                try:
+                    visualizer.plot(
+                        viz_data, 
+                        save_path=save_path, 
+                        title=f"{self.model_name} - {key}",
+                        **kwargs
+                    )
+                except Exception as e:
+                    print(f"Error plotting custom viz {key}: {e}")
+
         if fig:
             plt.close(fig)
         return fig
@@ -354,24 +412,36 @@ class StatTracker:
 
         # Bar chart for the last step
         if PlotType.BAR in types:
-            # We want to plot the values of the *last* step as a bar chart.
-            # 'data' here is likely a 2D array: (steps, num_classes) or 1D (steps,)
-            # But the 'append' logic for vector stats creates a 2D tensor: (steps, vector_dim).
-            # When we pull it out as numpy, it's (steps, vector_dim).
-            
-            # If we are doing a bar chart, we assume we want to visualize the distribution
-            # at the latest time step.
             if len(data.shape) > 1:
                 latest_data = data[-1]
-                indices = np.arange(len(latest_data))
-                ax.bar(indices, latest_data, label=f"{label} (latest)")
-                ax.set_xticks(indices)
-                ax.set_xlabel("Index")
+                
+                # Filter out actions with near-zero probability to reduce clutter
+                threshold = params.get("bar_threshold", 0.01)
+                significant_indices = np.where(latest_data > threshold)[0]
+                
+                # If too many are significant, just take the top N
+                max_bars = params.get("max_bars", 20)
+                if len(significant_indices) > max_bars:
+                    top_indices = np.argsort(latest_data)[-max_bars:]
+                    significant_indices = np.sort(top_indices)
+                
+                if len(significant_indices) == 0:
+                    # Fallback to top 5 if nothing is "significant"
+                    significant_indices = np.argsort(latest_data)[-5:]
+                    significant_indices = np.sort(significant_indices)
+
+                plot_data = latest_data[significant_indices]
+                plot_x = np.arange(len(significant_indices)) # Dense X axis
+                
+                alpha = 0.5 if "network" in label or "search" in label else 0.8
+                ax.bar(plot_x, plot_data, label=f"{label} (latest)", alpha=alpha)
+                
+                # Use the original significant_indices as labels for the dense x-axis
+                ax.set_xticks(plot_x)
+                ax.set_xticklabels([str(i) for i in significant_indices], rotation=45)
+                ax.set_xlabel("Action Index")
             else:
-                # If it's just scalar data over time, a bar chart might mean
-                # plotting the history as bars? Usually not what's intended if combined with line plots.
-                # But let's support plotting the history as bars if requested for 1D data.
-                ax.bar(x, data, label=label)
+                ax.bar(x, data, label=label, alpha=0.7)
 
 
         # Logarithmic scale
