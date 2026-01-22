@@ -149,113 +149,86 @@ class MuZeroAgent(MARLBaseAgent):
         test_score_keys = [
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
         ]
-        self.stats = StatTracker(
-            model_name=self.model_name,
-            stat_keys=[
-                "score",
-                "policy_loss",
-                "value_loss",
-                "reward_loss",
-                "to_play_loss",
-                "cons_loss",
-                "loss",
-                "test_score",
-                "episode_length",
-            ]
-            + test_score_keys
-            + (
-                [            "num_codes",
-"chance_probs", "chance_entropy",                 "q_loss",
-                "sigma_loss",
-                "vqvae_commitment_cost",
-]
-                if self.config.stochastic
-                else []
-            ),
-            target_values={
-                "score": (
-                    self.env.spec.reward_threshold
-                    if hasattr(self.env, "spec") and self.env.spec.reward_threshold
-                    else None
-                ),
-                "test_score": (
-                    self.env.spec.reward_threshold
-                    if hasattr(self.env, "spec") and self.env.spec.reward_threshold
-                    else None
-                ),
-                "num_codes": 1 if self.config.game.is_deterministic else None,
-            },
-            use_tensor_dicts={
-                "test_score": ["score", "max_score", "min_score"],
-                **{
-                    key: ["score"]
-                    + [
-                        "player_{}_score".format(player)
-                        for player in range(self.config.game.num_players)
-                    ]
-                    + [
-                        "player_{}_win%".format(player)
-                        for player in range(self.config.game.num_players)
-                    ]
-                    for key in test_score_keys
-                },
-            },
-        )
-        self.stats.add_plot_types(
-            "score",
-            PlotType.ROLLING_AVG,
-            # PlotType.EXPONENTIAL_AVG,
-            PlotType.BEST_FIT_LINE,
-            rolling_window=100,
-            ema_beta=0.6,
-        )
-        self.stats.add_plot_types("test_score", PlotType.BEST_FIT_LINE)
-        self.stats.add_plot_types(
-            "policy_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types(
-            "value_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types(
-            "reward_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types(
-            "to_play_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types("cons_loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types(
-            "num_codes", PlotType.ROLLING_AVG, rolling_window=100
-        )
+        self._setup_stats()
+        self.stop_flag = mp.Value("i", 0)
 
+    def _setup_stats(self):
+        """Initializes or updates the stat tracker with all required keys and plot types."""
+        test_score_keys = [
+            "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
+        ]
+        
+        # EnsureStatTracker exists (might have been deleted in __getstate__)
+        if not hasattr(self, "stats") or self.stats is None:
+             self.stats = StatTracker(model_name=self.model_name)
+
+        # 1. Initialize Keys (if not already present)
+        stat_keys = [
+            "score", "policy_loss", "value_loss", "reward_loss", "to_play_loss",
+            "cons_loss", "loss", "test_score", "episode_length", "policy_entropy", 
+            "value_diff", "policy_improvement"
+        ] + test_score_keys
+        
+        if self.config.stochastic:
+            stat_keys += ["num_codes", "chance_probs", "chance_entropy", "q_loss", "sigma_loss", "vqvae_commitment_cost"]
+
+        target_values = {
+            "score": (self.env.spec.reward_threshold if hasattr(self.env, "spec") and self.env.spec.reward_threshold else None),
+            "test_score": (self.env.spec.reward_threshold if hasattr(self.env, "spec") and self.env.spec.reward_threshold else None),
+            "num_codes": 1 if self.config.game.is_deterministic else None,
+        }
+        
+        use_tensor_dicts = {
+            "test_score": ["score", "max_score", "min_score"],
+            "policy_improvement": ["network", "search"],
+            **{key: ["score"] + ["player_{}_score".format(p) for p in range(self.config.game.num_players)] + ["player_{}_win%".format(p) for p in range(self.config.game.num_players)] for key in test_score_keys},
+        }
+
+        # For host StatTracker, initialize keys that don't exist
+        if not self.stats._is_client:
+            for key in stat_keys:
+                if key not in self.stats.stats:
+                    self.stats._init_key(key, target_value=target_values.get(key), subkeys=use_tensor_dicts.get(key))
+
+        # 2. Add/Refresh Plot Types
+        self.stats.add_plot_types("score", PlotType.ROLLING_AVG, PlotType.BEST_FIT_LINE, rolling_window=100, ema_beta=0.6)
+        self.stats.add_plot_types("test_score", PlotType.BEST_FIT_LINE)
+        self.stats.add_plot_types("policy_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("value_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("reward_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("to_play_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("cons_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("num_codes", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types("q_loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types(
-            "sigma_loss", PlotType.ROLLING_AVG, rolling_window=100
-        )
-        self.stats.add_plot_types(
-            "vqvae_commitment_cost", PlotType.ROLLING_AVG, rolling_window=100
-        )
+        self.stats.add_plot_types("sigma_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("vqvae_commitment_cost", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types(
-            "episode_length", PlotType.ROLLING_AVG, rolling_window=100
-        )
+        self.stats.add_plot_types("episode_length", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("policy_entropy", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("value_diff", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types("policy_improvement", PlotType.BAR)
+        
         if self.config.stochastic:
             self.stats.add_plot_types("chance_probs", PlotType.BAR)
             self.stats.add_plot_types("chance_entropy", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stop_flag = mp.Value("i", 0)
 
     def worker_fn(
         self, worker_id, stop_flag, stats_client: StatTracker, error_queue: mp.Queue
     ):
+        self.stats = stats_client
         print(f"[Worker {worker_id}] Starting self-play...")
         worker_env = self.config.game.make_env()  # each process needs its own env
-        # from wrappers import record_video_wrapper
+        try:
+            from wrappers import record_video_wrapper
 
-        # worker_env.render_mode = "rgb_array"
-        # worker_env = record_video_wrapper(
-        #     worker_env,
-        #     f"./videos/{self.model_name}/{worker_id}",
-        #     self.checkpoint_interval,
-        # )
+            worker_env.render_mode = "rgb_array"
+            worker_env = record_video_wrapper(
+                worker_env,
+                f"./videos/{self.model_name}/{worker_id}",
+                self.checkpoint_interval,
+            )
+        except:
+            print(f"[Worker {worker_id}] Could not record video")
         # Workers should use the target model for inference so training doesn't
         # destabilize ongoing self-play. Ensure the target model is on the worker's device
         # and set as the inference model.
@@ -285,6 +258,7 @@ class MuZeroAgent(MARLBaseAgent):
         worker_env.close()
 
     def train(self):
+        self._setup_stats()
         if self.config.multi_process:
             stats_client = self.stats.get_client()
             error_queue = mp.Queue()
@@ -342,6 +316,7 @@ class MuZeroAgent(MARLBaseAgent):
 
             if self.replay_buffer.size >= self.config.min_replay_buffer_size:
                 for minibatch in range(self.config.num_minibatches):
+                    print("learning")
                     (
                         value_loss,
                         policy_loss,
@@ -362,7 +337,6 @@ class MuZeroAgent(MARLBaseAgent):
                     self.stats.append("sigma_loss", sigma_loss)
                     self.stats.append("vqvae_commitment_cost", vqvae_commitment_cost)
                     self.stats.append("loss", loss)
-                    print("learned")
                 self.training_step += 1
 
                 self.replay_buffer.set_beta(
@@ -739,7 +713,6 @@ class MuZeroAgent(MARLBaseAgent):
         self.stats.append("chance_entropy", mean_entropy)
 
 
-
     def _prepare_return_losses(self, loss_dict, total_loss):
         """Prepare loss values for return."""
         # Helper to extract and detach/item()
@@ -849,11 +822,11 @@ class MuZeroAgent(MARLBaseAgent):
             "afterstate": self.predict_afterstate_recurrent_inference,
         }
 
-        root_value, exploratory_policy, target_policy, best_action = self.search.run(
+        root_value, exploratory_policy, target_policy, best_action, search_metadata = self.search.run(
             state, info, to_play, inference_fns, inference_model=inference_model
         )
 
-        return exploratory_policy, target_policy, root_value, best_action
+        return exploratory_policy, target_policy, root_value, best_action, search_metadata
 
     def select_actions(
         self,
@@ -883,11 +856,10 @@ class MuZeroAgent(MARLBaseAgent):
                 current_player = env.agents.index(agent_id)
             else:
                 state, info = env.reset()
-
             game: Game = Game(self.config.game.num_players)
 
             game.append(state, info)
-
+    
             done = False
             while not done:
                 temperature = self.config.temperatures[0]
@@ -913,7 +885,7 @@ class MuZeroAgent(MARLBaseAgent):
                     prediction,
                     temperature=temperature,  # model=model
                 ).item()
-
+                print(f"step: {len(game)}, action: {action}")
                 if self.config.game.num_players != 1:
                     env.step(action)
                     next_state, _, terminated, truncated, next_info = env.last()
@@ -946,6 +918,7 @@ class MuZeroAgent(MARLBaseAgent):
                     value=prediction[2],
                 )
 
+                self._track_search_stats(prediction[4])
                 state = next_state
                 info = next_info
             self.replay_buffer.store_aggregate(game_object=game)
@@ -1010,7 +983,7 @@ class MuZeroAgent(MARLBaseAgent):
                             "afterstate": self.predict_afterstate_recurrent_inference,
                         }
 
-                        root_value, _, new_policy, best_action = self.search.run(
+                        root_value, _, new_policy, best_action, _ = self.search.run(
                             obs,
                             info,
                             to_play,
@@ -1055,6 +1028,29 @@ class MuZeroAgent(MARLBaseAgent):
                 self.update_replay_priorities(
                     indices, new_priorities, ids=np.array(ids)
                 )
+
+    def _track_search_stats(self, search_metadata):
+        """Track statistics from the search process."""
+        if search_metadata is None:
+            return
+
+        network_policy = search_metadata["network_policy"]
+        search_policy = search_metadata["search_policy"]
+        network_value = search_metadata["network_value"]
+        search_value = search_metadata["search_value"]
+
+        # 1. Policy Entropy
+        # search_policy: (num_actions,)
+        probs = search_policy + 1e-10
+        entropy = -torch.sum(probs * torch.log(probs)).item()
+        self.stats.append("policy_entropy", entropy)
+
+        # 2. Value Difference
+        self.stats.append("value_diff", abs(search_value - network_value))
+
+        # 3. Policy Improvement (BAR plot comparison)
+        self.stats.append("policy_improvement", network_policy.unsqueeze(0), subkey="network")
+        self.stats.append("policy_improvement", search_policy.unsqueeze(0), subkey="search")
 
     def __getstate__(self):
         state = self.__dict__.copy()
