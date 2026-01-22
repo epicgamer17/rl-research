@@ -114,6 +114,8 @@ class OptimizationConfig:
         self.lr_schedule_values: list = self.parse_field("lr_schedule_values", [])
 
         self.use_mixed_precision: bool = self.parse_field("use_mixed_precision", False)
+        self.compile: bool = self.parse_field("compile", False)
+        self.compile_mode: str = self.parse_field("compile_mode", "default")
 
 
 class ReplayConfig:

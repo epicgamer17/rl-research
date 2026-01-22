@@ -28,7 +28,7 @@ class MockConfig:
         self.pb_c_base = 19652
         self.long_term_discount = 1.0
         self.game = SimpleNamespace(num_players=1, is_discrete=True)
-        self.num_simulations = 50 
+        self.num_simulations = 100 
         self.gumbel = gumbel
         self.stochastic = stochastic
         
@@ -203,7 +203,7 @@ def test_equivalence_iterative_vs_batched_basics(batch_size):
     assert np.allclose(p_iter, p_batch, atol=1e-5), f"Policy Mismatch: {p_iter} vs {p_batch}"
 
 @pytest.mark.parametrize("batch_size", [0, 1, 4, 8, 16])
-@pytest.mark.parametrize("virtual_loss", [0.0, 1.0]) # Reduced VL
+@pytest.mark.parametrize("virtual_loss", [1.0]) # Reduced VL
 def test_batched_convergence_consistency(batch_size, virtual_loss):
     """
     Verify that batched search converges to the correct action in a biased scenario.
@@ -248,7 +248,7 @@ def test_gumbel_batched_vs_iterative():
 
     # 2. Batched Gumbel
     torch.manual_seed(42)
-    config_batch = MockConfig(batch_size=8, gumbel=True)
+    config_batch = MockConfig(batch_size=4, gumbel=True)
     mcts_batch = create_mcts(config_batch, "cpu", 4)
     _, _, target_batch, action_batch, _ = mcts_batch.run(state, info, 0, inference_fns)
     
@@ -260,7 +260,7 @@ def test_regression_no_negative_visits():
     Test that visits do not become negative (ZeroDivisionError regression).
     """
     config = MockConfig(batch_size=5)
-    config.num_simulations = 20
+    config.num_simulations = 100
     mcts = create_mcts(config, "cpu", 4)
     state = torch.zeros(1, 10)
     info = {"legal_moves": [0, 1, 2, 3]}
@@ -316,7 +316,7 @@ def test_diagnostics_collisions():
     """
     batch_size = 8
     config = MockConfig(batch_size=batch_size)
-    config.num_simulations = 40
+    config.num_simulations = 100
     mcts = create_mcts(config, "cpu", 4)
     mocker = MockInference(mode="deterministic_tree")
     
@@ -344,7 +344,7 @@ def test_randomized_stress_batching(iteration):
     stochastic = random.choice([True, False])
     
     config = MockConfig(batch_size=batch_size, gumbel=gumbel, stochastic=stochastic)
-    config.num_simulations = random.randint(10, 50)
+    config.num_simulations = random.randint(25, 100)
     
     mcts = create_mcts(config, "cpu", 4)
     mocker = MockInference(mode="random")

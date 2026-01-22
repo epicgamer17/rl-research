@@ -76,6 +76,12 @@ class RainbowAgent(BaseAgent):
         self.model.to(device)
         self.target_model.to(device)
         self.target_model.load_state_dict(self.model.state_dict())
+
+        if self.config.compile:
+            print("Compiling models...")
+            self.model = torch.compile(self.model, mode=self.config.compile_mode)
+            self.target_model = torch.compile(self.target_model, mode=self.config.compile_mode)
+
         self.target_model.eval()
 
         loss_modules = []

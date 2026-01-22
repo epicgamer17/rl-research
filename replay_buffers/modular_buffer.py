@@ -152,7 +152,7 @@ class ModularReplayBuffer:
                 self.priority_lock.release()
 
         if self.size <= 1000:
-            pass # print("Size:", self.size)
+            print("Size:", self.size)
 
         return idx
 

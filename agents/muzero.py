@@ -95,6 +95,11 @@ class MuZeroAgent(MARLBaseAgent):
         if not self.config.multi_process:
             self.model.to(device)
 
+        if self.config.compile:
+            print("Compiling models...")
+            self.model = torch.compile(self.model, mode=self.config.compile_mode)
+            self.target_model = torch.compile(self.target_model, mode=self.config.compile_mode)
+
         if loss_pipeline is None:
             self.loss_pipeline = create_muzero_loss_pipeline(
                 config=self.config,

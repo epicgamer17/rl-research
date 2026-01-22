@@ -53,6 +53,10 @@ class PPOAgent(BaseAgent):
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
         ).to(self.device)
 
+        if self.config.compile:
+             print("Compiling model...")
+             self.model = torch.compile(self.model, mode=self.config.compile_mode)
+
         if self.config.actor.optimizer == Adam:
             self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
                 params=self.model.parameters(),

@@ -6,7 +6,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam, SGD
 
 from modules.agent_nets.policy_imitation import SupervisedNetwork
-from replay_buffers.nfsp_reservoir_buffer import NFSPReservoirBuffer
+from replay_buffers.buffer_factories import create_nfsp_buffer
 
 
 class PolicyImitationAgent(BaseAgent):
@@ -29,12 +29,12 @@ class PolicyImitationAgent(BaseAgent):
     ):
         super().__init__(env, config, name, device, from_checkpoint=from_checkpoint)
 
-        self.replay_buffer = NFSPReservoirBuffer(
+        self.replay_buffer = create_nfsp_buffer(
             observation_dimensions=self.observation_dimensions,
-            observation_dtype=self.observation_dtype,
             max_size=self.config.replay_buffer_size,
             num_actions=self.num_actions,
             batch_size=self.config.minibatch_size,
+            observation_dtype=self.observation_dtype,
         )
 
         self.model = SupervisedNetwork(
@@ -42,6 +42,10 @@ class PolicyImitationAgent(BaseAgent):
             self.num_actions,
             torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
         ).to(self.device)
+
+        if self.config.compile:
+             print("Compiling model...")
+             self.model = torch.compile(self.model, mode=self.config.compile_mode)
 
         if self.config.optimizer == Adam:
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(

@@ -3,11 +3,20 @@ import torch
 _epsilon = 1e-12
 
 
+def _is_low_precision(tensor: torch.Tensor):
+    """Returns True if the tensor is in low precision or autocast is enabled."""
+    return (
+        tensor.dtype in [torch.float16, torch.bfloat16]
+        or torch.is_autocast_enabled()
+    )
+
+
 def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
-    assert torch.allclose(
-        torch.sum(predicted, dim=axis, keepdim=True),
-        torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
-    ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
+    if not _is_low_precision(predicted):
+        assert torch.allclose(
+            torch.sum(predicted, dim=axis, keepdim=True),
+            torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
+        ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
     assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
 
     predicted = (predicted + _epsilon) / torch.sum(
@@ -33,14 +42,16 @@ class CategoricalCrossentropyLoss:
 
 def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
     assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
-    assert torch.allclose(
-        torch.sum(predicted, dim=axis, keepdim=True),
-        torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
-    ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
-    assert torch.allclose(
-        torch.sum(target, dim=axis, keepdim=True),
-        torch.ones_like(torch.sum(target, dim=axis, keepdim=True)),
-    ), f"Target probabilities do not sum to 1: sum = {torch.sum(target, dim=axis, keepdim=True)}, for predicted = {target}"
+    if not _is_low_precision(predicted):
+        assert torch.allclose(
+            torch.sum(predicted, dim=axis, keepdim=True),
+            torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
+        ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
+    if not _is_low_precision(target):
+        assert torch.allclose(
+            torch.sum(target, dim=axis, keepdim=True),
+            torch.ones_like(torch.sum(target, dim=axis, keepdim=True)),
+        ), f"Target probabilities do not sum to 1: sum = {torch.sum(target, dim=axis, keepdim=True)}, for predicted = {target}"
     # 1. Add epsilon prevents 0/0 errors
     # 2. Normalize BOTH to ensure they sum to 1.0
     predicted = (predicted + _epsilon) / torch.sum(
