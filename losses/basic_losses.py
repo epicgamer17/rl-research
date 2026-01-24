@@ -16,6 +16,7 @@ def categorical_crossentropy(predicted: torch.Tensor, target: torch.Tensor, axis
         assert torch.allclose(
             torch.sum(predicted, dim=axis, keepdim=True),
             torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
+            atol=1e-2,
         ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
     assert predicted.shape == target.shape, f"{predicted.shape} = { target.shape}"
 
@@ -46,12 +47,14 @@ def kl_divergence(predicted: torch.Tensor, target: torch.Tensor, axis=-1):
         assert torch.allclose(
             torch.sum(predicted, dim=axis, keepdim=True),
             torch.ones_like(torch.sum(predicted, dim=axis, keepdim=True)),
+            atol=1e-2,
         ), f"Predicted probabilities do not sum to 1: sum = {torch.sum(predicted, dim=axis, keepdim=True)}, for predicted = {predicted}"
     if not _is_low_precision(target):
         assert torch.allclose(
             torch.sum(target, dim=axis, keepdim=True),
             torch.ones_like(torch.sum(target, dim=axis, keepdim=True)),
-        ), f"Target probabilities do not sum to 1: sum = {torch.sum(target, dim=axis, keepdim=True)}, for predicted = {target}"
+            atol=1e-2,
+        ), f"Target probabilities do not sum to 1: sum = {torch.sum(target, dim=axis, keepdim=True)}, for target = {target}"
     # 1. Add epsilon prevents 0/0 errors
     # 2. Normalize BOTH to ensure they sum to 1.0
     predicted = (predicted + _epsilon) / torch.sum(

@@ -1,0 +1,153 @@
+[W123 01:05:02.407289000 qlinear_dynamic.cpp:252] Warning: Currently, qnnpack incorrectly ignores reduce_range when it is set to true; this may change in a future release. (function operator())
+Using default save_intermediate_weights     : False
+Using default training_steps                : 10000
+Using default adam_epsilon                  : 1e-08
+Using default momentum                      : 0.9
+Using default learning_rate                 : 0.001
+Using default clipnorm                      : 0
+Using default optimizer                     : <class 'torch.optim.adam.Adam'>
+Using default weight_decay                  : 0.0
+Using default num_minibatches               : 1
+Using default training_iterations           : 1
+Using default lr_schedule_type              : none
+Using default lr_schedule_steps             : []
+Using default lr_schedule_steps             : []
+Using default lr_schedule_values            : []
+Using         use_mixed_precision           : False
+Using default compile                       : False
+Using default compile_mode                  : default
+Using         minibatch_size                : 2
+Using default replay_buffer_size            : 5000
+Using default min_replay_buffer_size        : 2
+Using default n_step                        : 1
+Using default discount_factor               : 0.99
+Using default per_alpha                     : 0.5
+Using default per_beta                      : 0.5
+Using default per_beta_final                : 1.0
+Using default per_epsilon                   : 1e-06
+Using default per_use_batch_weights         : False
+Using default per_use_initial_max_priority  : True
+Using default loss_function                 : <class 'losses.basic_losses.MSELoss'>
+Using default activation                    : relu
+Using         kernel_initializer            : None
+Using         prob_layer_initializer        : None
+Using default norm_type                     : none
+Using default soft_update                   : False
+Using default min_max_epsilon               : 0.01
+Using         world_model_cls               : <class 'modules.world_models.muzero_world_model.MuzeroWorldModel'>
+Using         known_bounds                  : None
+Using         residual_layers               : []
+Using         conv_layers                   : []
+Using         dense_layer_widths            : [64]
+Using         representation_residual_layers: []
+Using         representation_conv_layers    : []
+Using         representation_dense_layer_widths: [64]
+Using         dynamics_residual_layers      : []
+Using         dynamics_conv_layers          : []
+Using         dynamics_dense_layer_widths   : [64]
+Using         reward_conv_layers            : []
+Using default reward_dense_layer_widths     : [256]
+Using         to_play_conv_layers           : []
+Using default to_play_dense_layer_widths    : [256]
+Using         critic_conv_layers            : []
+Using default critic_dense_layer_widths     : [256]
+Using         actor_conv_layers             : []
+Using default actor_dense_layer_widths      : [256]
+Using default noisy_sigma                   : 0.0
+Using default games_per_generation          : 100
+Using default value_loss_factor             : 1.0
+Using default to_play_loss_factor           : 1.0
+Using default num_simulations               : 800
+Using default search_batch_size             : 0
+Using default use_virtual_mean              : False
+Using default virtual_loss                  : 3.0
+Using default root_dirichlet_alpha          : 0.25
+Using default root_exploration_fraction     : 0.25
+Using default root_dirichlet_alpha_adaptive : False
+Using default gumbel                        : False
+Using default gumbel_m                      : 16
+Using default gumbel_cvisit                 : 50
+Using default gumbel_cscale                 : 1.0
+Using default pb_c_base                     : 19652
+Using default pb_c_init                     : 1.25
+Using default temperatures                  : [1.0, 0.0]
+Using default temperature_updates           : [5]
+Using default temperature_with_training_steps: False
+Using default clip_low_prob                 : 0.0
+Using default value_loss_function           : <losses.basic_losses.MSELoss object at 0x17d801df0>
+Using default reward_loss_function          : <losses.basic_losses.MSELoss object at 0x301f98b30>
+Using default policy_loss_function          : <losses.basic_losses.CategoricalCrossentropyLoss object at 0x17f6717c0>
+Using default to_play_loss_function         : <losses.basic_losses.CategoricalCrossentropyLoss object at 0x10d34f2c0>
+Using default unroll_steps                  : 5
+Using default atom_size                     : 1
+Using         support_range                 : None
+Using         multi_process                 : False
+Using default num_workers                   : 4
+Using default lr_ratio                      : inf
+Using default transfer_interval             : 1000
+Using default reanalyze_ratio               : 0.0
+Using default reanalyze_method              : mcts
+Using default reanalyze_tau                 : 0.3
+Using default injection_frac                : 0.0
+Using default reanalyze_noise               : False
+Using default reanalyze_update_priorities   : False
+Using default consistency_loss_factor       : 0.0
+Using default projector_output_dim          : 128
+Using default projector_hidden_dim          : 128
+Using default predictor_output_dim          : 128
+Using default predictor_hidden_dim          : 64
+Using default mask_absorbing                : True
+Using default value_prefix                  : False
+Using default lstm_horizon_len              : 5
+Using default lstm_hidden_size              : 64
+Using default q_estimation_method           : v_mix
+Using default stochastic                    : False
+Using default use_true_chance_codes         : False
+Using default num_chance                    : 32
+Using default sigma_loss                    : <losses.basic_losses.CategoricalCrossentropyLoss object at 0x301b46ff0>
+Using default afterstate_residual_layers    : []
+Using default afterstate_conv_layers        : []
+Using default afterstate_dense_layer_widths : [64]
+Using default chance_conv_layers            : [(32, 3, 1)]
+Using default chance_dense_layer_widths     : [256]
+Using default vqvae_commitment_cost_factor  : 1.0
+Using default action_embedding_dim          : 32
+Using default single_action_plane           : False
+Using default latent_viz_method             : pca
+Using default latent_viz_interval           : 1
+Instantiating MuZeroAgent...
+[test_quant] Using device: cpu
+Observation dimensions: torch.Size([4])
+Num actions: 4 (Discrete: True)
+Making test env...
+MARL Agent 'test_quant' initialized. Test agents: []
+Hidden state shape: (2, 64)
+Hidden state shape: (2, 64)
+encoder input shape (2, 8)
+Hidden state shape: (2, 64)
+Hidden state shape: (2, 64)
+encoder input shape (2, 8)
+Max size: 5000
+Initializing stat 'score' with subkeys None
+Initializing stat 'policy_loss' with subkeys None
+Initializing stat 'value_loss' with subkeys None
+Initializing stat 'reward_loss' with subkeys None
+Initializing stat 'to_play_loss' with subkeys None
+Initializing stat 'cons_loss' with subkeys None
+Initializing stat 'loss' with subkeys None
+Initializing stat 'test_score' with subkeys ['score', 'max_score', 'min_score']
+Initializing stat 'episode_length' with subkeys None
+Initializing stat 'policy_entropy' with subkeys None
+Initializing stat 'value_diff' with subkeys None
+Initializing stat 'policy_improvement' with subkeys ['network', 'search']
+
+Verifying target_model structure...
+Found 21 quantized linear layers in target_model.
+Found 21 float linear layers in model.
+
+Testing update_target_model...
+Tracking layer: world_model.representation.net.dense_layers._layers.0.layer
+
+Max Output Diff: 0.0035699307918548584
+
+Success! Quantization and Update logic verified.

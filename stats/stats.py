@@ -246,14 +246,18 @@ class StatTracker:
             )
         }
 
-        if len(collected_stats) > 0:
+        # Helper to plot a group of stats
+        def plot_group(stats_group, filename_suffix):
+            if len(stats_group) == 0:
+                return None
+            
             fig, axs = plt.subplots(
-                len(collected_stats), 1, figsize=(10, 5 * len(collected_stats))
+                len(stats_group), 1, figsize=(10, 5 * len(stats_group))
             )
-            if len(collected_stats) == 1:
+            if len(stats_group) == 1:
                 axs = [axs]
 
-            for ax, (key, tensor) in zip(axs, collected_stats.items()):
+            for ax, (key, tensor) in zip(axs, stats_group.items()):
                 config = self.plot_configs.get(key, {"types": set(), "params": {}})
                 print("plotting {}".format(key))
                 if isinstance(tensor, Dict):
@@ -276,10 +280,23 @@ class StatTracker:
             
             plt.tight_layout()
             if dir:
-                fig.savefig(f"{dir}/{self.model_name}_stats.png")
+                fig.savefig(f"{dir}/{self.model_name}_{filename_suffix}.png")
             plt.close(fig)
-        else:
-            fig = None
+            return fig
+
+        # Split stats into main and policy groups
+        policy_keys = ["policy_entropy", "value_diff", "policy_improvement"]
+        main_stats = {}
+        policy_stats = {}
+
+        for key, tensor in collected_stats.items():
+            if key in policy_keys:
+                policy_stats[key] = tensor
+            else:
+                main_stats[key] = tensor
+
+        fig = plot_group(main_stats, "stats")
+        plot_group(policy_stats, "policy_stats")
 
         # Plot latent visualizations
         for key, data in self.latent_viz_data.items():
@@ -288,6 +305,10 @@ class StatTracker:
             latents = data['latents']
             labels = data['labels']
             kwargs = data['kwargs']
+            
+            # Ensure latents are float32 (numpy doesn't support bfloat16 properly)
+            if isinstance(latents, torch.Tensor) and latents.dtype in [torch.bfloat16, torch.float16]:
+                latents = latents.to(torch.float32)
             
             visualizer = None
             if method == 'pca':
@@ -307,6 +328,7 @@ class StatTracker:
                 save_path = None
                 if dir:
                     save_path = f"{dir}/{self.model_name}_{key}_{method}.png"
+                    print(f"  Saving latent viz to {save_path}")
                 
                 # Check dimensionality before plotting
                 # flatten if needed is handled by visualizer, but let's be safe on input type
@@ -348,6 +370,11 @@ class StatTracker:
         return fig
 
     def _plot_tensor(self, ax, tensor: torch.Tensor, label: str, config: Dict):
+        # Ensure tensor is CPU-resident and float32 readable by numpy
+        # older numpy versions don't support bfloat16, preventing crashes
+        if tensor.dtype in [torch.bfloat16, torch.float16]:
+            tensor = tensor.to(torch.float32)
+
         data = tensor.numpy()
         x = np.arange(len(data))
         types = config["types"]
@@ -415,19 +442,23 @@ class StatTracker:
             if len(data.shape) > 1:
                 latest_data = data[-1]
                 
-                # Filter out actions with near-zero probability to reduce clutter
-                threshold = params.get("bar_threshold", 0.01)
-                significant_indices = np.where(latest_data > threshold)[0]
-                
-                # If too many are significant, just take the top N
-                max_bars = params.get("max_bars", 20)
-                if len(significant_indices) > max_bars:
-                    top_indices = np.argsort(latest_data)[-max_bars:]
-                    significant_indices = np.sort(top_indices)
+                # Filter out actions with near-zero value/probability to reduce clutter
+                if params.get("show_all_bars", False):
+                    significant_indices = np.arange(len(latest_data))
+                else:
+                    threshold = params.get("bar_threshold", 0.01)
+                    # Use magnitude for threshold check
+                    significant_indices = np.where(np.abs(latest_data) > threshold)[0]
+                    
+                    # If too many are significant, just take the top N by magnitude
+                    max_bars = params.get("max_bars", 20)
+                    if len(significant_indices) > max_bars:
+                        top_indices = np.argsort(np.abs(latest_data))[-max_bars:]
+                        significant_indices = np.sort(top_indices)
                 
                 if len(significant_indices) == 0:
-                    # Fallback to top 5 if nothing is "significant"
-                    significant_indices = np.argsort(latest_data)[-5:]
+                    # Fallback to top 5 by magnitude if nothing is "significant"
+                    significant_indices = np.argsort(np.abs(latest_data))[-5:]
                     significant_indices = np.sort(significant_indices)
 
                 plot_data = latest_data[significant_indices]

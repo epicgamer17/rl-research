@@ -32,7 +32,7 @@ class SearchAlgorithm:
         backpropagator,
     ):
         self.config = config
-        self.device = device
+        self.device = torch.device(device)
         self.num_actions = num_actions
 
         self.root_selection_strategy: SelectionStrategy = root_selection_strategy
@@ -65,7 +65,9 @@ class SearchAlgorithm:
         # 1. Inference
         assert not root.expanded()
 
-        outputs = inference_fns["initial"](state, model=inference_model)
+        with torch.no_grad():
+            with torch.autocast(device_type=self.device.type):
+                outputs = inference_fns["initial"](state, model=inference_model)
         if len(outputs) == 3:
             val_raw, policy, hidden_state = outputs
         else:
@@ -181,6 +183,12 @@ class SearchAlgorithm:
             isinstance(target_policy, torch.Tensor)
             and target_policy.shape == policy.shape
         )
+        # Extract root children values for visualization
+        root_children_values = torch.zeros(self.num_actions)
+        for action, child in root.children.items():
+            if isinstance(child, (DecisionNode, ChanceNode)): # Should be nodes
+                 root_children_values[action] = child.value()
+        
         return (
             root.value(),
             exploratory_policy,
@@ -192,6 +200,7 @@ class SearchAlgorithm:
                 "network_value": v_pi_scalar,
                 "search_policy": target_policy,
                 "search_value": root.value(),
+                "root_children_values": root_children_values,
             },
         )
 
@@ -302,23 +311,25 @@ class SearchAlgorithm:
         #     print("WRONG TO PLAY", onehot_to_play)
         if isinstance(node, DecisionNode):
             if isinstance(parent, DecisionNode):
-                (
-                    reward,
-                    hidden_state,
-                    value,
-                    policy,
-                    to_play,
-                    reward_h_state,
-                    reward_c_state,
-                ) = inference_fns["recurrent"](
-                    parent.hidden_state,
-                    torch.tensor(action_or_code)
-                    .to(parent.hidden_state.device)
-                    .unsqueeze(0),
-                    parent.reward_h_state,
-                    parent.reward_c_state,
-                    model=inference_model,
-                )
+                with torch.no_grad():
+                    with torch.autocast(device_type=self.device.type):
+                        (
+                            reward,
+                            hidden_state,
+                            value,
+                            policy,
+                            to_play,
+                            reward_h_state,
+                            reward_c_state,
+                        ) = inference_fns["recurrent"](
+                            parent.hidden_state,
+                            torch.tensor(action_or_code)
+                            .to(parent.hidden_state.device)
+                            .unsqueeze(0),
+                            parent.reward_h_state,
+                            parent.reward_c_state,
+                            model=inference_model,
+                        )
                 if self.config.support_range is not None:
                     reward = support_to_scalar(reward, self.config.support_range).item()
                     value = support_to_scalar(value, self.config.support_range).item()
@@ -353,23 +364,25 @@ class SearchAlgorithm:
                     is_reset=is_reset,
                 )
             elif isinstance(parent, ChanceNode):
-                (
-                    reward,
-                    hidden_state,
-                    value,
-                    policy,
-                    to_play,
-                    reward_h_state,
-                    reward_c_state,
-                ) = inference_fns["recurrent"](
-                    parent.afterstate,
-                    action_or_code.to(parent.afterstate.device)
-                    .unsqueeze(0)
-                    .float(),  # a sampled code instead of an action
-                    parent.reward_h_state,
-                    parent.reward_c_state,
-                    model=inference_model,
-                )
+                with torch.no_grad():
+                    with torch.autocast(device_type=self.device.type):
+                        (
+                            reward,
+                            hidden_state,
+                            value,
+                            policy,
+                            to_play,
+                            reward_h_state,
+                            reward_c_state,
+                        ) = inference_fns["recurrent"](
+                            parent.afterstate,
+                            action_or_code.to(parent.afterstate.device)
+                            .unsqueeze(0)
+                            .float(),  # a sampled code instead of an action
+                            parent.reward_h_state,
+                            parent.reward_c_state,
+                            model=inference_model,
+                        )
                 if self.config.support_range is not None:
                     reward = support_to_scalar(reward, self.config.support_range).item()
                     value = support_to_scalar(value, self.config.support_range).item()
@@ -409,16 +422,18 @@ class SearchAlgorithm:
             # 1. Get Afterstate Value & Code Priors (Expand ChanceNode)
             # 2. Sample a Code
             # 3. Get Next State & Reward (Create DecisionNode)
-            afterstate, value, code_probs = inference_fns[
-                "afterstate"
-            ](  # <--- YOU NEED THIS METHOD
-                parent.hidden_state,
-                torch.tensor(action_or_code)
-                .to(parent.hidden_state.device)
-                .unsqueeze(0)
-                .float(),
-                model=inference_model,
-            )
+            with torch.no_grad():
+                with torch.autocast(device_type=self.device.type):
+                    afterstate, value, code_probs = inference_fns[
+                        "afterstate"
+                    ](  # <--- YOU NEED THIS METHOD
+                        parent.hidden_state,
+                        torch.tensor(action_or_code)
+                        .to(parent.hidden_state.device)
+                        .unsqueeze(0)
+                        .float(),
+                        model=inference_model,
+                    )
 
             if self.config.support_range:
                 value = support_to_scalar(value, self.config.support_range).item()
@@ -454,14 +469,23 @@ class SearchAlgorithm:
         
         sim_data = []
         
+        # Pre-allocate buffers lazily
+        rec_states = None
+        rec_actions = None
+        rec_rhs = None
+        rec_rcs = None
+        rec_indices = []
+
+        aft_states = None
+        aft_actions = None
+        aft_indices = []
+        
         # 1. Selection Phase
         for b in range(batch_size):
             node = root
             search_path = [node]
-            path_virtual_values = [] # Track virtual values for this path if using Virtual Mean
+            path_virtual_values = [] 
             horizon_index = 0
-
-            action_or_code = None
 
             action_or_code = None
 
@@ -470,7 +494,7 @@ class SearchAlgorithm:
                     break
 
                 parent_node = node
-
+                
                 if node.parent is None:
                     # Root
                     pruned_actionset, next_state = self.pruning_method.step(
@@ -483,13 +507,11 @@ class SearchAlgorithm:
                     pruning_context["root"] = next_state
                     if pruned_actionset is not None and len(pruned_actionset) == 0:
                         # Revert virtual update for this failed path
-                        # existing nodes in search_path (including root) have been updated
                         if use_virtual_mean:
                             for n, v in zip(search_path, path_virtual_values):
                                 n.visits -= 1
                                 n.value_sum -= v
                         else:
-                            # Revert standard VL
                             for n in search_path:
                                 n.visits -= 1
                                 n.value_sum += virtual_loss
@@ -550,27 +572,25 @@ class SearchAlgorithm:
                 horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
                 
                 # Apply virtual update to the PARENT (search_path[-1])
-                # We do this after successful selection.
                 parent_node = search_path[-1]
                 if use_virtual_mean:
                     v_val = parent_node.value()
                     parent_node.visits += 1
                     parent_node.value_sum += v_val
-                    path_virtual_values.append(v_val) # Note: path_virtual_values will match search_path indices
+                    path_virtual_values.append(v_val) 
                 else:
                     parent_node.visits += 1
                     parent_node.value_sum -= virtual_loss
                 
                 search_path.append(node)
 
-
-
             if node is None:
+                sim_data.append(None)
                 continue
 
-            # Leaf Node Update (since loop only updates parents)
+            # Leaf Node Update
             if use_virtual_mean:
-                v_val = node.value() # Bootstrap
+                v_val = node.value() 
                 node.visits += 1
                 node.value_sum += v_val
                 path_virtual_values.append(v_val)
@@ -578,168 +598,153 @@ class SearchAlgorithm:
                 node.visits += 1
                 node.value_sum -= virtual_loss
 
-            # Leaf already updated in the loop (added to search_path and updated)
-            # Check: Loop breaks when `not node.expanded()`.
-            # Inside loop: we select child `node`. Then update `node`. Then append to search_path.
-            # Then check `if not node.expanded(): break`.
-            # So `node` (the leaf) IS in search_path and HAS been updated.
-            # In original code:
-            #  parent_node updated in loop.
-            #  search_path appended.
-            #  Leaf updated AFTER loop.
-            #  Wait, let's check original code carefully.
-            #  Original:
-            #    while True:
-            #      if not node.expanded(): break
-            #      ... select ...
-            #      parent_node.visits += 1... (Update PARENT)
-            #      search_path.append(node) (Child)
-            #    node.visits += 1... (Update LEAF)
-            #
-            #  My new code:
-            #    Update ROOT (start of loop).
-            #    while True:
-            #       if not node.expanded(): break
-            #       ... select ...
-            #       Update CHILD (node).
-            #       search_path.append(node).
-            #
-            #  Trace:
-            #    Start: node=Root. Update Root. search_path=[Root].
-            #    Loop 1: Root expanded? Yes.
-            #       Select Child1.
-            #       Update Child1.
-            #       search_path=[Root, Child1].
-            #       node=Child1.
-            #    Loop 2: Child1 expanded? No. Break.
-            #
-            #  Result: Root and Child1 updated. search_path=[Root, Child1].
-            #  This covers exactly everyone in search_path.
-            #  Original code:
-            #    Loop 1: Root expanded? Yes.
-            #       Select Child1.
-            #       Update parent (Root).
-            #       search_path=[Root, Child1].
-            #       node=Child1.
-            #    Loop 2: Child1 expanded? No. Break.
-            #    Update leaf (Child1).
-            #
-            #  Result: Root and Child1 updated.
-            #  Logic is equivalent. Proceed.
+            sim_entry = {
+                "path": search_path,
+                "node": node,
+                "parent": search_path[-2],
+                # "action": action_or_code, # Not stored, we act on it immediately
+                "horizon_index": horizon_index,
+                "virtual_values": path_virtual_values if use_virtual_mean else None,
+                "result": None
+            }
+            sim_data.append(sim_entry)
 
-            sim_data.append(
-                {
-                    "path": search_path,
-                    "node": node,
-                    "parent": search_path[-2],
-                    "action": action_or_code,
-                    "horizon_index": horizon_index,
-                    "virtual_values": path_virtual_values if use_virtual_mean else None
-                }
-            )
-
-        # 2. Batched Inference
-        recurrent_inputs = []
-        afterstate_inputs = []
-
-        for i, d in enumerate(sim_data):
-            node = d["node"]
-            parent = d["parent"]
-            action = d["action"]
+            # --- Prepare Inference Inputs (In-Place Filling) ---
+            parent = sim_entry["parent"]
+            action = action_or_code
 
             if isinstance(node, DecisionNode):
+                # Recurrent Inference
                 if isinstance(parent, DecisionNode):
                     state = parent.hidden_state
                 elif isinstance(parent, ChanceNode):
                     state = parent.afterstate
 
-                recurrent_inputs.append(
-                    {
-                        "state": state,
-                        "action": action,
-                        "rh": parent.reward_h_state,
-                        "rc": parent.reward_c_state,
-                        "idx": i,
-                    }
-                )
+                # Buffers Setup
+                if rec_states is None:
+                    # Infer shapes from first item
+                    rec_states = torch.empty((batch_size, *state.shape[1:]), device=self.device, dtype=state.dtype)
+                    rec_rhs = torch.empty((batch_size, *parent.reward_h_state.shape[1:]), device=self.device, dtype=parent.reward_h_state.dtype)
+                    rec_rcs = torch.empty((batch_size, *parent.reward_c_state.shape[1:]), device=self.device, dtype=parent.reward_c_state.dtype)
+                    # For actions, we use a list to be safe against shape/type variants
+                    rec_actions_list = []
+
+                idx = len(rec_indices)
+                rec_states[idx] = state.squeeze(0)
+                rec_rhs[idx] = parent.reward_h_state.squeeze(0)
+                rec_rcs[idx] = parent.reward_c_state.squeeze(0)
+                
+                # Handle action safely
+                if isinstance(action, torch.Tensor):
+                    val = action.clone().detach() # Detach to be safe
+                else:
+                    val = torch.tensor(action)
+                rec_actions_list.append(val)
+
+                rec_indices.append(b)
+
             elif isinstance(node, ChanceNode):
-                afterstate_inputs.append(
-                    {
-                        "state": parent.hidden_state,
-                        "action": action,
-                        "idx": i,
-                    }
-                )
+                # Afterstate Inference
+                state = parent.hidden_state
+                if aft_states is None:
+                    aft_states = torch.empty((batch_size, *state.shape[1:]), device=self.device, dtype=state.dtype)
+                    # For actions, we use a list to be safe against shape/type variants
+                    aft_actions_list = []
 
-        if recurrent_inputs:
-            states = torch.cat([x["state"] for x in recurrent_inputs], dim=0)
+                idx = len(aft_indices)
+                aft_states[idx] = state.squeeze(0)
+                
+                 # Handle action safely
+                if isinstance(action, torch.Tensor):
+                    val = action.clone().detach()
+                else:
+                    val = torch.tensor(action)
+                aft_actions_list.append(val)
+                
+                aft_indices.append(b)
 
+        # 2. Batched Inference
+        if rec_indices:
+            # Slice to actual size
+            count = len(rec_indices)
+            states = rec_states[:count]
+            rhs = rec_rhs[:count]
+            rcs = rec_rcs[:count]
+            
+            # Form action tensor from list
             act_list = []
-            for x in recurrent_inputs:
-                d = sim_data[x["idx"]]
-                is_chance_parent = isinstance(d["parent"], ChanceNode)
-                raw_action = x["action"]
-                if isinstance(raw_action, torch.Tensor):
-                    val = raw_action.to(self.device).detach().clone()
-                else:
-                    val = torch.tensor(raw_action, device=self.device)
-
-                if is_chance_parent:
-                     act_list.append(val.float().unsqueeze(0))
-                else:
-                     act_list.append(val.unsqueeze(0))
-
+            for val in rec_actions_list:
+                # Ensure shape (1, ...) or (1)
+                if val.dim() == 0: val = val.unsqueeze(0)
+                if val.dim() == 1 and val.shape[0] == 1: val = val # Already correct
+                elif val.dim() == 1: val = val.unsqueeze(0) # (N) -> (1, N)
+                
+                # IMPORTANT: Keep Original Dtype/Value logic if possible, 
+                # but usually actions are floats for NN inputs
+                act_list.append(val.float())
+                
             actions = torch.cat(act_list, dim=0)
+            if actions.dim() == 1: actions = actions.unsqueeze(1) # Ensure (B, 1) if simplified
 
-            rhs = torch.cat([x["rh"] for x in recurrent_inputs], dim=0)
-            rcs = torch.cat([x["rc"] for x in recurrent_inputs], dim=0)
+            with torch.no_grad():
+                with torch.autocast(device_type=self.device.type):
+                    (
+                        rewards,
+                        hidden_states,
+                        values,
+                        policies,
+                        to_plays,
+                        rh_news,
+                        rc_news,
+                    ) = inference_fns["recurrent"](
+                        states, actions, rhs, rcs, model=inference_model
+                    )
 
-            (
-                rewards,
-                hidden_states,
-                values,
-                policies,
-                to_plays,
-                rh_news,
-                rc_news,
-            ) = inference_fns["recurrent"](
-                states, actions, rhs, rcs, model=inference_model
-            )
-
-            for local_i, x in enumerate(recurrent_inputs):
-                idx = x["idx"]
-                sim_data[idx]["result"] = {
-                    "reward": rewards[local_i],
-                    "hidden_state": hidden_states[local_i : local_i + 1],
-                    "value": values[local_i],
-                    "policy": policies[local_i : local_i + 1],
-                    "to_play": to_plays[local_i : local_i + 1],
-                    "rh": rh_news[local_i : local_i + 1],
-                    "rc": rc_news[local_i : local_i + 1],
+            # Distribute results
+            for i, sim_idx in enumerate(rec_indices):
+                sim_data[sim_idx]["result"] = {
+                    "reward": rewards[i],
+                    "hidden_state": hidden_states[i : i + 1],
+                    "value": values[i],
+                    "policy": policies[i : i + 1],
+                    "to_play": to_plays[i : i + 1],
+                    "rh": rh_news[i : i + 1],
+                    "rc": rc_news[i : i + 1],
                 }
 
-        if afterstate_inputs:
-             states = torch.cat([x["state"] for x in afterstate_inputs], dim=0)
-             actions = torch.tensor([x["action"] for x in afterstate_inputs]).to(self.device).float().unsqueeze(1)
+        if aft_indices:
+             count = len(aft_indices)
+             states = aft_states[:count]
+             
+             # Form action tensor from list
+             act_list = []
+             for val in aft_actions_list:
+                if val.dim() == 0: val = val.unsqueeze(0)
+                if val.dim() == 1 and val.shape[0] > 1: val = val.unsqueeze(0)
+                
+                act_list.append(val.float())
+                
+             actions = torch.cat(act_list, dim=0)
+             if actions.dim() == 1: actions = actions.unsqueeze(1)
 
-             afterstates, values, code_probs_batch = inference_fns["afterstate"](
-                 states, actions, model=inference_model
-             )
+             with torch.no_grad():
+                with torch.autocast(device_type=self.device.type):
+                    afterstates, values, code_probs_batch = inference_fns["afterstate"](
+                        states, actions, model=inference_model
+                    )
 
-             for local_i, x in enumerate(afterstate_inputs):
-                 idx = x["idx"]
-                 sim_data[idx]["result"] = {
-                     "afterstate": afterstates[local_i : local_i + 1],
-                     "value": values[local_i],
-                     "code_probs": code_probs_batch[local_i : local_i + 1],
+             for i, sim_idx in enumerate(aft_indices):
+                 sim_data[sim_idx]["result"] = {
+                     "afterstate": afterstates[i : i + 1],
+                     "value": values[i],
+                     "code_probs": code_probs_batch[i : i + 1],
                  }
 
         # 3. Expansion & Backprop
         
         # A. Revert Virtual Loss / Virtual Mean (Global Reversion Phase)
-        # We must revert ALL virtual updates before backprop to ensure min_max_stats
-        # sees clean values without penalty/mean bias from other simulations.
         for d in sim_data:
+            if d is None: continue
             path = d["path"]
             virtual_values = d.get("virtual_values", [])
 
@@ -757,9 +762,10 @@ class SearchAlgorithm:
 
         # B. Backpropagation Phase
         for d in sim_data:
+            if d is None: continue
             path = d["path"]
             node = d["node"]
-
+            
             res = d.get("result")
             if not res:
                 continue

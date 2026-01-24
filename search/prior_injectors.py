@@ -84,7 +84,7 @@ class GumbelInjector(PriorInjector):
         noisy_scores = g + current_logits
 
         new_logits = logits.clone()
-        new_logits[legal_moves] = noisy_scores
+        new_logits[legal_moves] = noisy_scores.to(new_logits.dtype)
 
         # TODO: RETURN NOISY SCORES POLICY, TURN LOGITS INTO POLICY, IS BELOW RIGHT?
         assert not torch.all(torch.isclose(new_logits, logits))

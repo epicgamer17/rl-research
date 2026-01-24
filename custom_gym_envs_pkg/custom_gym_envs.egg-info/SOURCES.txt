@@ -17,4 +17,5 @@ custom_gym_envs/envs/mississippi_marbles.py
 custom_gym_envs/envs/nonstationary_armed_bandits.py
 custom_gym_envs/envs/slippery_grid_world.py
 custom_gym_envs/envs/tictactoe.py
+custom_gym_envs/envs/variable_turn_tictactoe.py
 custom_gym_envs/envs/wardrobe.py

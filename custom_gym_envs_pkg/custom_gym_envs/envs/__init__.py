@@ -16,3 +16,4 @@ from custom_gym_envs.envs.catan import CatanAECEnv
 
 from custom_gym_envs.envs.game_2048 import Game2048Env
 from custom_gym_envs.envs.slippery_grid_world import SlipperyGridEnv
+from custom_gym_envs.envs.variable_turn_tictactoe import env as VariableTurnTicTacToeEnv

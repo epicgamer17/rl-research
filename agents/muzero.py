@@ -19,6 +19,7 @@ from losses.losses import create_muzero_loss_pipeline
 from agents.agent import MARLBaseAgent
 from agent_configs.muzero_config import MuZeroConfig
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from modules.agent_nets.muzero import Network
 import datetime
@@ -32,6 +33,9 @@ from torch.optim.adam import Adam
 from torch.nn.utils import clip_grad_norm_
 import torch.multiprocessing as mp
 from tqdm import tqdm
+import torch.ao.quantization
+from torch.nn import quantized
+
 
 
 class MuZeroAgent(MARLBaseAgent):
@@ -91,6 +95,32 @@ class MuZeroAgent(MARLBaseAgent):
         else:
             # non-multiprocess: keep target on device for faster inference
             self.target_model.to(device)
+
+        # --- Dynamic Quantization for Inference Model ---
+        # --- Dynamic Quantization for Inference Model ---
+        # We only quantize the target_model (inference).
+        if self.config.quantize:
+            # We target nn.Linear.
+            # On macOS (ARM), qnnpack engine is used.
+            try:
+                if 'qnnpack' in torch.backends.quantized.supported_engines:
+                     torch.backends.quantized.engine = 'qnnpack'
+            except:
+                pass
+
+            # Quantize the target model
+            self.target_model.to('cpu')
+            self.target_model = torch.ao.quantization.quantize_dynamic(
+                self.target_model,
+                {nn.Linear},
+                dtype=torch.qint8
+            )
+            self.target_model.eval()
+            for p in self.target_model.parameters():
+                p.requires_grad = False
+        
+        if self.config.multi_process:
+             self.target_model.share_memory()
 
         if not self.config.multi_process:
             self.model.to(device)
@@ -175,7 +205,7 @@ class MuZeroAgent(MARLBaseAgent):
         stat_keys = [
             "score", "policy_loss", "value_loss", "reward_loss", "to_play_loss",
             "cons_loss", "loss", "test_score", "episode_length", "policy_entropy", 
-            "value_diff", "policy_improvement"
+            "value_diff", "policy_improvement", "root_children_values"
         ] + test_score_keys
         
         if self.config.stochastic:
@@ -215,10 +245,11 @@ class MuZeroAgent(MARLBaseAgent):
         self.stats.add_plot_types("episode_length", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types("policy_entropy", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types("value_diff", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("policy_improvement", PlotType.BAR)
+        self.stats.add_plot_types("policy_improvement", PlotType.BAR, bar_threshold=0.01, max_bars=20)
+        self.stats.add_plot_types("root_children_values", PlotType.BAR, bar_threshold=1e-8, max_bars=30)
         
         if self.config.stochastic:
-            self.stats.add_plot_types("chance_probs", PlotType.BAR)
+            self.stats.add_plot_types("chance_probs", PlotType.BAR, show_all_bars=True)
             self.stats.add_plot_types("chance_entropy", PlotType.ROLLING_AVG, rolling_window=100)
 
     def worker_fn(
@@ -905,7 +936,7 @@ class MuZeroAgent(MARLBaseAgent):
                     prediction,
                     temperature=temperature,  # model=model
                 ).item()
-                print(f"step: {len(game)}, action: {action}")
+                # print(f"step: {len(game)}, action: {action}")
                 if self.config.game.num_players != 1:
                     env.step(action)
                     next_state, _, terminated, truncated, next_info = env.last()
@@ -1072,6 +1103,10 @@ class MuZeroAgent(MARLBaseAgent):
         self.stats.append("policy_improvement", network_policy.unsqueeze(0), subkey="network")
         self.stats.append("policy_improvement", search_policy.unsqueeze(0), subkey="search")
 
+        # 4. Root Children Values
+        if "root_children_values" in search_metadata:
+             self.stats.append("root_children_values", search_metadata["root_children_values"].unsqueeze(0))
+
     def __getstate__(self):
         state = self.__dict__.copy()
         state["stop_flag"] = state["stop_flag"].value
@@ -1104,6 +1139,17 @@ class MuZeroAgent(MARLBaseAgent):
 
     def __setstate__(self, state):
         model_state_dict = state.pop("model_state_dict", None)
+        
+        # Strip _orig_mod prefix added by torch.compile
+        if model_state_dict is not None:
+            new_state_dict = {}
+            for k, v in model_state_dict.items():
+                if k.startswith("_orig_mod."):
+                    new_state_dict[k[10:]] = v
+                else:
+                    new_state_dict[k] = v
+            model_state_dict = new_state_dict
+
         self.__dict__.update(state)
         self.stop_flag = mp.Value("i", state["stop_flag"])
         self.env = self.config.game.make_env()
@@ -1123,6 +1169,24 @@ class MuZeroAgent(MARLBaseAgent):
              self.model.load_state_dict(model_state_dict)
              self.model.to(self.device)
              self.target_model = copy.deepcopy(self.model)
+             
+             # Apply quantization to reconstructed target model
+             if self.config.quantize:
+                 try:
+                     if 'qnnpack' in torch.backends.quantized.supported_engines:
+                          torch.backends.quantized.engine = 'qnnpack'
+                 except:
+                     pass
+                 self.target_model.to('cpu')
+                 self.target_model = torch.ao.quantization.quantize_dynamic(
+                     self.target_model,
+                     {nn.Linear},
+                     dtype=torch.qint8
+                 )
+                 self.target_model.eval()
+                 for p in self.target_model.parameters():
+                     p.requires_grad = False
+
              # Move target to shared memory if multi_process (though for testing we might just use local copy)
              if self.config.multi_process:
                  # Note: sharing CUDA/MPS tensors is tricky. If device is CPU, this is fine.
@@ -1137,4 +1201,38 @@ class MuZeroAgent(MARLBaseAgent):
                  # Training workers rely on the pickled 'target_model' which points to shared memory.
                  # WE DELETED 'target_model' from state!
                  pass
+
+    def update_target_model(self):
+        """
+        Override to support quantized target model updates.
+        """
+        if not self.config.quantize:
+            super().update_target_model()
+            return
+
+        with torch.no_grad():
+            def update_recursively(target_module, source_module):
+                source_children = dict(source_module.named_children())
+                for name, target_child in target_module.named_children():
+                    if name not in source_children:
+                        continue
+                    source_child = source_children[name]
+                    
+                    if isinstance(target_child, (nn.quantized.dynamic.Linear, torch.ao.nn.quantized.dynamic.Linear)) and isinstance(source_child, nn.Linear):
+                        # Workaround for set_weight_bias backend issues:
+                        # Create new quantized module via from_float (identical to how quantize_dynamic does it)
+                        # and steal its packed params.
+                        # We use source_child directly (it's float). from_float usually copies weights.
+                        # We must attach qconfig to a copy of source to avoid modifying training model.
+                        temp_source = copy.copy(source_child)
+                        temp_source.qconfig = torch.ao.quantization.default_dynamic_qconfig
+                        new_q_child = type(target_child).from_float(temp_source)
+                        target_child._packed_params = new_q_child._packed_params
+                    else:
+                        update_recursively(target_child, source_child)
+            
+            if self.config.soft_update:
+                pass # Soft update not supported for quantized yet
+            else:
+                 update_recursively(self.target_model, self.model)
 

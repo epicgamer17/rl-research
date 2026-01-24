@@ -138,6 +138,7 @@ class MuZeroConfig(
         self.transfer_interval: int = self.parse_field("transfer_interval", 1000)
 
         self.reanalyze_ratio: float = self.parse_field("reanalyze_ratio", 0.0)
+        self.quantize: bool = self.parse_field("quantize", False)
         self.reanalyze_method: bool = self.parse_field("reanalyze_method", "mcts")
         self.reanalyze_tau: float = self.parse_field("reanalyze_tau", 0.3)
         self.injection_frac: float = self.parse_field(
@@ -189,8 +190,8 @@ class MuZeroConfig(
         self.action_embedding_dim = self.parse_field("action_embedding_dim", 32)
         self.single_action_plane = self.parse_field("single_action_plane", False)
 
-        self.latent_viz_method = self.parse_field("latent_viz_method", "pca")
-        self.latent_viz_interval = self.parse_field("latent_viz_interval", 1)  # how often within learn() to update buffer
+        self.latent_viz_method = self.parse_field("latent_viz_method", "umap")
+        self.latent_viz_interval = self.parse_field("latent_viz_interval", 10)  # how often within learn() to update buffer
 
     def _verify_game(self):
         # override alphazero game verification since muzero can play those games

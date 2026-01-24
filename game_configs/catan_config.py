@@ -30,7 +30,7 @@ def make_env(
         auto_play_single_action=auto_play_single_action,
     )
     env = ActionMaskInInfoWrapper(env)
-    env = FrameStackWrapper(env, 4, channel_first=False)
+    # env = FrameStackWrapper(env, 4, channel_first=False)
     env = AppendAgentSelectionWrapper(env)
     return env
 

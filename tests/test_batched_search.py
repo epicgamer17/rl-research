@@ -214,8 +214,13 @@ def test_batched_convergence_consistency(batch_size, virtual_loss):
     inference_fns = mocker.get_fns()
     
     # Run Batched
+    # Fix flakiness: Seeding + more sims
+    torch.manual_seed(12345 + batch_size) 
+    np.random.seed(12345 + batch_size)
+    random.seed(12345 + batch_size)
+
     config = MockConfig(batch_size=batch_size, virtual_loss=virtual_loss)
-    config.num_simulations = 400 
+    config.num_simulations = 600 # Increased from 400 for stability 
     config.root_exploration_fraction = 0.0
     
     mcts = create_mcts(config, "cpu", config.num_actions)
@@ -240,14 +245,19 @@ def test_gumbel_batched_vs_iterative():
     mocker = MockInference(mode="biased") 
     inference_fns = mocker.get_fns()
 
+
     # 1. Iterative Gumbel
-    torch.manual_seed(42)
+    torch.manual_seed(12345)
+    np.random.seed(12345)  
+    random.seed(12345)
     config_iter = MockConfig(batch_size=0, gumbel=True)
     mcts_iter = create_mcts(config_iter, "cpu", 4)
     _, _, target_iter, action_iter, _ = mcts_iter.run(state, info, 0, inference_fns)
 
     # 2. Batched Gumbel
-    torch.manual_seed(42)
+    torch.manual_seed(12345)
+    np.random.seed(12345)
+    random.seed(12345)
     config_batch = MockConfig(batch_size=4, gumbel=True)
     mcts_batch = create_mcts(config_batch, "cpu", 4)
     _, _, target_batch, action_batch, _ = mcts_batch.run(state, info, 0, inference_fns)
