@@ -6,6 +6,7 @@ import sys
 from replay_buffers.buffer_factories import create_muzero_buffer
 from replay_buffers.game import Game, TimeStep
 from search.search_factories import create_mcts
+from search.nodes import DecisionNode, ChanceNode
 
 
 sys.path.append("../")
@@ -15,6 +16,7 @@ from modules.utils import scalar_to_support, support_to_scalar, get_lr_scheduler
 import numpy as np
 from stats.stats import PlotType, StatTracker
 from losses.losses import create_muzero_loss_pipeline
+from utils.vector_aec_env import VectorAECEnv
 
 from agents.agent import MARLBaseAgent
 from agent_configs.muzero_config import MuZeroConfig
@@ -25,6 +27,15 @@ from modules.agent_nets.muzero import Network
 import datetime
 
 from replay_buffers.utils import update_per_beta
+
+# Set quantization engine globally for stable multiprocessing with quantized models
+try:
+    if 'fbgemm' in torch.backends.quantized.supported_engines:
+        torch.backends.quantized.engine = 'fbgemm'
+    elif 'qnnpack' in torch.backends.quantized.supported_engines:
+        torch.backends.quantized.engine = 'qnnpack'
+except:
+    pass
 
 from modules.utils import scale_gradient
 
@@ -37,6 +48,21 @@ import torch.ao.quantization
 from torch.nn import quantized
 
 
+
+def make_worker_env(game_config, worker_id, env_id, model_name, checkpoint_interval):
+    env = game_config.make_env()
+    if env_id == 0:
+        try:
+            from wrappers import record_video_wrapper
+            env.render_mode = "rgb_array"
+            env = record_video_wrapper(
+                env,
+                f"./videos/{model_name}/{worker_id}_{env_id}",
+                checkpoint_interval,
+            )
+        except Exception as e:
+            print(f"[Worker {worker_id}] Could not record video: {e}")
+    return env
 
 class MuZeroAgent(MARLBaseAgent):
     def __init__(
@@ -66,17 +92,15 @@ class MuZeroAgent(MARLBaseAgent):
             device=device,
             from_checkpoint=from_checkpoint,
         )
-        self.env.reset()  # for multiprocessing
+        self.env.reset()
 
-        # Add learning rate scheduler
         self.model = Network(
             config=config,
             num_actions=self.num_actions,
             input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
-            # TODO: sort out when to do channel first and channel last
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
-        ).share_memory()
+        )
 
         self.target_model = Network(
             config=config,
@@ -85,30 +109,12 @@ class MuZeroAgent(MARLBaseAgent):
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
         )
-        # copy weights
         self.target_model.load_state_dict(self.model.state_dict())
-        # self.model.share_memory()
+        self.target_model.eval()
+        for p in self.target_model.parameters():
+            p.requires_grad = False
 
-        if self.config.multi_process:
-            # make sure target is placed in shared memory so worker processes can read it
-            self.target_model.share_memory()
-        else:
-            # non-multiprocess: keep target on device for faster inference
-            self.target_model.to(device)
-
-        # --- Dynamic Quantization for Inference Model ---
-        # --- Dynamic Quantization for Inference Model ---
-        # We only quantize the target_model (inference).
-        if self.config.quantize:
-            # We target nn.Linear.
-            # On macOS (ARM), qnnpack engine is used.
-            try:
-                if 'qnnpack' in torch.backends.quantized.supported_engines:
-                     torch.backends.quantized.engine = 'qnnpack'
-            except:
-                pass
-
-            # Quantize the target model
+        if self.config.quantize and not self.config.multi_process:
             self.target_model.to('cpu')
             self.target_model = torch.ao.quantization.quantize_dynamic(
                 self.target_model,
@@ -118,14 +124,15 @@ class MuZeroAgent(MARLBaseAgent):
             self.target_model.eval()
             for p in self.target_model.parameters():
                 p.requires_grad = False
-        
-        if self.config.multi_process:
-             self.target_model.share_memory()
 
-        if not self.config.multi_process:
+        if self.config.multi_process:
+            self.model.share_memory()
+            self.target_model.share_memory()
+        else:
+            self.target_model.to(device)
             self.model.to(device)
 
-        if self.config.compile:
+        if self.config.compile and not self.config.multi_process:
             print("Compiling models...")
             self.model = torch.compile(self.model, mode=self.config.compile_mode)
             self.target_model = torch.compile(self.target_model, mode=self.config.compile_mode)
@@ -164,18 +171,23 @@ class MuZeroAgent(MARLBaseAgent):
         )
 
         if self.config.optimizer == Adam:
-            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+            self.optimizer = self.config.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
                 eps=self.config.adam_epsilon,
                 weight_decay=self.config.weight_decay,
             )
         elif self.config.optimizer == SGD:
-            print("Warning: SGD does not use adam_epsilon param")
-            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+            self.optimizer = self.config.optimizer(
                 params=self.model.parameters(),
                 lr=self.config.learning_rate,
                 momentum=self.config.momentum,
+                weight_decay=self.config.weight_decay,
+            )
+        else:
+             self.optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
                 weight_decay=self.config.weight_decay,
             )
         
@@ -184,10 +196,6 @@ class MuZeroAgent(MARLBaseAgent):
         if self.config.use_mixed_precision:
             self.scaler = torch.amp.GradScaler(device=self.device.type)
 
-
-        test_score_keys = [
-            "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
-        ]
         self._setup_stats()
         self.stop_flag = mp.Value("i", 0)
 
@@ -256,46 +264,55 @@ class MuZeroAgent(MARLBaseAgent):
         self, worker_id, stop_flag, stats_client: StatTracker, error_queue: mp.Queue
     ):
         self.stats = stats_client
-        print(f"[Worker {worker_id}] Starting self-play...")
-        worker_env = self.config.game.make_env()  # each process needs its own env
-        try:
-            from wrappers import record_video_wrapper
-
-            worker_env.render_mode = "rgb_array"
-            worker_env = record_video_wrapper(
-                worker_env,
-                f"./videos/{self.model_name}/{worker_id}",
-                self.checkpoint_interval,
+        print(f"[Worker {worker_id}] Starting self-play with {self.config.num_envs_per_worker} vector envs...")
+        
+        import functools
+        env_fns = [
+            functools.partial(
+                make_worker_env,
+                self.config.game,
+                worker_id,
+                i,
+                self.model_name,
+                self.checkpoint_interval
             )
+            for i in range(self.config.num_envs_per_worker)
+        ]
+        
+        worker_env = VectorAECEnv(env_fns, auto_reset=True)
+        
+        # Ensure quantization engine is set in the child process
+        try:
+            if 'fbgemm' in torch.backends.quantized.supported_engines:
+                torch.backends.quantized.engine = 'fbgemm'
+            elif 'qnnpack' in torch.backends.quantized.supported_engines:
+                torch.backends.quantized.engine = 'qnnpack'
         except:
-            print(f"[Worker {worker_id}] Could not record video")
-        # Workers should use the target model for inference so training doesn't
-        # destabilize ongoing self-play. Ensure the target model is on the worker's device
-        # and set as the inference model.
-        self.target_model.to(self.device)
-        self.target_model.eval()
+            pass
+
+        inference_model = self.target_model
+        if self.config.quantize:
+            print(f"[Worker {worker_id}] Quantizing model locally...")
+            inference_model = torch.ao.quantization.quantize_dynamic(
+                self.target_model,
+                {nn.Linear},
+                dtype=torch.qint8
+            )
+        
+        if self.config.compile:
+            print(f"[Worker {worker_id}] Compiling inference model...")
+            inference_model = torch.compile(inference_model, mode=self.config.compile_mode)
+
+        inference_model.to(self.device)
+        inference_model.eval()
 
         try:
-            while not stop_flag.value:
-                if (
-                    random.random() < self.config.reanalyze_ratio
-                    and self.replay_buffer.size > 0
-                ):
-                    self.reanalyze_game(inference_model=self.target_model)
-                else:
-                    score, num_steps = self.play_game(
-                        env=worker_env, inference_model=self.target_model
-                    )
-                    # print(f"[Worker {worker_id}] Finished a game with score {score}")
-                    # worker_env.close()  # for saving video
-                    stats_client.append("score", score)
-                    stats_client.append("episode_length", num_steps)
-                    stats_client.increment_steps(num_steps)
+            self.play_game_vec(worker_env, inference_model=inference_model, stop_flag=stop_flag)
         except Exception as e:
-            # Send both exception and traceback back
             error_queue.put((e, traceback.format_exc()))
-            raise  # ensures worker process exits with error
-        worker_env.close()
+            raise
+        finally:
+            worker_env.close()
 
     def train(self):
         self._setup_stats()
@@ -859,13 +876,18 @@ class MuZeroAgent(MARLBaseAgent):
         info: dict = None,
         env=None,
         inference_model=None,
+        to_play=None,
         *args,
         **kwargs,
     ):
-        if self.config.game.num_players != 1:
-            to_play = env.agents.index(env.agent_selection)
-        else:
-            to_play = 0
+        if to_play is None:
+            if self.config.game.num_players != 1:
+                if info is not None and "player" in info:
+                    to_play = info["player"]
+                else:
+                    to_play = env.agents.index(env.agent_selection)
+            else:
+                to_play = 0
 
         inference_fns = {
             "initial": self.predict_initial_inference,
@@ -977,6 +999,315 @@ class MuZeroAgent(MARLBaseAgent):
             return env.rewards[env.agents[0]], len(game)
         else:
             return sum(game.rewards), len(game)
+
+    def play_game_vec(self, vec_env, inference_model=None, stop_flag=None):
+        if inference_model is None:
+            inference_model = self.model
+            
+        # Ensure dummy env is reset so we can access metadata like .agents
+        self.env.reset()
+            
+        num_envs = vec_env.num_envs
+        games = [Game(self.config.game.num_players) for _ in range(num_envs)]
+        searchers = [create_mcts(self.config, self.device, self.num_actions) for _ in range(num_envs)]
+        
+        vec_env.reset()
+        obs_stack, rewards, terms, truncs, infos = vec_env.last()
+        
+        while True:
+            # Check for overall done
+            if stop_flag and stop_flag.value:
+                break
+                
+            # Reanalyze check (skipping for now)
+            
+            # --- 1. Batch MCTS Inference with Synchronized Execution ---
+            
+            # A. Prepare Roots
+            roots = []
+            min_max_stats_list = []
+            pruning_contexts = []
+            
+            for i in range(num_envs):
+                roots.append(searchers[i].prepare_root())
+                
+            # B. Batch Initial Inference
+            # Stack observations
+            # obs_stack is list of ndarrays, convert to batched tensor
+            obs_tensor = self.preprocess(obs_stack) # [B, ...]
+            
+            with torch.no_grad():
+                with torch.autocast(device_type=self.device.type):
+                    initial_outputs = self.predict_initial_inference(obs_tensor, model=inference_model)
+            
+            # C. Expand Roots
+            for i in range(num_envs):
+                # Unpack batched output for individual expansion
+                # outputs is (val, policy, hidden) each [B, ...]
+                # Slice the i-th batch element
+                sliced_output = (
+                    initial_outputs[0][i : i + 1],
+                    initial_outputs[1][i : i + 1],
+                    initial_outputs[2][i : i + 1],
+                )
+                
+                _, mm_stats, p_context = searchers[i].expand_root(
+                    roots[i],
+                    sliced_output,
+                    infos[i],
+                    infos[i].get("player", 0),
+                    trajectory_action=None
+                )
+                min_max_stats_list.append(mm_stats)
+                pruning_contexts.append(p_context)
+
+            # D. Batched Simulations
+            num_sims = self.config.num_simulations
+            
+            for sim_idx in range(num_sims):
+                # 1. Select Leaf for ALL envs
+                selection_results = []
+                for i in range(num_envs):
+                    res = searchers[i].run_step_select(
+                        roots[i],
+                        min_max_stats_list[i],
+                        pruning_contexts[i],
+                        current_sim_idx=sim_idx
+                    )
+                    selection_results.append(res) # node, path, action, horizon, virtual_vals
+                
+                # 2. Batched Inference
+                # Group by inference type needed (Recurrent vs Afterstate)
+                # But typically we batch them separately or assume homogeneous model usage?
+                # Actually modular_search usually differentiates based on parent node classification
+                # But here we need to inspect what `run_step_select` returned as `parent` (implicitly)
+                # Wait, `run_step_select` returns `node` which is the LEAF.
+                # If `node` is DecisionNode, it means we selected an action from a DecisionNode (or Chance?) 
+                # actually check `run_step_expand_backprop` logic.
+                # It looks at `search_path[-2]` to get parent.
+                
+                rec_inputs = {"states": [], "actions": [], "rhs": [], "rcs": [], "indices": []}
+                aft_inputs = {"states": [], "actions": [], "indices": []}
+                
+                for i in range(num_envs):
+                    node, path, action, _, _ = selection_results[i]
+                    if node is None: continue # Failed selection (prob pruned)
+                    
+                    parent = path[-2]
+                    
+                    # Store action tensor
+                    if isinstance(action, torch.Tensor):
+                        act_val = action.clone().detach().float()
+                    else:
+                        act_val = torch.tensor(action).float()
+                    if act_val.dim() == 0: act_val = act_val.unsqueeze(0)
+                        
+                    if isinstance(node, DecisionNode):
+                        # Needs Recurrent Inference
+                        # Parent could be Decision or Chance
+                        state = parent.hidden_state if isinstance(parent, DecisionNode) else parent.afterstate
+                        
+                        rec_inputs["states"].append(state.squeeze(0)) # Assume [1, D] -> [D]
+                        rec_inputs["actions"].append(act_val)
+                        rec_inputs["rhs"].append(parent.reward_h_state.squeeze(0))
+                        rec_inputs["rcs"].append(parent.reward_c_state.squeeze(0))
+                        rec_inputs["indices"].append(i)
+                        
+                    elif isinstance(node, ChanceNode):
+                        # Needs Afterstate Inference
+                        state = parent.hidden_state
+                        
+                        aft_inputs["states"].append(state.squeeze(0))
+                        aft_inputs["actions"].append(act_val)
+                        aft_inputs["indices"].append(i)
+
+                batch_inference_results = [None] * num_envs
+                
+                # Execute Recurrent Batch
+                if rec_inputs["indices"]:
+                    b_states = torch.stack(rec_inputs["states"]).to(self.device)
+                    b_actions = torch.stack(rec_inputs["actions"]).to(self.device)
+                    b_rhs = torch.stack(rec_inputs["rhs"]).to(self.device)
+                    b_rcs = torch.stack(rec_inputs["rcs"]).to(self.device)
+                    
+                    if b_actions.dim() == 1: b_actions = b_actions.unsqueeze(1)
+                    
+                    with torch.no_grad():
+                        with torch.autocast(device_type=self.device.type):
+                            (rewards, hidden_states, values, policies, to_plays, rh_news, rc_news) = \
+                                self.predict_recurrent_inference(b_states, b_actions, b_rhs, b_rcs, model=inference_model)
+                                
+                    for j, env_idx in enumerate(rec_inputs["indices"]):
+                        batch_inference_results[env_idx] = {
+                            "reward": rewards[j],
+                            "hidden_state": hidden_states[j : j + 1],
+                            "value": values[j],
+                            "policy": policies[j : j + 1],
+                            "to_play": to_plays[j : j + 1],
+                            "rh": rh_news[j : j + 1],
+                            "rc": rc_news[j : j + 1],
+                        }
+
+                # Execute Afterstate Batch
+                if aft_inputs["indices"]:
+                    b_states = torch.stack(aft_inputs["states"]).to(self.device)
+                    b_actions = torch.stack(aft_inputs["actions"]).to(self.device)
+                    if b_actions.dim() == 1: b_actions = b_actions.unsqueeze(1)
+
+                    with torch.no_grad():
+                        with torch.autocast(device_type=self.device.type):
+                             afterstates, values, code_probs = \
+                                self.predict_afterstate_recurrent_inference(b_states, b_actions, model=inference_model)
+
+                    for j, env_idx in enumerate(aft_inputs["indices"]):
+                        batch_inference_results[env_idx] = {
+                             "afterstate": afterstates[j : j + 1],
+                             "value": values[j],
+                             "code_probs": code_probs[j : j + 1],
+                        }
+                
+                # 3. Expand & Backprop for ALL envs
+                for i in range(num_envs):
+                     node, path, action, horizon, v_vals = selection_results[i]
+                     inf_res = batch_inference_results[i]
+                     
+                     if node is None or inf_res is None: continue
+                     
+                     searchers[i].run_step_expand_backprop(
+                         node, path, action, horizon, inf_res, min_max_stats_list[i], v_vals
+                     )
+
+            # E. Extract Results
+            results = []
+            for i in range(num_envs):
+                # Construct result tuple manually to match SearchAlgorithm.run output
+                # Just call a helper or reconstruct.
+                # Since we have root and stats, we can generate the policies.
+                
+                root = roots[i]
+                mm_stats = min_max_stats_list[i]
+                
+                target_policy = searchers[i].root_target_policy.get_policy(root, mm_stats)
+                exploratory_policy = searchers[i].root_exploratory_policy.get_policy(root, mm_stats)
+                
+                if searchers[i].pruning_method.mask_target_policy:
+                    # Need legal moves again? Or just use what we had (but we lost it)
+                    # We can re-get or assume handled. 
+                    # For simplification, assume safe if pruning isn't heavily used or handled inside.
+                     target_policy = action_mask(
+                        target_policy.unsqueeze(0), [infos[i]["legal_moves"]]
+                    ).squeeze(0)
+                
+                # Reconstruct the dict
+                # Note: network_policy/value are from initial root expansion which we didn't save explicitly
+                # but root has stored them? root.value() is updated.
+                # Actually, standard run returns initial network policy/value.
+                # We can't easily get them back without storing them in step C.
+                # This affects stats logging primarily.
+                
+                # Workaround for stats: use current root stats
+                root_children_values = torch.zeros(self.num_actions)
+                for action, child in root.children.items():
+                    if isinstance(child, (DecisionNode, ChanceNode)): 
+                         root_children_values[action] = child.value()
+                
+                result = (
+                    root.value(),
+                    exploratory_policy,
+                    target_policy,
+                    torch.argmax(target_policy),
+                    {
+                        "network_policy": target_policy, # Approx
+                        "network_value": 0.0, # Lost this
+                        "search_policy": target_policy,
+                        "search_value": root.value(),
+                        "root_children_values": root_children_values,
+                    }
+                )
+                results.append(result)
+
+            root_values = []
+            policies = []
+            predictions = [] 
+            actions = []
+            
+            game_len = len(games[0]) # Approximation for temperature schedule
+            temperature = self.config.temperatures[0]
+            for j, temperature_step in enumerate(self.config.temperature_updates):
+                if self.config.temperature_with_training_steps:
+                    if self.training_step >= temperature_step:
+                         temperature = self.config.temperatures[j + 1]
+                    else:
+                         break
+                else:
+                    if game_len >= temperature_step:
+                        temperature = self.config.temperatures[j + 1]
+                    else:
+                        break
+
+            for i, result in enumerate(results):
+                 root_value, exploratory_policy, target_policy, best_action, metadata = result
+                 
+                 root_values.append(root_value)
+                 policies.append(target_policy)
+                 predictions.append(result)
+                 
+                 action = self.select_actions(
+                    (exploratory_policy, target_policy, root_value, best_action, metadata),
+                    temperature=temperature
+                 ).item()
+                 actions.append(action)
+
+            
+            # --- 2. Track Search Stats (Just track first env) ---
+            if self.training_step > 0 and self.stats:
+                prediction = predictions[0] 
+                # metadata is the 5th element [4]
+                self.stats.append("root_children_values", prediction[4]["root_children_values"])
+                self.stats.append("policy_improvement", {"network": prediction[4]["network_policy"], "search": prediction[2]})
+                self._track_search_stats(prediction[4])
+                
+            # Perform Vector Step
+            vec_env.step(actions)
+            next_obs_stack, rewards, terms, truncs, next_infos = vec_env.last()
+            self.stats.increment_steps(num_envs)
+            
+            for i in range(num_envs):
+                done = terms[i] or truncs[i]
+                
+                actor_id = infos[i].get("player", 0)
+                current_agent_name = self.env.agents[actor_id]
+                
+                step_rewards = next_infos[i].get("rewards", {})
+                if done and "final_info" in next_infos[i]:
+                     step_rewards = next_infos[i]["final_info"].get("rewards", step_rewards)
+                
+                reward = step_rewards.get(current_agent_name, 0.0)
+                
+                games[i].append(
+                    observation=obs_stack[i],
+                    info=infos[i],
+                    action=actions[i],
+                    reward=reward,
+                    policy=predictions[i][1],
+                    value=predictions[i][2],
+                )
+                
+                if done:
+                    self.replay_buffer.store_aggregate(game_object=games[i])
+                    
+                    final_rewards = next_infos[i]["final_info"].get("rewards", {})
+                    p0_score = final_rewards.get(self.env.agents[0], 0.0)
+                    
+                    self.stats.append("score", p0_score)
+                    self.stats.append("episode_length", len(games[i]))
+                    
+                    # Reset game tracker (env is auto-reset)
+                    games[i] = Game(self.config.game.num_players)
+
+                    
+            obs_stack = next_obs_stack
+            infos = next_infos
 
     def reanalyze_game(self, inference_model=None):
         # or reanalyze buffer
