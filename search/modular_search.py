@@ -60,17 +60,14 @@ class SearchAlgorithm:
     ):
         self._set_node_configs()
         root = DecisionNode(0.0)
-        return root
 
-    def expand_root(
-        self,
-        root,
-        initial_inference_output,
-        info,
-        to_play,
-        trajectory_action=None,
-    ):
-        outputs = initial_inference_output
+        # Delegate root expansion to the strategy
+        # 1. Inference
+        assert not root.expanded()
+
+        with torch.no_grad():
+            with torch.autocast(device_type=self.device.type):
+                outputs = inference_fns["initial"](state, model=inference_model)
         if len(outputs) == 3:
             val_raw, policy, hidden_state = outputs
         else:
@@ -78,9 +75,11 @@ class SearchAlgorithm:
 
         # 3. Legal Moves
         legal_moves = get_legal_moves(info)
+        # print("legal smoves", legal_moves)
         if legal_moves is None:
             legal_moves = [list(range(self.num_actions))]
 
+        # TODO: should i action mask?
         policy = action_mask(policy, legal_moves, device=self.device)
 
         legal_moves = legal_moves[0]
@@ -125,43 +124,19 @@ class SearchAlgorithm:
             reward_c_state=reward_c_state,
             is_reset=True,
         )
-        
-        # 8. Init Stats & Pruning
+
         min_max_stats = MinMaxStats(
             self.config.known_bounds,
             soft_update=self.config.soft_update,
             min_max_epsilon=self.config.min_max_epsilon,
         )
 
+        # Initialize pruning state (e.g. Sequential Halving budget)
+        # pruning_state = self.pruning_method.initialize(root, self.config)
         pruning_context = {
             "root": self.pruning_method.initialize(root, self.config),
             "internal": {},  # Map node -> state
         }
-        
-        return root, min_max_stats, pruning_context
-
-    def run(
-        self,
-        state,
-        info,
-        to_play,
-        inference_fns,
-        trajectory_action=None,
-        inference_model=None,
-    ):
-        root = self.prepare_root() # Use new method
-
-        # Delegate root expansion to the strategy
-        # 1. Inference
-        assert not root.expanded()
-
-        with torch.no_grad():
-            with torch.autocast(device_type=self.device.type):
-                outputs = inference_fns["initial"](state, model=inference_model)
-                
-        root, min_max_stats, pruning_context = self.expand_root(
-            root, outputs, info, to_play, trajectory_action
-        )
         # --- Main Simulation Loop ---
         search_batch_size = self.config.search_batch_size
         if search_batch_size > 0:
@@ -222,201 +197,11 @@ class SearchAlgorithm:
             torch.argmax(target_policy),
             {
                 "network_policy": network_policy,
-                "network_value": float(root.value()), # TODO Check if this is correct access, likely v_pi_scalar was local var
+                "network_value": v_pi_scalar,
                 "search_policy": target_policy,
                 "search_value": root.value(),
                 "root_children_values": root_children_values,
             },
-        )
-        
-    def prepare_root(self):
-        self._set_node_configs()
-        root = DecisionNode(0.0)
-        return root
-    
-    def run_step_select(self, root, min_max_stats, pruning_context, current_sim_idx=0):
-        # 1. Selection Phase
-        node = root
-        search_path = [node]
-        horizon_index = 0
-        action_or_code = None
-        
-        # Virtual Loss / Mean Logic
-        use_virtual_mean = self.config.use_virtual_mean
-        virtual_loss = self.config.virtual_loss
-        path_virtual_values = [] 
-
-        while True:
-            if not node.expanded():
-                break  # Reached a leaf state
-
-            parent_node = node
-            
-            if node.parent is None:
-                # Root
-                pruned_actionset, next_state = self.pruning_method.step(
-                    node,
-                    pruning_context["root"],
-                    self.config,
-                    min_max_stats,
-                    current_sim_idx,
-                )
-                pruning_context["root"] = next_state
-                # Check for Early Stopping / Pruning Rejection
-                if pruned_actionset is not None and len(pruned_actionset) == 0:
-                     # Revert virtual update for this failed path (if we applied any? No, we haven't descended yet)
-                     return None, None, None, None # Signal failed selection
-                
-                action_or_code, node = self.root_selection_strategy.select_child(
-                    node, pruned_actionset=pruned_actionset, min_max_stats=min_max_stats
-                )
-            else:
-                if isinstance(node, DecisionNode):
-                    if node not in pruning_context["internal"]:
-                        pruning_context["internal"][node] = (
-                            self.internal_pruning_method.initialize(node, self.config)
-                        )
-                    
-                    pruned_actionset, next_state = self.internal_pruning_method.step(
-                        node,
-                        pruning_context["internal"][node],
-                        self.config,
-                        min_max_stats,
-                        current_sim_idx,
-                    )
-                    pruning_context["internal"][node] = next_state
-
-                    if pruned_actionset is not None and len(pruned_actionset) == 0:
-                        return None, None, None, None # Signal failed selection
-
-                    action_or_code, node = self.decision_selection_strategy.select_child(
-                        node,
-                        pruned_actionset=pruned_actionset,
-                        min_max_stats=min_max_stats,
-                    )
-                elif isinstance(node, ChanceNode):
-                    action_or_code, node = self.chance_selection_strategy.select_child(
-                        node,
-                        min_max_stats=min_max_stats,
-                    )
-
-            horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
-            
-            # Apply virtual update to the PARENT
-            if use_virtual_mean:
-                v_val = parent_node.value()
-                parent_node.visits += 1
-                parent_node.value_sum += v_val
-                path_virtual_values.append(v_val) 
-            else:
-                parent_node.visits += 1
-                parent_node.value_sum -= virtual_loss
-            
-            search_path.append(node)
-            
-        # Leaf Node Virtual Update
-        if use_virtual_mean:
-            v_val = node.value() 
-            node.visits += 1
-            node.value_sum += v_val
-            path_virtual_values.append(v_val)
-        else:
-            node.visits += 1
-            node.value_sum -= virtual_loss
-            
-        return node, search_path, action_or_code, horizon_index, path_virtual_values
-
-    def run_step_expand_backprop(
-        self, 
-        node, 
-        search_path, 
-        action_or_code, 
-        horizon_index, # From select step
-        inference_output_dict, # Batched inference result
-        min_max_stats,
-        path_virtual_values=None
-    ):
-        # 1. Revert Virtual Loss / Mean
-        use_virtual_mean = self.config.use_virtual_mean
-        virtual_loss = self.config.virtual_loss
-        
-        if use_virtual_mean:
-             if path_virtual_values:
-                for n, v in zip(search_path, path_virtual_values):
-                    n.visits -= 1
-                    n.value_sum -= v
-        else:
-             for n in search_path:
-                n.visits -= 1
-                n.value_sum += virtual_loss
-        
-        # 2. Expand
-        parent = search_path[-2]
-        res = inference_output_dict
-        
-        to_play_for_backprop = None
-        
-        if isinstance(node, DecisionNode):
-            reward = res["reward"]
-            value = res["value"]
-            if self.config.support_range is not None:
-                reward = support_to_scalar(reward, self.config.support_range).item()
-                value = support_to_scalar(value, self.config.support_range).item()
-            else:
-                reward = reward if isinstance(reward, float) else reward.item()
-                value = value if isinstance(value, float) else value.item()
-
-            to_play = int(res["to_play"].argmax().item())
-            to_play_for_backprop = to_play
-
-            is_reset = horizon_index == 0
-            rh = res["rh"]
-            rc = res["rc"]
-
-            if self.config.value_prefix and is_reset:
-                rh = torch.zeros_like(rh).to(self.device)
-                rc = torch.zeros_like(rc).to(self.device)
-
-            policy = res["policy"][0]
-            actions_to_expand = self.internal_actionset.create_initial_actionset(
-                policy,
-                list(range(self.num_actions)),
-                self.config.gumbel_m,
-                trajectory_action=None,
-            )
-
-            node.expand(
-                allowed_actions=actions_to_expand,
-                to_play=to_play,
-                priors=policy.to(self.device), # Send back to device
-                network_policy=policy,
-                hidden_state=res["hidden_state"],
-                reward=reward,
-                value=value,
-                reward_h_state=rh,
-                reward_c_state=rc,
-                is_reset=is_reset,
-            )
-            
-        elif isinstance(node, ChanceNode):
-             value = res["value"]
-             if self.config.support_range:
-                value = support_to_scalar(value, self.config.support_range).item()
-             else:
-                value = value if isinstance(value, float) else value.item()
-             
-             node.expand(
-                to_play=parent.to_play,
-                afterstate=res["afterstate"],
-                network_value=value,
-                code_probs=res["code_probs"][0],
-                reward_h_state=parent.reward_h_state,
-                reward_c_state=parent.reward_c_state,
-             )
-        
-        # 3. Backprop
-        self.backpropagator.backpropagate(
-            search_path, value, to_play_for_backprop, min_max_stats, self.config
         )
 
     def _set_node_configs(self):

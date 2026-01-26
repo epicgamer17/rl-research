@@ -1,3 +1,0 @@
-search_batch_size,compile,use_mixed_precision,quantize,num_workers,num_envs_per_worker,device,fps,steps
-0,False,False,True,1,1,cpu,12.669778235425294,51
-8,False,False,True,1,1,cpu,8.785944898259238,53
