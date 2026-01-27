@@ -6,8 +6,7 @@ _epsilon = 1e-12
 def _is_low_precision(tensor: torch.Tensor):
     """Returns True if the tensor is in low precision or autocast is enabled."""
     return (
-        tensor.dtype in [torch.float16, torch.bfloat16]
-        or torch.is_autocast_enabled()
+        tensor.dtype in [torch.float16, torch.bfloat16] or torch.is_autocast_enabled()
     )
 
 

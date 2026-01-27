@@ -5,6 +5,7 @@ import os
 import shutil
 from stats.latent_pca import LatentPCAVisualizer
 
+
 class TestLatentPCA(unittest.TestCase):
     def setUp(self):
         self.output_dir = "test_output_pca"
@@ -18,10 +19,10 @@ class TestLatentPCA(unittest.TestCase):
         # Test with simple 1D latent vectors (N, D)
         N, D = 100, 32
         latents = torch.randn(N, D)
-        
+
         visualizer = LatentPCAVisualizer(n_components=2)
         points = visualizer.fit_transform(latents)
-        
+
         self.assertEqual(points.shape, (N, 2))
         self.assertTrue(isinstance(points, np.ndarray))
 
@@ -29,11 +30,11 @@ class TestLatentPCA(unittest.TestCase):
         # Test with "image" latents (N, C, H, W)
         N, C, H, W = 50, 3, 32, 32
         latents = torch.randn(N, C, H, W)
-        
+
         visualizer = LatentPCAVisualizer(n_components=2)
         # Should internally flatten to (N, C*H*W)
         points = visualizer.fit_transform(latents)
-        
+
         self.assertEqual(points.shape, (N, 2))
 
     def test_plotting(self):
@@ -41,14 +42,15 @@ class TestLatentPCA(unittest.TestCase):
         N, D = 20, 16
         latents = torch.randn(N, D)
         labels = np.random.randint(0, 3, size=N)
-        
+
         visualizer = LatentPCAVisualizer(n_components=2)
         save_path = os.path.join(self.output_dir, "test_plot.png")
-        
+
         # Should not raise error
         visualizer.plot(latents, labels=labels, save_path=save_path, show=False)
-        
+
         self.assertTrue(os.path.exists(save_path))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

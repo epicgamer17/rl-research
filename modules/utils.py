@@ -5,8 +5,10 @@ import torch
 import torch.nn.init as init
 from torch import nn, Tensor, optim
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent_configs.base_config import Config
+
 
 def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
     """
@@ -19,10 +21,13 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
         # Linear decay from initial LR to 0 (or small epsilon) over training steps
         # LambdaLR is flexible.
         training_steps = getattr(config, "training_steps", 10000)
-        
+
         def lr_lambda(current_step: int):
-            return max(0.0, float(training_steps - current_step) / float(max(1, training_steps)))
-            
+            return max(
+                0.0,
+                float(training_steps - current_step) / float(max(1, training_steps)),
+            )
+
         return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     elif schedule_type == "step_wise":
@@ -32,18 +37,20 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
         steps = getattr(config, "lr_schedule_steps", [])
         values = getattr(config, "lr_schedule_values", [])
         initial_lr = config.learning_rate
-        
-        assert len(steps) == len(values), "Length of steps and values must match for step_wise scheduler"
-        
+
+        assert len(steps) == len(
+            values
+        ), "Length of steps and values must match for step_wise scheduler"
+
         # Sort just in case
         combined = sorted(zip(steps, values), key=lambda x: x[0])
         steps, values = zip(*combined) if combined else ([], [])
-        
+
         def lr_lambda(current_step: int):
             # Find the largest step <= current_step
             idx = bisect.bisect_right(steps, current_step)
             if idx == 0:
-                return 1.0 # Before first step, use initial LR
+                return 1.0  # Before first step, use initial LR
             else:
                 # Use the value corresponding to the step we passed
                 # The value is the absolute LR, so divide by initial_lr to get lambda
@@ -54,7 +61,6 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
     else:
         # No scheduling (constant LR)
         return optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
-
 
 
 def support_to_scalar(

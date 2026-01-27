@@ -434,6 +434,8 @@ def numpy_dtype_to_torch_dtype(np_dtype):
 def get_lr_scheduler(optimizer: torch.optim.Optimizer, config):
     if config.lr_schedule_type == "none":
         return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0)
-    
-    print(f"Warning: Unknown lr_schedule_type {config.lr_schedule_type}, using ConstantLR")
+
+    print(
+        f"Warning: Unknown lr_schedule_type {config.lr_schedule_type}, using ConstantLR"
+    )
     return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0)

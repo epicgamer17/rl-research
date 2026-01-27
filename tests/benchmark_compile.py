@@ -1,9 +1,8 @@
-
 import sys
 import os
 
 # Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import time
 import torch
@@ -14,6 +13,7 @@ from agents.ppo import PPOAgent
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 import gymnasium as gym
 
+
 # Mock Config Classes (reused from verify_compile.py)
 class DummyGame:
     def __init__(self):
@@ -21,14 +21,16 @@ class DummyGame:
         self.action_space = gym.spaces.Discrete(2)
         self.num_players = 1
         self.is_deterministic = True
-        self.is_discrete = True # Added
+        self.is_discrete = True  # Added
+
 
 class SubConfig:
-    def __init__(self, optimizer): 
-         self.optimizer = optimizer
-         self.clipnorm = 0
-         self.learning_rate = 1e-3
-         self.noisy_sigma = 0 # Added
+    def __init__(self, optimizer):
+        self.optimizer = optimizer
+        self.clipnorm = 0
+        self.learning_rate = 1e-3
+        self.noisy_sigma = 0  # Added
+
 
 class DummyConfig:
     def __init__(self, compile_enabled=False, compile_mode="default"):
@@ -66,15 +68,15 @@ class DummyConfig:
         self.lr_ratio = 1.0
         self.transfer_interval = 100
         self.stochastic = False
-        self.action_embedding_dim = 16 # Added
-        self.kernel_initializer = None # Added
-        
+        self.action_embedding_dim = 16  # Added
+        self.kernel_initializer = None  # Added
+
         # MuZero specific
         self.world_model_cls = MuzeroWorldModel
         self.unroll_steps = 5
         self.reanalyze_ratio = 0.5
         self.num_workers = 1
-        
+
         # Rainbow specific
         self.atom_size = 1
         self.v_min = -10
@@ -88,7 +90,7 @@ class DummyConfig:
         self.save_intermediate_weights = False
         self.checkpoint_interval = 1000
         self.steps_per_epoch = 100
-        self.dueling = False # Added
+        self.dueling = False  # Added
 
         # OptimizationConfig
         self.lr_schedule_type = "none"
@@ -107,9 +109,9 @@ class DummyConfig:
         self.root_dirichlet_alpha = 0.25
         self.root_exploration_fraction = 0.25
         self.root_dirichlet_alpha_adaptive = False
-        self.use_virtual_mean = False # Added default
-        self.virtual_loss = 3.0 # Added default
-        self.search_batch_size = 0 # Added default
+        self.use_virtual_mean = False  # Added default
+        self.virtual_loss = 3.0  # Added default
+        self.search_batch_size = 0  # Added default
 
         # PPO
         self.gae_lambda = 0.95
@@ -120,28 +122,29 @@ class DummyConfig:
         self.train_policy_iterations = 1
         self.train_value_iterations = 1
         self.critic_coefficient = 0.5
-        self.noisy_sigma = 0 # Added
+        self.noisy_sigma = 0  # Added
 
         self.actor = SubConfig(torch.optim.Adam)
         self.critic = SubConfig(torch.optim.Adam)
-        
+
         # Policy Imitation
         self.loss_function = torch.nn.MSELoss()
-        
+
         # Dummy Num chance/support range
         self.num_chance = 0
         self.support_range = None
 
+
 def benchmark_agent(agent_cls, name, run_fn, config_updates={}, input_shape=None):
     print(f"\n--- Benchmarking {name} ---")
-    
+
     modes = [
         ("Baseline (No Compile)", False, "default"),
         # ("Compiled (Default)", True, "default"),
         ("Compiled (Reduce Overhead)", True, "reduce-overhead"),
         # ("Compiled (Max Autotune)", True, "max-autotune"),
     ]
-    
+
     results = {}
 
     for mode_name, compile_enabled, compile_mode in modes:
@@ -150,23 +153,25 @@ def benchmark_agent(agent_cls, name, run_fn, config_updates={}, input_shape=None
         # Apply specific config updates
         for k, v in config_updates.items():
             setattr(config, k, v)
-            
-        try:
-             # Hack for PPO sub-configs which are instances
-            if name == "PPO":
-                 config.actor = SubConfig(torch.optim.Adam)
-                 config.critic = SubConfig(torch.optim.Adam)
 
-            agent = agent_cls(gym.make("CartPole-v1"), config, device=torch.device("cpu"))
-            
+        try:
+            # Hack for PPO sub-configs which are instances
+            if name == "PPO":
+                config.actor = SubConfig(torch.optim.Adam)
+                config.critic = SubConfig(torch.optim.Adam)
+
+            agent = agent_cls(
+                gym.make("CartPole-v1"), config, device=torch.device("cpu")
+            )
+
             # WARMUP
             print("  Warmup...")
             warmup_start = time.time()
-            for _ in range(10): # Run a few times to trigger JIT
+            for _ in range(10):  # Run a few times to trigger JIT
                 run_fn(agent)
             warmup_time = time.time() - warmup_start
             print(f"  Warmup time: {warmup_time:.4f}s")
-            
+
             # BENCHMARK
             print("  Benchmarking...")
             start_time = time.time()
@@ -174,17 +179,18 @@ def benchmark_agent(agent_cls, name, run_fn, config_updates={}, input_shape=None
             for _ in range(iterations):
                 run_fn(agent)
             total_time = time.time() - start_time
-            avg_time = total_time / iterations * 1000 # ms
-            
+            avg_time = total_time / iterations * 1000  # ms
+
             print(f"  Avg Inference Time: {avg_time:.4f} ms")
             results[mode_name] = avg_time
-            
+
         except Exception as e:
             print(f"  FAILED: {e}")
             import traceback
+
             traceback.print_exc()
             results[mode_name] = None
-    
+
     # Calculate Speedup
     baseline = results.get("Baseline (No Compile)")
     if baseline:
@@ -193,23 +199,27 @@ def benchmark_agent(agent_cls, name, run_fn, config_updates={}, input_shape=None
                 speedup = baseline / val
                 print(f"Speedup {mode_name}: {speedup:.2f}x")
 
+
 def run_muzero_inference(agent):
     # Test initial_inference
     obs = torch.randn(1, *agent.observation_dimensions).to(agent.device)
     with torch.no_grad():
         agent.model.initial_inference(obs)
 
+
 def run_rainbow_inference(agent):
     obs = torch.randn(1, *agent.observation_dimensions).to(agent.device)
     with torch.no_grad():
         agent.model(obs)
+
 
 def run_ppo_inference(agent):
     obs = torch.randn(1, *agent.observation_dimensions).to(agent.device)
     with torch.no_grad():
         # PPO predict calls model.actor and model.critic
         # Let's call the model's forward or just actor/critic directly if that's what predict does
-        agent.predict(obs, info={"legal_moves": []}, mask_actions=False) 
+        agent.predict(obs, info={"legal_moves": []}, mask_actions=False)
+
 
 if __name__ == "__main__":
     benchmark_agent(MuZeroAgent, "MuZero", run_muzero_inference)

@@ -37,7 +37,6 @@ import torch.ao.quantization
 from torch.nn import quantized
 
 
-
 class MuZeroAgent(MARLBaseAgent):
     def __init__(
         self,
@@ -72,7 +71,9 @@ class MuZeroAgent(MARLBaseAgent):
         self.model = Network(
             config=config,
             num_actions=self.num_actions,
-            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
+            input_shape=torch.Size(
+                (self.config.minibatch_size,) + self.observation_dimensions
+            ),
             # TODO: sort out when to do channel first and channel last
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
@@ -81,7 +82,9 @@ class MuZeroAgent(MARLBaseAgent):
         self.target_model = Network(
             config=config,
             num_actions=self.num_actions,
-            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
+            input_shape=torch.Size(
+                (self.config.minibatch_size,) + self.observation_dimensions
+            ),
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
         )
@@ -97,30 +100,27 @@ class MuZeroAgent(MARLBaseAgent):
             self.target_model.to(device)
 
         # --- Dynamic Quantization for Inference Model ---
-        # --- Dynamic Quantization for Inference Model ---
         # We only quantize the target_model (inference).
         if self.config.quantize:
             # We target nn.Linear.
             # On macOS (ARM), qnnpack engine is used.
             try:
-                if 'qnnpack' in torch.backends.quantized.supported_engines:
-                     torch.backends.quantized.engine = 'qnnpack'
+                if "qnnpack" in torch.backends.quantized.supported_engines:
+                    torch.backends.quantized.engine = "qnnpack"
             except:
                 pass
 
             # Quantize the target model
-            self.target_model.to('cpu')
+            self.target_model.to("cpu")
             self.target_model = torch.ao.quantization.quantize_dynamic(
-                self.target_model,
-                {nn.Linear},
-                dtype=torch.qint8
+                self.target_model, {nn.Linear}, dtype=torch.qint8
             )
             self.target_model.eval()
             for p in self.target_model.parameters():
                 p.requires_grad = False
-        
+
         if self.config.multi_process:
-             self.target_model.share_memory()
+            self.target_model.share_memory()
 
         if not self.config.multi_process:
             self.model.to(device)
@@ -128,7 +128,9 @@ class MuZeroAgent(MARLBaseAgent):
         if self.config.compile:
             print("Compiling models...")
             self.model = torch.compile(self.model, mode=self.config.compile_mode)
-            self.target_model = torch.compile(self.target_model, mode=self.config.compile_mode)
+            self.target_model = torch.compile(
+                self.target_model, mode=self.config.compile_mode
+            )
 
         if loss_pipeline is None:
             self.loss_pipeline = create_muzero_loss_pipeline(
@@ -178,12 +180,11 @@ class MuZeroAgent(MARLBaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
-        
+
         self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
         if self.config.use_mixed_precision:
             self.scaler = torch.amp.GradScaler(device=self.device.type)
-
 
         test_score_keys = [
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
@@ -196,61 +197,131 @@ class MuZeroAgent(MARLBaseAgent):
         test_score_keys = [
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
         ]
-        
+
         # EnsureStatTracker exists (might have been deleted in __getstate__)
         if not hasattr(self, "stats") or self.stats is None:
-             self.stats = StatTracker(model_name=self.model_name)
+            self.stats = StatTracker(model_name=self.model_name)
 
         # 1. Initialize Keys (if not already present)
         stat_keys = [
-            "score", "policy_loss", "value_loss", "reward_loss", "to_play_loss",
-            "cons_loss", "loss", "test_score", "episode_length", "policy_entropy", 
-            "value_diff", "policy_improvement", "root_children_values"
+            "score",
+            "policy_loss",
+            "value_loss",
+            "reward_loss",
+            "to_play_loss",
+            "cons_loss",
+            "loss",
+            "test_score",
+            "episode_length",
+            "policy_entropy",
+            "value_diff",
+            "policy_improvement",
+            "root_children_values",
         ] + test_score_keys
-        
+
         if self.config.stochastic:
-            stat_keys += ["num_codes", "chance_probs", "chance_entropy", "q_loss", "sigma_loss", "vqvae_commitment_cost"]
+            stat_keys += [
+                "num_codes",
+                "chance_probs",
+                "chance_entropy",
+                "q_loss",
+                "sigma_loss",
+                "vqvae_commitment_cost",
+            ]
 
         target_values = {
-            "score": (self.env.spec.reward_threshold if hasattr(self.env, "spec") and self.env.spec.reward_threshold else None),
-            "test_score": (self.env.spec.reward_threshold if hasattr(self.env, "spec") and self.env.spec.reward_threshold else None),
+            "score": (
+                self.env.spec.reward_threshold
+                if hasattr(self.env, "spec") and self.env.spec.reward_threshold
+                else None
+            ),
+            "test_score": (
+                self.env.spec.reward_threshold
+                if hasattr(self.env, "spec") and self.env.spec.reward_threshold
+                else None
+            ),
             "num_codes": 1 if self.config.game.is_deterministic else None,
         }
-        
+
         use_tensor_dicts = {
             "test_score": ["score", "max_score", "min_score"],
             "policy_improvement": ["network", "search"],
-            **{key: ["score"] + ["player_{}_score".format(p) for p in range(self.config.game.num_players)] + ["player_{}_win%".format(p) for p in range(self.config.game.num_players)] for key in test_score_keys},
+            **{
+                key: ["score"]
+                + [
+                    "player_{}_score".format(p)
+                    for p in range(self.config.game.num_players)
+                ]
+                + [
+                    "player_{}_win%".format(p)
+                    for p in range(self.config.game.num_players)
+                ]
+                for key in test_score_keys
+            },
         }
 
         # For host StatTracker, initialize keys that don't exist
         if not self.stats._is_client:
             for key in stat_keys:
                 if key not in self.stats.stats:
-                    self.stats._init_key(key, target_value=target_values.get(key), subkeys=use_tensor_dicts.get(key))
+                    self.stats._init_key(
+                        key,
+                        target_value=target_values.get(key),
+                        subkeys=use_tensor_dicts.get(key),
+                    )
 
         # 2. Add/Refresh Plot Types
-        self.stats.add_plot_types("score", PlotType.ROLLING_AVG, PlotType.BEST_FIT_LINE, rolling_window=100, ema_beta=0.6)
+        self.stats.add_plot_types(
+            "score",
+            PlotType.ROLLING_AVG,
+            PlotType.BEST_FIT_LINE,
+            rolling_window=100,
+            ema_beta=0.6,
+        )
         self.stats.add_plot_types("test_score", PlotType.BEST_FIT_LINE)
-        self.stats.add_plot_types("policy_loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("value_loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("reward_loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("to_play_loss", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types(
+            "policy_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "value_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "reward_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "to_play_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
         self.stats.add_plot_types("cons_loss", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types("num_codes", PlotType.ROLLING_AVG, rolling_window=100)
         self.stats.add_plot_types("q_loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("sigma_loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("vqvae_commitment_cost", PlotType.ROLLING_AVG, rolling_window=100)
+        self.stats.add_plot_types(
+            "sigma_loss", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "vqvae_commitment_cost", PlotType.ROLLING_AVG, rolling_window=100
+        )
         self.stats.add_plot_types("loss", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("episode_length", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("policy_entropy", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("value_diff", PlotType.ROLLING_AVG, rolling_window=100)
-        self.stats.add_plot_types("policy_improvement", PlotType.BAR, bar_threshold=0.01, max_bars=20)
-        self.stats.add_plot_types("root_children_values", PlotType.BAR, bar_threshold=1e-8, max_bars=30)
-        
+        self.stats.add_plot_types(
+            "episode_length", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "policy_entropy", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "value_diff", PlotType.ROLLING_AVG, rolling_window=100
+        )
+        self.stats.add_plot_types(
+            "policy_improvement", PlotType.BAR, bar_threshold=0.01, max_bars=20
+        )
+        self.stats.add_plot_types(
+            "root_children_values", PlotType.BAR, bar_threshold=1e-8, max_bars=30
+        )
+
         if self.config.stochastic:
             self.stats.add_plot_types("chance_probs", PlotType.BAR, show_all_bars=True)
-            self.stats.add_plot_types("chance_entropy", PlotType.ROLLING_AVG, rolling_window=100)
+            self.stats.add_plot_types(
+                "chance_entropy", PlotType.ROLLING_AVG, rolling_window=100
+            )
 
     def worker_fn(
         self, worker_id, stop_flag, stats_client: StatTracker, error_queue: mp.Queue
@@ -472,13 +543,13 @@ class MuZeroAgent(MARLBaseAgent):
         shifted_dones[:, 0] = False
         has_valid_obs_mask = ~shifted_dones
 
-
-
         weights = samples["weights"].to(self.device)
         inputs = self.preprocess(observations)
 
         # --- 2. Initial Inference ---
-        with torch.amp.autocast(device_type=self.device.type, enabled=self.config.use_mixed_precision):
+        with torch.amp.autocast(
+            device_type=self.device.type, enabled=self.config.use_mixed_precision
+        ):
             (
                 initial_values,
                 initial_policies,
@@ -529,7 +600,9 @@ class MuZeroAgent(MARLBaseAgent):
                 targets_tensor["chance_values"][:, 1:] = target_values[
                     :, :-1
                 ]  # TODO: LightZero this is the value of the next state (ie offset by one step)
-                targets_tensor["encoder_onehots"] = predictions_tensor["encoder_onehots"]
+                targets_tensor["encoder_onehots"] = predictions_tensor[
+                    "encoder_onehots"
+                ]
 
             gradient_scales_tensor = torch.tensor(
                 gradient_scales, device=self.device
@@ -575,7 +648,7 @@ class MuZeroAgent(MARLBaseAgent):
 
             # --- 9. Backpropagation and Optimization ---
             self.optimizer.zero_grad()
-            
+
             if self.config.use_mixed_precision:
                 self.scaler.scale(loss_mean).backward()
                 if self.config.clipnorm > 0:
@@ -588,9 +661,9 @@ class MuZeroAgent(MARLBaseAgent):
                 if self.config.clipnorm > 0:
                     clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
                 self.optimizer.step()
-            
+
             self.lr_scheduler.step()
-            
+
             if self.device == "mps":
                 torch.mps.empty_cache()
 
@@ -606,7 +679,7 @@ class MuZeroAgent(MARLBaseAgent):
                     predictions_tensor["encoder_onehots"],
                     predictions_tensor["latent_code_probabilities"],
                 )
-            
+
             # Categorize latent space by action
             if self.training_step % self.config.latent_viz_interval == 0:
                 self._track_latent_visualization(
@@ -624,14 +697,10 @@ class MuZeroAgent(MARLBaseAgent):
         # actions: (B, K)
         s0 = latent_states[:, 0]
         a0 = actions[:, 0]
-        
-        self.stats.add_latent_visualization(
-            "latent_root", 
-            s0, 
-            labels=a0, 
-            method=self.config.latent_viz_method
-        )
 
+        self.stats.add_latent_visualization(
+            "latent_root", s0, labels=a0, method=self.config.latent_viz_method
+        )
 
     def _stack_predictions(self, network_output_sequences):
         """Stack prediction lists into (B, K+1, ...) tensors."""
@@ -704,41 +773,47 @@ class MuZeroAgent(MARLBaseAgent):
         # Calculate validity mask from probs (sum > 0.001)
         # latent_code_probs_tensor: (B, K, NumCodes) or (B, K+1, NumCodes)
         if latent_code_probs_tensor.ndim == 3:
-             prob_sums = latent_code_probs_tensor.sum(dim=-1) # (B, K)
-             mask = prob_sums > 0.001
+            prob_sums = latent_code_probs_tensor.sum(dim=-1)  # (B, K)
+            mask = prob_sums > 0.001
         else:
-             mask = torch.ones_like(codes, dtype=torch.bool)
+            mask = torch.ones_like(codes, dtype=torch.bool)
 
         codes = encoder_onehots_tensor.argmax(dim=-1)  # shape (B, K), dtype long
-        
+
         # Filter codes using the mask
         if mask.shape == codes.shape:
-             valid_codes = codes[mask]
+            valid_codes = codes[mask]
         else:
-             # Fallback if shapes mismatch (e.g. if K vs K+1 issue arises)
-             valid_codes = codes.flatten()
+            # Fallback if shapes mismatch (e.g. if K vs K+1 issue arises)
+            valid_codes = codes.flatten()
 
         # --- (A) Total unique codes across entire batch+time ---
-        unique_codes_all = torch.unique(valid_codes)  # 1D tensor with sorted unique indices
+        unique_codes_all = torch.unique(
+            valid_codes
+        )  # 1D tensor with sorted unique indices
         num_unique_all = unique_codes_all.numel()
         # Optionally: convert to Python int
         num_unique_all_int = int(num_unique_all)
         self.stats.append("num_codes", num_unique_all_int)
 
         # Track chance probability statistics (mean over batch and time)
-        latent_node_probs = latent_code_probs_tensor  # (B, K+1, NumCodes) or (B, K, NumCodes)
-        
+        latent_node_probs = (
+            latent_code_probs_tensor  # (B, K+1, NumCodes) or (B, K, NumCodes)
+        )
+
         # Calculate mean probabilities for each code across batch and unroll steps
         # Result shape: (NumCodes,)
         if latent_node_probs.ndim == 3:
-             valid_probs = latent_node_probs[mask] # (N_valid, NumCodes)
-             if valid_probs.shape[0] > 0:
-                 mean_probs = valid_probs.mean(dim=0)
-             else:
-                 mean_probs = torch.zeros(latent_node_probs.shape[-1], device=latent_node_probs.device)
+            valid_probs = latent_node_probs[mask]  # (N_valid, NumCodes)
+            if valid_probs.shape[0] > 0:
+                mean_probs = valid_probs.mean(dim=0)
+            else:
+                mean_probs = torch.zeros(
+                    latent_node_probs.shape[-1], device=latent_node_probs.device
+                )
         else:
-             # Fallback if dimensions are unexpected
-             mean_probs = latent_node_probs.mean(dim=0)
+            # Fallback if dimensions are unexpected
+            mean_probs = latent_node_probs.mean(dim=0)
 
         # Append to stats as a 2D tensor (1, NumCodes) so we can stack them
         self.stats.append("chance_probs", mean_probs.unsqueeze(0))
@@ -748,24 +823,24 @@ class MuZeroAgent(MARLBaseAgent):
         probs = latent_code_probs_tensor
         # Avoid log(0)
         entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1)  # (B, K)
-        
+
         if mask is not None:
-             if entropy.shape == mask.shape:
-                  entropy = entropy[mask]
-             else:
-                  # shape mismatch fallback
-                  entropy = entropy.flatten()
+            if entropy.shape == mask.shape:
+                entropy = entropy[mask]
+            else:
+                # shape mismatch fallback
+                entropy = entropy.flatten()
 
         if entropy.numel() > 0:
-             mean_entropy = entropy.mean().item()
+            mean_entropy = entropy.mean().item()
         else:
-             mean_entropy = 0.0
-             
-        self.stats.append("chance_entropy", mean_entropy)
+            mean_entropy = 0.0
 
+        self.stats.append("chance_entropy", mean_entropy)
 
     def _prepare_return_losses(self, loss_dict, total_loss):
         """Prepare loss values for return."""
+
         # Helper to extract and detach/item()
         def get_val(key):
             val = loss_dict.get(key, 0.0)
@@ -873,11 +948,19 @@ class MuZeroAgent(MARLBaseAgent):
             "afterstate": self.predict_afterstate_recurrent_inference,
         }
 
-        root_value, exploratory_policy, target_policy, best_action, search_metadata = self.search.run(
-            state, info, to_play, inference_fns, inference_model=inference_model
+        root_value, exploratory_policy, target_policy, best_action, search_metadata = (
+            self.search.run(
+                state, info, to_play, inference_fns, inference_model=inference_model
+            )
         )
 
-        return exploratory_policy, target_policy, root_value, best_action, search_metadata
+        return (
+            exploratory_policy,
+            target_policy,
+            root_value,
+            best_action,
+            search_metadata,
+        )
 
     def select_actions(
         self,
@@ -910,7 +993,7 @@ class MuZeroAgent(MARLBaseAgent):
             game: Game = Game(self.config.game.num_players)
 
             game.append(state, info)
-    
+
             done = False
             while not done:
                 temperature = self.config.temperatures[0]
@@ -1100,12 +1183,19 @@ class MuZeroAgent(MARLBaseAgent):
         self.stats.append("value_diff", abs(search_value - network_value))
 
         # 3. Policy Improvement (BAR plot comparison)
-        self.stats.append("policy_improvement", network_policy.unsqueeze(0), subkey="network")
-        self.stats.append("policy_improvement", search_policy.unsqueeze(0), subkey="search")
+        self.stats.append(
+            "policy_improvement", network_policy.unsqueeze(0), subkey="network"
+        )
+        self.stats.append(
+            "policy_improvement", search_policy.unsqueeze(0), subkey="search"
+        )
 
         # 4. Root Children Values
         if "root_children_values" in search_metadata:
-             self.stats.append("root_children_values", search_metadata["root_children_values"].unsqueeze(0))
+            self.stats.append(
+                "root_children_values",
+                search_metadata["root_children_values"].unsqueeze(0),
+            )
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -1118,17 +1208,19 @@ class MuZeroAgent(MARLBaseAgent):
             del state["optimizer"]
         if "lr_scheduler" in state:
             del state["lr_scheduler"]
-        
+
         # Only handle these if training has started (step > 0)
         # At step 0 (worker spawn), model is on CPU and replay_buffer is empty/picklable.
         if self.training_step > 0:
             # Manually serialize model to CPU state dict to avoid device sharing issues (MPS etc)
             if "model" in state:
-                state["model_state_dict"] = {k: v.cpu() for k, v in self.model.state_dict().items()}
+                state["model_state_dict"] = {
+                    k: v.cpu() for k, v in self.model.state_dict().items()
+                }
                 del state["model"]
             if "target_model" in state:
-                 del state["target_model"]
-            
+                del state["target_model"]
+
             if "loss_pipeline" in state:
                 del state["loss_pipeline"]
 
@@ -1139,7 +1231,7 @@ class MuZeroAgent(MARLBaseAgent):
 
     def __setstate__(self, state):
         model_state_dict = state.pop("model_state_dict", None)
-        
+
         # Strip _orig_mod prefix added by torch.compile
         if model_state_dict is not None:
             new_state_dict = {}
@@ -1154,53 +1246,53 @@ class MuZeroAgent(MARLBaseAgent):
         self.stop_flag = mp.Value("i", state["stop_flag"])
         self.env = self.config.game.make_env()
         self.test_env = self.config.game.make_env(render_mode="rgb_array")
-        
+
         # Reconstruct model if we have weights
         if model_state_dict is not None:
-             # self.config, self.observation_dimensions, self.num_actions are in state
-             device = torch.device("cpu") # Initialize on CPU
-             self.model = Network(
+            # self.config, self.observation_dimensions, self.num_actions are in state
+            device = torch.device("cpu")  # Initialize on CPU
+            self.model = Network(
                 config=self.config,
                 num_actions=self.num_actions,
-                input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
+                input_shape=torch.Size(
+                    (self.config.minibatch_size,) + self.observation_dimensions
+                ),
                 channel_first=True,
                 world_model_cls=self.config.world_model_cls,
             )
-             self.model.load_state_dict(model_state_dict)
-             self.model.to(self.device)
-             self.target_model = copy.deepcopy(self.model)
-             
-             # Apply quantization to reconstructed target model
-             if self.config.quantize:
-                 try:
-                     if 'qnnpack' in torch.backends.quantized.supported_engines:
-                          torch.backends.quantized.engine = 'qnnpack'
-                 except:
-                     pass
-                 self.target_model.to('cpu')
-                 self.target_model = torch.ao.quantization.quantize_dynamic(
-                     self.target_model,
-                     {nn.Linear},
-                     dtype=torch.qint8
-                 )
-                 self.target_model.eval()
-                 for p in self.target_model.parameters():
-                     p.requires_grad = False
+            self.model.load_state_dict(model_state_dict)
+            self.model.to(self.device)
+            self.target_model = copy.deepcopy(self.model)
 
-             # Move target to shared memory if multi_process (though for testing we might just use local copy)
-             if self.config.multi_process:
-                 # Note: sharing CUDA/MPS tensors is tricky. If device is CPU, this is fine.
-                 # If device is MPS, this might fail or be no-op. 
-                 # Given we just deserialized, we are likely fine keeping it local for the test worker.
-                 # But if this is a training worker, it might expect shared memory?
-                 # Training workers use target_model for inference.
-                 # A reconstructed target_model here is NOT shared with the main process 'target_model'.
-                 # This implies __setstate__ is creating a LOCAL copy.
-                 # If training workers need the SHARED target model updated by learner, 
-                 # then training workers CANNOT rely on this reconstruction!
-                 # Training workers rely on the pickled 'target_model' which points to shared memory.
-                 # WE DELETED 'target_model' from state!
-                 pass
+            # Apply quantization to reconstructed target model
+            if self.config.quantize:
+                try:
+                    if "qnnpack" in torch.backends.quantized.supported_engines:
+                        torch.backends.quantized.engine = "qnnpack"
+                except:
+                    pass
+                self.target_model.to("cpu")
+                self.target_model = torch.ao.quantization.quantize_dynamic(
+                    self.target_model, {nn.Linear}, dtype=torch.qint8
+                )
+                self.target_model.eval()
+                for p in self.target_model.parameters():
+                    p.requires_grad = False
+
+            # Move target to shared memory if multi_process (though for testing we might just use local copy)
+            if self.config.multi_process:
+                # Note: sharing CUDA/MPS tensors is tricky. If device is CPU, this is fine.
+                # If device is MPS, this might fail or be no-op.
+                # Given we just deserialized, we are likely fine keeping it local for the test worker.
+                # But if this is a training worker, it might expect shared memory?
+                # Training workers use target_model for inference.
+                # A reconstructed target_model here is NOT shared with the main process 'target_model'.
+                # This implies __setstate__ is creating a LOCAL copy.
+                # If training workers need the SHARED target model updated by learner,
+                # then training workers CANNOT rely on this reconstruction!
+                # Training workers rely on the pickled 'target_model' which points to shared memory.
+                # WE DELETED 'target_model' from state!
+                pass
 
     def update_target_model(self):
         """
@@ -1211,28 +1303,36 @@ class MuZeroAgent(MARLBaseAgent):
             return
 
         with torch.no_grad():
+
             def update_recursively(target_module, source_module):
                 source_children = dict(source_module.named_children())
                 for name, target_child in target_module.named_children():
                     if name not in source_children:
                         continue
                     source_child = source_children[name]
-                    
-                    if isinstance(target_child, (nn.quantized.dynamic.Linear, torch.ao.nn.quantized.dynamic.Linear)) and isinstance(source_child, nn.Linear):
+
+                    if isinstance(
+                        target_child,
+                        (
+                            nn.quantized.dynamic.Linear,
+                            torch.ao.nn.quantized.dynamic.Linear,
+                        ),
+                    ) and isinstance(source_child, nn.Linear):
                         # Workaround for set_weight_bias backend issues:
                         # Create new quantized module via from_float (identical to how quantize_dynamic does it)
                         # and steal its packed params.
                         # We use source_child directly (it's float). from_float usually copies weights.
                         # We must attach qconfig to a copy of source to avoid modifying training model.
                         temp_source = copy.copy(source_child)
-                        temp_source.qconfig = torch.ao.quantization.default_dynamic_qconfig
+                        temp_source.qconfig = (
+                            torch.ao.quantization.default_dynamic_qconfig
+                        )
                         new_q_child = type(target_child).from_float(temp_source)
                         target_child._packed_params = new_q_child._packed_params
                     else:
                         update_recursively(target_child, source_child)
-            
-            if self.config.soft_update:
-                pass # Soft update not supported for quantized yet
-            else:
-                 update_recursively(self.target_model, self.model)
 
+            if self.config.soft_update:
+                pass  # Soft update not supported for quantized yet
+            else:
+                update_recursively(self.target_model, self.model)

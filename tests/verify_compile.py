@@ -1,4 +1,3 @@
-
 import sys
 import torch
 import gymnasium as gym
@@ -13,6 +12,7 @@ from agents.nfsp import NFSPDQN
 from game_configs.cartpole_config import CartPoleConfig
 
 from modules.world_models.muzero_world_model import MuzeroWorldModel
+
 
 class DummyConfig:
     def __init__(self):
@@ -43,15 +43,15 @@ class DummyConfig:
         self.use_mixed_precision = False
         self.clipnorm = 0
         self.training_iterations = 1
-        self.norm_type = "none" # Missing
-        self.noisy_sigma = 0 # Missing
-        self.action_embedding_dim = 16 # Missing
-        self.prob_layer_initializer = None # Missing
-        self.activation = torch.nn.ReLU # Missing
-        
+        self.norm_type = "none"  # Missing
+        self.noisy_sigma = 0  # Missing
+        self.action_embedding_dim = 16  # Missing
+        self.prob_layer_initializer = None  # Missing
+        self.activation = torch.nn.ReLU  # Missing
+
         # MuZero specific
         self.unroll_steps = 2
-        self.world_model_cls = MuzeroWorldModel 
+        self.world_model_cls = MuzeroWorldModel
         self.reanalyze_ratio = 0.5
         self.num_workers = 1
         self.games_per_generation = 1
@@ -59,17 +59,17 @@ class DummyConfig:
         self.num_minibatches = 1
         self.transfer_interval = 10
         self.stochastic = False
-        self.num_chance = 0 # Missing
-        self.lr_schedule_type = "none" # Missing
+        self.num_chance = 0  # Missing
+        self.lr_schedule_type = "none"  # Missing
         self.latent_viz_interval = 100
-        
-        self.projector_hidden_dim = 16 # Missing
-        self.predictor_hidden_dim = 16 # Missing
-        self.projector_output_dim = 16 # Missing
-        self.predictor_output_dim = 16 # Missing
-        
+
+        self.projector_hidden_dim = 16  # Missing
+        self.predictor_hidden_dim = 16  # Missing
+        self.projector_output_dim = 16  # Missing
+        self.predictor_output_dim = 16  # Missing
+
         # Search
-        self.gumbel = False # Missing
+        self.gumbel = False  # Missing
         self.gumbel_m = 16
         self.gumbel_cvisit = 50
         self.gumbel_cscale = 1.0
@@ -79,13 +79,13 @@ class DummyConfig:
         self.root_exploration_fraction = 0.25
         self.root_dirichlet_alpha_adaptive = False
         self.min_max_epsilon = 0.01
-        self.search_batch_size = 1 # Not 0
+        self.search_batch_size = 1  # Not 0
         self.use_virtual_mean = False
         self.virtual_loss = 3.0
         self.num_simulations = 10
         self.latent_viz_method = "tsne"
         self.save_intermediate_weights = False
-        
+
         # Rainbow specific
         self.atom_size = 1
         self.v_min = -10
@@ -96,8 +96,8 @@ class DummyConfig:
         self.eg_epsilon_final = 0.01
         self.eg_epsilon_final_step = 100
         self.replay_interval = 4
-        self.dueling = False # Missing
-        
+        self.dueling = False  # Missing
+
         # PPO specific
         self.actor = self
         self.critic = self
@@ -110,9 +110,9 @@ class DummyConfig:
         self.steps_per_epoch = 10
         self.target_kl = 0.01
         self.critic_coefficient = 0.5
-        self.support_range = None # Missing
-        self.distributional_head = False # Likely needed
-        
+        self.support_range = None  # Missing
+        self.distributional_head = False  # Likely needed
+
         # NFSP
         self.rl_configs = [self]
         self.sl_configs = [self]
@@ -121,41 +121,44 @@ class DummyConfig:
         self.loss_function = torch.nn.MSELoss()
 
 
-
 def test_agent_compile(agent_cls, config_cls, name):
     print(f"Testing {name} with compile=True...")
     game_config = CartPoleConfig()
     env = gym.make("CartPole-v1")
-    
+
     # Mock config
     config = DummyConfig()
     config.game = game_config
-    
+
     # Initialize agent
     try:
         agent = agent_cls(env=env, config=config, name=f"test_{name}")
         print(f"✅ {name} initialized successfully.")
-        
+
         # Run a simple forward pass to trigger compilation (lazy compilation)
-        if name != "MuZero": # MuZero network construction is complex without real config
-             pass 
-        
+        if (
+            name != "MuZero"
+        ):  # MuZero network construction is complex without real config
+            pass
+
         print(f"✅ {name} verification passed (init only).")
     except Exception as e:
         print(f"❌ {name} failed: {e}")
         import traceback
+
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     # Test MuZero
     test_agent_compile(MuZeroAgent, MuZeroConfig, "MuZero")
-    
+
     # Test Rainbow
     test_agent_compile(RainbowAgent, RainbowConfig, "RainbowDQN")
-    
+
     # Test PPO
     test_agent_compile(PPOAgent, PPOConfig, "PPO")
-    
+
     # Test NFSP (which uses Rainbow)
     # NFSP structure is complex, might need more mocks
     # test_agent_compile(NFSPDQN, NFSPDQNConfig, "NFSP")

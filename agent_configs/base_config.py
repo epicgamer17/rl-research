@@ -114,8 +114,11 @@ class OptimizationConfig:
         self.lr_schedule_values: list = self.parse_field("lr_schedule_values", [])
 
         self.use_mixed_precision: bool = self.parse_field("use_mixed_precision", False)
-        self.compile: bool = self.parse_field("compile", False)
-        self.compile_mode: str = self.parse_field("compile_mode", "default")
+        self.use_torch_compile: bool = self.parse_field("use_torch_compile", False)
+        # Map legacy compile flag
+        self.compile = self.use_torch_compile
+
+        self.compile_mode: str = self.parse_field("compile_mode", "reduce-overhead")
 
 
 class ReplayConfig:
@@ -302,7 +305,6 @@ class Config(ConfigBase, OptimizationConfig, ReplayConfig):
             required=False,
             wrapper=kernel_initializer_wrapper,
         )
-
 
         self.norm_type: str = self.parse_field("norm_type", "none")
         self.soft_update: bool = self.parse_field("soft_update", False)

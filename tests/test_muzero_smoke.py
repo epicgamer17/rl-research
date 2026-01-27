@@ -7,6 +7,7 @@ from game_configs.tictactoe_config import TicTacToeConfig
 from modules.world_models.muzero_world_model import MuzeroWorldModel
 from losses.basic_losses import CategoricalCrossentropyLoss, MSELoss
 
+
 def action_as_onehot(action, num_actions):
     """
     Encodes an action as a one-hot vector.
@@ -16,6 +17,7 @@ def action_as_onehot(action, num_actions):
     one_hot = torch.zeros(num_actions)
     one_hot[action] = 1.0
     return one_hot
+
 
 def action_as_plane(action, num_actions, height, width):
     """
@@ -27,6 +29,7 @@ def action_as_plane(action, num_actions, height, width):
     plane[action, :, :] = 1.0
     return plane
 
+
 def test_muzero_cartpole_smoke():
     """
     Smoke test for MuZero on CartPole.
@@ -34,7 +37,7 @@ def test_muzero_cartpole_smoke():
     """
     game_config = CartPoleConfig()
     env = game_config.make_env()
-    
+
     config_dict = {
         "world_model_cls": MuzeroWorldModel,
         "residual_layers": [],
@@ -63,18 +66,14 @@ def test_muzero_cartpole_smoke():
         "policy_loss_function": CategoricalCrossentropyLoss(),
         "support_range": 31,
     }
-    
+
     config = MuZeroConfig(config_dict, game_config)
-    
-    agent = MuZeroAgent(
-        env,
-        config,
-        name="smoke_test_cartpole",
-        device="cpu"
-    )
-    
+
+    agent = MuZeroAgent(env, config, name="smoke_test_cartpole", device="cpu")
+
     assert agent.model is not None
     assert agent.replay_buffer is not None
+
 
 def test_muzero_tictactoe_smoke():
     """
@@ -82,7 +81,7 @@ def test_muzero_tictactoe_smoke():
     """
     game_config = TicTacToeConfig()
     env = game_config.make_env()
-    
+
     config_dict = {
         "world_model_cls": MuzeroWorldModel,
         "residual_layers": [(16, 3, 1)],
@@ -104,20 +103,16 @@ def test_muzero_tictactoe_smoke():
         "policy_loss_function": CategoricalCrossentropyLoss(),
         "support_range": None,
     }
-    
+
     config = MuZeroConfig(config_dict, game_config)
-    
-    agent = MuZeroAgent(
-        env,
-        config,
-        name="smoke_test_tictactoe",
-        device="cpu"
-    )
+
+    agent = MuZeroAgent(env, config, name="smoke_test_tictactoe", device="cpu")
     # Patch player_id because TicTacToe uses player_1
     agent.player_id = "player_1"
-    
+
     assert agent.model is not None
     assert agent.replay_buffer is not None
+
 
 if __name__ == "__main__":
     pytest.main([__file__])
