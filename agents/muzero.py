@@ -99,38 +99,9 @@ class MuZeroAgent(MARLBaseAgent):
             # non-multiprocess: keep target on device for faster inference
             self.target_model.to(device)
 
-        # --- Dynamic Quantization for Inference Model ---
-        # We only quantize the target_model (inference).
-        if self.config.quantize:
-            # We target nn.Linear.
-            # On macOS (ARM), qnnpack engine is used.
-            try:
-                if "qnnpack" in torch.backends.quantized.supported_engines:
-                    torch.backends.quantized.engine = "qnnpack"
-            except:
-                pass
-
-            # Quantize the target model
-            self.target_model.to("cpu")
-            self.target_model = torch.ao.quantization.quantize_dynamic(
-                self.target_model, {nn.Linear}, dtype=torch.qint8
-            )
-            self.target_model.eval()
-            for p in self.target_model.parameters():
-                p.requires_grad = False
-
-        if self.config.multi_process:
-            self.target_model.share_memory()
-
         if not self.config.multi_process:
             self.model.to(device)
-
-        if self.config.compile:
-            print("Compiling models...")
-            self.model = torch.compile(self.model, mode=self.config.compile_mode)
-            self.target_model = torch.compile(
-                self.target_model, mode=self.config.compile_mode
-            )
+            self.target_model.to(device)
 
         if loss_pipeline is None:
             self.loss_pipeline = create_muzero_loss_pipeline(
@@ -340,33 +311,98 @@ class MuZeroAgent(MARLBaseAgent):
             )
         except:
             print(f"[Worker {worker_id}] Could not record video")
-        # Workers should use the target model for inference so training doesn't
-        # destabilize ongoing self-play. Ensure the target model is on the worker's device
-        # and set as the inference model.
-        self.target_model.to(self.device)
-        self.target_model.eval()
+
+        # 0. Re-initialize search for the worker process (MCTS tree can't be shared safely)
+        self.search = create_mcts(self.config, self.device, self.num_actions)
+
+        # 1. Local Model Initialization
+        def prepare_local_model():
+            local_model = copy.deepcopy(self.target_model)
+            local_model.to("cpu")  # Ensure inference is on CPU for stability
+            local_model.eval()
+
+            if self.config.use_quantization:
+                # Explicitly set the engine for the worker process
+                if "qnnpack" in torch.backends.quantized.supported_engines:
+                    torch.backends.quantized.engine = "qnnpack"
+                elif "fbgemm" in torch.backends.quantized.supported_engines:
+                    torch.backends.quantized.engine = "fbgemm"
+
+                local_model = torch.ao.quantization.quantize_dynamic(
+                    local_model, {nn.Linear}, dtype=torch.qint8
+                )
+
+            if self.config.compile:
+                local_model = torch.compile(local_model, mode=self.config.compile_mode)
+
+            for p in local_model.parameters():
+                p.requires_grad = False
+            return local_model
+
+        local_inference_model = prepare_local_model()
+        last_updated_step = 0
 
         try:
             while not stop_flag.value:
-                if (
-                    random.random() < self.config.reanalyze_ratio
-                    and self.replay_buffer.size > 0
+                # 2. Synchronization Logic
+                current_step = self.training_step
+                if current_step - last_updated_step >= self.config.transfer_interval:
+                    local_inference_model = prepare_local_model()
+                    last_updated_step = current_step
+                    # print(f"[Worker {worker_id}] Refreshed local model at step {current_step}")
+
+                # 3. Inference Execution
+                use_amp = (
+                    self.config.use_mixed_precision and not self.config.use_quantization
+                )
+                with torch.amp.autocast(
+                    device_type=next(local_inference_model.parameters()).device.type,
+                    enabled=use_amp,
                 ):
-                    self.reanalyze_game(inference_model=self.target_model)
-                else:
-                    score, num_steps = self.play_game(
-                        env=worker_env, inference_model=self.target_model
-                    )
-                    # print(f"[Worker {worker_id}] Finished a game with score {score}")
-                    # worker_env.close()  # for saving video
-                    stats_client.append("score", score)
-                    stats_client.append("episode_length", num_steps)
-                    stats_client.increment_steps(num_steps)
+                    if (
+                        random.random() < self.config.reanalyze_ratio
+                        and self.replay_buffer.size > 0
+                    ):
+                        self.reanalyze_game(inference_model=local_inference_model)
+                    else:
+                        score, num_steps = self.play_game(
+                            env=worker_env, inference_model=local_inference_model
+                        )
+                        # print(f"[Worker {worker_id}] Finished a game with score {score}")
+                        # worker_env.close()  # for saving video
+                        stats_client.append("score", score)
+                        stats_client.append("episode_length", num_steps)
+                        stats_client.increment_steps(num_steps)
         except Exception as e:
             # Send both exception and traceback back
             error_queue.put((e, traceback.format_exc()))
             raise  # ensures worker process exits with error
         worker_env.close()
+
+    def update_target_model(self):
+        """
+        Custom update logic to handle torch.compile prefixes.
+        The Learner (self.model) is compiled (has '_orig_mod.' prefix).
+        The Target (self.target_model) is raw/uncompiled (for MP sharing).
+        """
+        # 1. Get the source state dict
+        source_state_dict = self.model.state_dict()
+
+        # 2. Clean the keys
+        clean_state_dict = {}
+        for k, v in source_state_dict.items():
+            # Strip '_orig_mod.' prefix added by torch.compile
+            if k.startswith("_orig_mod."):
+                clean_state_dict[k[10:]] = v
+            else:
+                clean_state_dict[k] = v
+
+        # 3. Load into target
+        # strict=True ensures we don't silently miss keys
+        self.target_model.load_state_dict(clean_state_dict, strict=True)
+
+        if self.config.multi_process:
+            self.target_model.share_memory()
 
     def train(self):
         self._setup_stats()
@@ -383,6 +419,16 @@ class MuZeroAgent(MARLBaseAgent):
             ]
             for w in workers:
                 w.start()
+
+        # Compile AFTER workers have started to avoid pickling issues
+        if self.config.compile:
+            print("Compiling models in train()...")
+            self.model = torch.compile(self.model, mode=self.config.compile_mode)
+            # Only compile target_model if NOT multiprocessing (workers have their own compiled copies)
+            if not self.config.multi_process:
+                self.target_model = torch.compile(
+                    self.target_model, mode=self.config.compile_mode
+                )
 
         start_time = time() - self.stats.get_time_elapsed()
         self.model.to(self.device)
@@ -546,7 +592,7 @@ class MuZeroAgent(MARLBaseAgent):
         weights = samples["weights"].to(self.device)
         inputs = self.preprocess(observations)
 
-        # --- 2. Initial Inference ---
+        # --- 2. Forward Pass within AMP context ---
         with torch.amp.autocast(
             device_type=self.device.type, enabled=self.config.use_mixed_precision
         ):
@@ -617,75 +663,74 @@ class MuZeroAgent(MARLBaseAgent):
                 "target_observations": target_observations,
             }
 
-            # --- 7. Train for Multiple Iterations ---
-            for training_iteration in range(self.config.training_iterations):
-                # Run the modular loss pipeline
-                loss_mean, loss_dict, priorities = self.loss_pipeline.run(
-                    predictions_tensor=predictions_tensor,
-                    targets_tensor=targets_tensor,
-                    context=context,
-                    weights=weights,
-                    gradient_scales=gradient_scales_tensor,
-                    config=self.config,
-                    device=self.device,
-                )
-
-            # --- 8. Logging at Checkpoint ---
-            if self.training_step % self.checkpoint_interval == 0:
-                self._log_training_step(
-                    actions,
-                    target_values,
-                    predictions_tensor["values"],
-                    target_rewards,
-                    predictions_tensor["rewards"],
-                    target_to_plays,
-                    predictions_tensor["to_plays"],
-                    has_valid_action_mask,
-                    has_valid_obs_mask,
-                    targets_tensor,
-                    predictions_tensor if self.config.stochastic else None,
-                )
-
-            # --- 9. Backpropagation and Optimization ---
-            self.optimizer.zero_grad()
-
-            if self.config.use_mixed_precision:
-                self.scaler.scale(loss_mean).backward()
-                if self.config.clipnorm > 0:
-                    self.scaler.unscale_(self.optimizer)
-                    clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                loss_mean.backward()
-                if self.config.clipnorm > 0:
-                    clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
-                self.optimizer.step()
-
-            self.lr_scheduler.step()
-
-            if self.device == "mps":
-                torch.mps.empty_cache()
-
-            # --- 10. Update Priorities ---
-            # priorities tensor is already of shape (B,) from k=0
-            self.update_replay_priorities(
-                samples["indices"], priorities.cpu().numpy(), ids=samples["ids"]
+            # --- 7. Run Modular Loss Pipeline ---
+            # NOTE: We run this within autocast as requested.
+            loss_mean, loss_dict, priorities = self.loss_pipeline.run(
+                predictions_tensor=predictions_tensor,
+                targets_tensor=targets_tensor,
+                context=context,
+                weights=weights,
+                gradient_scales=gradient_scales_tensor,
+                config=self.config,
+                device=self.device,
             )
 
-            # --- 11. STAT TRACKING ---
-            if self.config.stochastic:
-                self._track_stochastic_stats(
-                    predictions_tensor["encoder_onehots"],
-                    predictions_tensor["latent_code_probabilities"],
-                )
+        # --- 8. Logging at Checkpoint ---
+        if self.training_step % self.checkpoint_interval == 0:
+            self._log_training_step(
+                actions,
+                target_values,
+                predictions_tensor["values"],
+                target_rewards,
+                predictions_tensor["rewards"],
+                target_to_plays,
+                predictions_tensor["to_plays"],
+                has_valid_action_mask,
+                has_valid_obs_mask,
+                targets_tensor,
+                predictions_tensor if self.config.stochastic else None,
+            )
 
-            # Categorize latent space by action
-            if self.training_step % self.config.latent_viz_interval == 0:
-                self._track_latent_visualization(
-                    predictions_tensor["latent_states"],
-                    actions,
-                )
+        # --- 9. Backpropagation and Optimization ---
+        self.optimizer.zero_grad()
+
+        if self.config.use_mixed_precision:
+            self.scaler.scale(loss_mean).backward()
+            if self.config.clipnorm > 0:
+                self.scaler.unscale_(self.optimizer)
+                clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            loss_mean.backward()
+            if self.config.clipnorm > 0:
+                clip_grad_norm_(self.model.parameters(), self.config.clipnorm)
+            self.optimizer.step()
+
+        self.lr_scheduler.step()
+
+        if self.device == "mps":
+            torch.mps.empty_cache()
+
+        # --- 10. Update Priorities ---
+        # priorities tensor is already of shape (B,) from k=0
+        self.update_replay_priorities(
+            samples["indices"], priorities.cpu().numpy(), ids=samples["ids"]
+        )
+
+        # --- 11. STAT TRACKING ---
+        if self.config.stochastic:
+            self._track_stochastic_stats(
+                predictions_tensor["encoder_onehots"],
+                predictions_tensor["latent_code_probabilities"],
+            )
+
+        # Categorize latent space by action
+        if self.training_step % self.config.latent_viz_interval == 0:
+            self._track_latent_visualization(
+                predictions_tensor["latent_states"],
+                actions,
+            )
 
         # --- 12. Return Losses for Logging ---
         return self._prepare_return_losses(loss_dict, loss_mean.item())
@@ -870,14 +915,23 @@ class MuZeroAgent(MARLBaseAgent):
             total_loss,
         )
 
-    def predict_initial_inference(
-        self,
-        states,
-        model,
-    ):
-        if model == None:
+    def predict_initial_inference(self, states, model):
+        if model is None:
             model = self.model
         state_inputs = self.preprocess(states)
+
+        # Safety: Ensure inputs match model device (important for CPU workers)
+        # and are Float32 (critical for Quantization which crashes on BFloat16)
+        if hasattr(model, "parameters"):
+            try:
+                param = next(model.parameters())
+                if state_inputs.device != param.device:
+                    state_inputs = state_inputs.to(param.device)
+                if state_inputs.dtype == torch.bfloat16:
+                    state_inputs = state_inputs.to(dtype=torch.float32)
+            except StopIteration:
+                pass
+
         values, policies, hidden_states = model.initial_inference(state_inputs)
         return values, policies, hidden_states
 
@@ -889,8 +943,21 @@ class MuZeroAgent(MARLBaseAgent):
         reward_c_states=None,
         model=None,
     ):
-        if model == None:
+        if model is None:
             model = self.model
+
+        # Safety: Ensure inputs match model device/dtype
+        if hasattr(model, "parameters"):
+            try:
+                param = next(model.parameters())
+                if states.device != param.device:
+                    states = states.to(param.device)
+                    actions_or_codes = actions_or_codes.to(param.device)
+                if states.dtype == torch.bfloat16:
+                    states = states.to(dtype=torch.float32)
+            except StopIteration:
+                pass
+
         rewards, states, values, policies, to_play, reward_hidden = (
             model.recurrent_inference(
                 states,
@@ -900,11 +967,8 @@ class MuZeroAgent(MARLBaseAgent):
             )
         )
 
-        # print(reward_hidden)
         reward_h_states = reward_hidden[0]
         reward_c_states = reward_hidden[1]
-        # print(reward_h_states)
-        # print(reward_c_states)
 
         return (
             rewards,
@@ -919,13 +983,25 @@ class MuZeroAgent(MARLBaseAgent):
     def predict_afterstate_recurrent_inference(
         self, hidden_states, actions, model=None
     ):
-        if model == None:
+        if model is None:
             model = self.model
+
+        # Safety: Ensure inputs match model device/dtype
+        if hasattr(model, "parameters"):
+            try:
+                param = next(model.parameters())
+                if hidden_states.device != param.device:
+                    hidden_states = hidden_states.to(param.device)
+                    actions = actions.to(param.device)
+                if hidden_states.dtype == torch.bfloat16:
+                    hidden_states = hidden_states.to(dtype=torch.float32)
+            except StopIteration:
+                pass
+
         afterstates, value, chance_probs = model.afterstate_recurrent_inference(
             hidden_states,
             actions,
         )
-
         return afterstates, value, chance_probs
 
     def predict(
@@ -1055,7 +1131,11 @@ class MuZeroAgent(MARLBaseAgent):
                 self._track_search_stats(prediction[4])
                 state = next_state
                 info = next_info
-            self.replay_buffer.store_aggregate(game_object=game)
+
+            # Disable autocast for buffer storage to prevent "Unexpected floating ScalarType" errors
+            # on CPU/MPS during torch.cat operations.
+            with torch.amp.autocast(device_type="cpu", enabled=False):
+                self.replay_buffer.store_aggregate(game_object=game)
         if self.config.game.num_players != 1:
             return env.rewards[env.agents[0]], len(game)
         else:
@@ -1142,26 +1222,27 @@ class MuZeroAgent(MARLBaseAgent):
 
                 # decide value target per your config (paper default: keep stored n-step TD for Atari)
             # now write back under write_lock and update priorities with ids
-            self.replay_buffer.reanalyze_game(
-                indices,
-                new_policies,
-                new_root_values,
-                ids,
-                self.training_step,
-                self.config.training_steps,
-            )
-            if self.config.reanalyze_update_priorities:
-                stored_n_step_value = float(
-                    self.replay_buffer.n_step_values_buffer[idx][0].item()
+            with torch.amp.autocast(device_type="cpu", enabled=False):
+                self.replay_buffer.reanalyze_game(
+                    indices,
+                    new_policies,
+                    new_root_values,
+                    ids,
+                    self.training_step,
+                    self.config.training_steps,
                 )
+                if self.config.reanalyze_update_priorities:
+                    stored_n_step_value = float(
+                        self.replay_buffer.n_step_values_buffer[idx][0].item()
+                    )
 
-                new_policies.append(new_policy[0])
-                new_root_values.append(new_root_value)
-                new_priorities.append(abs(float(root_value) - stored_n_step_value))
+                    new_policies.append(new_policy[0])
+                    new_root_values.append(new_root_value)
+                    new_priorities.append(abs(float(root_value) - stored_n_step_value))
 
-                self.update_replay_priorities(
-                    indices, new_priorities, ids=np.array(ids)
-                )
+                    self.update_replay_priorities(
+                        indices, new_priorities, ids=np.array(ids)
+                    )
 
     def _track_search_stats(self, search_metadata):
         """Track statistics from the search process."""
@@ -1198,34 +1279,31 @@ class MuZeroAgent(MARLBaseAgent):
             )
 
     def __getstate__(self):
-        state = self.__dict__.copy()
+        state = super().__getstate__()
         state["stop_flag"] = state["stop_flag"].value
-        if "env" in state:
-            del state["env"]
-        if "test_env" in state:
-            del state["test_env"]
-        if "optimizer" in state:
-            del state["optimizer"]
-        if "lr_scheduler" in state:
-            del state["lr_scheduler"]
 
-        # Only handle these if training has started (step > 0)
-        # At step 0 (worker spawn), model is on CPU and replay_buffer is empty/picklable.
-        if self.training_step > 0:
-            # Manually serialize model to CPU state dict to avoid device sharing issues (MPS etc)
-            if "model" in state:
+        # Unconditionally remove learner-specific heavy objects
+        for key in [
+            "model",
+            "loss_pipeline",
+            "search",
+            "optimizer",
+            "scaler",
+            "lr_scheduler",
+        ]:
+            if key in state:
+                del state[key]
+
+        # NOTE: We keep "replay_buffer" and "target_model" so workers can use them.
+
+        # Optional: Save model weights if they exist (for checkpointing, not for workers)
+        if hasattr(self, "model") and self.model is not None:
+            try:
                 state["model_state_dict"] = {
                     k: v.cpu() for k, v in self.model.state_dict().items()
                 }
-                del state["model"]
-            if "target_model" in state:
-                del state["target_model"]
-
-            if "loss_pipeline" in state:
-                del state["loss_pipeline"]
-
-            if "replay_buffer" in state:
-                del state["replay_buffer"]
+            except:
+                pass
 
         return state
 
@@ -1247,10 +1325,9 @@ class MuZeroAgent(MARLBaseAgent):
         self.env = self.config.game.make_env()
         self.test_env = self.config.game.make_env(render_mode="rgb_array")
 
-        # Reconstruct model if we have weights
+        # Reconstruct model if we have weights (e.g. from a checkpoint)
         if model_state_dict is not None:
             # self.config, self.observation_dimensions, self.num_actions are in state
-            device = torch.device("cpu")  # Initialize on CPU
             self.model = Network(
                 config=self.config,
                 num_actions=self.num_actions,
@@ -1263,76 +1340,11 @@ class MuZeroAgent(MARLBaseAgent):
             self.model.load_state_dict(model_state_dict)
             self.model.to(self.device)
             self.target_model = copy.deepcopy(self.model)
-
-            # Apply quantization to reconstructed target model
-            if self.config.quantize:
-                try:
-                    if "qnnpack" in torch.backends.quantized.supported_engines:
-                        torch.backends.quantized.engine = "qnnpack"
-                except:
-                    pass
-                self.target_model.to("cpu")
-                self.target_model = torch.ao.quantization.quantize_dynamic(
-                    self.target_model, {nn.Linear}, dtype=torch.qint8
-                )
-                self.target_model.eval()
-                for p in self.target_model.parameters():
-                    p.requires_grad = False
-
-            # Move target to shared memory if multi_process (though for testing we might just use local copy)
-            if self.config.multi_process:
-                # Note: sharing CUDA/MPS tensors is tricky. If device is CPU, this is fine.
-                # If device is MPS, this might fail or be no-op.
-                # Given we just deserialized, we are likely fine keeping it local for the test worker.
-                # But if this is a training worker, it might expect shared memory?
-                # Training workers use target_model for inference.
-                # A reconstructed target_model here is NOT shared with the main process 'target_model'.
-                # This implies __setstate__ is creating a LOCAL copy.
-                # If training workers need the SHARED target model updated by learner,
-                # then training workers CANNOT rely on this reconstruction!
-                # Training workers rely on the pickled 'target_model' which points to shared memory.
-                # WE DELETED 'target_model' from state!
-                pass
-
-    def update_target_model(self):
-        """
-        Override to support quantized target model updates.
-        """
-        if not self.config.quantize:
-            super().update_target_model()
-            return
-
-        with torch.no_grad():
-
-            def update_recursively(target_module, source_module):
-                source_children = dict(source_module.named_children())
-                for name, target_child in target_module.named_children():
-                    if name not in source_children:
-                        continue
-                    source_child = source_children[name]
-
-                    if isinstance(
-                        target_child,
-                        (
-                            nn.quantized.dynamic.Linear,
-                            torch.ao.nn.quantized.dynamic.Linear,
-                        ),
-                    ) and isinstance(source_child, nn.Linear):
-                        # Workaround for set_weight_bias backend issues:
-                        # Create new quantized module via from_float (identical to how quantize_dynamic does it)
-                        # and steal its packed params.
-                        # We use source_child directly (it's float). from_float usually copies weights.
-                        # We must attach qconfig to a copy of source to avoid modifying training model.
-                        temp_source = copy.copy(source_child)
-                        temp_source.qconfig = (
-                            torch.ao.quantization.default_dynamic_qconfig
-                        )
-                        new_q_child = type(target_child).from_float(temp_source)
-                        target_child._packed_params = new_q_child._packed_params
-                    else:
-                        update_recursively(target_child, source_child)
-
-            if self.config.soft_update:
-                pass  # Soft update not supported for quantized yet
-            else:
-                update_recursively(self.target_model, self.model)
+        else:
+            # Workers operate fine with self.model = None because they use self.target_model
+            # Note: We do NOT quantize here anymore; workers handle it locally.
+            self.model = None
+            self.loss_pipeline = None
+            self.search = None
+            if not hasattr(self, "replay_buffer"):
+                self.replay_buffer = None

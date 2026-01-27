@@ -49,6 +49,12 @@ class SearchAlgorithm:
         self.internal_pruning_method: PruningMethod = internal_pruning_method
         self.backpropagator: Backpropagator = backpropagator
 
+    @property
+    def use_amp(self):
+        return self.config.use_mixed_precision and not getattr(
+            self.config, "use_quantization", False
+        )
+
     def run(
         self,
         state,
@@ -66,7 +72,7 @@ class SearchAlgorithm:
         assert not root.expanded()
 
         with torch.no_grad():
-            with torch.autocast(device_type=self.device.type):
+            with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
                 outputs = inference_fns["initial"](state, model=inference_model)
         if len(outputs) == 3:
             val_raw, policy, hidden_state = outputs
@@ -186,9 +192,9 @@ class SearchAlgorithm:
         # Extract root children values for visualization
         root_children_values = torch.zeros(self.num_actions)
         for action, child in root.children.items():
-            if isinstance(child, (DecisionNode, ChanceNode)): # Should be nodes
-                 root_children_values[action] = child.value()
-        
+            if isinstance(child, (DecisionNode, ChanceNode)):  # Should be nodes
+                root_children_values[action] = child.value()
+
         return (
             root.value(),
             exploratory_policy,
@@ -312,7 +318,10 @@ class SearchAlgorithm:
         if isinstance(node, DecisionNode):
             if isinstance(parent, DecisionNode):
                 with torch.no_grad():
-                    with torch.autocast(device_type=self.device.type):
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        enabled=self.use_amp,
+                    ):
                         (
                             reward,
                             hidden_state,
@@ -365,7 +374,10 @@ class SearchAlgorithm:
                 )
             elif isinstance(parent, ChanceNode):
                 with torch.no_grad():
-                    with torch.autocast(device_type=self.device.type):
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        enabled=self.use_amp,
+                    ):
                         (
                             reward,
                             hidden_state,
@@ -423,7 +435,10 @@ class SearchAlgorithm:
             # 2. Sample a Code
             # 3. Get Next State & Reward (Create DecisionNode)
             with torch.no_grad():
-                with torch.autocast(device_type=self.device.type):
+                with torch.autocast(
+                    device_type=self.device.type,
+                    enabled=self.use_amp,
+                ):
                     afterstate, value, code_probs = inference_fns[
                         "afterstate"
                     ](  # <--- YOU NEED THIS METHOD
@@ -466,9 +481,9 @@ class SearchAlgorithm:
     ):
         use_virtual_mean = self.config.use_virtual_mean
         virtual_loss = self.config.virtual_loss
-        
+
         sim_data = []
-        
+
         # Pre-allocate buffers lazily
         rec_states = None
         rec_actions = None
@@ -479,12 +494,12 @@ class SearchAlgorithm:
         aft_states = None
         aft_actions = None
         aft_indices = []
-        
+
         # 1. Selection Phase
         for b in range(batch_size):
             node = root
             search_path = [node]
-            path_virtual_values = [] 
+            path_virtual_values = []
             horizon_index = 0
 
             action_or_code = None
@@ -494,7 +509,7 @@ class SearchAlgorithm:
                     break
 
                 parent_node = node
-                
+
                 if node.parent is None:
                     # Root
                     pruned_actionset, next_state = self.pruning_method.step(
@@ -515,12 +530,14 @@ class SearchAlgorithm:
                             for n in search_path:
                                 n.visits -= 1
                                 n.value_sum += virtual_loss
-                        
+
                         node = None
                         break
 
                     action_or_code, node = self.root_selection_strategy.select_child(
-                        node, pruned_actionset=pruned_actionset, min_max_stats=min_max_stats
+                        node,
+                        pruned_actionset=pruned_actionset,
+                        min_max_stats=min_max_stats,
                     )
                 else:
                     if isinstance(node, DecisionNode):
@@ -570,18 +587,18 @@ class SearchAlgorithm:
                         )
 
                 horizon_index = (horizon_index + 1) % self.config.lstm_horizon_len
-                
+
                 # Apply virtual update to the PARENT (search_path[-1])
                 parent_node = search_path[-1]
                 if use_virtual_mean:
                     v_val = parent_node.value()
                     parent_node.visits += 1
                     parent_node.value_sum += v_val
-                    path_virtual_values.append(v_val) 
+                    path_virtual_values.append(v_val)
                 else:
                     parent_node.visits += 1
                     parent_node.value_sum -= virtual_loss
-                
+
                 search_path.append(node)
 
             if node is None:
@@ -590,7 +607,7 @@ class SearchAlgorithm:
 
             # Leaf Node Update
             if use_virtual_mean:
-                v_val = node.value() 
+                v_val = node.value()
                 node.visits += 1
                 node.value_sum += v_val
                 path_virtual_values.append(v_val)
@@ -605,7 +622,7 @@ class SearchAlgorithm:
                 # "action": action_or_code, # Not stored, we act on it immediately
                 "horizon_index": horizon_index,
                 "virtual_values": path_virtual_values if use_virtual_mean else None,
-                "result": None
+                "result": None,
             }
             sim_data.append(sim_entry)
 
@@ -623,9 +640,21 @@ class SearchAlgorithm:
                 # Buffers Setup
                 if rec_states is None:
                     # Infer shapes from first item
-                    rec_states = torch.empty((batch_size, *state.shape[1:]), device=self.device, dtype=state.dtype)
-                    rec_rhs = torch.empty((batch_size, *parent.reward_h_state.shape[1:]), device=self.device, dtype=parent.reward_h_state.dtype)
-                    rec_rcs = torch.empty((batch_size, *parent.reward_c_state.shape[1:]), device=self.device, dtype=parent.reward_c_state.dtype)
+                    rec_states = torch.empty(
+                        (batch_size, *state.shape[1:]),
+                        device=self.device,
+                        dtype=state.dtype,
+                    )
+                    rec_rhs = torch.empty(
+                        (batch_size, *parent.reward_h_state.shape[1:]),
+                        device=self.device,
+                        dtype=parent.reward_h_state.dtype,
+                    )
+                    rec_rcs = torch.empty(
+                        (batch_size, *parent.reward_c_state.shape[1:]),
+                        device=self.device,
+                        dtype=parent.reward_c_state.dtype,
+                    )
                     # For actions, we use a list to be safe against shape/type variants
                     rec_actions_list = []
 
@@ -633,10 +662,10 @@ class SearchAlgorithm:
                 rec_states[idx] = state.squeeze(0)
                 rec_rhs[idx] = parent.reward_h_state.squeeze(0)
                 rec_rcs[idx] = parent.reward_c_state.squeeze(0)
-                
+
                 # Handle action safely
                 if isinstance(action, torch.Tensor):
-                    val = action.clone().detach() # Detach to be safe
+                    val = action.clone().detach()  # Detach to be safe
                 else:
                     val = torch.tensor(action)
                 rec_actions_list.append(val)
@@ -647,20 +676,24 @@ class SearchAlgorithm:
                 # Afterstate Inference
                 state = parent.hidden_state
                 if aft_states is None:
-                    aft_states = torch.empty((batch_size, *state.shape[1:]), device=self.device, dtype=state.dtype)
+                    aft_states = torch.empty(
+                        (batch_size, *state.shape[1:]),
+                        device=self.device,
+                        dtype=state.dtype,
+                    )
                     # For actions, we use a list to be safe against shape/type variants
                     aft_actions_list = []
 
                 idx = len(aft_indices)
                 aft_states[idx] = state.squeeze(0)
-                
-                 # Handle action safely
+
+                # Handle action safely
                 if isinstance(action, torch.Tensor):
                     val = action.clone().detach()
                 else:
                     val = torch.tensor(action)
                 aft_actions_list.append(val)
-                
+
                 aft_indices.append(b)
 
         # 2. Batched Inference
@@ -670,24 +703,31 @@ class SearchAlgorithm:
             states = rec_states[:count]
             rhs = rec_rhs[:count]
             rcs = rec_rcs[:count]
-            
+
             # Form action tensor from list
             act_list = []
             for val in rec_actions_list:
                 # Ensure shape (1, ...) or (1)
-                if val.dim() == 0: val = val.unsqueeze(0)
-                if val.dim() == 1 and val.shape[0] == 1: val = val # Already correct
-                elif val.dim() == 1: val = val.unsqueeze(0) # (N) -> (1, N)
-                
-                # IMPORTANT: Keep Original Dtype/Value logic if possible, 
+                if val.dim() == 0:
+                    val = val.unsqueeze(0)
+                if val.dim() == 1 and val.shape[0] == 1:
+                    val = val  # Already correct
+                elif val.dim() == 1:
+                    val = val.unsqueeze(0)  # (N) -> (1, N)
+
+                # IMPORTANT: Keep Original Dtype/Value logic if possible,
                 # but usually actions are floats for NN inputs
                 act_list.append(val.float())
-                
+
             actions = torch.cat(act_list, dim=0)
-            if actions.dim() == 1: actions = actions.unsqueeze(1) # Ensure (B, 1) if simplified
+            if actions.dim() == 1:
+                actions = actions.unsqueeze(1)  # Ensure (B, 1) if simplified
 
             with torch.no_grad():
-                with torch.autocast(device_type=self.device.type):
+                with torch.autocast(
+                    device_type=self.device.type,
+                    enabled=self.use_amp,
+                ):
                     (
                         rewards,
                         hidden_states,
@@ -713,38 +753,45 @@ class SearchAlgorithm:
                 }
 
         if aft_indices:
-             count = len(aft_indices)
-             states = aft_states[:count]
-             
-             # Form action tensor from list
-             act_list = []
-             for val in aft_actions_list:
-                if val.dim() == 0: val = val.unsqueeze(0)
-                if val.dim() == 1 and val.shape[0] > 1: val = val.unsqueeze(0)
-                
-                act_list.append(val.float())
-                
-             actions = torch.cat(act_list, dim=0)
-             if actions.dim() == 1: actions = actions.unsqueeze(1)
+            count = len(aft_indices)
+            states = aft_states[:count]
 
-             with torch.no_grad():
-                with torch.autocast(device_type=self.device.type):
+            # Form action tensor from list
+            act_list = []
+            for val in aft_actions_list:
+                if val.dim() == 0:
+                    val = val.unsqueeze(0)
+                if val.dim() == 1 and val.shape[0] > 1:
+                    val = val.unsqueeze(0)
+
+                act_list.append(val.float())
+
+            actions = torch.cat(act_list, dim=0)
+            if actions.dim() == 1:
+                actions = actions.unsqueeze(1)
+
+            with torch.no_grad():
+                with torch.autocast(
+                    device_type=self.device.type,
+                    enabled=self.use_amp,
+                ):
                     afterstates, values, code_probs_batch = inference_fns["afterstate"](
                         states, actions, model=inference_model
                     )
 
-             for i, sim_idx in enumerate(aft_indices):
-                 sim_data[sim_idx]["result"] = {
-                     "afterstate": afterstates[i : i + 1],
-                     "value": values[i],
-                     "code_probs": code_probs_batch[i : i + 1],
-                 }
+            for i, sim_idx in enumerate(aft_indices):
+                sim_data[sim_idx]["result"] = {
+                    "afterstate": afterstates[i : i + 1],
+                    "value": values[i],
+                    "code_probs": code_probs_batch[i : i + 1],
+                }
 
         # 3. Expansion & Backprop
-        
+
         # A. Revert Virtual Loss / Virtual Mean (Global Reversion Phase)
         for d in sim_data:
-            if d is None: continue
+            if d is None:
+                continue
             path = d["path"]
             virtual_values = d.get("virtual_values", [])
 
@@ -762,10 +809,11 @@ class SearchAlgorithm:
 
         # B. Backpropagation Phase
         for d in sim_data:
-            if d is None: continue
+            if d is None:
+                continue
             path = d["path"]
             node = d["node"]
-            
+
             res = d.get("result")
             if not res:
                 continue
@@ -776,11 +824,11 @@ class SearchAlgorithm:
                 reward = res["reward"]
                 value = res["value"]
                 if self.config.support_range is not None:
-                     reward = support_to_scalar(reward, self.config.support_range).item()
-                     value = support_to_scalar(value, self.config.support_range).item()
+                    reward = support_to_scalar(reward, self.config.support_range).item()
+                    value = support_to_scalar(value, self.config.support_range).item()
                 else:
-                     reward = reward.item()
-                     value = value.item()
+                    reward = reward.item()
+                    value = value.item()
 
                 to_play = int(res["to_play"].argmax().item())
                 to_play_for_backprop = to_play
@@ -790,15 +838,15 @@ class SearchAlgorithm:
                 rc = res["rc"]
 
                 if self.config.value_prefix and is_reset:
-                     rh = torch.zeros_like(rh).to(self.device)
-                     rc = torch.zeros_like(rc).to(self.device)
+                    rh = torch.zeros_like(rh).to(self.device)
+                    rc = torch.zeros_like(rc).to(self.device)
 
                 policy = res["policy"][0]
                 actions_to_expand = self.internal_actionset.create_initial_actionset(
                     policy,
                     list(range(self.num_actions)),
                     self.config.gumbel_m,
-                    trajectory_action=None
+                    trajectory_action=None,
                 )
 
                 node.expand(
@@ -811,7 +859,7 @@ class SearchAlgorithm:
                     value=value,
                     reward_h_state=rh,
                     reward_c_state=rc,
-                    is_reset=is_reset
+                    is_reset=is_reset,
                 )
 
             elif isinstance(node, ChanceNode):
@@ -829,7 +877,7 @@ class SearchAlgorithm:
                     network_value=value,
                     code_probs=res["code_probs"][0],
                     reward_h_state=d["parent"].reward_h_state,
-                    reward_c_state=d["parent"].reward_c_state
+                    reward_c_state=d["parent"].reward_c_state,
                 )
 
             self.backpropagator.backpropagate(

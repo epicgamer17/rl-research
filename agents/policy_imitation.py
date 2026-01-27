@@ -44,8 +44,8 @@ class PolicyImitationAgent(BaseAgent):
         ).to(self.device)
 
         if self.config.compile:
-             print("Compiling model...")
-             self.model = torch.compile(self.model, mode=self.config.compile_mode)
+            print("Compiling model...")
+            self.model = torch.compile(self.model, mode=self.config.compile_mode)
 
         if self.config.optimizer == Adam:
             self.optimizer: torch.optim.Optimizer = self.config.optimizer(
@@ -61,12 +61,11 @@ class PolicyImitationAgent(BaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
-        
+
         self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
         if self.config.use_mixed_precision:
             self.scaler = torch.amp.GradScaler(device=self.device.type)
-
 
     def select_actions(self, predictions):
         distribution = torch.distributions.Categorical(probs=predictions)
@@ -106,7 +105,10 @@ class PolicyImitationAgent(BaseAgent):
             ]
 
             if self.config.use_mixed_precision:
-                with torch.amp.autocast(device_type=self.device.type):
+                with torch.amp.autocast(
+                    device_type=self.device.type,
+                    enabled=self.config.use_mixed_precision,
+                ):
                     policy = self.predict(observations, infos)
                     loss = self.config.loss_function(policy, targets).mean()
 

@@ -57,6 +57,20 @@ class TestLatentUMAP(unittest.TestCase):
 
         self.assertTrue(os.path.exists(save_path))
 
+    def test_small_dataset(self):
+        # Test with N < n_neighbors to ensure fixed logic works
+        # Default n_neighbors is 15. Let's use N=5.
+        N, D = 5, 20
+        latents = torch.randn(N, D)
+
+        visualizer = LatentUMAPVisualizer(n_components=2, n_neighbors=15)
+
+        # This should have previously raised a UserWarning
+        # We also check if it returns the correct shape
+        points = visualizer.fit_transform(latents)
+        self.assertEqual(points.shape, (N, 2))
+        self.assertEqual(visualizer.reducer.n_neighbors, 4)  # N - 1
+
 
 if __name__ == "__main__":
     unittest.main()

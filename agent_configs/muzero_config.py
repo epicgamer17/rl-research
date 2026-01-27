@@ -139,8 +139,6 @@ class MuZeroConfig(
 
         self.reanalyze_ratio: float = self.parse_field("reanalyze_ratio", 0.0)
         self.use_quantization: bool = self.parse_field("use_quantization", False)
-        # Backwards compatibility if needed, or just sync them
-        self.quantize = self.use_quantization
 
         self.reanalyze_method: bool = self.parse_field("reanalyze_method", "mcts")
         self.reanalyze_tau: float = self.parse_field("reanalyze_tau", 0.3)

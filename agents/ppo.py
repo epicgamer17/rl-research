@@ -49,13 +49,15 @@ class PPOAgent(BaseAgent):
         self.model = Network(
             config=config,
             output_size=self.num_actions,
-            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
+            input_shape=torch.Size(
+                (self.config.minibatch_size,) + self.observation_dimensions
+            ),
             discrete=self.discrete_action_space,  # COULD USE GAME CONFIG?
         ).to(self.device)
 
         if self.config.compile:
-             print("Compiling model...")
-             self.model = torch.compile(self.model, mode=self.config.compile_mode)
+            print("Compiling model...")
+            self.model = torch.compile(self.model, mode=self.config.compile_mode)
 
         if self.config.actor.optimizer == Adam:
             self.actor_optimizer: torch.optim.Optimizer = self.config.actor.optimizer(
@@ -87,14 +89,13 @@ class PPOAgent(BaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
-        
+
         self.actor_scheduler = get_lr_scheduler(self.actor_optimizer, self.config)
         self.actor_scheduler = get_lr_scheduler(self.actor_optimizer, self.config)
         self.critic_scheduler = get_lr_scheduler(self.critic_optimizer, self.config)
 
         if self.config.use_mixed_precision:
             self.scaler = torch.amp.GradScaler(device=self.device.type)
-
 
         # self.actor = ActorNetwork(
         #     input_shape=self.observation_dimensions,
@@ -178,7 +179,9 @@ class PPOAgent(BaseAgent):
         legal_moves_mask: Tensor = None,
         mask_actions: bool = True,
     ):
-        assert legal_moves_mask is not None if mask_actions else True, "Need legal_moves_mask to mask actions"
+        assert (
+            legal_moves_mask is not None if mask_actions else True
+        ), "Need legal_moves_mask to mask actions"
         # print("Training Actor")
         inputs = inputs.to(self.device)
         actions = actions.to(self.device)
@@ -186,11 +189,17 @@ class PPOAgent(BaseAgent):
         advantages = advantages.to(self.device)
 
         if self.config.use_mixed_precision:
-            with torch.amp.autocast(device_type=self.device.type):
+            with torch.amp.autocast(
+                device_type=self.device.type, enabled=self.config.use_mixed_precision
+            ):
                 if self.discrete_action_space:
                     probabilities = self.model.actor(inputs)
                     if mask_actions:
-                        probabilities = torch.where(legal_moves_mask, probabilities, torch.tensor(0.0, device=self.device))
+                        probabilities = torch.where(
+                            legal_moves_mask,
+                            probabilities,
+                            torch.tensor(0.0, device=self.device),
+                        )
                         probabilities = normalize_policies(probabilities)
                     distribution = torch.distributions.Categorical(probabilities)
                 else:
@@ -208,24 +217,33 @@ class PPOAgent(BaseAgent):
                 )
 
                 actor_loss = torch.max(
-                    -probability_ratios * advantages, -clipped_probability_ratios * advantages
+                    -probability_ratios * advantages,
+                    -clipped_probability_ratios * advantages,
                 ).mean()
 
                 entropy_loss = distribution.entropy().mean()
-                actor_loss = actor_loss - (self.config.entropy_coefficient * entropy_loss)
-            
+                actor_loss = actor_loss - (
+                    self.config.entropy_coefficient * entropy_loss
+                )
+
             self.actor_optimizer.zero_grad()
             self.scaler.scale(actor_loss).backward()
             if self.config.actor.clipnorm > 0:
                 self.scaler.unscale_(self.actor_optimizer)
-                clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
+                clip_grad_norm_(
+                    self.model.actor.parameters(), self.config.actor.clipnorm
+                )
             self.scaler.step(self.actor_optimizer)
             self.scaler.update()
         else:
             if self.discrete_action_space:
                 probabilities = self.model.actor(inputs)
                 if mask_actions:
-                    probabilities = torch.where(legal_moves_mask, probabilities, torch.tensor(0.0, device=self.device))
+                    probabilities = torch.where(
+                        legal_moves_mask,
+                        probabilities,
+                        torch.tensor(0.0, device=self.device),
+                    )
                     probabilities = normalize_policies(probabilities)
                 distribution = torch.distributions.Categorical(probabilities)
             else:
@@ -255,7 +273,8 @@ class PPOAgent(BaseAgent):
             # print((clipped_probability_ratios * advantages).shape)
 
             actor_loss = torch.max(
-                -probability_ratios * advantages, -clipped_probability_ratios * advantages
+                -probability_ratios * advantages,
+                -clipped_probability_ratios * advantages,
             ).mean()
 
             entropy_loss = distribution.entropy().mean()
@@ -263,7 +282,9 @@ class PPOAgent(BaseAgent):
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             if self.config.actor.clipnorm > 0:
-                clip_grad_norm_(self.model.actor.parameters(), self.config.actor.clipnorm)
+                clip_grad_norm_(
+                    self.model.actor.parameters(), self.config.actor.clipnorm
+                )
 
             self.actor_optimizer.step()
 
@@ -286,9 +307,12 @@ class PPOAgent(BaseAgent):
         returns = returns.to(self.device)
 
         if self.config.use_mixed_precision:
-            with torch.amp.autocast(device_type=self.device.type):
+            with torch.amp.autocast(
+                device_type=self.device.type, enabled=self.config.use_mixed_precision
+            ):
                 critic_loss = (
-                    self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
+                    self.config.critic_coefficient
+                    * (returns - self.model.critic(inputs)) ** 2
                 ).mean()
 
             print("critic loss", critic_loss)
@@ -296,12 +320,15 @@ class PPOAgent(BaseAgent):
             self.scaler.scale(critic_loss).backward()
             if self.config.critic.clipnorm > 0:
                 self.scaler.unscale_(self.critic_optimizer)
-                clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
+                clip_grad_norm_(
+                    self.model.critic.parameters(), self.config.critic.clipnorm
+                )
             self.scaler.step(self.critic_optimizer)
             self.scaler.update()
         else:
             critic_loss = (
-                self.config.critic_coefficient * (returns - self.model.critic(inputs)) ** 2
+                self.config.critic_coefficient
+                * (returns - self.model.critic(inputs)) ** 2
             ).mean()
 
             print("critic loss", critic_loss)
@@ -309,7 +336,9 @@ class PPOAgent(BaseAgent):
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             if self.config.critic.clipnorm > 0:
-                clip_grad_norm_(self.model.critic.parameters(), self.config.critic.clipnorm)
+                clip_grad_norm_(
+                    self.model.critic.parameters(), self.config.critic.clipnorm
+                )
 
             self.critic_optimizer.step()
         return critic_loss.detach()
@@ -425,7 +454,7 @@ class PPOAgent(BaseAgent):
                         actions=action,
                         values=value,
                         log_probabilities=log_probability,
-                        rewards=reward
+                        rewards=reward,
                     )
 
                     done = terminated or truncated

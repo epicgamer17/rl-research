@@ -268,6 +268,15 @@ class Network(nn.Module):
             num_codes=self.config.num_chance,
             channel_first=channel_first,
         )
+        self._device = torch.device("cpu")
+
+    @property
+    def device(self):
+        # Infer device from parameters if possible
+        try:
+            return next(self.parameters()).device
+        except StopIteration:
+            return self._device
 
     def initial_inference(self, obs):
         wm_output = self.world_model.initial_inference(obs)

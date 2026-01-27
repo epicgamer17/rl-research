@@ -62,12 +62,16 @@ class RainbowAgent(BaseAgent):
         self.model = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
-            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
+            input_shape=torch.Size(
+                (self.config.minibatch_size,) + self.observation_dimensions
+            ),
         )
         self.target_model = RainbowNetwork(
             config=config,
             output_size=self.num_actions,
-            input_shape=torch.Size((self.config.minibatch_size,) + self.observation_dimensions),
+            input_shape=torch.Size(
+                (self.config.minibatch_size,) + self.observation_dimensions
+            ),
         )
 
         if not self.config.kernel_initializer == None:
@@ -80,7 +84,9 @@ class RainbowAgent(BaseAgent):
         if self.config.compile:
             print("Compiling models...")
             self.model = torch.compile(self.model, mode=self.config.compile_mode)
-            self.target_model = torch.compile(self.target_model, mode=self.config.compile_mode)
+            self.target_model = torch.compile(
+                self.target_model, mode=self.config.compile_mode
+            )
 
         self.target_model.eval()
 
@@ -112,12 +118,11 @@ class RainbowAgent(BaseAgent):
                 momentum=self.config.momentum,
                 weight_decay=self.config.weight_decay,
             )
-        
+
         self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
 
         if self.config.use_mixed_precision:
             self.scaler = torch.amp.GradScaler(device=self.device.type)
-
 
         self.replay_buffer = create_dqn_buffer(
             observation_dimensions=self.observation_dimensions,
@@ -240,9 +245,12 @@ class RainbowAgent(BaseAgent):
             # This handles ensure_predictions -> ensure_targets -> compute_loss
             # It returns the sum of all losses and the primary elementwise loss for PER
             if self.config.use_mixed_precision:
-                with torch.amp.autocast(device_type=self.device.type):
+                with torch.amp.autocast(
+                    device_type=self.device.type,
+                    enabled=self.config.use_mixed_precision,
+                ):
                     loss, elementwise_loss = self.loss_pipeline.run(self, context)
-            
+
                 # 3. Optimization
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
@@ -256,8 +264,10 @@ class RainbowAgent(BaseAgent):
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                loss, elementwise_loss = self.loss_pipeline.run(self, context) # run handles devices
-                
+                loss, elementwise_loss = self.loss_pipeline.run(
+                    self, context
+                )  # run handles devices
+
                 # 3. Optimization
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -268,7 +278,7 @@ class RainbowAgent(BaseAgent):
                     )
 
                 self.optimizer.step()
-            
+
             self.lr_scheduler.step()
 
             # 4. Update Priorities (PER)

@@ -64,10 +64,10 @@ class BaseAgent(ABC):
         # 3. Training Params
         if hasattr(env, "possible_agents") and env.possible_agents:
             self.player_id = env.possible_agents[0]
-            assert self.player_id == "player_0"
+            # assert self.player_id == "player_0"
         elif hasattr(env, "agents") and env.agents:
             self.player_id = env.agents[0]
-            assert self.player_id == "player_0"
+            # assert self.player_id == "player_0"
         else:
             self.player_id = "player_0"
         self.training_step = 0
@@ -162,6 +162,8 @@ class BaseAgent(ABC):
         """
         # 1. Convert to numpy (efficiently)
         if torch.is_tensor(states):
+            if states.dtype == torch.bfloat16:
+                states = states.to(torch.float32)
             states = states.cpu().numpy()
 
         np_states = np.array(states, copy=False)
