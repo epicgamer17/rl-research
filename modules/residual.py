@@ -1,4 +1,5 @@
 from typing import Callable, Literal, Tuple, Union
+import copy
 
 from torch import nn, Tensor
 from modules.utils import calculate_padding
@@ -24,7 +25,9 @@ class ResidualBlock(nn.Module):
         activation: nn.Module = nn.ReLU(),
     ):
         super().__init__()
-        self.activation = activation
+        # Clone activation for distinct layers to allow fusion
+        self.act1 = copy.deepcopy(activation)
+        self.act2 = copy.deepcopy(activation)
 
         # 1st Conv + Norm
         self.conv1 = nn.Conv2d(
@@ -37,6 +40,7 @@ class ResidualBlock(nn.Module):
         )
         self.norm1 = build_normalization_layer(norm_type, out_channels, dim=2)
 
+        # 2nd Conv + Norm
         # 2nd Conv + Norm
         self.conv2 = nn.Conv2d(
             out_channels,
@@ -68,13 +72,13 @@ class ResidualBlock(nn.Module):
 
         x = self.conv1(inputs)
         x = self.norm1(x)
-        x = self.activation(x)
+        x = self.act1(x)
 
         x = self.conv2(x)
         x = self.norm2(x)
 
         # Skip Connection
-        x = self.activation(x + residual)
+        x = self.act2(x + residual)
         return x
 
 

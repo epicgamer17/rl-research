@@ -77,7 +77,7 @@ class MuZeroAgent(MARLBaseAgent):
             # TODO: sort out when to do channel first and channel last
             channel_first=True,
             world_model_cls=self.config.world_model_cls,
-        ).share_memory()
+        )
 
         self.target_model = Network(
             config=config,
@@ -95,9 +95,11 @@ class MuZeroAgent(MARLBaseAgent):
         if self.config.multi_process:
             # make sure target is placed in shared memory so worker processes can read it
             self.target_model.share_memory()
+            self.update_queues = [mp.Queue() for _ in range(self.config.num_workers)]
         else:
             # non-multiprocess: keep target on device for faster inference
             self.target_model.to(device)
+            self.update_queues = []
 
         if not self.config.multi_process:
             self.model.to(device)
@@ -136,23 +138,8 @@ class MuZeroAgent(MARLBaseAgent):
             tau=self.config.reanalyze_tau,
         )
 
-        if self.config.optimizer == Adam:
-            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
-                eps=self.config.adam_epsilon,
-                weight_decay=self.config.weight_decay,
-            )
-        elif self.config.optimizer == SGD:
-            print("Warning: SGD does not use adam_epsilon param")
-            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
-                momentum=self.config.momentum,
-                weight_decay=self.config.weight_decay,
-            )
-
-        self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
+        self.lr_scheduler = None
+        self.optimizer = None
 
         if self.config.use_mixed_precision:
             self.scaler = torch.amp.GradScaler(device=self.device.type)
@@ -294,78 +281,148 @@ class MuZeroAgent(MARLBaseAgent):
                 "chance_entropy", PlotType.ROLLING_AVG, rolling_window=100
             )
 
-    def worker_fn(
-        self, worker_id, stop_flag, stats_client: StatTracker, error_queue: mp.Queue
+    @staticmethod
+    def run_worker(
+        worker_id,
+        config,
+        model_queue: mp.Queue,
+        replay_buffer,
+        device,
+        stop_flag,
+        stats_client: StatTracker,
+        error_queue: mp.Queue,
+        model_name,
+        checkpoint_interval,
+        num_actions: int,
+        training_step_shared,
     ):
-        self.stats = stats_client
+        # Create a lightweight agent shell to reuse methods
+        agent = MuZeroAgent.__new__(MuZeroAgent)
+        agent.config = config
+        agent.device = device
+        agent.num_actions = num_actions
+        # Ensure model is None so it's not accidentally used
+        agent.model = None
+        # target_model will be fetched from the queue
+        agent.target_model = None
+        agent.replay_buffer = replay_buffer
+        agent.stats = stats_client
+        agent.model_name = model_name
+        agent.checkpoint_interval = checkpoint_interval
+        # Set the shared training step value so agent.training_step property works
+        agent._training_step = training_step_shared
+        # Set stop flag just in case
+        agent.stop_flag = stop_flag
+
+        # 1. Set engine immediately!
+        # This ensures unpickling quantized weights (which triggers __setstate__)
+        # works correctly in the worker process.
+        if config.qat or config.use_quantization:
+            torch.backends.quantized.engine = "qnnpack"
+
         print(f"[Worker {worker_id}] Starting self-play...")
-        worker_env = self.config.game.make_env()  # each process needs its own env
+        worker_env = config.game.make_env()  # each process needs its own env
+        agent.env = worker_env
+
+        # Detect player_id (needed for observation dimension determination in some envs)
+        if hasattr(worker_env, "possible_agents") and worker_env.possible_agents:
+            agent.player_id = worker_env.possible_agents[0]
+        elif hasattr(worker_env, "agents") and worker_env.agents:
+            agent.player_id = worker_env.agents[0]
+        else:
+            agent.player_id = "player_0"
+
+        # Determine observation dimensions/dtype (needed for preprocess)
+        agent.observation_dimensions, agent.observation_dtype = (
+            agent.determine_observation_dimensions(worker_env)
+        )
+
+        # Determine action space properties (needed for creating MCTS if not passed in config or internal logic)
+        agent._setup_action_space(worker_env)
+
         try:
             from wrappers import record_video_wrapper
 
             worker_env.render_mode = "rgb_array"
             worker_env = record_video_wrapper(
                 worker_env,
-                f"./videos/{self.model_name}/{worker_id}",
-                self.checkpoint_interval,
+                f"./videos/{model_name}/{worker_id}",
+                checkpoint_interval,
             )
-        except:
+        except Exception:
             print(f"[Worker {worker_id}] Could not record video")
 
         # 0. Re-initialize search for the worker process (MCTS tree can't be shared safely)
-        self.search = create_mcts(self.config, self.device, self.num_actions)
+        agent.search = create_mcts(config, device, num_actions)
 
         # 1. Local Model Initialization
         def prepare_local_model():
-            local_model = copy.deepcopy(self.target_model)
-            local_model.to("cpu")  # Ensure inference is on CPU for stability
+            # agent.target_model is provided by the learner via model_queue
+            if agent.target_model is None:
+                return None
+
+            # The target_model is already fully quantized if config.use_quantization/qat is True
+            # via update_target_model().
+            local_model = copy.deepcopy(agent.target_model)
+            local_model.to("cpu")
             local_model.eval()
 
-            if self.config.use_quantization:
-                # Explicitly set the engine for the worker process
-                if "qnnpack" in torch.backends.quantized.supported_engines:
-                    torch.backends.quantized.engine = "qnnpack"
-                elif "fbgemm" in torch.backends.quantized.supported_engines:
-                    torch.backends.quantized.engine = "fbgemm"
+            # Ensure quantization engine is set for inference (redundant but safe)
+            if config.qat or config.use_quantization:
+                torch.backends.quantized.engine = "qnnpack"
 
-                local_model = torch.ao.quantization.quantize_dynamic(
-                    local_model, {nn.Linear}, dtype=torch.qint8
-                )
-
-            if self.config.compile:
-                local_model = torch.compile(local_model, mode=self.config.compile_mode)
+            if config.compile:
+                local_model = torch.compile(local_model, mode=config.compile_mode)
 
             for p in local_model.parameters():
                 p.requires_grad = False
             return local_model
 
+        # Wait for the first model from the learner
+        print(f"[Worker {worker_id}] Waiting for initial model from queue...")
+        agent.target_model = model_queue.get()
         local_inference_model = prepare_local_model()
-        last_updated_step = 0
+        print(f"[Worker {worker_id}] Model received and prepared.")
 
         try:
             while not stop_flag.value:
-                # 2. Synchronization Logic
-                current_step = self.training_step
-                if current_step - last_updated_step >= self.config.transfer_interval:
-                    local_inference_model = prepare_local_model()
-                    last_updated_step = current_step
-                    # print(f"[Worker {worker_id}] Refreshed local model at step {current_step}")
+                # 2. Synchronization Logic via Queue
+                # Check if there's a new model in the queue
+                if not model_queue.empty():
+                    # Drain the queue to get the latest model
+                    latest_model = None
+                    while not model_queue.empty():
+                        latest_model = model_queue.get()
+
+                    if latest_model is not None:
+                        agent.target_model = latest_model
+                        local_inference_model = prepare_local_model()
+                        # print(f"[Worker {worker_id}] Refreshed local model from queue")
 
                 # 3. Inference Execution
-                use_amp = (
-                    self.config.use_mixed_precision and not self.config.use_quantization
-                )
+                use_amp = config.use_mixed_precision and not config.use_quantization
+
+                # Determine device type for autocast safely
+                device_type = "cpu"
+                if hasattr(local_inference_model, "parameters"):
+                    try:
+                        device_type = next(
+                            local_inference_model.parameters()
+                        ).device.type
+                    except StopIteration:
+                        pass
+
                 with torch.amp.autocast(
-                    device_type=next(local_inference_model.parameters()).device.type,
+                    device_type=device_type,
                     enabled=use_amp,
                 ):
                     if (
-                        random.random() < self.config.reanalyze_ratio
-                        and self.replay_buffer.size > 0
+                        random.random() < config.reanalyze_ratio
+                        and agent.replay_buffer.size > 0
                     ):
-                        self.reanalyze_game(inference_model=local_inference_model)
+                        agent.reanalyze_game(inference_model=local_inference_model)
                     else:
-                        score, num_steps = self.play_game(
+                        score, num_steps = agent.play_game(
                             env=worker_env, inference_model=local_inference_model
                         )
                         # print(f"[Worker {worker_id}] Finished a game with score {score}")
@@ -377,32 +434,77 @@ class MuZeroAgent(MARLBaseAgent):
             # Send both exception and traceback back
             error_queue.put((e, traceback.format_exc()))
             raise  # ensures worker process exits with error
-        worker_env.close()
+        finally:
+            worker_env.close()
 
     def update_target_model(self):
         """
-        Custom update logic to handle torch.compile prefixes.
-        The Learner (self.model) is compiled (has '_orig_mod.' prefix).
-        The Target (self.target_model) is raw/uncompiled (for MP sharing).
+        Updates self.target_model from self.model.
+        Handles:
+         1. Stripping `_orig_mod` prefix if self.model is compiled.
+         2. Converting to INT8 if quantization is enabled.
+         3. Dispatching to update_queues (if multi-process) or updating self.target_model locally.
         """
-        # 1. Get the source state dict
-        source_state_dict = self.model.state_dict()
+        # 1. Access the underlying module if compiled
+        if hasattr(self.model, "_orig_mod"):
+            input_model = self.model._orig_mod
+        else:
+            input_model = self.model
 
-        # 2. Clean the keys
-        clean_state_dict = {}
-        for k, v in source_state_dict.items():
-            # Strip '_orig_mod.' prefix added by torch.compile
-            if k.startswith("_orig_mod."):
-                clean_state_dict[k[10:]] = v
+        # 2. Create a clean CPU copy for conversion/dispatch
+        # We use a deepcopy to ensure the worker's model is independent
+        temp_model = copy.deepcopy(input_model).cpu()
+        temp_model.eval()
+        for p in temp_model.parameters():
+            p.requires_grad = False
+
+        # 3. Convert to Quantized Model if enabled
+        if self.config.qat or self.config.use_quantization:
+            # Check if this is the initial update (step 0).
+            # If so, we SKIP convert() because observers are empty and it would crash.
+            # We must also strip the qconfig/observers so the model is pickleable for workers.
+            is_initial_step = (self.training_step == 0) or (
+                self.stats is not None and self.stats.get_num_steps() == 0
+            )
+
+            if is_initial_step:
+                # Sanitize the Float32 model for workers.
+                # We replace QuantStub and DeQuantStub with Identity because setting
+                # activation_post_process to None causes a TypeError in workers.
+                def replace_stubs_with_identity(module):
+                    for name, child in module.named_children():
+                        if isinstance(
+                            child,
+                            (
+                                torch.ao.quantization.QuantStub,
+                                torch.ao.quantization.DeQuantStub,
+                            ),
+                        ):
+                            setattr(module, name, torch.nn.Identity())
+                        else:
+                            replace_stubs_with_identity(child)
+
+                replace_stubs_with_identity(temp_model)
+
+                for m in temp_model.modules():
+                    if hasattr(m, "qconfig"):
+                        m.qconfig = None
             else:
-                clean_state_dict[k] = v
+                # This converts inplace, fusing observers into quantized layers.
+                # It requires the model to have been prepared (prepare_qat or prepare).
+                torch.ao.quantization.convert(temp_model, inplace=True)
 
-        # 3. Load into target
-        # strict=True ensures we don't silently miss keys
-        self.target_model.load_state_dict(clean_state_dict, strict=True)
-
+        # 4. Dispatch or Update Local Target
         if self.config.multi_process:
-            self.target_model.share_memory()
+            # Push to every worker's queue
+            # Ensure it's in shared memory if possible
+            temp_model.share_memory()
+            for q in self.update_queues:
+                q.put(temp_model)
+        else:
+            self.target_model = temp_model.to(self.device)
+            # Update inference_model reference
+            self.inference_model = self.target_model
 
     def train(self):
         self._setup_stats()
@@ -412,15 +514,74 @@ class MuZeroAgent(MARLBaseAgent):
 
             workers = [
                 mp.Process(
-                    target=self.worker_fn,
-                    args=(i, self.stop_flag, stats_client, error_queue),
+                    target=MuZeroAgent.run_worker,
+                    args=(
+                        i,
+                        self.config,
+                        self.update_queues[i],
+                        self.replay_buffer,
+                        self.device,
+                        self.stop_flag,
+                        stats_client,
+                        error_queue,
+                        self.model_name,
+                        self.checkpoint_interval,
+                        self.num_actions,
+                        self._training_step,
+                    ),
                 )
                 for i in range(self.config.num_workers)
             ]
             for w in workers:
                 w.start()
 
-        # Compile AFTER workers have started to avoid pickling issues
+        # --- Late Initialization (Learner Setup) ---
+        # Now that workers have started with clean models, we can prepare the learner.
+
+        # 1. Quantization Preparation
+        if self.config.qat or self.config.use_quantization:
+            # Force "qnnpack" for ARM/M-series (or x86 too if consistent)
+            torch.backends.quantized.engine = "qnnpack"
+
+            if self.config.qat:
+                # Quantization Aware Training (QAT)
+                self.model.qconfig = torch.ao.quantization.get_default_qat_qconfig(
+                    "qnnpack", version=0
+                )
+                self.model.fuse_model()
+                torch.ao.quantization.prepare_qat(self.model, inplace=True)
+            elif self.config.use_quantization:
+                # Post Training Quantization (PTQ) - Preparation Phase
+                self.model.qconfig = torch.ao.quantization.get_default_qconfig(
+                    "qnnpack"
+                )
+                self.model.fuse_model()
+                torch.ao.quantization.prepare(self.model, inplace=True)
+
+        # 1.5 Initialize Optimizer and LR Scheduler
+        # This must happen AFTER QAT preparation (fusion) because it swaps modules
+        if self.config.optimizer == Adam:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
+            )
+        elif self.config.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                momentum=self.config.momentum,
+                weight_decay=self.config.weight_decay,
+            )
+
+        self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
+        # Re-bind model to loss_pipeline in case it was re-initialized or needs refresh
+        if hasattr(self.loss_pipeline, "model"):
+            self.loss_pipeline.model = self.model
+
+        # 2. Compilation
         if self.config.compile:
             print("Compiling models in train()...")
             self.model = torch.compile(self.model, mode=self.config.compile_mode)
@@ -429,6 +590,10 @@ class MuZeroAgent(MARLBaseAgent):
                 self.target_model = torch.compile(
                     self.target_model, mode=self.config.compile_mode
                 )
+
+        # 3. Initial Sync
+        # Call update_target_model to convert current model and dispatch to workers
+        self.update_target_model()
 
         start_time = time() - self.stats.get_time_elapsed()
         self.model.to(self.device)
@@ -1281,6 +1446,8 @@ class MuZeroAgent(MARLBaseAgent):
     def __getstate__(self):
         state = super().__getstate__()
         state["stop_flag"] = state["stop_flag"].value
+        if "_training_step" in state and hasattr(state["_training_step"], "value"):
+            state["_training_step"] = state["_training_step"].value
 
         # Unconditionally remove learner-specific heavy objects
         for key in [
@@ -1322,6 +1489,8 @@ class MuZeroAgent(MARLBaseAgent):
 
         self.__dict__.update(state)
         self.stop_flag = mp.Value("i", state["stop_flag"])
+        if hasattr(self, "_training_step") and isinstance(self._training_step, int):
+            self._training_step = mp.Value("i", self._training_step)
         self.env = self.config.game.make_env()
         self.test_env = self.config.game.make_env(render_mode="rgb_array")
 
@@ -1348,3 +1517,7 @@ class MuZeroAgent(MARLBaseAgent):
             self.search = None
             if not hasattr(self, "replay_buffer"):
                 self.replay_buffer = None
+
+        # Re-initialize MCTS if missing (critical for predict() in subprocesses)
+        if not hasattr(self, "search") or self.search is None:
+            self.search = create_mcts(self.config, self.device, self.num_actions)

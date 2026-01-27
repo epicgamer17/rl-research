@@ -40,23 +40,20 @@ class BaseHead(nn.Module):
 
         # Initialize the final output layer
         # If probabilistic, we often zero-init to start with uniform probability
-        if getattr(self, "is_probabilistic", False):
-            if (
-                hasattr(self.config, "prob_layer_initializer")
-                and self.config.prob_layer_initializer is not None
-            ):
+        if self.is_probabilistic:
+            if self.config.prob_layer_initializer is not None:
                 self.output_layer.apply(self.config.prob_layer_initializer)
             else:
                 self.output_layer.apply(zero_weights_initializer)
-        elif hasattr(self.output_layer, "initialize"):
+        elif self.output_layer.initialize:
             self.output_layer.initialize(initializer)
         else:
             self.output_layer.apply(initializer)
 
     def reset_noise(self):
-        if hasattr(self.backbone, "reset_noise"):
+        if self.backbone.reset_noise:
             self.backbone.reset_noise()
-        if hasattr(self.output_layer, "reset_noise"):
+        if self.output_layer.reset_noise:
             self.output_layer.reset_noise()
 
     def _process_backbone(self, x: Tensor) -> Tensor:

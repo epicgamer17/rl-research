@@ -270,6 +270,12 @@ class Network(nn.Module):
         )
         self._device = torch.device("cpu")
 
+        # Check for quantization flags
+        self.use_quantization_stubs = config.qat or config.use_quantization
+        if self.use_quantization_stubs:
+            self.quant = torch.ao.quantization.QuantStub()
+            self.dequant = torch.ao.quantization.DeQuantStub()
+
     @property
     def device(self):
         # Infer device from parameters if possible
@@ -279,10 +285,105 @@ class Network(nn.Module):
             return self._device
 
     def initial_inference(self, obs):
+        if self.use_quantization_stubs:
+            obs = self.quant(obs)
+
         wm_output = self.world_model.initial_inference(obs)
         hidden_state = wm_output.features
         value, policy = self.prediction(hidden_state)
+
+        if self.use_quantization_stubs:
+            value = self.dequant(value)
+            policy = self.dequant(policy)
+            hidden_state = self.dequant(hidden_state)
+
         return value, policy, hidden_state
+
+    def fuse_model(self):
+        """
+        Fuses eligible layers (Conv+BN+Relu, Linear+Relu) for quantization.
+        Recursively looks for 'Conv2dStack', 'ResidualStack', and 'DenseStack'.
+        """
+        from modules.conv import Conv2dStack
+        from modules.residual import ResidualBlock
+        from modules.dense import DenseStack
+
+        # Resolve 'same' padding for Conv2d layers as qnnpack doesn't support it
+        for name, m in self.named_modules():
+            if isinstance(m, nn.Conv2d) and m.padding == "same":
+                # Assuming symmetric padding for simplicity and stride=1 (enforced by pytorch for 'same')
+                # Padding = (K - 1) / 2
+                p = (m.kernel_size[0] - 1) // 2
+                m.padding = (p, p)
+
+        def is_batchnorm(layer):
+            return (
+                isinstance(
+                    layer,
+                    (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d),
+                )
+                or "BatchNorm" in layer.__class__.__name__
+            )
+
+        for name, m in self.named_modules():
+            # print(f"DEBUG: Visiting {name} -> {type(m).__name__}")
+
+            # 1. Fuse Conv2dStack layers
+            if isinstance(m, Conv2dStack):
+                for layer in m._layers:
+                    if len(layer) == 3:
+                        # Case: Conv, Norm, Act
+                        if is_batchnorm(layer[1]):
+                            torch.ao.quantization.fuse_modules(
+                                layer, ["0", "1", "2"], inplace=True
+                            )
+                        else:
+                            torch.ao.quantization.fuse_modules(
+                                layer, ["0", "2"], inplace=True
+                            )
+                    elif len(layer) == 4:
+                        # Case: Pad, Conv, Norm, Act
+                        if is_batchnorm(layer[2]):
+                            torch.ao.quantization.fuse_modules(
+                                layer, ["1", "2", "3"], inplace=True
+                            )
+                        else:
+                            torch.ao.quantization.fuse_modules(
+                                layer, ["1", "3"], inplace=True
+                            )
+
+            # 2. Fuse ResidualBlock (inside ResidualStack or standalone)
+            if m.__class__.__name__ == "ResidualBlock":
+                # Fuse conv1 + norm1 + act1
+                if is_batchnorm(m.norm1):
+                    torch.ao.quantization.fuse_modules(
+                        m, ["conv1", "norm1", "act1"], inplace=True
+                    )
+                else:
+                    torch.ao.quantization.fuse_modules(
+                        m, ["conv1", "act1"], inplace=True
+                    )
+
+                # Fuse conv2 + norm2
+                if is_batchnorm(m.norm2):
+                    torch.ao.quantization.fuse_modules(
+                        m, ["conv2", "norm2"], inplace=True
+                    )
+                else:
+                    pass
+
+            # 3. Fuse DenseStack layers
+            if isinstance(m, DenseStack):
+                for layer in m._layers:
+                    if len(layer) == 2:
+                        from modules.dense import Dense
+
+                        if isinstance(layer[0], Dense):
+                            layer[0] = layer[0].layer
+
+                        torch.ao.quantization.fuse_modules(
+                            layer, ["0", "1"], inplace=True
+                        )
 
     def recurrent_inference(
         self,
@@ -291,6 +392,9 @@ class Network(nn.Module):
         reward_h_states,
         reward_c_states,
     ):
+        if self.use_quantization_stubs:
+            hidden_state = self.quant(hidden_state)
+
         wm_output = self.world_model.recurrent_inference(
             hidden_state, action, reward_h_states, reward_c_states
         )
@@ -300,6 +404,13 @@ class Network(nn.Module):
         to_play = wm_output.to_play
         reward_hidden = wm_output.reward_hidden
         value, policy = self.prediction(next_hidden_state)
+
+        if self.use_quantization_stubs:
+            reward = self.dequant(reward)
+            next_hidden_state = self.dequant(next_hidden_state)
+            value = self.dequant(value)
+            policy = self.dequant(policy)
+
         return reward, next_hidden_state, value, policy, to_play, reward_hidden
 
     def afterstate_recurrent_inference(

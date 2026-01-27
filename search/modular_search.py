@@ -51,9 +51,7 @@ class SearchAlgorithm:
 
     @property
     def use_amp(self):
-        return self.config.use_mixed_precision and not getattr(
-            self.config, "use_quantization", False
-        )
+        return self.config.use_mixed_precision and not self.config.use_quantization
 
     def run(
         self,

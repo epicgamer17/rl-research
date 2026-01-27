@@ -15,12 +15,12 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
     Returns a learning rate scheduler based on the config parameters.
     Supports: "linear", "step_wise", "none".
     """
-    schedule_type = getattr(config, "lr_schedule_type", "none")
+    schedule_type = config.lr_schedule_type
 
     if schedule_type == "linear":
         # Linear decay from initial LR to 0 (or small epsilon) over training steps
         # LambdaLR is flexible.
-        training_steps = getattr(config, "training_steps", 10000)
+        training_steps = config.training_steps
 
         def lr_lambda(current_step: int):
             return max(
@@ -34,8 +34,8 @@ def get_lr_scheduler(optimizer: optim.Optimizer, config: "Config"):
         # Step-wise decay: at step x, LR becomes value y
         # We assume lr_schedule_steps and lr_schedule_values are lists
         # We need to map steps to multipliers relative to initial LR
-        steps = getattr(config, "lr_schedule_steps", [])
-        values = getattr(config, "lr_schedule_values", [])
+        steps = config.lr_schedule_steps
+        values = config.lr_schedule_values
         initial_lr = config.learning_rate
 
         assert len(steps) == len(

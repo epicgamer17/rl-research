@@ -24,6 +24,7 @@ from modules.utils import (
     calculate_same_padding,
     unpack,
 )  # Import utility
+import copy
 
 
 class Conv2dStack(BaseStack):
@@ -64,17 +65,16 @@ class Conv2dStack(BaseStack):
             )
 
             norm_layer = build_normalization_layer(norm_type, filters[i], dim=2)
+            act_layer = copy.deepcopy(activation)
 
             if manual_padding is None:
                 layer = nn.Sequential(
-                    conv, norm_layer
-                )  # Conv -> Norm -> Activation in forward
+                    conv, norm_layer, act_layer
+                )  # Conv -> Norm -> Activation
             else:
                 layer = nn.Sequential(
-                    nn.ZeroPad2d(manual_padding),
-                    conv,
-                    norm_layer,  # Pad -> Conv -> Norm -> Activation in forward
-                )
+                    nn.ZeroPad2d(manual_padding), conv, norm_layer, act_layer
+                )  # Pad -> Conv -> Norm -> Activation
             # --- END: Building the Layer ---
 
             self._layers.append(layer)
@@ -90,8 +90,8 @@ class Conv2dStack(BaseStack):
     def forward(self, inputs):
         x = inputs
         for layer in self._layers:
-            # Note: We apply activation AFTER the Conv/Norm block
-            x = self.activation(layer(x))
+            # Note: Activation is now inside the layer
+            x = layer(x)
         return x
 
 

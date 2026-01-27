@@ -127,6 +127,7 @@ def build_dense(in_features: int, out_features: int, sigma: float = 0):
 from typing import Callable
 from torch import nn, Tensor
 from modules.base_stack import BaseStack  # Assuming new structure
+import copy
 
 
 class DenseStack(BaseStack):
@@ -152,7 +153,9 @@ class DenseStack(BaseStack):
                 out_features=width,
                 sigma=noisy_sigma,
             )
-            self._layers.append(dense_layer)
+            act_layer = copy.deepcopy(activation)
+            layer = nn.Sequential(dense_layer, act_layer)
+            self._layers.append(layer)
             current_input_width = width
 
         self.initial_width = initial_width
@@ -166,7 +169,7 @@ class DenseStack(BaseStack):
     def forward(self, inputs: Tensor) -> Tensor:
         x = inputs
         for layer in self._layers:
-            x = self.activation(layer(x))
+            x = layer(x)
         return x
 
     # ... (extra_repr is optional but can be kept)
