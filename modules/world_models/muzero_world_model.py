@@ -28,13 +28,20 @@ class Representation(nn.Module):
         self.net = NetworkBlock(config, input_shape, "representation")
         self.output_shape = self.net.output_shape
 
+        self.dequant = torch.ao.quantization.DeQuantStub()
+        self.out_quant = torch.ao.quantization.QuantStub()
+
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         self.net.initialize(initializer)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         S = self.net(inputs)
         # Apply normalization to the final output of the representation network
-        return _normalize_hidden_state(S)
+        # Safe normalization via float
+        S = self.dequant(S)
+        S = _normalize_hidden_state(S)
+        S = self.out_quant(S)
+        return S
 
 
 class BaseDynamics(nn.Module):
@@ -84,6 +91,10 @@ class BaseDynamics(nn.Module):
         self.net = NetworkBlock(config, input_shape, layer_prefix)
         self.output_shape = self.net.output_shape
 
+        self.ff = torch.ao.nn.quantized.FloatFunctional()
+        self.dequant = torch.ao.quantization.DeQuantStub()
+        self.out_quant = torch.ao.quantization.QuantStub()
+
     def initialize(self, initializer: Callable[[torch.Tensor], None]) -> None:
         self.net.initialize(initializer)
         # Additional initializations for fusion layers if needed
@@ -95,19 +106,22 @@ class BaseDynamics(nn.Module):
         action_embedded = self.action_encoder(action, hidden_state.shape)
 
         # Concatenate and fuse
-        x = torch.cat((hidden_state, action_embedded), dim=1)
+        # x = torch.cat((hidden_state, action_embedded), dim=1)
+        x = self.ff.cat([hidden_state, action_embedded], dim=1)
         x = self.fusion(x)
         # x = self.fusion_bn(x) # BN is often omitted or placed after ReLU in some MuZero implementations
 
         # Residual Connection
-        x = x + hidden_state
+        x = self.ff.add(x, hidden_state)
         S = F.relu(x)
 
         # Process through the main network block
         S = self.net(S)
 
         # Apply normalization to the final output of the dynamics network
+        S = self.dequant(S)
         next_hidden_state = _normalize_hidden_state(S)
+        next_hidden_state = self.out_quant(next_hidden_state)
 
         return next_hidden_state
 

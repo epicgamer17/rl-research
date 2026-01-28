@@ -129,6 +129,8 @@ class Encoder(nn.Module):
             self.fc2 = nn.Linear(128, 64)
             self.fc3 = nn.Linear(64, num_codes)
 
+        self.dequant = torch.ao.quantization.DeQuantStub()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns:
@@ -151,6 +153,7 @@ class Encoder(nn.Module):
             x = self.fc3(x)
 
         # 2. Softmax
+        x = self.dequant(x)
         probs = x.softmax(dim=-1)
 
         # Convert to one-hot (B, num_codes)
@@ -270,11 +273,9 @@ class Network(nn.Module):
         )
         self._device = torch.device("cpu")
 
-        # Check for quantization flags
-        self.use_quantization_stubs = config.qat or config.use_quantization
-        if self.use_quantization_stubs:
-            self.quant = torch.ao.quantization.QuantStub()
-            self.dequant = torch.ao.quantization.DeQuantStub()
+        # Quantization stubs (act as Identity in Float32 mode, handle conversion in QAT/INT8)
+        self.quant = torch.ao.quantization.QuantStub()
+        self.dequant = torch.ao.quantization.DeQuantStub()
 
     @property
     def device(self):
@@ -285,17 +286,15 @@ class Network(nn.Module):
             return self._device
 
     def initial_inference(self, obs):
-        if self.use_quantization_stubs:
-            obs = self.quant(obs)
+        obs = self.quant(obs)
 
         wm_output = self.world_model.initial_inference(obs)
         hidden_state = wm_output.features
         value, policy = self.prediction(hidden_state)
 
-        if self.use_quantization_stubs:
-            value = self.dequant(value)
-            policy = self.dequant(policy)
-            hidden_state = self.dequant(hidden_state)
+        value = self.dequant(value)
+        policy = self.dequant(policy)
+        hidden_state = self.dequant(hidden_state)
 
         return value, policy, hidden_state
 
@@ -392,8 +391,7 @@ class Network(nn.Module):
         reward_h_states,
         reward_c_states,
     ):
-        if self.use_quantization_stubs:
-            hidden_state = self.quant(hidden_state)
+        hidden_state = self.quant(hidden_state)
 
         wm_output = self.world_model.recurrent_inference(
             hidden_state, action, reward_h_states, reward_c_states
@@ -405,11 +403,10 @@ class Network(nn.Module):
         reward_hidden = wm_output.reward_hidden
         value, policy = self.prediction(next_hidden_state)
 
-        if self.use_quantization_stubs:
-            reward = self.dequant(reward)
-            next_hidden_state = self.dequant(next_hidden_state)
-            value = self.dequant(value)
-            policy = self.dequant(policy)
+        reward = self.dequant(reward)
+        next_hidden_state = self.dequant(next_hidden_state)
+        value = self.dequant(value)
+        policy = self.dequant(policy)
 
         return reward, next_hidden_state, value, policy, to_play, reward_hidden
 

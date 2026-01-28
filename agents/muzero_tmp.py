@@ -3,16 +3,13 @@ import datetime
 import random
 import sys
 
-import gymnasium as gym
-import torch
-import ray
+from replay_buffers.buffer_factories import create_muzero_buffer
 from replay_buffers.game import Game, TimeStep
 from search.search_factories import create_mcts
-from replay_buffers.buffer_factories import create_muzero_buffer
 
 
 sys.path.append("../")
-import time
+from time import time
 import traceback
 from modules.utils import scalar_to_support, support_to_scalar, get_lr_scheduler
 import numpy as np
@@ -21,9 +18,11 @@ from losses.losses import create_muzero_loss_pipeline
 
 from agents.agent import MARLBaseAgent
 from agent_configs.muzero_config import MuZeroConfig
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from modules.agent_nets.muzero import Network
+import datetime
 
 from replay_buffers.utils import update_per_beta
 
@@ -32,6 +31,10 @@ from modules.utils import scale_gradient
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 from torch.nn.utils import clip_grad_norm_
+import torch.multiprocessing as mp
+from tqdm import tqdm
+import torch.ao.quantization
+from torch.nn import quantized
 
 
 class MuZeroAgent(MARLBaseAgent):
@@ -62,8 +65,9 @@ class MuZeroAgent(MARLBaseAgent):
             device=device,
             from_checkpoint=from_checkpoint,
         )
-        self.env.reset()
+        self.env.reset()  # for multiprocessing
 
+        # Add learning rate scheduler
         self.model = Network(
             config=config,
             num_actions=self.num_actions,
@@ -86,23 +90,18 @@ class MuZeroAgent(MARLBaseAgent):
         )
         # copy weights
         self.target_model.load_state_dict(self.model.state_dict())
+        # self.model.share_memory()
 
         if self.config.multi_process:
-            if not ray.is_initialized():
-                ray.init(ignore_reinit_error=True)
-
-            # Instantiate workers
-            self.workers = [
-                MuZeroWorker.remote(
-                    self.config,
-                    i,
-                    self.model_name,
-                    self.checkpoint_interval,  # Checkpoint interval for workers (videos)
-                    device="cpu",
-                )
-                for i in range(self.config.num_workers)
-            ]
+            # make sure target is placed in shared memory so worker processes can read it
+            self.target_model.share_memory()
+            self.update_queues = [mp.Queue() for _ in range(self.config.num_workers)]
         else:
+            # non-multiprocess: keep target on device for faster inference
+            self.target_model.to(device)
+            self.update_queues = []
+
+        if not self.config.multi_process:
             self.model.to(device)
             self.target_model.to(device)
 
@@ -149,6 +148,7 @@ class MuZeroAgent(MARLBaseAgent):
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
         ]
         self._setup_stats()
+        self.stop_flag = mp.Value("i", 0)
 
     def _setup_stats(self):
         """Initializes or updates the stat tracker with all required keys and plot types."""
@@ -206,8 +206,8 @@ class MuZeroAgent(MARLBaseAgent):
             "policy_improvement": ["network", "search"],
             **{
                 key: ["score"]
-                + ["{}_score".format(agent) for agent in self.env.possible_agents]
-                + ["{}_win%".format(agent) for agent in self.env.possible_agents]
+                + ["{}_score".format(p) for p in self.env.possible_agents]
+                + ["{}_win%".format(p) for p in self.env.possible_agents]
                 for key in test_score_keys
             },
         }
@@ -275,26 +275,263 @@ class MuZeroAgent(MARLBaseAgent):
                 "chance_entropy", PlotType.ROLLING_AVG, rolling_window=100
             )
 
+    @staticmethod
+    def run_worker(
+        worker_id,
+        config,
+        model_queue: mp.Queue,
+        replay_buffer,
+        device,
+        stop_flag,
+        stats_client: StatTracker,
+        error_queue: mp.Queue,
+        model_name,
+        checkpoint_interval,
+        num_actions: int,
+        training_step_shared,
+    ):
+        # Create a lightweight agent shell to reuse methods
+        agent = MuZeroAgent.__new__(MuZeroAgent)
+        agent.config = config
+        agent.device = device
+        agent.num_actions = num_actions
+        # Ensure model is None so it's not accidentally used
+        agent.model = None
+        # target_model will be fetched from the queue
+        agent.target_model = None
+        agent.replay_buffer = replay_buffer
+        agent.stats = stats_client
+        agent.model_name = model_name
+        agent.checkpoint_interval = checkpoint_interval
+        # Set the shared training step value so agent.training_step property works
+        agent._training_step = training_step_shared
+        # Set stop flag just in case
+        agent.stop_flag = stop_flag
+
+        # 1. Set engine immediately!
+        # This ensures unpickling quantized weights (which triggers __setstate__)
+        # works correctly in the worker process.
+        if config.qat or config.use_quantization:
+            torch.backends.quantized.engine = "qnnpack"
+
+        print(f"[Worker {worker_id}] Starting self-play...")
+        worker_env = config.game.make_env()  # each process needs its own env
+        agent.env = worker_env
+
+        # Detect player_id (needed for observation dimension determination in some envs)
+        if hasattr(worker_env, "possible_agents") and worker_env.possible_agents:
+            agent.player_id = worker_env.possible_agents[0]
+        elif hasattr(worker_env, "agents") and worker_env.agents:
+            agent.player_id = worker_env.agents[0]
+        else:
+            agent.player_id = "player_0"
+
+        # Determine observation dimensions/dtype (needed for preprocess)
+        agent.observation_dimensions, agent.observation_dtype = (
+            agent.determine_observation_dimensions(worker_env)
+        )
+
+        # Determine action space properties (needed for creating MCTS if not passed in config or internal logic)
+        agent._setup_action_space(worker_env)
+
+        try:
+            from wrappers import record_video_wrapper
+
+            worker_env.render_mode = "rgb_array"
+            worker_env = record_video_wrapper(
+                worker_env,
+                f"./videos/{model_name}/{worker_id}",
+                checkpoint_interval,
+            )
+        except Exception:
+            print(f"[Worker {worker_id}] Could not record video")
+
+        # 0. Re-initialize search for the worker process (MCTS tree can't be shared safely)
+        agent.search = create_mcts(config, device, num_actions)
+
+        # 1. Local Model Initialization
+        def prepare_local_model():
+            # agent.target_model is provided by the learner via model_queue
+            if agent.target_model is None:
+                return None
+
+            # The target_model is already fully quantized if config.use_quantization/qat is True
+            # via update_target_model().
+            local_model = copy.deepcopy(agent.target_model)
+            local_model.to("cpu")
+            local_model.eval()
+
+            # Ensure quantization engine is set for inference (redundant but safe)
+            if config.qat or config.use_quantization:
+                torch.backends.quantized.engine = "qnnpack"
+
+            if config.compile:
+                local_model = torch.compile(local_model, mode=config.compile_mode)
+
+            for p in local_model.parameters():
+                p.requires_grad = False
+            return local_model
+
+        # Wait for the first model from the learner
+        print(f"[Worker {worker_id}] Waiting for initial model from queue...")
+        agent.target_model = model_queue.get()
+        local_inference_model = prepare_local_model()
+        print(f"[Worker {worker_id}] Model received and prepared.")
+
+        try:
+            while not stop_flag.value:
+                # 2. Synchronization Logic via Queue
+                # Check if there's a new model in the queue
+                if not model_queue.empty():
+                    # Drain the queue to get the latest model
+                    latest_model = None
+                    while not model_queue.empty():
+                        latest_model = model_queue.get()
+
+                    if latest_model is not None:
+                        agent.target_model = latest_model
+                        local_inference_model = prepare_local_model()
+                        # print(f"[Worker {worker_id}] Refreshed local model from queue")
+
+                # 3. Inference Execution
+                use_amp = config.use_mixed_precision and not config.use_quantization
+
+                # Determine device type for autocast safely
+                device_type = "cpu"
+                if hasattr(local_inference_model, "parameters"):
+                    try:
+                        device_type = next(
+                            local_inference_model.parameters()
+                        ).device.type
+                    except StopIteration:
+                        pass
+
+                with torch.amp.autocast(
+                    device_type=device_type,
+                    enabled=use_amp,
+                ):
+                    if (
+                        random.random() < config.reanalyze_ratio
+                        and agent.replay_buffer.size > 0
+                    ):
+                        agent.reanalyze_game(inference_model=local_inference_model)
+                    else:
+                        score, num_steps = agent.play_game(
+                            env=worker_env, inference_model=local_inference_model
+                        )
+                        # print(f"[Worker {worker_id}] Finished a game with score {score}")
+                        # worker_env.close()  # for saving video
+                        stats_client.append("score", score)
+                        stats_client.append("episode_length", num_steps)
+                        stats_client.increment_steps(num_steps)
+        except Exception as e:
+            # Send both exception and traceback back
+            error_queue.put((e, traceback.format_exc()))
+            raise  # ensures worker process exits with error
+        finally:
+            worker_env.close()
+
     def update_target_model(self):
         """
         Updates self.target_model from self.model.
-        Handles stripping `_orig_mod` prefix if self.model is compiled.
+        Handles:
+         1. Stripping `_orig_mod` prefix if self.model is compiled.
+         2. Converting to INT8 if quantization is enabled.
+         3. Dispatching to update_queues (if multi-process) or updating self.target_model locally.
         """
+        # 1. Access the underlying module if compiled
         if hasattr(self.model, "_orig_mod"):
-            source_state = self.model._orig_mod.state_dict()
+            input_model = self.model._orig_mod
         else:
-            source_state = self.model.state_dict()
+            input_model = self.model
 
-        self.target_model.load_state_dict(source_state)
-        self.target_model.eval()
+        # 2. Create a clean CPU copy for conversion/dispatch
+        # We use a deepcopy to ensure the worker's model is independent
+        temp_model = copy.deepcopy(input_model).cpu()
+        temp_model.eval()
+        for p in temp_model.parameters():
+            p.requires_grad = False
 
-        # Update inference_model reference
-        self.inference_model = self.target_model
+        # 3. Convert to Quantized Model if enabled
+        if self.config.qat or self.config.use_quantization:
+            # Check if this is the initial update (step 0).
+            # If so, we SKIP convert() because observers are empty and it would crash.
+            # We must also strip the qconfig/observers so the model is pickleable for workers.
+            is_initial_step = (self.training_step == 0) or (
+                self.stats is not None and self.stats.get_num_steps() == 0
+            )
+
+            if is_initial_step:
+                # Sanitize the Float32 model for workers.
+                # We replace QuantStub and DeQuantStub with Identity because setting
+                # activation_post_process to None causes a TypeError in workers.
+                def replace_stubs_with_identity(module):
+                    for name, child in module.named_children():
+                        if isinstance(
+                            child,
+                            (
+                                torch.ao.quantization.QuantStub,
+                                torch.ao.quantization.DeQuantStub,
+                            ),
+                        ):
+                            setattr(module, name, torch.nn.Identity())
+                        else:
+                            replace_stubs_with_identity(child)
+
+                replace_stubs_with_identity(temp_model)
+
+                for m in temp_model.modules():
+                    if hasattr(m, "qconfig"):
+                        m.qconfig = None
+            else:
+                # This converts inplace, fusing observers into quantized layers.
+                # It requires the model to have been prepared (prepare_qat or prepare).
+                torch.ao.quantization.convert(temp_model, inplace=True)
+
+        # 4. Dispatch or Update Local Target
+        if self.config.multi_process:
+            # Push to every worker's queue
+            # Ensure it's in shared memory if possible
+            temp_model.share_memory()
+            for q in self.update_queues:
+                q.put(temp_model)
+        else:
+            self.target_model = temp_model.to(self.device)
+            # Update inference_model reference
+            self.inference_model = self.target_model
 
     def train(self):
         self._setup_stats()
+        if self.config.multi_process:
+            stats_client = self.stats.get_client()
+            error_queue = mp.Queue()
+
+            workers = [
+                mp.Process(
+                    target=MuZeroAgent.run_worker,
+                    args=(
+                        i,
+                        self.config,
+                        self.update_queues[i],
+                        self.replay_buffer,
+                        self.device,
+                        self.stop_flag,
+                        stats_client,
+                        error_queue,
+                        self.model_name,
+                        self.checkpoint_interval,
+                        self.num_actions,
+                        self._training_step,
+                    ),
+                )
+                for i in range(self.config.num_workers)
+            ]
+            for w in workers:
+                w.start()
 
         # --- Late Initialization (Learner Setup) ---
+        # Now that workers have started with clean models, we can prepare the learner.
+
         # 1. Quantization Preparation
         if self.config.qat or self.config.use_quantization:
             # Force "qnnpack" for ARM/M-series (or x86 too if consistent)
@@ -307,13 +544,6 @@ class MuZeroAgent(MARLBaseAgent):
                 )
                 self.model.fuse_model()
                 torch.ao.quantization.prepare_qat(self.model, inplace=True)
-
-                # Apply to target_model so structures match
-                self.target_model.qconfig = (
-                    torch.ao.quantization.get_default_qat_qconfig("qnnpack", version=0)
-                )
-                self.target_model.fuse_model()
-                torch.ao.quantization.prepare_qat(self.target_model, inplace=True)
             elif self.config.use_quantization:
                 # Post Training Quantization (PTQ) - Preparation Phase
                 self.model.qconfig = torch.ao.quantization.get_default_qconfig(
@@ -321,13 +551,6 @@ class MuZeroAgent(MARLBaseAgent):
                 )
                 self.model.fuse_model()
                 torch.ao.quantization.prepare(self.model, inplace=True)
-
-                # Apply to target_model so structures match
-                self.target_model.qconfig = torch.ao.quantization.get_default_qconfig(
-                    "qnnpack"
-                )
-                self.target_model.fuse_model()
-                torch.ao.quantization.prepare(self.target_model, inplace=True)
 
         # 1.5 Initialize Optimizer and LR Scheduler
         # This must happen AFTER QAT preparation (fusion) because it swaps modules
@@ -366,232 +589,122 @@ class MuZeroAgent(MARLBaseAgent):
         # Call update_target_model to convert current model and dispatch to workers
         self.update_target_model()
 
-        start_time = time.time() - self.stats.get_time_elapsed()
+        start_time = time() - self.stats.get_time_elapsed()
         self.model.to(self.device)
 
         # ensure inference uses the current target before any play in main thread
         self.inference_model = self.target_model
 
-        # 4. Initialize Ray Workers
-        if self.config.multi_process:
-            print("Broadcasting initial weights to workers...")
-            weights = {k: v.cpu() for k, v in self.target_model.state_dict().items()}
-            [w.set_weights.remote(weights, self.training_step) for w in self.workers]
+        while self.training_step < self.config.training_steps:
+            if self.config.multi_process:
+                if not error_queue.empty():
+                    err, tb = error_queue.get()
 
-            # Start initial batch of games
-            print("Starting initial batch of games...")
-            # Dictionary mapping futures to workers
-            pending_games = {w.continuous_self_play.remote(): w for w in self.workers}
+                    # Stop all workers
+                    self.stop_flag.value = 1
+                    for w in workers:
+                        w.terminate()
 
-        try:
-            while self.training_step < self.config.training_steps:
-                did_anything = False
+                    # Re-raise the *exact same* exception type with traceback
+                    print("".join(tb))  # optional: print worker traceback
+                    raise err
 
-                # 1. Non-Blocking Check for New Games
-                ready_refs = []
+                self.stats.drain_queue()
+            if not self.config.multi_process:
+                for training_game in tqdm(range(self.config.games_per_generation)):
+                    if self.stop_flag.value:
+                        print("Stopping game generation")
+                        break
+
+                    score, num_steps = self.play_game(inference_model=self.target_model)
+                    self.stats.append("score", score)
+                    self.stats.increment_steps(num_steps)
+                if self.stop_flag.value:
+                    print("Stopping training")
+                    break
+
+            # STAT TRACKING
+            if (self.training_step * self.config.minibatch_size + 1) / (
+                max(0, self.stats.get_num_steps() - self.config.min_replay_buffer_size)
+                + 1
+            ) > self.config.lr_ratio:
+                continue
+
+            if self.replay_buffer.size >= self.config.min_replay_buffer_size:
+                for minibatch in range(self.config.num_minibatches):
+                    print("learning")
+                    (
+                        value_loss,
+                        policy_loss,
+                        reward_loss,
+                        to_play_loss,
+                        cons_loss,
+                        q_loss,
+                        sigma_loss,
+                        vqvae_commitment_cost,
+                        loss,
+                    ) = self.learn()
+                    self.stats.append("value_loss", value_loss)
+                    self.stats.append("policy_loss", policy_loss)
+                    self.stats.append("reward_loss", reward_loss)
+                    self.stats.append("to_play_loss", to_play_loss)
+                    self.stats.append("cons_loss", cons_loss)
+                    self.stats.append("q_loss", q_loss)
+                    self.stats.append("sigma_loss", sigma_loss)
+                    self.stats.append("vqvae_commitment_cost", vqvae_commitment_cost)
+                    self.stats.append("loss", loss)
+                self.training_step += 1
+
+                self.replay_buffer.set_beta(
+                    update_per_beta(
+                        self.replay_buffer.beta,
+                        self.config.per_beta_final,
+                        self.config.training_steps,
+                        self.config.per_beta,
+                    )
+                )
+
+                if self.training_step % self.config.transfer_interval == 0:
+                    self.update_target_model()
+
+            if self.training_step % self.test_interval == 0 and self.training_step > 0:
                 if self.config.multi_process:
-                    # timeout=0 makes this instant. Returns empty list if nothing ready.
-                    ready_refs, _ = ray.wait(
-                        list(pending_games.keys()), num_returns=1, timeout=0
-                    )
-
-                    for ref in ready_refs:
-                        did_anything = True
-                        worker = pending_games.pop(ref)
-                        try:
-                            result = ray.get(ref)
-                            if result and "game" in result:
-                                # Process Result
-                                game = result["game"]
-                                score = result["score"]
-                                steps = result["num_steps"]
-
-                                # Store the received game in the Learner's central buffer
-                                with torch.amp.autocast(
-                                    device_type="cpu", enabled=False
-                                ):
-                                    self.replay_buffer.store_aggregate(game_object=game)
-
-                                # Log Stats
-                                self.stats.append("score", score)
-                                self.stats.increment_steps(steps)
-                                self.stats.append("episode_length", steps)
-
-                                # Log Search Stats from Worker
-                                search_stats = result.get("search_stats", {})
-                                if search_stats:
-                                    self.stats.append(
-                                        "policy_entropy", search_stats["entropy"]
-                                    )
-                                    self.stats.append(
-                                        "value_diff", search_stats["value_diff"]
-                                    )
-                                    self.stats.append(
-                                        "policy_improvement",
-                                        search_stats["policy_improvement"]["network"],
-                                        subkey="network",
-                                    )
-                                    self.stats.append(
-                                        "policy_improvement",
-                                        search_stats["policy_improvement"]["search"],
-                                        subkey="search",
-                                    )
-                                    if (
-                                        search_stats.get("root_children_values")
-                                        is not None
-                                    ):
-                                        self.stats.append(
-                                            "root_children_values",
-                                            search_stats["root_children_values"],
-                                        )
-
-                            # Re-schedule worker
-                            new_ref = worker.continuous_self_play.remote()
-                            pending_games[new_ref] = worker
-                        except Exception as e:
-                            print(f"Error processing worker result: {e}")
-                            traceback.print_exc()
-                            # Attempt to re-schedule to avoid losing a worker slot
-                            new_ref = worker.continuous_self_play.remote()
-                            pending_games[new_ref] = worker
+                    try:
+                        testing_worker = mp.Process(
+                            target=self.run_tests, args=(stats_client,)
+                        )
+                        testing_worker.start()
+                        self.stats.drain_queue()
+                    except Exception as e:
+                        print(f"Error starting testing worker: {e}")
                 else:
-                    # ---------------- SINGLE PROCESS LOOP ----------------
-                    # Play a batch of games sequentially (blocking ok here)
-                    for _ in range(self.config.games_per_generation):
-                        did_anything = True
-                        score, num_steps, game, search_stats = self.play_game(
-                            inference_model=self.target_model
-                        )
-
-                        # Log search stats directly
-                        if search_stats:
-                            self.stats.append("policy_entropy", search_stats["entropy"])
-                            self.stats.append("value_diff", search_stats["value_diff"])
-                            self.stats.append(
-                                "policy_improvement",
-                                search_stats["policy_improvement"]["network"],
-                                subkey="network",
-                            )
-                            self.stats.append(
-                                "policy_improvement",
-                                search_stats["policy_improvement"]["search"],
-                                subkey="search",
-                            )
-                            if search_stats.get("root_children_values") is not None:
-                                self.stats.append(
-                                    "root_children_values",
-                                    search_stats["root_children_values"],
-                                )
-
-                        # Store the received game in the Learner's central buffer
-                        with torch.amp.autocast(device_type="cpu", enabled=False):
-                            self.replay_buffer.store_aggregate(game_object=game)
-
-                        self.stats.append("score", score)
-                        self.stats.increment_steps(num_steps)
-                        self.stats.append("episode_length", num_steps)
-
-                # 2. Continuous Learning (Decoupled)
-                if self.replay_buffer.size >= self.config.min_replay_buffer_size:
-                    # Calculate current ratio of training samples to environment samples
-                    total_samples_trained = (
-                        self.training_step * self.config.minibatch_size + 1
-                    )
-                    total_samples_collected = (
-                        max(
-                            0,
-                            self.stats.get_num_steps()
-                            - self.config.min_replay_buffer_size,
-                        )
-                        + 1
-                    )
-                    current_ratio = total_samples_trained / total_samples_collected
-
-                    if current_ratio <= self.config.lr_ratio:
-                        did_anything = True
-
-                        for minibatch in range(self.config.num_minibatches):
-                            (
-                                value_loss,
-                                policy_loss,
-                                reward_loss,
-                                to_play_loss,
-                                cons_loss,
-                                q_loss,
-                                sigma_loss,
-                                vqvae_commitment_cost,
-                                loss,
-                            ) = self.learn()
-
-                            self.stats.append("value_loss", value_loss)
-                            self.stats.append("policy_loss", policy_loss)
-                            self.stats.append("reward_loss", reward_loss)
-                            self.stats.append("to_play_loss", to_play_loss)
-                            self.stats.append("cons_loss", cons_loss)
-                            self.stats.append("q_loss", q_loss)
-                            self.stats.append("sigma_loss", sigma_loss)
-                            self.stats.append(
-                                "vqvae_commitment_cost", vqvae_commitment_cost
-                            )
-                            self.stats.append("loss", loss)
-
-                            self.training_step += 1
-
-                            # Periodic Broadcast
-                            if self.training_step % self.config.transfer_interval == 0:
-                                self.update_target_model()
-
-                                if self.config.multi_process:
-                                    weights = {
-                                        k: v.cpu()
-                                        for k, v in self.target_model.state_dict().items()
-                                    }
-                                    [
-                                        w.set_weights.remote(
-                                            weights, self.training_step
-                                        )
-                                        for w in self.workers
-                                    ]
-
-                        self.replay_buffer.set_beta(
-                            update_per_beta(
-                                self.replay_buffer.beta,
-                                self.config.per_beta_final,
-                                self.config.training_steps,
-                                self.config.per_beta,
-                            )
-                        )
-
-                # 3. Prevent CPU Spin
-                # If we didn't train AND didn't receive a game result, sleep briefly
-                if not did_anything:
-                    time.sleep(0.001)
-
-                # PERIODIC TESTING
-                if (
-                    self.training_step % self.test_interval == 0
-                    and self.training_step > 0
-                ):
                     self.run_tests(stats=self.stats)
 
-                # CHECKPOINTING
-                if (
-                    self.training_step % self.checkpoint_interval == 0
-                    and self.training_step > 0
-                ):
-                    self.stats.set_time_elapsed(time.time() - start_time)
-                    self.save_checkpoint(
-                        save_weights=self.config.save_intermediate_weights,
-                    )
-        finally:
-            # Cleanup
-            if self.config.multi_process:
-                print("Stopping workers...")
-                for w in self.workers:
-                    ray.kill(w)
-                print("All workers stopped")
+            # CHECKPOINTING
+            if (
+                self.training_step % self.checkpoint_interval == 0
+                and self.training_step > 0
+            ):
+                self.stats.set_time_elapsed(time() - start_time)
+                # print("Saving Checkpoint")
+                self.save_checkpoint(
+                    save_weights=self.config.save_intermediate_weights,
+                )
+        if self.config.multi_process:
+            self.stop_flag.value = 1
+            for w in workers:
+                print("Stopping workers")
+                w.terminate()
+            print("All workers stopped")
 
-        self.stats.set_time_elapsed(time.time() - start_time)
+        if self.config.multi_process:
+            try:
+                testing_worker.join()
+            except:
+                pass
+            self.stats.drain_queue()
+
+        self.stats.set_time_elapsed(time() - start_time)
         print("Finished Training")
         self.run_tests(self.stats)
         self.save_checkpoint(save_weights=True)
@@ -1178,10 +1291,14 @@ class MuZeroAgent(MARLBaseAgent):
                 state = next_state
                 info = next_info
 
+            # Disable autocast for buffer storage to prevent "Unexpected floating ScalarType" errors
+            # on CPU/MPS during torch.cat operations.
+            with torch.amp.autocast(device_type="cpu", enabled=False):
+                self.replay_buffer.store_aggregate(game_object=game)
         if self.config.game.num_players != 1:
-            return env.rewards[env.agents[0]], len(game), game, self.stats_buffer
+            return env.rewards[env.agents[0]], len(game)
         else:
-            return sum(game.rewards), len(game), game, self.stats_buffer
+            return sum(game.rewards), len(game)
 
     def reanalyze_game(self, inference_model=None):
         # or reanalyze buffer
@@ -1286,8 +1403,45 @@ class MuZeroAgent(MARLBaseAgent):
                         indices, new_priorities, ids=np.array(ids)
                     )
 
+    def _track_search_stats(self, search_metadata):
+        """Track statistics from the search process."""
+        if search_metadata is None:
+            return
+
+        network_policy = search_metadata["network_policy"]
+        search_policy = search_metadata["search_policy"]
+        network_value = search_metadata["network_value"]
+        search_value = search_metadata["search_value"]
+
+        # 1. Policy Entropy
+        # search_policy: (num_actions,)
+        probs = search_policy + 1e-10
+        entropy = -torch.sum(probs * torch.log(probs)).item()
+        self.stats.append("policy_entropy", entropy)
+
+        # 2. Value Difference
+        self.stats.append("value_diff", abs(search_value - network_value))
+
+        # 3. Policy Improvement (BAR plot comparison)
+        self.stats.append(
+            "policy_improvement", network_policy.unsqueeze(0), subkey="network"
+        )
+        self.stats.append(
+            "policy_improvement", search_policy.unsqueeze(0), subkey="search"
+        )
+
+        # 4. Root Children Values
+        if "root_children_values" in search_metadata:
+            self.stats.append(
+                "root_children_values",
+                search_metadata["root_children_values"].unsqueeze(0),
+            )
+
     def __getstate__(self):
         state = super().__getstate__()
+        state["stop_flag"] = state["stop_flag"].value
+        if "_training_step" in state and hasattr(state["_training_step"], "value"):
+            state["_training_step"] = state["_training_step"].value
 
         # Unconditionally remove learner-specific heavy objects
         for key in [
@@ -1328,6 +1482,9 @@ class MuZeroAgent(MARLBaseAgent):
             model_state_dict = new_state_dict
 
         self.__dict__.update(state)
+        self.stop_flag = mp.Value("i", state["stop_flag"])
+        if hasattr(self, "_training_step") and isinstance(self._training_step, int):
+            self._training_step = mp.Value("i", self._training_step)
         self.env = self.config.game.make_env()
         self.test_env = self.config.game.make_env(render_mode="rgb_array")
 
@@ -1358,514 +1515,3 @@ class MuZeroAgent(MARLBaseAgent):
         # Re-initialize MCTS if missing (critical for predict() in subprocesses)
         if not hasattr(self, "search") or self.search is None:
             self.search = create_mcts(self.config, self.device, self.num_actions)
-
-
-@ray.remote
-class MuZeroWorker(object):
-    """
-    Ray Actor for MuZero Worker.
-    Standalone implementation (Composition over Inheritance) to avoid pickling issues.
-    """
-
-    def __init__(
-        self,
-        config,
-        worker_id,
-        model_name,
-        checkpoint_interval,
-        device="cpu",
-    ):
-        torch.set_num_threads(1)
-        self.config = config
-        self.worker_id = worker_id
-        self.model_name = model_name
-        self.checkpoint_interval = checkpoint_interval
-        self.device = torch.device(device)
-        self.training_step = 0
-
-        # Stats buffer
-        self.stats_buffer = []
-
-        # 1. Environment
-        self.env = self.config.game.make_env()
-        self.observation_dimensions, self.observation_dtype = (
-            self.determine_observation_dimensions(self.env)
-        )
-        self._setup_action_space(self.env)
-
-        # 2. Model (Float32 for weights)
-        self.model = Network(
-            config=self.config,
-            num_actions=self.num_actions,
-            input_shape=(1,) + tuple(self.observation_dimensions),
-            channel_first=True,  # Assuming image-based for now based on config
-            world_model_cls=self.config.world_model_cls,
-        )
-        self.model.to(self.device).eval()
-
-        # 3. Inference Model (Used for play_game, handles INT8/Float32)
-        self.inference_model = self.model
-
-        # 4. Search
-        self.search = create_mcts(self.config, self.device, self.num_actions)
-
-    def set_weights(self, weights, training_step):
-        self.training_step = training_step
-
-        # Clean weights
-        clean_weights = {}
-        for k, v in weights.items():
-            if k.startswith("_orig_mod."):
-                clean_weights[k[10:]] = v
-            else:
-                clean_weights[k] = v
-
-        use_quantization = self.config.qat or self.config.use_quantization
-
-        if not use_quantization:
-            # No Quantization: Standard Float32
-            try:
-                self.model.load_state_dict(clean_weights)
-            except Exception as e:
-                print(f"Worker {self.worker_id}: Error loading weights (Float32): {e}")
-
-            if self.config.compile:
-                self.inference_model = torch.compile(self.model)
-            else:
-                self.inference_model = self.model
-        elif self.training_step == 0:
-            # Step 0 with QAT/Quantization: Prepare model structure first, then load weights
-            import torch.backends.quantized
-
-            torch.backends.quantized.engine = "qnnpack"
-
-            # Prepare model for QAT (must match learner's preparation)
-            self.model.train()
-            self.model.fuse_model()
-
-            if self.config.qat:
-                self.model.qconfig = torch.ao.quantization.get_default_qat_qconfig(
-                    "qnnpack"
-                )
-                torch.ao.quantization.prepare_qat(self.model, inplace=True)
-            else:
-                self.model.qconfig = torch.ao.quantization.get_default_qconfig(
-                    "qnnpack"
-                )
-                torch.ao.quantization.prepare(self.model, inplace=True)
-
-            # Now load the QAT-prepared weights
-            try:
-                self.model.load_state_dict(clean_weights)
-            except Exception as e:
-                print(
-                    f"Worker {self.worker_id}: Error loading weights (QAT Step 0): {e}"
-                )
-
-            # For step 0, keep the QAT model as inference model (not converted to INT8 yet)
-            self.inference_model = self.model
-
-            # Reset cached int8 model if we restart or are at step 0
-            if hasattr(self, "compiled_int8_model"):
-                del self.compiled_int8_model
-        else:
-            # Step > 0 (QAT/Quantization): self.model is already QAT-prepared from step 0
-            import torch.backends.quantized
-
-            torch.backends.quantized.engine = "qnnpack"
-
-            # Use cached compiled model if available
-            if hasattr(self, "compiled_int8_model"):
-                # We need to get the INT8 state dict from the new weights
-                # 1. Load new weights into the QAT model (self.model)
-                try:
-                    self.model.load_state_dict(clean_weights)
-                except Exception as e:
-                    print(
-                        f"Worker {self.worker_id}: Error loading weights into QAT model: {e}"
-                    )
-
-                # 2. Convert to INT8 (temporary model just to get state_dict)
-                temp_int8_model = copy.deepcopy(self.model)
-                temp_int8_model.eval()
-                torch.ao.quantization.convert(temp_int8_model, inplace=True)
-
-                # 3. Load INT8 state dict into the CACHED compiled model
-                try:
-                    state_dict_to_load = temp_int8_model.state_dict()
-
-                    # Try loading into _orig_mod if it exists (standard for torch.compile)
-                    target_model = self.compiled_int8_model
-                    if hasattr(target_model, "_orig_mod"):
-                        target_model = target_model._orig_mod
-
-                    missing, unexpected = target_model.load_state_dict(
-                        state_dict_to_load, strict=False
-                    )
-
-                    if missing:
-                        # Filter out likely observer keys which are expected to be missing/different
-                        real_missing = [
-                            k for k in missing if "activation_post_process" not in k
-                        ]
-                        if real_missing:
-                            print(
-                                f"Worker {self.worker_id}: Warning - Missing keys in compiled load: {real_missing[:5]}..."
-                            )
-
-                except Exception as e:
-                    print(
-                        f"Worker {self.worker_id}: Error loading compiled INT8 weights: {e}"
-                    )
-
-                self.inference_model = self.compiled_int8_model
-
-            else:
-                # First time converting to INT8 (e.g. step 1)
-                # 1. Copy the already-prepared QAT model
-                inference_model = copy.deepcopy(self.model)
-                # 2. Load State Dict (apply weights BEFORE conversion)
-                try:
-                    inference_model.load_state_dict(clean_weights)
-                except Exception as e:
-                    print(
-                        f"Worker {self.worker_id}: Error loading weights (INT8 Prep): {e}"
-                    )
-                # 3. Convert to INT8
-                inference_model.eval()
-                torch.ao.quantization.convert(inference_model, inplace=True)
-
-                # 4. Compile (after conversion) and CACHE it
-                if self.config.compile:
-                    print(f"Worker {self.worker_id}: Compiling INT8 model...")
-                    self.compiled_int8_model = torch.compile(inference_model)
-                    self.inference_model = self.compiled_int8_model
-                else:
-                    self.inference_model = inference_model
-
-        self.inference_model.to(self.device).eval()
-
-    def continuous_self_play(self):
-        try:
-            # Clear stats
-            self.stats_buffer = []
-
-            # Setup Mixed Precision
-            use_amp = self.config.use_mixed_precision and not (
-                self.config.qat or self.config.use_quantization
-            )
-            device_type = "cpu" if self.device.type == "cpu" else "cuda"
-
-            score, num_steps, latest_game, search_stats = self.play_game(
-                env=self.env, inference_model=self.inference_model
-            )
-
-            return {
-                "score": score,
-                "num_steps": num_steps,
-                "game": latest_game,
-                "worker_id": self.worker_id,
-                "training_step": self.training_step,
-                "search_stats": search_stats,
-            }
-        except Exception as e:
-            print(f"Worker {self.worker_id} Play Error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return {"error": str(e)}
-
-    # --- Methods COPIED from MuZeroAgent / BaseAgent ---
-
-    def play_game(self, env=None, inference_model=None):
-        if env is None:
-            env = self.env
-        with torch.no_grad():
-            if self.config.game.num_players != 1:
-                env.reset()
-                state, reward, terminated, truncated, info = env.last()
-                agent_id = env.agent_selection
-                current_player = env.agents.index(agent_id)
-            else:
-                state, info = env.reset()
-            game = Game(self.config.game.num_players)
-
-            game.append(state, info)
-
-            done = False
-            while not done:
-                temperature = self.config.temperatures[0]
-                for i, temperature_step in enumerate(self.config.temperature_updates):
-                    if self.config.temperature_with_training_steps:
-                        if self.training_step >= temperature_step:
-                            temperature = self.config.temperatures[i + 1]
-                        else:
-                            break
-                    else:
-                        if len(game) >= temperature_step:
-                            temperature = self.config.temperatures[i + 1]
-                        else:
-                            break
-
-                prediction = self.predict(
-                    state,
-                    info,
-                    env=env,
-                    inference_model=inference_model,
-                )
-                action = self.select_actions(
-                    prediction,
-                    temperature=temperature,
-                ).item()
-
-                if self.config.game.num_players != 1:
-                    env.step(action)
-                    next_state, _, terminated, truncated, next_info = env.last()
-                    reward = env.rewards[env.agents[current_player]]
-                    agent_id = env.agent_selection
-                    current_player = env.agents.index(agent_id)
-                else:
-                    next_state, reward, terminated, truncated, next_info = env.step(
-                        action
-                    )
-
-                done = terminated or truncated
-
-                game.append(
-                    observation=next_state,
-                    info=next_info,
-                    action=action,
-                    reward=reward,
-                    policy=prediction[1],
-                    value=prediction[2],
-                )
-
-                self._track_search_stats(prediction[4])
-                state = next_state
-                info = next_info
-
-        # Calculate search stats summary (mean over episode)
-        search_stats_summary = {}
-        if self.stats_buffer:
-            all_entropies = [s["policy_entropy"] for s in self.stats_buffer]
-            all_value_diffs = [s["value_diff"] for s in self.stats_buffer]
-            search_stats_summary = {
-                "entropy": sum(all_entropies) / len(all_entropies),
-                "value_diff": sum(all_value_diffs) / len(all_value_diffs),
-            }
-            # Also include policy improvement/root values from the LAST step for visualization
-            last_stats = self.stats_buffer[-1]
-            search_stats_summary.update(
-                {
-                    "policy_improvement": last_stats["policy_improvement"],
-                    "root_children_values": last_stats.get("root_children_values"),
-                }
-            )
-            self.stats_buffer = []
-
-        if self.config.game.num_players != 1:
-            return (
-                env.rewards[env.agents[0]],
-                len(game),
-                game,
-                search_stats_summary,
-            )
-        else:
-            return sum(game.rewards), len(game), game, search_stats_summary
-
-    def predict(
-        self, state, info: dict = None, env=None, inference_model=None, *args, **kwargs
-    ):
-        if self.config.game.num_players != 1:
-            to_play = env.agents.index(env.agent_selection)
-        else:
-            to_play = 0
-
-        inference_fns = {
-            "initial": self.predict_initial_inference,
-            "recurrent": self.predict_recurrent_inference,
-            "afterstate": self.predict_afterstate_recurrent_inference,
-        }
-
-        root_value, exploratory_policy, target_policy, best_action, search_metadata = (
-            self.search.run(
-                state, info, to_play, inference_fns, inference_model=inference_model
-            )
-        )
-
-        return (
-            exploratory_policy,
-            target_policy,
-            root_value,
-            best_action,
-            search_metadata,
-        )
-
-    def predict_initial_inference(self, states, model):
-        if model is None:
-            model = self.inference_model  # Use inference_model by default
-        state_inputs = self.preprocess(states)
-
-        if hasattr(model, "parameters"):
-            try:
-                param = next(model.parameters())
-                if state_inputs.device != param.device:
-                    state_inputs = state_inputs.to(param.device)
-                if state_inputs.dtype == torch.bfloat16:
-                    state_inputs = state_inputs.to(dtype=torch.float32)
-            except StopIteration:
-                pass
-
-        values, policies, hidden_states = model.initial_inference(state_inputs)
-        return values, policies, hidden_states
-
-    def predict_recurrent_inference(
-        self,
-        states,
-        actions_or_codes,
-        reward_h_states=None,
-        reward_c_states=None,
-        model=None,
-    ):
-        if model is None:
-            model = self.inference_model
-
-        if hasattr(model, "parameters"):
-            try:
-                param = next(model.parameters())
-                if states.device != param.device:
-                    states = states.to(param.device)
-                    actions_or_codes = actions_or_codes.to(param.device)
-                if states.dtype == torch.bfloat16:
-                    states = states.to(dtype=torch.float32)
-            except StopIteration:
-                pass
-
-        rewards, states, values, policies, to_play, reward_hidden = (
-            model.recurrent_inference(
-                states,
-                actions_or_codes,
-                reward_h_states,
-                reward_c_states,
-            )
-        )
-        reward_h_states = reward_hidden[0]
-        reward_c_states = reward_hidden[1]
-
-        return (
-            rewards,
-            states,
-            values,
-            policies,
-            to_play,
-            reward_h_states,
-            reward_c_states,
-        )
-
-    def predict_afterstate_recurrent_inference(
-        self, hidden_states, actions, model=None
-    ):
-        if model is None:
-            model = self.inference_model
-
-        if hasattr(model, "parameters"):
-            try:
-                param = next(model.parameters())
-                if hidden_states.device != param.device:
-                    hidden_states = hidden_states.to(param.device)
-                    actions = actions.to(param.device)
-                if hidden_states.dtype == torch.bfloat16:
-                    hidden_states = hidden_states.to(dtype=torch.float32)
-            except StopIteration:
-                pass
-
-        afterstates, value, chance_probs = model.afterstate_recurrent_inference(
-            hidden_states,
-            actions,
-        )
-        return afterstates, value, chance_probs
-
-    def select_actions(self, prediction, temperature=0.0, *args, **kwargs):
-        if temperature != 0:
-            probs = prediction[0] ** temperature
-            probs /= probs.sum()
-            action = torch.multinomial(probs, 1)
-            return action
-        else:
-            return prediction[3]
-
-    def _track_search_stats(self, search_metadata):
-        """Accumulate search statistics for later reporting."""
-        if search_metadata is None:
-            return
-
-        network_policy = search_metadata["network_policy"]
-        search_policy = search_metadata["search_policy"]
-        network_value = search_metadata["network_value"]
-        search_value = search_metadata["search_value"]
-
-        # Calculate metrics (matches MuZeroAgent._track_search_stats logic)
-        probs = search_policy + 1e-10
-        entropy = -torch.sum(probs * torch.log(probs)).item()
-
-        stats = {
-            "policy_entropy": entropy,
-            "value_diff": abs(search_value - network_value),
-            "policy_improvement": {
-                "network": network_policy.unsqueeze(0),
-                "search": search_policy.unsqueeze(0),
-            },
-        }
-
-        if "root_children_values" in search_metadata:
-            stats["root_children_values"] = search_metadata[
-                "root_children_values"
-            ].unsqueeze(0)
-
-        self.stats_buffer.append(stats)
-
-    def determine_observation_dimensions(self, env):
-        obs_space = env.observation_space
-        if isinstance(obs_space, gym.spaces.Box):
-            return torch.Size(obs_space.shape), obs_space.dtype
-        elif isinstance(obs_space, gym.spaces.Discrete):
-            return torch.Size((1,)), np.int32
-        elif isinstance(obs_space, gym.spaces.Tuple):
-            return torch.Size((len(obs_space.spaces),)), np.int32
-        elif callable(obs_space):  # PettingZoo
-            # Assuming generic player_0 for checking dims
-            p_id = env.possible_agents[0]
-            return torch.Size(obs_space(p_id).shape), obs_space(p_id).dtype
-        else:
-            return torch.Size(obs_space.shape), obs_space.dtype
-
-    def _setup_action_space(self, env):
-        if isinstance(env.action_space, gym.spaces.Discrete):
-            self.num_actions = int(env.action_space.n)
-            self.discrete_action_space = True
-        elif hasattr(env, "action_space") and callable(env.action_space):
-            p_id = env.possible_agents[0]
-            self.num_actions = int(env.action_space(p_id).n)
-            self.discrete_action_space = True
-        else:
-            self.num_actions = int(env.action_space.shape[0])
-            self.discrete_action_space = False
-
-    def preprocess(self, states) -> torch.Tensor:
-        if torch.is_tensor(states):
-            if states.dtype == torch.bfloat16:
-                states = states.to(torch.float32)
-            states = states.cpu().numpy()
-
-        np_states = np.array(states, copy=False)
-        prepared_state = torch.tensor(
-            np_states, dtype=torch.float32, device=self.device
-        )
-
-        if prepared_state.ndim == 0:
-            prepared_state = prepared_state.unsqueeze(0)
-
-        if prepared_state.shape == torch.Size(self.observation_dimensions):
-            prepared_state = prepared_state.unsqueeze(0)
-
-        return prepared_state

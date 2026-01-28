@@ -42,6 +42,9 @@ class ActionEncoder(nn.Module):
         self.fc_vector = nn.Linear(action_space_size, embedding_dim, bias=False)
         self.bn_vector = nn.BatchNorm1d(embedding_dim)
 
+        self.ff = torch.ao.nn.quantized.FloatFunctional()
+        self.quant = torch.ao.quantization.QuantStub()
+
     def forward(self, action: torch.Tensor, target_shape: Tuple[int]):
         """
         Args:
@@ -90,14 +93,16 @@ class ActionEncoder(nn.Module):
                 assert (
                     action.dim() == 2
                 ), f"Action must be (B, A) for soft discrete encoding got {action.shape}"
-                scalar_action = torch.sum(action * indices, dim=1)
+                scalar_action = torch.sum(self.ff.mul(action, indices), dim=1)
                 assert torch.allclose(
                     scalar_action, torch.argmax(action, dim=1).float()
                 ), f"{scalar_action} vs {torch.argmax(action, dim=1).float()}"
 
                 # 3. Normalize (Optional but recommended)
                 # Keeps values between 0.0 and 1.0
-                scalar_action = scalar_action / self.action_space_size
+                scalar_action = self.ff.mul_scalar(
+                    scalar_action, 1.0 / self.action_space_size
+                )
 
                 # 4. Expand to 1 Plane
                 # (B,) -> (B, 1, 1, 1) -> (B, 1, H, W)
@@ -129,6 +134,7 @@ class ActionEncoder(nn.Module):
             action_place = action_place.expand(batch_size, self.action_space_size, h, w)
 
         # 2. Embed and Normalize
+        action_place = self.quant(action_place)
         x = self.conv1x1(action_place)
         # x = self.bn_image(x)
         # x = F.relu(x)
@@ -137,6 +143,7 @@ class ActionEncoder(nn.Module):
 
     def _forward_vector(self, action: torch.Tensor):
         # 1. Embed
+        action = self.quant(action)
         x = self.fc_vector(action)
 
         # 2. Normalize

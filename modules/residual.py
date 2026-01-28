@@ -1,11 +1,8 @@
 from typing import Callable, Literal, Tuple, Union
 import copy
-
 from torch import nn, Tensor
 from modules.utils import calculate_padding
-
-# modules/residual_block.py (New File)
-from torch import nn, Tensor
+import torch
 from modules.utils import build_normalization_layer, unpack
 
 
@@ -67,6 +64,8 @@ class ResidualBlock(nn.Module):
                 build_normalization_layer(norm_type, out_channels, dim=2),
             )
 
+        self.skip_add = torch.ao.nn.quantized.FloatFunctional()
+
     def forward(self, inputs: Tensor) -> Tensor:
         residual = self.downsample(inputs)
 
@@ -78,7 +77,7 @@ class ResidualBlock(nn.Module):
         x = self.norm2(x)
 
         # Skip Connection
-        x = self.act2(x + residual)
+        x = self.act2(self.skip_add.add(x, residual))
         return x
 
 

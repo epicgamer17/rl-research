@@ -129,14 +129,8 @@ class NFSPDQN(MARLBaseAgent):
             use_tensor_dicts={
                 **{
                     key: ["score"]
-                    + [
-                        "player_{}_score".format(player)
-                        for player in range(self.config.game.num_players)
-                    ]
-                    + [
-                        "player_{}_win%".format(player)
-                        for player in range(self.config.game.num_players)
-                    ]
+                    + ["{}_score".format(agent) for agent in self.env.possible_agents]
+                    + ["{}_win%".format(agent) for agent in self.env.possible_agents]
                     for key in test_score_keys
                 },
             },

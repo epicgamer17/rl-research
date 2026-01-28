@@ -487,7 +487,7 @@ class MARLBaseAgent(BaseAgent):
                     done = terminated or truncated
 
                     if done:
-                        score += self.test_env.rewards[f"player_{player}"]
+                        score += self.test_env.rewards[self.test_env.agents[player]]
                 results.append(score)
 
             # reset
@@ -588,21 +588,25 @@ class MARLBaseAgent(BaseAgent):
             # std = np.std(final_rewards[player])
             results.update(
                 {
-                    "player_{}_score".format(player): test_player_average_score,
+                    "{}_score".format(
+                        self.test_env.agents[player]
+                    ): test_player_average_score,
                 }
             )
             results.update(
                 {
-                    "player_{}_win%".format(player): test_player_win_percentage,
+                    "{}_win%".format(
+                        self.test_env.agents[player]
+                    ): test_player_win_percentage,
                 }
             )
             print(
-                f"Player {player} win percentage vs {agent.model_name}: {test_player_win_percentage * 100} and average score: {test_player_average_score}"
+                f"Player {player} ({self.test_env.agents[player]}) win percentage vs {agent.model_name}: {test_player_win_percentage * 100} and average score: {test_player_average_score}"
             )
         results.update(
             {
                 "score": sum(
-                    results["player_{}_score".format(player)]
+                    results["{}_score".format(self.test_env.agents[player])]
                     for player in range(self.config.game.num_players)
                 )
                 / self.config.game.num_players

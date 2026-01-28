@@ -29,6 +29,8 @@ class BaseHead(nn.Module):
             self.backbone = nn.Identity()
             self.input_flat_dim = self._get_flat_dim(input_shape)
 
+        self.dequant = torch.ao.quantization.DeQuantStub()
+
     def _get_flat_dim(self, shape: Tuple[int]) -> int:
         if len(shape) == 4:  # (B, C, H, W)
             return shape[1] * shape[2] * shape[3]
@@ -94,6 +96,7 @@ class ScalarHead(BaseHead):
     def forward(self, x: Tensor) -> Tensor:
         x = self._process_backbone(x)
         x = self.output_layer(x)
+        x = self.dequant(x)
 
         if self.is_probabilistic:
             return x.softmax(dim=-1)
@@ -124,7 +127,9 @@ class CategoricalHead(BaseHead):
 
     def forward(self, x: Tensor) -> Tensor:
         x = self._process_backbone(x)
-        return self.output_layer(x).softmax(dim=-1)
+        x = self.output_layer(x)
+        x = self.dequant(x)
+        return x.softmax(dim=-1)
 
 
 class ContinuousHead(BaseHead):
@@ -162,6 +167,9 @@ class ContinuousHead(BaseHead):
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         x = self._process_backbone(x)
-        mean = self.mean(x).tanh()
-        std = self.std(x).softplus()
+        mean = self.mean(x)
+        mean = self.dequant(mean).tanh()
+
+        std = self.std(x)
+        std = self.dequant(std).softplus()
         return mean, std

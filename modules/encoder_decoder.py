@@ -109,6 +109,8 @@ class ActionDecoder(nn.Module):
         elif dist == "onehot":
             self.head = nn.Linear(self.net.output_width, action_size)
 
+        self.ff = torch.ao.nn.quantized.FloatFunctional()
+
     def forward(self, features: Tensor):
         raw_init_std = np.log(np.exp(self._init_std) - 1)
         x = self.net(features)
@@ -116,8 +118,16 @@ class ActionDecoder(nn.Module):
 
         if self._dist == "tanh_normal":
             mean, std = torch.chunk(x, 2, dim=-1)
-            mean = self._mean_scale * torch.tanh(mean / self._mean_scale)
-            std = F.softplus(std + raw_init_std) + self._min_std
+            # mean = self._mean_scale * torch.tanh(mean / self._mean_scale)
+            # Safe quantize ops
+            mean = self.ff.mul_scalar(
+                torch.tanh(self.ff.mul_scalar(mean, 1.0 / self._mean_scale)),
+                self._mean_scale,
+            )
+            # std = F.softplus(std + raw_init_std) + self._min_std
+            std = self.ff.add_scalar(
+                F.softplus(self.ff.add_scalar(std, raw_init_std)), self._min_std
+            )
 
             dist = td.Normal(mean, std)
             dist = td.TransformedDistribution(dist, TanhBijector())
