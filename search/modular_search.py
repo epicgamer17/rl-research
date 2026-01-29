@@ -726,6 +726,10 @@ class SearchAlgorithm:
                     device_type=self.device.type,
                     enabled=self.use_amp,
                 ):
+                    # Transpose LSTM states from (Batch, 1, Hidden) -> (1, Batch, Hidden) for PyTorch LSTM
+                    rhs_t = rhs.transpose(0, 1)
+                    rcs_t = rcs.transpose(0, 1)
+
                     (
                         rewards,
                         hidden_states,
@@ -735,8 +739,12 @@ class SearchAlgorithm:
                         rh_news,
                         rc_news,
                     ) = inference_fns["recurrent"](
-                        states, actions, rhs, rcs, model=inference_model
+                        states, actions, rhs_t, rcs_t, model=inference_model
                     )
+
+                    # Transpose back to (Batch, 1, Hidden) for storage
+                    rh_news = rh_news.transpose(0, 1)
+                    rc_news = rc_news.transpose(0, 1)
 
             # Distribute results
             for i, sim_idx in enumerate(rec_indices):

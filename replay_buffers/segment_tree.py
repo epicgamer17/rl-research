@@ -34,9 +34,7 @@ class SegmentTree:
         ), "capacity must be positive and a power of 2."
         self.capacity = capacity
         # self.tree = [init_value for _ in range(2 * capacity)]
-        self.tree = torch.full(
-            (2 * capacity,), init_value, dtype=torch.float32
-        ).share_memory_()
+        self.tree = torch.full((2 * capacity,), init_value, dtype=torch.float32)
         self.operation = operation
 
     def _operate_helper(

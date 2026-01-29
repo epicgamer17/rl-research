@@ -15,6 +15,7 @@ if sys.platform == "darwin":
 from replay_buffers.game import Game, TimeStep
 from search.search_factories import create_mcts
 from replay_buffers.buffer_factories import create_muzero_buffer
+from replay_buffers.modular_buffer import ModularReplayBuffer
 
 
 sys.path.append("../")
@@ -38,6 +39,25 @@ from modules.utils import scale_gradient
 from torch.optim.sgd import SGD
 from torch.optim.adam import Adam
 from torch.nn.utils import clip_grad_norm_
+
+
+@ray.remote
+class SharedStorage:
+    """
+    Class which acts as a storage for the latest network weights.
+    Workers pull the latest weights from here.
+    """
+
+    def __init__(self, step, weights):
+        self.step = step
+        self.weights = weights
+
+    def get_weights(self):
+        return self.step, self.weights
+
+    def set_weights(self, step, weights):
+        self.step = step
+        self.weights = weights
 
 
 class MuZeroAgent(MARLBaseAgent):
@@ -81,49 +101,8 @@ class MuZeroAgent(MARLBaseAgent):
             world_model_cls=self.config.world_model_cls,
         )
 
-        self.target_model = Network(
-            config=config,
-            num_actions=self.num_actions,
-            input_shape=torch.Size(
-                (self.config.minibatch_size,) + self.observation_dimensions
-            ),
-            channel_first=True,
-            world_model_cls=self.config.world_model_cls,
-        )
-        # copy weights
-        self.target_model.load_state_dict(self.model.state_dict())
-
-        if self.config.multi_process:
-            if not ray.is_initialized():
-                ray.init(ignore_reinit_error=True)
-
-            # Instantiate workers
-            self.workers = [
-                MuZeroWorker.remote(
-                    self.config,
-                    i,
-                    self.model_name,
-                    self.checkpoint_interval,  # Checkpoint interval for workers (videos)
-                    device="cpu",
-                )
-                for i in range(self.config.num_workers)
-            ]
-        else:
-            self.model.to(device)
-            self.target_model.to(device)
-
-        if loss_pipeline is None:
-            self.loss_pipeline = create_muzero_loss_pipeline(
-                config=self.config,
-                device=self.device,
-                predict_initial_inference_fn=self.predict_initial_inference,
-                preprocess_fn=self.preprocess,
-                model=self.model,
-            )
-        else:
-            self.loss_pipeline = loss_pipeline
-
-        self.search = create_mcts(config, self.device, self.num_actions)
+        # Create a Ray Actor class dynamically from the existing ModularReplayBuffer
+        RemoteBuffer = ray.remote(ModularReplayBuffer)
 
         self.replay_buffer = create_muzero_buffer(
             observation_dimensions=self.observation_dimensions,
@@ -143,10 +122,106 @@ class MuZeroAgent(MARLBaseAgent):
             lstm_horizon_len=self.config.lstm_horizon_len,
             value_prefix=self.config.value_prefix,
             tau=self.config.reanalyze_tau,
+            class_fn=RemoteBuffer.remote,  # Instantiate as a Ray Actor
         )
 
-        self.lr_scheduler = None
-        self.optimizer = None
+        if self.config.multi_process:
+            if not ray.is_initialized():
+                ray.init(ignore_reinit_error=True)
+
+            # Initialize Shared Storage
+            # We initialize with CPU weights to ensure compatibility
+            cpu_weights = {k: v.cpu() for k, v in self.model.state_dict().items()}
+            # Use ray.put to avoid pickling large weights in the actor creation task
+            weights_ref = ray.put(cpu_weights)
+            self.storage = SharedStorage.remote(0, weights_ref)
+
+            # Instantiate workers
+            self.workers = [
+                MuZeroWorker.remote(
+                    self.config,
+                    i,
+                    self.model_name,
+                    self.checkpoint_interval,  # Checkpoint interval for workers (videos)
+                    self.storage,
+                    self.replay_buffer,
+                    device="cpu",
+                )
+                for i in range(self.config.num_workers)
+            ]
+
+        # 1. Quantization Preparation
+        if self.config.qat or self.config.use_quantization:
+            # Force "qnnpack" for ARM/M-series (or x86 too if consistent)
+            torch.backends.quantized.engine = "qnnpack"
+
+            if self.config.qat:
+                # Quantization Aware Training (QAT)
+                self.model.qconfig = torch.ao.quantization.get_default_qat_qconfig(
+                    "qnnpack", version=0
+                )
+                self.model.fuse_model()
+                torch.ao.quantization.prepare_qat(self.model, inplace=True)
+
+            elif self.config.use_quantization:
+                # Post Training Quantization (PTQ) - Preparation Phase
+                self.model.qconfig = torch.ao.quantization.get_default_qconfig(
+                    "qnnpack"
+                )
+                self.model.fuse_model()
+                torch.ao.quantization.prepare(self.model, inplace=True)
+
+        # 1.5 Initialize Optimizer and LR Scheduler
+        # This must happen AFTER QAT preparation (fusion) because it swaps modules
+        if self.config.optimizer == Adam:
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                eps=self.config.adam_epsilon,
+                weight_decay=self.config.weight_decay,
+            )
+        elif self.config.optimizer == SGD:
+            print("Warning: SGD does not use adam_epsilon param")
+            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
+                params=self.model.parameters(),
+                lr=self.config.learning_rate,
+                momentum=self.config.momentum,
+                weight_decay=self.config.weight_decay,
+            )
+
+        self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
+
+        if loss_pipeline is None:
+            self.loss_pipeline = create_muzero_loss_pipeline(
+                config=self.config,
+                device=self.device,
+                predict_initial_inference_fn=self.predict_initial_inference,
+                preprocess_fn=self.preprocess,
+                model=self.model,
+            )
+        else:
+            self.loss_pipeline = loss_pipeline
+
+        # Re-bind model to loss_pipeline in case it was re-initialized or needs refresh
+        if hasattr(self.loss_pipeline, "model"):
+            self.loss_pipeline.model = self.model
+
+        # 2. Compilation
+        if self.config.compile:
+            print("Compiling models...")
+            self.model = torch.compile(self.model, mode=self.config.compile_mode)
+
+        # 3. Initial Sync
+        self.model.to(self.device)
+        self.inference_model = self.model
+
+        if self.config.multi_process:
+            print("Starting workers...")
+            # Start workers in autonomous mode
+            for w in self.workers:
+                w.run.remote()
+
+        self.search = create_mcts(config, self.device, self.num_actions)
 
         if self.config.use_mixed_precision:
             self.scaler = torch.amp.GradScaler(device=self.device.type)
@@ -156,19 +231,37 @@ class MuZeroAgent(MARLBaseAgent):
         ]
         self._setup_stats()
 
+    def __del__(self):
+        self.shutdown()
+
     def shutdown(self):
         """
         Cleanly shuts down all Ray workers.
         """
+        print("Shutting down workers...")
         if hasattr(self, "workers") and self.workers:
-            print("Shutting down workers...")
             for w in self.workers:
                 try:
                     ray.kill(w)
                 except Exception as e:
-                    print(f"Error killing worker: {e}")
+                    pass  # Worker likely already dead
             self.workers = []
-            print("All workers shut down.")
+
+        if hasattr(self, "storage") and self.storage:
+            try:
+                ray.kill(self.storage)
+                print("Killed SharedStorage")
+            except Exception as e:
+                pass  # Storage likely already dead
+
+        if hasattr(self, "replay_buffer") and self.replay_buffer:
+            try:
+                ray.kill(self.replay_buffer)
+                print("Killed ReplayBuffer")
+            except Exception as e:
+                pass  # Buffer likely already dead
+
+        print("Shutdown complete.")
 
     def _setup_stats(self):
         """Initializes or updates the stat tracker with all required keys and plot types."""
@@ -295,194 +388,21 @@ class MuZeroAgent(MARLBaseAgent):
                 "chance_entropy", PlotType.ROLLING_AVG, rolling_window=100
             )
 
-    def update_target_model(self):
-        """
-        Updates self.target_model from self.model.
-        Handles stripping `_orig_mod` prefix if self.model is compiled.
-        """
-        if hasattr(self.model, "_orig_mod"):
-            source_state = self.model._orig_mod.state_dict()
-        else:
-            source_state = self.model.state_dict()
-
-        self.target_model.load_state_dict(source_state)
-        self.target_model.eval()
-
-        # Update inference_model reference
-        self.inference_model = self.target_model
-
     def train(self):
         self._setup_stats()
 
-        # --- Late Initialization (Learner Setup) ---
-        # 1. Quantization Preparation
-        if self.config.qat or self.config.use_quantization:
-            # Force "qnnpack" for ARM/M-series (or x86 too if consistent)
-            torch.backends.quantized.engine = "qnnpack"
-
-            if self.config.qat:
-                # Quantization Aware Training (QAT)
-                self.model.qconfig = torch.ao.quantization.get_default_qat_qconfig(
-                    "qnnpack", version=0
-                )
-                self.model.fuse_model()
-                torch.ao.quantization.prepare_qat(self.model, inplace=True)
-
-                # Apply to target_model so structures match
-                self.target_model.qconfig = (
-                    torch.ao.quantization.get_default_qat_qconfig("qnnpack", version=0)
-                )
-                self.target_model.fuse_model()
-                torch.ao.quantization.prepare_qat(self.target_model, inplace=True)
-            elif self.config.use_quantization:
-                # Post Training Quantization (PTQ) - Preparation Phase
-                self.model.qconfig = torch.ao.quantization.get_default_qconfig(
-                    "qnnpack"
-                )
-                self.model.fuse_model()
-                torch.ao.quantization.prepare(self.model, inplace=True)
-
-                # Apply to target_model so structures match
-                self.target_model.qconfig = torch.ao.quantization.get_default_qconfig(
-                    "qnnpack"
-                )
-                self.target_model.fuse_model()
-                torch.ao.quantization.prepare(self.target_model, inplace=True)
-
-        # 1.5 Initialize Optimizer and LR Scheduler
-        # This must happen AFTER QAT preparation (fusion) because it swaps modules
-        if self.config.optimizer == Adam:
-            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
-                eps=self.config.adam_epsilon,
-                weight_decay=self.config.weight_decay,
-            )
-        elif self.config.optimizer == SGD:
-            print("Warning: SGD does not use adam_epsilon param")
-            self.optimizer: torch.optim.Optimizer = self.config.optimizer(
-                params=self.model.parameters(),
-                lr=self.config.learning_rate,
-                momentum=self.config.momentum,
-                weight_decay=self.config.weight_decay,
-            )
-
-        self.lr_scheduler = get_lr_scheduler(self.optimizer, self.config)
-        # Re-bind model to loss_pipeline in case it was re-initialized or needs refresh
-        if hasattr(self.loss_pipeline, "model"):
-            self.loss_pipeline.model = self.model
-
-        # 2. Compilation
-        if self.config.compile:
-            print("Compiling models in train()...")
-            self.model = torch.compile(self.model, mode=self.config.compile_mode)
-            # Only compile target_model if NOT multiprocessing (workers have their own compiled copies)
-            if not self.config.multi_process:
-                self.target_model = torch.compile(
-                    self.target_model, mode=self.config.compile_mode
-                )
-
-        # 3. Initial Sync
-        # Call update_target_model to convert current model and dispatch to workers
-        self.update_target_model()
-
         start_time = time.time() - self.stats.get_time_elapsed()
-        self.model.to(self.device)
 
-        # ensure inference uses the current target before any play in main thread
-        self.inference_model = self.target_model
-
-        # 4. Initialize Ray Workers
-        if self.config.multi_process:
-            print("Broadcasting initial weights to workers...")
-            weights = {k: v.cpu() for k, v in self.target_model.state_dict().items()}
-            weights_ref = ray.put(weights)
-            [
-                w.set_weights.remote(weights_ref, self.training_step)
-                for w in self.workers
-            ]
-
-            # Start initial batch of games
-            print("Starting initial batch of games...")
-            # Dictionary mapping futures to workers
-            pending_games = {w.continuous_self_play.remote(): w for w in self.workers}
+        # Prefetch the first batch
+        next_batch_ref = None
 
         try:
             while self.training_step < self.config.training_steps:
-                did_anything = False
-
-                # 1. Non-Blocking Check for New Games
-                ready_refs = []
-                if self.config.multi_process:
-                    # timeout=0 makes this instant. Returns empty list if nothing ready.
-                    ready_refs, _ = ray.wait(
-                        list(pending_games.keys()), num_returns=1, timeout=0
-                    )
-
-                    for ref in ready_refs:
-                        did_anything = True
-                        worker = pending_games.pop(ref)
-                        try:
-                            result = ray.get(ref)
-                            if result and "game" in result:
-                                # Process Result
-                                game = result["game"]
-                                score = result["score"]
-                                steps = result["num_steps"]
-
-                                # Store the received game in the Learner's central buffer
-                                with torch.amp.autocast(
-                                    device_type="cpu", enabled=False
-                                ):
-                                    self.replay_buffer.store_aggregate(game_object=game)
-
-                                # Log Stats
-                                self.stats.append("score", score)
-                                self.stats.increment_steps(steps)
-                                self.stats.append("episode_length", steps)
-
-                                # Log Search Stats from Worker
-                                search_stats = result.get("search_stats", {})
-                                if search_stats:
-                                    self.stats.append(
-                                        "policy_entropy", search_stats["entropy"]
-                                    )
-                                    self.stats.append(
-                                        "value_diff", search_stats["value_diff"]
-                                    )
-                                    self.stats.append(
-                                        "policy_improvement",
-                                        search_stats["policy_improvement"]["network"],
-                                        subkey="network",
-                                    )
-                                    self.stats.append(
-                                        "policy_improvement",
-                                        search_stats["policy_improvement"]["search"],
-                                        subkey="search",
-                                    )
-                                    if (
-                                        search_stats.get("root_children_values")
-                                        is not None
-                                    ):
-                                        self.stats.append(
-                                            "root_children_values",
-                                            search_stats["root_children_values"],
-                                        )
-
-                            # Re-schedule worker
-                            new_ref = worker.continuous_self_play.remote()
-                            pending_games[new_ref] = worker
-                        except Exception as e:
-                            print(f"Error processing worker result: {e}")
-                            traceback.print_exc()
-                            # Attempt to re-schedule to avoid losing a worker slot
-                            new_ref = worker.continuous_self_play.remote()
-                            pending_games[new_ref] = worker
-                else:
+                # 1. Check for user interruption or other signals if needed
+                if not self.config.multi_process:
                     # ---------------- SINGLE PROCESS LOOP ----------------
                     # Play a batch of games sequentially (blocking ok here)
                     for _ in range(self.config.games_per_generation):
-                        did_anything = True
                         score, num_steps, game, search_stats = self.play_game(
                             inference_model=self.target_model
                         )
@@ -508,15 +428,21 @@ class MuZeroAgent(MARLBaseAgent):
                                 )
 
                         # Store the received game in the Learner's central buffer
-                        with torch.amp.autocast(device_type="cpu", enabled=False):
-                            self.replay_buffer.store_aggregate(game_object=game)
+                        self.replay_buffer.store_aggregate.remote(game_object=game)
 
                         self.stats.append("score", score)
                         self.stats.increment_steps(num_steps)
                         self.stats.append("episode_length", num_steps)
 
                 # 2. Continuous Learning (Decoupled)
-                if self.replay_buffer.size >= self.config.min_replay_buffer_size:
+                # Check buffer size asynchronously
+                try:
+                    current_size = ray.get(self.replay_buffer.get_size.remote())
+                except Exception as e:
+                    print(f"Error checking buffer size: {e}")
+                    current_size = 0
+
+                if current_size >= self.config.min_replay_buffer_size:
                     # Calculate current ratio of training samples to environment samples
                     total_samples_trained = (
                         self.training_step * self.config.minibatch_size + 1
@@ -524,7 +450,7 @@ class MuZeroAgent(MARLBaseAgent):
                     total_samples_collected = (
                         max(
                             0,
-                            self.stats.get_num_steps()
+                            ray.get(self.replay_buffer.get_total_steps.remote())
                             - self.config.min_replay_buffer_size,
                         )
                         + 1
@@ -532,65 +458,65 @@ class MuZeroAgent(MARLBaseAgent):
                     current_ratio = total_samples_trained / total_samples_collected
 
                     if current_ratio <= self.config.lr_ratio:
-                        did_anything = True
 
-                        for minibatch in range(self.config.num_minibatches):
-                            (
-                                value_loss,
-                                policy_loss,
-                                reward_loss,
-                                to_play_loss,
-                                cons_loss,
-                                q_loss,
-                                sigma_loss,
-                                vqvae_commitment_cost,
-                                loss,
-                            ) = self.learn()
-                            print("Learned")
-                            self.stats.append("value_loss", value_loss)
-                            self.stats.append("policy_loss", policy_loss)
-                            self.stats.append("reward_loss", reward_loss)
-                            self.stats.append("to_play_loss", to_play_loss)
-                            self.stats.append("cons_loss", cons_loss)
-                            self.stats.append("q_loss", q_loss)
-                            self.stats.append("sigma_loss", sigma_loss)
-                            self.stats.append(
-                                "vqvae_commitment_cost", vqvae_commitment_cost
-                            )
-                            self.stats.append("loss", loss)
+                        if next_batch_ref is None:
+                            # First time dispatch
+                            next_batch_ref = self.replay_buffer.sample.remote()
 
-                            self.training_step += 1
+                        # Fetch the ready batch (blocking here is fine as we are about to train)
+                        batch = ray.get(next_batch_ref)
 
-                            # Periodic Broadcast
-                            if self.training_step % self.config.transfer_interval == 0:
-                                self.update_target_model()
+                        # Pipeline: Immediately dispatch request for NEXT batch
+                        next_batch_ref = self.replay_buffer.sample.remote()
 
-                                if self.config.multi_process:
-                                    weights = {
-                                        k: v.cpu()
-                                        for k, v in self.target_model.state_dict().items()
-                                    }
-                                    weights_ref = ray.put(weights)
-                                    [
-                                        w.set_weights.remote(
-                                            weights_ref, self.training_step
-                                        )
-                                        for w in self.workers
-                                    ]
+                        (
+                            value_loss,
+                            policy_loss,
+                            reward_loss,
+                            to_play_loss,
+                            cons_loss,
+                            q_loss,
+                            sigma_loss,
+                            vqvae_commitment_cost,
+                            loss,
+                        ) = self.learn(batch)
 
-                        self.replay_buffer.set_beta(
-                            update_per_beta(
-                                self.replay_buffer.beta,
+                        print("Learned")
+                        self.stats.append("value_loss", value_loss)
+                        self.stats.append("policy_loss", policy_loss)
+                        self.stats.append("reward_loss", reward_loss)
+                        self.stats.append("to_play_loss", to_play_loss)
+                        self.stats.append("cons_loss", cons_loss)
+                        self.stats.append("q_loss", q_loss)
+                        self.stats.append("sigma_loss", sigma_loss)
+                        self.stats.append(
+                            "vqvae_commitment_cost", vqvae_commitment_cost
+                        )
+                        self.stats.append("loss", loss)
+
+                        self.training_step += 1
+
+                        # Periodic Broadcast
+                        if self.training_step % self.config.transfer_interval == 0:
+                            if self.config.multi_process:
+                                weights = {
+                                    k: v.cpu()
+                                    for k, v in self.model.state_dict().items()
+                                }
+                                # Update Shared Storage
+                                self.storage.set_weights.remote(
+                                    self.training_step, weights
+                                )
+
+                            # Update beta asynchronously
+                            current_beta = ray.get(self.replay_buffer.get_beta.remote())
+                            new_beta = update_per_beta(
+                                current_beta,
                                 self.config.per_beta_final,
                                 self.config.training_steps,
                                 self.config.per_beta,
                             )
-                        )
-
-                # 3. Prevent CPU Spin
-                # If we didn't train AND didn't receive a game result, sleep briefly
-                if not did_anything:
-                    time.sleep(0.001)
+                            self.replay_buffer.set_beta.remote(new_beta)
 
                 # PERIODIC TESTING
                 if (
@@ -608,6 +534,9 @@ class MuZeroAgent(MARLBaseAgent):
                     self.save_checkpoint(
                         save_weights=self.config.save_intermediate_weights,
                     )
+
+                # 3. Prevent CPU spin when no training occurs
+                time.sleep(0.001)
         except KeyboardInterrupt:
             print("Training Interrupted by User")
         except Exception as e:
@@ -623,8 +552,9 @@ class MuZeroAgent(MARLBaseAgent):
         self.save_checkpoint(save_weights=True)
         self.env.close()
 
-    def learn(self):
-        samples = self.replay_buffer.sample()
+    def learn(self, samples=None):
+        if samples is None:
+            samples = ray.get(self.replay_buffer.sample.remote())
 
         # --- 1. Unpack Data from New Buffer Structure ---
         observations = samples["observations"]
@@ -807,6 +737,9 @@ class MuZeroAgent(MARLBaseAgent):
         # --- 12. Return Losses for Logging ---
         return self._prepare_return_losses(loss_dict, loss_mean.item())
 
+    def update_replay_priorities(self, indices, priorities, ids):
+        self.replay_buffer.update_priorities.remote(indices, priorities, ids=ids)
+
     def _track_latent_visualization(self, latent_states, actions):
         """Track latent space representations categorized by action."""
         # Use root states (s0) and the first action (a0)
@@ -854,35 +787,35 @@ class MuZeroAgent(MARLBaseAgent):
     ):
         """Log training step information at checkpoint intervals."""
         # torch.set_printoptions(profile="full")
-        print(self.training_step)
-        print("actions shape", actions.shape)
-        print("target value shape", target_values.shape)
-        print("predicted values shape", predicted_values.shape)
-        print("target rewards shape", target_rewards.shape)
-        print("predicted rewards shape", predicted_rewards.shape)
-        if self.config.stochastic:
-            print("target qs shape", target_values.shape)
-            print("predicted qs shape", stochastic_preds["chance_values"].shape)
-        print("target to plays shape", target_to_plays.shape)
-        print("predicted to_plays shape", predicted_to_plays.shape)
-        print("masks shape", has_valid_action_mask.shape, has_valid_obs_mask.shape)
+        # print(self.training_step)
+        # print("actions shape", actions.shape)
+        # print("target value shape", target_values.shape)
+        # print("predicted values shape", predicted_values.shape)
+        # print("target rewards shape", target_rewards.shape)
+        # print("predicted rewards shape", predicted_rewards.shape)
+        # if self.config.stochastic:
+        #     print("target qs shape", target_values.shape)
+        #     print("predicted qs shape", stochastic_preds["chance_values"].shape)
+        # print("target to plays shape", target_to_plays.shape)
+        # print("predicted to_plays shape", predicted_to_plays.shape)
+        # print("masks shape", has_valid_action_mask.shape, has_valid_obs_mask.shape)
 
-        print("actions", actions)
-        print("target value", target_values)
-        print("predicted values", predicted_values)
-        print("target rewards", target_rewards)
-        print("predicted rewards", predicted_rewards)
-        if self.config.stochastic:
-            print("target qs", targets_tensor["chance_values"])
-            print("predicted qs", stochastic_preds["chance_values"])
-        print("target to plays", target_to_plays)
-        print("predicted to_plays", predicted_to_plays)
+        # print("actions", actions)
+        # print("target value", target_values)
+        # print("predicted values", predicted_values)
+        # print("target rewards", target_rewards)
+        # print("predicted rewards", predicted_rewards)
+        # if self.config.stochastic:
+        #     print("target qs", targets_tensor["chance_values"])
+        #     print("predicted qs", stochastic_preds["chance_values"])
+        # print("target to plays", target_to_plays)
+        # print("predicted to_plays", predicted_to_plays)
 
-        if self.config.stochastic:
-            print("encoder embedding", stochastic_preds["encoder_softmaxes"])
-            print("encoder onehot", stochastic_preds["encoder_onehots"])
-            print("predicted sigmas", stochastic_preds["latent_code_probabilities"])
-        print("masks", has_valid_action_mask, has_valid_obs_mask)
+        # if self.config.stochastic:
+        #     print("encoder embedding", stochastic_preds["encoder_softmaxes"])
+        #     print("encoder onehot", stochastic_preds["encoder_onehots"])
+        #     print("predicted sigmas", stochastic_preds["latent_code_probabilities"])
+        # print("masks", has_valid_action_mask, has_valid_obs_mask)
         # torch.set_printoptions(profile="default")
 
     def _track_stochastic_stats(self, encoder_onehots_tensor, latent_code_probs_tensor):
@@ -1371,9 +1304,7 @@ class MuZeroAgent(MARLBaseAgent):
             )
             self.model.load_state_dict(model_state_dict)
             self.model.to(self.device)
-            self.target_model = copy.deepcopy(self.model)
         else:
-            # Workers operate fine with self.model = None because they use self.target_model
             # Note: We do NOT quantize here anymore; workers handle it locally.
             self.model = None
             self.loss_pipeline = None
@@ -1399,6 +1330,8 @@ class MuZeroWorker(object):
         worker_id,
         model_name,
         checkpoint_interval,
+        storage,  # New: Handle to SharedStorage
+        replay_buffer,  # New: Handle to RemoteBuffer
         device="cpu",
     ):
         os.environ["OMP_NUM_THREADS"] = "1"
@@ -1408,8 +1341,10 @@ class MuZeroWorker(object):
         self.worker_id = worker_id
         self.model_name = model_name
         self.checkpoint_interval = checkpoint_interval
+        self.storage = storage
+        self.replay_buffer = replay_buffer
         self.device = torch.device(device)
-        self.training_step = 0
+        self.training_step = -1
 
         # Stats buffer
         self.stats_buffer = []
@@ -1436,6 +1371,39 @@ class MuZeroWorker(object):
 
         # 4. Search
         self.search = create_mcts(self.config, self.device, self.num_actions)
+
+    def run(self):
+        """
+        Main autonomous loop for the worker.
+        """
+        print(f"Worker {self.worker_id} started.")
+        while True:
+            # 1. Sync Weights
+            if ray.is_initialized():
+                # We assume storage is a Ray actor
+                try:
+                    step, weights = ray.get(self.storage.get_weights.remote())
+                    if step > self.training_step:
+                        self.set_weights(weights, step)
+                except Exception as e:
+                    print(f"Worker {self.worker_id} failed to sync weights: {e}")
+                    time.sleep(1)
+                    continue
+
+            # 2. Play Game
+            try:
+                play_result = self.play_game()
+                if play_result is not None:
+                    score, num_steps, game, search_stats = play_result
+                    # 3. Store Game
+                    ray.get(self.replay_buffer.store_aggregate.remote(game))
+                    if self.worker_id == 0 and game.action_history:
+                        print(
+                            f"Worker {self.worker_id} stored game length {len(game.action_history)}"
+                        )
+            except Exception as e:
+                print(f"Worker {self.worker_id} error in play loop: {e}")
+                time.sleep(1)
 
     def set_weights(self, weights, training_step):
         self.training_step = training_step

@@ -70,39 +70,6 @@ class CircularWriter(Writer):
         self.pointer = 0
 
 
-class SharedCircularWriter(CircularWriter):
-    """
-    Circular Writer that uses PyTorch Shared Memory tensors for state.
-    Essential for Multiprocessing (e.g. MuZero).
-    """
-
-    def __init__(self, max_size: int):
-        # We don't call super().__init__ because we manage size/pointer differently
-        self.max_size = max_size
-        self._pointer = torch.zeros(1, dtype=torch.int64).share_memory_()
-        self._size = torch.zeros(1, dtype=torch.int64).share_memory_()
-
-    @property
-    def pointer(self):
-        return int(self._pointer.item())
-
-    @pointer.setter
-    def pointer(self, value):
-        self._pointer[0] = value
-
-    @property
-    def size(self):
-        return int(self._size.item())
-
-    @size.setter
-    def size(self, value):
-        self._size[0] = value
-
-    def clear(self):
-        self.pointer = 0
-        self.size = 0
-
-
 class ReservoirWriter(Writer):
     """
     Reservoir sampling buffer.

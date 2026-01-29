@@ -1,7 +1,6 @@
 from logging import warning
 import torch
 import numpy as np
-import torch.multiprocessing as mp
 from dataclasses import dataclass
 from typing import List, Optional, Any
 
@@ -47,18 +46,11 @@ class ModularReplayBuffer:
         # 3. Multiprocessing Locks (if any buffer is shared)
         # We detect if we are in a shared context (MuZero) by checking the writer or buffers
         self.is_shared = any(c.is_shared for c in buffer_configs)
-        if self.is_shared:
-            self.write_lock = mp.Lock()
-            self.priority_lock = mp.Lock()
-        else:
-            self.write_lock = None
-            self.priority_lock = None
 
         # MuZero specific counters (only initialized if shared context is detected/needed)
         # You could also make this a specific config option
-        if self.is_shared:
-            self._next_id = torch.zeros(1, dtype=torch.int64).share_memory_()
-            self._next_game_id = torch.zeros(1, dtype=torch.int64).share_memory_()
+        self._next_id = 0
+        self._next_game_id = 0
 
         self.sampler = sampler if sampler is not None else UniformSampler()
         self.writer = writer if writer is not None else CircularWriter(max_size)
@@ -86,9 +78,6 @@ class ModularReplayBuffer:
 
         tensor = torch.full(final_shape, config.fill_value, dtype=dtype)
 
-        if config.is_shared:
-            tensor = tensor.share_memory_()
-
         self.buffers[config.name] = tensor
 
     def store(self, **kwargs):
@@ -103,53 +92,41 @@ class ModularReplayBuffer:
 
         # 2. Determine Write Index
         # Locking if shared, though standard store usually isn't used in MP heavy setups
-        if self.is_shared:
-            self.write_lock.acquire()
-        try:
-            idx = self.writer.store()
-            if idx is None:
-                return None
+        idx = self.writer.store()
+        if idx is None:
+            return None
 
-            # 3. Map Processed Data to Buffers
-            if isinstance(processed, dict):
-                # Direct mapping (Processor returns dict keys matching buffer names)
-                for key, val in processed.items():
-                    # warn if key not in buffers
-                    if key in self.buffers:
-                        self._write_to_buffer(key, idx, val)
-                    else:
-                        # warn only once per key
-                        if not hasattr(self, "_warned_keys"):
-                            self._warned_keys = set()
-                        if key not in self._warned_keys:
-                            warning(
-                                f"Key '{key}' from input processor not found in buffers."
-                            )
-                            self._warned_keys.add(key)
-            else:
-                raise ValueError(
-                    "Input processor must return a dict mapping buffer names to values"
-                )
-        finally:
-            if self.is_shared:
-                self.write_lock.release()
+        # 3. Map Processed Data to Buffers
+        if isinstance(processed, dict):
+            # Direct mapping (Processor returns dict keys matching buffer names)
+            for key, val in processed.items():
+                # warn if key not in buffers
+                if key in self.buffers:
+                    self._write_to_buffer(key, idx, val)
+                else:
+                    # warn only once per key
+                    if not hasattr(self, "_warned_keys"):
+                        self._warned_keys = set()
+                    if key not in self._warned_keys:
+                        warning(
+                            f"Key '{key}' from input processor not found in buffers."
+                        )
+                        self._warned_keys.add(key)
+        else:
+            raise ValueError(
+                "Input processor must return a dict mapping buffer names to values"
+            )
 
         # 4. Update Sampler (Priorities)
         priority = kwargs.get("priority", None)
 
-        if self.is_shared:
-            self.priority_lock.acquire()
-        try:
-            # We assume tree_pointer logic is handled by the sampler or writer if specific
-            # For CircularWriter, the writer doesn't track 'tree_pointer' distinct from 'pointer' usually
-            # But specific samplers might need hooks.
-            self.sampler.on_store(
-                idx,
-                priority=priority,
-            )
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
+        # We assume tree_pointer logic is handled by the sampler or writer if specific
+        # For CircularWriter, the writer doesn't track 'tree_pointer' distinct from 'pointer' usually
+        # But specific samplers might need hooks.
+        self.sampler.on_store(
+            idx,
+            priority=priority,
+        )
 
         if self.size <= 1000:
             print("Size:", self.size)
@@ -166,26 +143,26 @@ class ModularReplayBuffer:
             return
 
         path_slice = self.writer.path_slice
-        
+
         # Call input processor to compute advantages/returns
         if hasattr(self.input_processor, "finish_trajectory"):
             result = self.input_processor.finish_trajectory(
                 self.buffers, path_slice, last_value
             )
-            
+
             if result is not None:
                 advantages, returns = result
                 # Assign back to buffers
                 # Assuming buffers 'advantages' and 'returns' exist
                 if "advantages" in self.buffers:
-                     if isinstance(advantages, np.ndarray):
+                    if isinstance(advantages, np.ndarray):
                         advantages = torch.from_numpy(advantages)
-                     self.buffers["advantages"][path_slice] = advantages
-                
+                    self.buffers["advantages"][path_slice] = advantages
+
                 if "returns" in self.buffers:
-                     if isinstance(returns, np.ndarray):
+                    if isinstance(returns, np.ndarray):
                         returns = torch.from_numpy(returns)
-                     self.buffers["returns"][path_slice] = returns
+                    self.buffers["returns"][path_slice] = returns
 
         # Advance path start index for next trajectory
         if hasattr(self.writer, "start_new_path"):
@@ -208,79 +185,56 @@ class ModularReplayBuffer:
         # or it returns a 'n_states' key (like MuZeroGameInputProcessor)
         n_items = data.get("n_states", len(next(iter(data.values()))))
 
+        # Assign IDs if buffers exist
+        if "game_ids" in self.buffers:
+            game_id = self._next_game_id
+            self._next_game_id += 1
+            data["game_ids"] = torch.full((n_items,), game_id, dtype=torch.int64)
+
+        if "ids" in self.buffers:
+            start_id = self._next_id
+            self._next_id += n_items
+            data["ids"] = torch.arange(start_id, start_id + n_items, dtype=torch.int64)
+
         priorities = kwargs.get("priorities", [None] * n_items)
 
-        if self.is_shared:
-            self.write_lock.acquire()
-        try:
-            # 2. Reserve Batch Indices
-            slices = self.writer.store_batch(n_items)
+        # 2. Reserve Batch Indices
+        slices = self.writer.store_batch(n_items)
 
-            # 3. Handle IDs (MuZero specific logic - integrated generally)
-            if self.is_shared and "ids" in self.buffers:
-                start_id = int(self._next_id.item())
-                self._next_id[0] = start_id + n_items
+        # 4. Write Data to Buffers
+        data_offset = 0
+        for sl in slices:
+            slice_len = sl.stop - sl.start
+            rng = sl
 
-                # Generate IDs on the fly
-                # We put this into the 'data' dict so the loop below handles it generically
-                data["ids"] = torch.arange(
-                    start_id + 1, start_id + n_items + 1, dtype=torch.int64
-                )
+            for key, tensor_data in data.items():
+                # Only write if we have a matching buffer
+                if key in self.buffers:
+                    # Slice the input data (tensor_data) matching the buffer slice
+                    batch_slice = tensor_data[data_offset : data_offset + slice_len]
 
-            if self.is_shared and "game_ids" in self.buffers:
-                start_game_id = int(self._next_game_id.item()) + 1
-                self._next_game_id[0] = start_game_id
-                data["game_ids"] = torch.full(
-                    (n_items,), start_game_id, dtype=torch.int64
-                )
+                    # Handle Numpy/Torch mismatch
+                    if isinstance(batch_slice, np.ndarray):
+                        batch_slice = torch.from_numpy(batch_slice)
 
-            # 4. Write Data to Buffers
-            data_offset = 0
-            for sl in slices:
-                slice_len = sl.stop - sl.start
-                rng = sl
+                    self.buffers[key][rng] = batch_slice
 
-                for key, tensor_data in data.items():
-                    # Only write if we have a matching buffer
-                    if key in self.buffers:
-                        # Slice the input data (tensor_data) matching the buffer slice
-                        batch_slice = tensor_data[data_offset : data_offset + slice_len]
-
-                        # Handle Numpy/Torch mismatch
-                        if isinstance(batch_slice, np.ndarray):
-                            batch_slice = torch.from_numpy(batch_slice)
-
-                        self.buffers[key][rng] = batch_slice
-
-                data_offset += slice_len
-
-        finally:
-            if self.is_shared:
-                self.write_lock.release()
+            data_offset += slice_len
 
         # 5. Update Priorities
-        if self.is_shared:
-            self.priority_lock.acquire()
-        try:
-            # Reconstruct indices from slices
-            all_indices = []
-            for sl in slices:
-                all_indices.extend(range(sl.start, sl.stop))
+        # Reconstruct indices from slices
+        all_indices = []
+        for sl in slices:
+            all_indices.extend(range(sl.start, sl.stop))
 
-            for i, (idx, p) in enumerate(zip(all_indices, priorities)):
-                # TODO: MAKE THIS A SEPERATE PROCESSOR?
-                is_terminal = i == n_items - 1
-                if is_terminal:
-                    # print("Storing terminal with zero priority")
-                    self.sampler.on_store(
-                        idx, sum_tree_val=0.0, min_tree_val=float("inf")
-                    )
-                else:
-                    self.sampler.on_store(idx, priority=p)
-
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
+        for i, (idx, p) in enumerate(zip(all_indices, priorities)):
+            # TODO: MAKE THIS A SEPERATE PROCESSOR?
+            is_terminal = i == n_items - 1
+            if is_terminal:
+                # print("Storing terminal with zero priority")
+                self.sampler.on_store(idx, sum_tree_val=0.0, min_tree_val=float("inf"))
+            else:
+                self.sampler.on_store(idx, priority=p)
 
     def _write_to_buffer(self, name, idx, val):
         if isinstance(val, np.ndarray):
@@ -289,13 +243,7 @@ class ModularReplayBuffer:
 
     def sample(self):
         # 1. Sample Indices
-        if self.is_shared and self.priority_lock:
-            self.priority_lock.acquire()
-        try:
-            indices, weights = self.sampler.sample(self.size, self.batch_size)
-        finally:
-            if self.is_shared and self.priority_lock:
-                self.priority_lock.release()
+        indices, weights = self.sampler.sample(self.size, self.batch_size)
 
         # no indices greater than current buffer size:
         # 2. Collect Raw Data
@@ -315,45 +263,32 @@ class ModularReplayBuffer:
 
     def update_priorities(self, indices, priorities, ids=None):
         if self.is_shared:
-            self.priority_lock.acquire()
             if ids is None:
                 warning(
                     "Updating priorities without IDs in a shared buffer may lead to incorrect updates."
                 )
 
-        try:
-            # Support optional ID checking if 'ids' buffer exists
-            buffer_ids = None
-            if "ids" in self.buffers:
-                buffer_ids = self.buffers["ids"]
+        # Support optional ID checking if 'ids' buffer exists
+        buffer_ids = None
+        if "ids" in self.buffers:
+            buffer_ids = self.buffers["ids"]
 
-            self.sampler.update_priorities(
-                indices, priorities, ids=ids, buffer_ids=buffer_ids
-            )
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
+        self.sampler.update_priorities(
+            indices, priorities, ids=ids, buffer_ids=buffer_ids
+        )
 
     def clear(self):
-        if self.is_shared:
-            self.write_lock.acquire()
-            self.priority_lock.acquire()
-        try:
-            self.sampler.clear()
-            self.writer.clear()
-            self.input_processor.clear()  # Clear processor state if necessary
-            self.output_processor.clear()  # Clear output processor state if necessary
-            # Zero out buffers
-            for buf in self.buffers.values():
-                buf.zero_()
+        self.sampler.clear()
+        self.writer.clear()
+        self.input_processor.clear()  # Clear processor state if necessary
+        self.output_processor.clear()  # Clear output processor state if necessary
+        # Zero out buffers
+        for buf in self.buffers.values():
+            buf.zero_()
 
-            if self.is_shared:
-                self._next_id.zero_()
-                self._next_game_id.zero_()
-        finally:
-            if self.is_shared:
-                self.priority_lock.release()
-                self.write_lock.release()
+        if self.is_shared:
+            self._next_id.zero_()
+            self._next_game_id.zero_()
 
     # Accessors for properties required by some utils (like beta)
     def set_beta(self, beta):
@@ -370,6 +305,18 @@ class ModularReplayBuffer:
     @property
     def beta(self):
         return self.sampler.beta
+
+    def get_beta(self):
+        """Returns the current beta value (Ray-compatible)."""
+        return self.beta
+
+    def get_size(self):
+        """Returns the current size of the buffer (Ray-compatible)."""
+        return self.size
+
+    def get_total_steps(self):
+        """Returns the total number of steps stored in the buffer's history (Ray-compatible)."""
+        return self._next_id
 
     def sample_game(self):
         """
@@ -419,30 +366,12 @@ class ModularReplayBuffer:
         assert len(new_values) == len(
             indices
         ), f"Length of new_values must match length of indices: {len(new_values)} != {len(indices)}"
+        assert len(new_values) == len(
+            indices
+        ), f"Length of new_values must match length of indices: {len(new_values)} != {len(indices)}"
         for i, idx in enumerate(indices):
-            if self.is_shared:
-                self.write_lock.acquire()
-            try:
-                if ids is not None and "ids" in self.buffers:
-                    if int(self.buffers["ids"][idx].item()) != ids[i]:
-                        continue
-                self.buffers["values"][idx] = new_values[i]
-                self.buffers["policies"][idx] = new_policies[i]
-            finally:
-                if self.is_shared:
-                    self.write_lock.release()
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state["write_lock"]
-        del state["priority_lock"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        if self.is_shared:
-            self.write_lock = mp.Lock()
-            self.priority_lock = mp.Lock()
-        else:
-            self.write_lock = None
-            self.priority_lock = None
+            if ids is not None and "ids" in self.buffers:
+                if int(self.buffers["ids"][idx].item()) != ids[i]:
+                    continue
+            self.buffers["values"][idx] = new_values[i]
+            self.buffers["policies"][idx] = new_policies[i]

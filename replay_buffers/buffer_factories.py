@@ -16,7 +16,6 @@ from replay_buffers.processors import (
 )
 from replay_buffers.writers import (
     CircularWriter,
-    SharedCircularWriter,
     ReservoirWriter,
     PPOWriter,
 )
@@ -223,38 +222,38 @@ def create_muzero_buffer(
     lstm_horizon_len=10,
     value_prefix=False,
     tau=0.3,
+    class_fn=ModularReplayBuffer,  # New: Allow passing RemoteClass.remote
 ):
     configs = [
         BufferConfig(
             "observations",
             shape=observation_dimensions,
             dtype=observation_dtype,
-            is_shared=True,
         ),
-        BufferConfig("actions", shape=(), dtype=torch.float16, is_shared=True),
-        BufferConfig("rewards", shape=(), dtype=torch.float32, is_shared=True),
-        BufferConfig("values", shape=(), dtype=torch.float32, is_shared=True),
+        BufferConfig("actions", shape=(), dtype=torch.float16),
+        BufferConfig("rewards", shape=(), dtype=torch.float32),
+        BufferConfig("values", shape=(), dtype=torch.float32),
         BufferConfig(
-            "policies", shape=(num_actions,), dtype=torch.float32, is_shared=True
+            "policies",
+            shape=(num_actions,),
+            dtype=torch.float32,
         ),
-        BufferConfig("to_plays", shape=(), dtype=torch.int16, is_shared=True),
-        BufferConfig("chances", shape=(1,), dtype=torch.int16, is_shared=True),
-        BufferConfig("game_ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("ids", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("training_steps", shape=(), dtype=torch.int64, is_shared=True),
-        BufferConfig("dones", shape=(), dtype=torch.bool, is_shared=True),
+        BufferConfig("to_plays", shape=(), dtype=torch.int16),
+        BufferConfig("chances", shape=(1,), dtype=torch.int16),
+        BufferConfig("game_ids", shape=(), dtype=torch.int64),
+        BufferConfig("ids", shape=(), dtype=torch.int64),
+        BufferConfig("training_steps", shape=(), dtype=torch.int64),
+        BufferConfig("dones", shape=(), dtype=torch.bool),
         BufferConfig(
-            "legal_masks", shape=(num_actions,), dtype=torch.bool, is_shared=True
+            "legal_masks",
+            shape=(num_actions,),
+            dtype=torch.bool,
         ),
     ]
 
-    # MuZero uses a monolithic processor because it processes the entire Game history at once.
-    # However, if you wanted to chain post-processing on the 'data' dict returned by process_game,
-    # you could wrap this in a StackedInputProcessor.
-    # For now, MuZeroGameInputProcessor handles extraction of policies, values, and legal_masks internally.
     input_processor = MuZeroGameInputProcessor(num_actions, num_players)
 
-    return ModularReplayBuffer(
+    return class_fn(
         max_size=max_size,
         batch_size=batch_size,
         buffer_configs=configs,
@@ -270,7 +269,7 @@ def create_muzero_buffer(
             value_prefix,
             tau,
         ),
-        writer=SharedCircularWriter(max_size),
+        writer=CircularWriter(max_size),
         sampler=PrioritizedSampler(
             max_size,
             alpha=alpha,

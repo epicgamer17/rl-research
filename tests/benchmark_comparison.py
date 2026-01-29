@@ -17,40 +17,30 @@ from agents.random import RandomAgent
 
 # Dynamic imports for agents
 from agents.muzero import MuZeroAgent as MuZeroRay
-from agents.muzero_tmp import MuZeroAgent as MuZeroTorchMP
+import ray
 from modules.world_models.muzero_world_model import MuzeroWorldModel
+
+
+import itertools
+import csv
+import datetime
+import gc
 
 
 class Benchmark:
     def __init__(self):
-        self.device = torch.device("cpu")  # User specified CPU in snippet
+        self.device = torch.device("cpu")
         if torch.cuda.is_available():
-            print(
-                "Warning: CUDA available but using CPU as per user snippet request (params_batched['device']='cpu')"
-            )
+            print("Warning: CUDA available but using CPU as per user snippet request")
 
         self.game_config = TicTacToeConfig()
 
-        # Base Params from User Snippet
-        self.base_params = {
-            # "num_workers": 4, # Will bet set in loop
-            "search_batch_size": 1,
-            "use_virtual_mean": True,
-            "use_mixed_precision": True,
-            "compile": True,  # Mapped from 'use_torch_compile'
-            "use_quantization": True,
-            "qat": True,
-            "transfer_interval": 100,
-            # Likely needed based on MuZeroConfig requirements
-            "world_model_cls": MuzeroWorldModel,
-            # (Note: MuZeroConfig expects the class object or string?
-            # Looking at muzero_config.py: self.world_model_cls = self.parse_field("world_model_cls", None, required=True)
-            # It usually comes from a dict where it might be a class or string.
-            # Let's import the class to be safe.
-            "minibatch_size": 8,  # Default/Guess
-            "training_steps": 1000,  # User asked for ~1000 steps
-            "min_replay_buffer_size": 100,
-            "replay_buffer_size": 500,
+        # Fixed parameters
+        self.fixed_params = {
+            "minibatch_size": 16,
+            "training_steps": 200,
+            "min_replay_buffer_size": 50,
+            "replay_buffer_size": 2000,
             "games_per_generation": 1,
             "optimizer": torch.optim.Adam,
             "learning_rate": 0.001,
@@ -70,113 +60,160 @@ class Benchmark:
             "lstm_horizon_len": 5,
             "value_prefix": True,
             "reanalyze_tau": 1,
-            "lr_ratio": 10,  # Ensure learning triggers
-            # MuZero specific
+            "lr_ratio": 1000,
             "unroll_steps": 5,
-            "reanalyze_ratio": 0.0,  # Disable reanalyze for pure train flux benchmark? Or keep default
-            # Recurrent/MCTS
+            "reanalyze_ratio": 0.0,
             "projector_hidden_dim": 16,
             "predictor_hidden_dim": 16,
             "projector_output_dim": 16,
             "predictor_output_dim": 16,
-            "num_simulations": 10,  # Kept low for speed benchmark?
             "root_dirichlet_alpha": 0.25,
             "root_exploration_fraction": 0.25,
-            # Architecture (Small for TicTacToe)
             "residual_layers": [(16, 3, 1)] * 2,
             "conv_layers": [(16, 3, 1)],
             "dense_layer_widths": [],
+            "world_model_cls": MuzeroWorldModel,
+            "multi_process": True,
+            "transfer_interval": 50,
         }
 
-    def run_benchmark(self, agent_cls, name, num_steps=1000):
-        print(f"\n--- Benchmarking {name} ---")
+    def run_grid_search(self):
+        # 1. Define Parameter Grid
+        self.grid_params = {
+            "num_workers": [1, 2, 4],  # [1, 2, 4, 8, 16],
+            "search_batch_size": [1, 4, 8],  # [1, 2, 4, 8],
+            "quantization_mode": ["none", "ptq", "qat"],
+            "use_torch_compile": [False, True],
+            "use_mixed_precision": [False, True],
+            "num_simulations": [32],
+        }
 
-        # 1. Setup Config
-        params = self.base_params.copy()
-        params["training_steps"] = num_steps
-        # Increase lr_ratio to ensure we actually learn every step if possible,
-        # or set it such that we learn reasonably often.
-        # User snippet has standard behavior.
+        keys, values = zip(*self.grid_params.items())
+        combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
 
-        # Ensure 'multi_process' is handled.
-        # Ray agent expects this true usually to spawn workers.
-        # TorchMP agent also uses it.
-        params["multi_process"] = True
-        params["num_workers"] = 4
+        results = []
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_filename = f"muzero_benchmark_results_{timestamp}.csv"
 
-        # Create Config Object
+        print(f"Starting Grid Search with {len(combinations)} configurations...")
+
+        # Prepare CSV
+        fieldnames = list(self.grid_params.keys()) + [
+            "duration_seconds",
+            "total_frames",
+            "fps",
+        ]
+        with open(csv_filename, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+
+        try:
+            for i, config_dict in enumerate(combinations):
+                print(f"\n--- Run {i+1}/{len(combinations)} ---")
+                print(f"Config: {config_dict}")
+
+                # Map quantization_mode
+                q_mode = config_dict.pop("quantization_mode")
+
+                # Prepare full params
+                run_params = self.fixed_params.copy()
+                run_params.update(config_dict)
+
+                # Handle Quantization
+                run_params["qat"] = q_mode == "qat"
+                run_params["use_quantization"] = q_mode == "ptq"
+
+                # Handle Compile mapping
+                run_params["compile"] = run_params.pop("use_torch_compile")
+
+                # Ensure nice naming
+                config_dict["quantization_mode"] = q_mode
+                config_dict["use_torch_compile"] = run_params["compile"]
+
+                # Run specific config
+                metrics = self._run_single_config(run_params)
+
+                # Record Result
+                result_row = {**config_dict, **metrics}
+                results.append(result_row)
+
+                # Append to CSV immediately
+                with open(csv_filename, "a", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writerow(result_row)
+
+        except KeyboardInterrupt:
+            print("Benchmark Interrupted")
+        finally:
+            print("Shutting down Ray cluster...")
+            ray.shutdown()
+
+        self._print_summary(results)
+        return csv_filename
+
+    def _run_single_config(self, params):
+        # Setup Config
+        # We'll run for a fixed number of training steps for the benchmark
+        # 100 steps should be enough to get a stable throughput measurement
+        params["training_steps"] = 100
+
         config = MuZeroConfig(params, self.game_config)
-
-        # Create Environment
         env = self.game_config.make_env()
+        test_agents = [RandomAgent(), TicTacToeBestAgent()]
 
         # Instantiate Agent
-        test_agents = [RandomAgent(), TicTacToeBestAgent()]
-        try:
-            agent = agent_cls(
-                env=env,
-                config=config,
-                name=f"bench_{name.lower().replace(' ', '_')}",
-                device=torch.device("cpu"),
-                test_agents=test_agents,
-            )
+        agent = MuZeroRay(
+            env=env,
+            config=config,
+            name=f"bench_worker{params['num_workers']}",
+            device=torch.device("cpu"),
+            test_agents=test_agents,
+        )
 
-            # Override testing to avoid slowdowns during benchmark
-            agent.test_interval = 100000
-            agent.checkpoint_interval = 100000
+        # Disable heavy testing/checkpointing for benchmark
+        agent.test_interval = 1000000
+        agent.checkpoint_interval = 1000000
 
-            # Run Training
-            print(f"  Starting training for {num_steps} steps...")
-            start_time = time.time()
+        print(f"  Starting training for {params['training_steps']} steps...")
 
-            # The 'train()' method runs until agent.training_step >= config.training_steps
-            # Ensure agent.training_step starts at 0
-            agent.training_step = 0
-            agent.train()
+        # Start timer
+        start_time = time.time()
 
-            end_time = time.time()
-            duration = end_time - start_time
-            print(f"  Finished. Time: {duration:.2f}s")
-            return duration
+        # Run standard training loop
+        agent.train()
 
-        except Exception as e:
-            print(f"  FAILED: {e}")
-            import traceback
+        # End timer
+        end_time = time.time()
+        duration = end_time - start_time
 
-            traceback.print_exc()
-            return None
+        # Calculate Metrics
+        # agent.training_step should be equal to params["training_steps"] if successful
+        total_samples = agent.training_step * agent.config.minibatch_size
+        fps = total_samples / duration if duration > 0 else 0
+
+        print(
+            f"  Benchmark complete: {fps:.2f} samples/sec ({total_samples} samples in {duration:.2f}s)"
+        )
+
+        # Final cleanup just in case (though train() calls shutdown())
+        agent.shutdown()
+        gc.collect()
+
+        return {
+            "duration_seconds": duration,
+            "total_frames": total_samples,
+            "fps": fps,
+        }
+
+    def _print_summary(self, results):
+        print("\n=== GRID SEARCH SUMMARY ===")
+        print(tabulate(results, headers="keys", tablefmt="pretty", floatfmt=".2f"))
 
 
 def main():
     bench = Benchmark()
-    results = []
-
-    # 1. Ray Benchmark
-    # ray_time = bench.run_benchmark(MuZeroRay, "MuZero (Ray)", num_steps=1000)
-    # results.append({"Agent": "MuZero (Ray)", "Time (s)": ray_time})
-
-    # 2. TorchMP Benchmark
-    mp_time = bench.run_benchmark(MuZeroTorchMP, "MuZero (TorchMP)", num_steps=1000)
-    results.append({"Agent": "MuZero (TorchMP)", "Time (s)": mp_time})
-
-    # 3. Ray Benchmark (Running second to avoid Ray init issues impacting TorchMP if any, though Ray usually robust)
-    # Actually, Ray init might persist. Let's run Ray second or handle shutdown.
-    # MuZeroRay.train() handles ray.init() check.
-
-    ray_time = bench.run_benchmark(MuZeroRay, "MuZero (Ray)", num_steps=1000)
-    results.append({"Agent": "MuZero (Ray)", "Time (s)": ray_time})
-
-    print("\n=== RESULTS ===")
-    df = tabulate(results, headers="keys", tablefmt="pretty", floatfmt=".2f")
-    print(df)
-
-    if ray_time and mp_time:
-        speedup = ray_time / mp_time
-        print(f"\nTime Ratio (Ray / TorchMP): {speedup:.2f}x")
-        if speedup > 1.0:
-            print(f"TorchMP is {speedup:.2f}x FASTER than Ray")
-        else:
-            print(f"Ray is {1/speedup:.2f}x FASTER than TorchMP")
+    csv_file = bench.run_grid_search()
+    print(f"\nResults saved to {csv_file}")
 
 
 if __name__ == "__main__":

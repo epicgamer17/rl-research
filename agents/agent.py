@@ -12,7 +12,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.multiprocessing as mp
 import gymnasium as gym
 import pettingzoo
 
@@ -220,10 +219,6 @@ class BaseAgent(ABC):
             else:
                 self.target_model.load_state_dict(self.model.state_dict())
 
-            # If using multiprocessing, ensure target remains in shared memory.
-            if self.config.multi_process:
-                self.target_model.share_memory()
-
     # --- Checkpointing ---
     def load_optimizer_state(self, checkpoint):
         if self.optimizer is not None and "optimizer" in checkpoint:
@@ -430,7 +425,7 @@ class MARLBaseAgent(BaseAgent):
 
         # Initialize shared training step BEFORE super().__init__
         # so that self.training_step = 0 works via the property setter
-        self._training_step = mp.Value("i", 0)
+        # self._training_step = mp.Value("i", 0)
 
         # FIX: BaseAgent init expects (env, config, name...)
         # The previous code passed 'model' which likely didn't exist or was in wrong place
@@ -441,14 +436,6 @@ class MARLBaseAgent(BaseAgent):
         print(
             f"MARL Agent '{self.model_name}' initialized. Test agents: {[a.model_name for a in self.test_agents]}"
         )
-
-    @property
-    def training_step(self):
-        return self._training_step.value
-
-    @training_step.setter
-    def training_step(self, value):
-        self._training_step.value = value
 
     def test(self, num_trials, player=0, dir="./checkpoints") -> None:
         if self.config.game.num_players == 1:

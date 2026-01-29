@@ -353,23 +353,30 @@ class Network(nn.Module):
 
             # 2. Fuse ResidualBlock (inside ResidualStack or standalone)
             if m.__class__.__name__ == "ResidualBlock":
-                # Fuse conv1 + norm1 + act1
-                if is_batchnorm(m.norm1):
-                    torch.ao.quantization.fuse_modules(
-                        m, ["conv1", "norm1", "act1"], inplace=True
-                    )
-                else:
-                    torch.ao.quantization.fuse_modules(
-                        m, ["conv1", "act1"], inplace=True
-                    )
+                # Check if already fused (if components are Identity)
+                if not isinstance(m.conv1, torch.nn.Identity):
+                    # Fuse conv1 + norm1 + act1
+                    if is_batchnorm(m.norm1) and not isinstance(
+                        m.norm1, torch.nn.Identity
+                    ):
+                        torch.ao.quantization.fuse_modules(
+                            m, ["conv1", "norm1", "act1"], inplace=True
+                        )
+                    elif not isinstance(m.act1, torch.nn.Identity):
+                        # If norm1 is Identity (fused) or not present, try fusing conv1+act1
+                        # BUT only if act1 isn't Identity
+                        torch.ao.quantization.fuse_modules(
+                            m, ["conv1", "act1"], inplace=True
+                        )
 
                 # Fuse conv2 + norm2
-                if is_batchnorm(m.norm2):
-                    torch.ao.quantization.fuse_modules(
-                        m, ["conv2", "norm2"], inplace=True
-                    )
-                else:
-                    pass
+                if not isinstance(m.conv2, torch.nn.Identity):
+                    if is_batchnorm(m.norm2) and not isinstance(
+                        m.norm2, torch.nn.Identity
+                    ):
+                        torch.ao.quantization.fuse_modules(
+                            m, ["conv2", "norm2"], inplace=True
+                        )
 
             # 3. Fuse DenseStack layers
             if isinstance(m, DenseStack):

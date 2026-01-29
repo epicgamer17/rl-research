@@ -1,0 +1,4 @@
+num_workers,search_batch_size,quantization_mode,use_torch_compile,use_mixed_precision,num_simulations,duration_seconds,total_frames,fps
+1,1,none,False,False,32,58.11915183067322,1008,17.343680495144692
+1,1,none,False,True,32,74.74191498756409,1005,13.44627041155176
+1,1,none,True,False,32,66.07923817634583,1008,15.254413153340963
