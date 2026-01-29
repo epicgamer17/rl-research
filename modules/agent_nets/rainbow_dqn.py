@@ -4,7 +4,7 @@ from agent_configs.dqn.rainbow_config import RainbowConfig
 from modules.dense import DenseStack, build_dense
 from modules.network_block import NetworkBlock
 from modules.residual import ResidualStack
-from utils.utils import to_lists  # Import the generalized block
+from utils.utils import to_lists, initialize_module  # Import the generalized block
 
 
 class RainbowNetwork(nn.Module):
@@ -87,6 +87,10 @@ class RainbowNetwork(nn.Module):
                 sigma=config.noisy_sigma,
             )
 
+        self.ff = torch.ao.nn.quantized.FloatFunctional()
+        self.quant = torch.ao.quantization.QuantStub()
+        self.dequant = torch.ao.quantization.DeQuantStub()
+
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         self.feature_block.initialize(initializer)
         # Initialize Dueling components if they exist
@@ -95,12 +99,13 @@ class RainbowNetwork(nn.Module):
                 self.value_block.initialize(initializer)
             if not isinstance(self.advantage_block, nn.Identity):
                 self.advantage_block.initialize(initializer)
-            self.value_layer.initialize(initializer)
-            self.advantage_layer.initialize(initializer)
+            initialize_module(self.value_layer, initializer)
+            initialize_module(self.advantage_layer, initializer)
         else:
-            self.distribution_layer.initialize(initializer)
+            initialize_module(self.distribution_layer, initializer)
 
     def forward(self, inputs: Tensor) -> Tensor:
+        inputs = self.quant(inputs)
         # Pass through core layers (Residual, Conv, Dense)
         S = self.feature_block(inputs)
 
@@ -122,10 +127,13 @@ class RainbowNetwork(nn.Module):
 
             # Combine
             a_mean = A.mean(1, keepdim=True)
-            Q = v + A - a_mean
+            # Q = v + A - a_mean
+            Q = self.ff.add(v, self.ff.sub(A, a_mean))
         else:
             # Simple Distribution
             Q = self.distribution_layer(S).view(-1, self.output_size, self.atom_size)
+
+        Q = self.dequant(Q)
 
         if self.atom_size == 1:
             return Q.squeeze(-1)

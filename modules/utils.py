@@ -4,7 +4,7 @@ import bisect
 import torch
 import torch.nn.init as init
 from torch import nn, Tensor, optim
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from agent_configs.base_config import Config
@@ -295,6 +295,20 @@ def zero_weights_initializer(m: nn.Module) -> None:
         init.constant_(m.weight, 0.0)
     if hasattr(m, "bias") and m.bias is not None:
         init.constant_(m.bias, 0.0)
+
+
+def initialize_module(m: nn.Module, initializer: Callable[[Tensor], None]) -> None:
+    """Recursively initializes the weights of a module."""
+    if isinstance(m, (nn.Conv2d, nn.Linear)):
+        if m.weight is not None:
+            initializer(m.weight)
+        if m.bias is not None:
+            # Standardize bias initialization (usually 0)
+            init.constant_(m.bias, 0.0)
+
+    # Recursively apply
+    for child in m.children():
+        initialize_module(child, initializer)
 
 
 def one_hundredth_initializer(m: nn.Module) -> None:

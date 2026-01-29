@@ -1,11 +1,17 @@
-import copy
-import datetime
 import random
 import sys
+import os
+import copy
+import datetime
+import time
 
 import gymnasium as gym
 import torch
 import ray
+
+# Fix for Mac M1/M2/M3 quantization backend
+if sys.platform == "darwin":
+    torch.backends.quantized.engine = "qnnpack"
 from replay_buffers.game import Game, TimeStep
 from search.search_factories import create_mcts
 from replay_buffers.buffer_factories import create_muzero_buffer
@@ -149,6 +155,20 @@ class MuZeroAgent(MARLBaseAgent):
             "test_score_vs_{}".format(agent.model_name) for agent in self.test_agents
         ]
         self._setup_stats()
+
+    def shutdown(self):
+        """
+        Cleanly shuts down all Ray workers.
+        """
+        if hasattr(self, "workers") and self.workers:
+            print("Shutting down workers...")
+            for w in self.workers:
+                try:
+                    ray.kill(w)
+                except Exception as e:
+                    print(f"Error killing worker: {e}")
+            self.workers = []
+            print("All workers shut down.")
 
     def _setup_stats(self):
         """Initializes or updates the stat tracker with all required keys and plot types."""
@@ -376,7 +396,11 @@ class MuZeroAgent(MARLBaseAgent):
         if self.config.multi_process:
             print("Broadcasting initial weights to workers...")
             weights = {k: v.cpu() for k, v in self.target_model.state_dict().items()}
-            [w.set_weights.remote(weights, self.training_step) for w in self.workers]
+            weights_ref = ray.put(weights)
+            [
+                w.set_weights.remote(weights_ref, self.training_step)
+                for w in self.workers
+            ]
 
             # Start initial batch of games
             print("Starting initial batch of games...")
@@ -522,7 +546,7 @@ class MuZeroAgent(MARLBaseAgent):
                                 vqvae_commitment_cost,
                                 loss,
                             ) = self.learn()
-
+                            print("Learned")
                             self.stats.append("value_loss", value_loss)
                             self.stats.append("policy_loss", policy_loss)
                             self.stats.append("reward_loss", reward_loss)
@@ -546,9 +570,10 @@ class MuZeroAgent(MARLBaseAgent):
                                         k: v.cpu()
                                         for k, v in self.target_model.state_dict().items()
                                     }
+                                    weights_ref = ray.put(weights)
                                     [
                                         w.set_weights.remote(
-                                            weights, self.training_step
+                                            weights_ref, self.training_step
                                         )
                                         for w in self.workers
                                     ]
@@ -583,13 +608,14 @@ class MuZeroAgent(MARLBaseAgent):
                     self.save_checkpoint(
                         save_weights=self.config.save_intermediate_weights,
                     )
+        except KeyboardInterrupt:
+            print("Training Interrupted by User")
+        except Exception as e:
+            print(f"Broke: {e}")
+            traceback.print_exc()
         finally:
             # Cleanup
-            if self.config.multi_process:
-                print("Stopping workers...")
-                for w in self.workers:
-                    ray.kill(w)
-                print("All workers stopped")
+            self.shutdown()
 
         self.stats.set_time_elapsed(time.time() - start_time)
         print("Finished Training")
@@ -1375,6 +1401,8 @@ class MuZeroWorker(object):
         checkpoint_interval,
         device="cpu",
     ):
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
         torch.set_num_threads(1)
         self.config = config
         self.worker_id = worker_id
@@ -1430,7 +1458,11 @@ class MuZeroWorker(object):
                 print(f"Worker {self.worker_id}: Error loading weights (Float32): {e}")
 
             if self.config.compile:
-                self.inference_model = torch.compile(self.model)
+                if not hasattr(self, "compiled_model"):
+                    self.compiled_model = torch.compile(
+                        self.model, mode=self.config.compile_mode
+                    )
+                self.inference_model = self.compiled_model
             else:
                 self.inference_model = self.model
         elif self.training_step == 0:

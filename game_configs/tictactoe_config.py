@@ -1,7 +1,9 @@
 from .game_config import GameConfig
 import sys
 
-sys.path.append("../../")
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from wrappers import (
     ActionMaskInInfoWrapper,
     ChannelLastToFirstWrapper,

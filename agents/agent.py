@@ -226,9 +226,9 @@ class BaseAgent(ABC):
 
     # --- Checkpointing ---
     def load_optimizer_state(self, checkpoint):
-        if self.optimizer and "optimizer" in checkpoint:
+        if self.optimizer is not None and "optimizer" in checkpoint:
             self.optimizer.load_state_dict(checkpoint["optimizer"])
-        if self.lr_scheduler and "lr_scheduler" in checkpoint:
+        if self.lr_scheduler is not None and "lr_scheduler" in checkpoint:
             self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
 
     def load_replay_buffers(self, checkpoint):
@@ -236,7 +236,7 @@ class BaseAgent(ABC):
             self.replay_buffer = checkpoint["replay_buffer"]
 
     def load_model_weights(self, checkpoint):
-        if self.model and "model" in checkpoint:
+        if self.model is not None and "model" in checkpoint:
             self.model.load_state_dict(checkpoint["model"])
 
     def make_checkpoint_dict(self):
@@ -244,13 +244,13 @@ class BaseAgent(ABC):
             "training_step": self.training_step,
             "model_name": self.model_name,
         }
-        if self.optimizer:
+        if self.optimizer is not None:
             checkpoint["optimizer"] = self.optimizer.state_dict()
-        if self.lr_scheduler:
+        if self.lr_scheduler is not None:
             checkpoint["lr_scheduler"] = self.lr_scheduler.state_dict()
-        if self.replay_buffer:
+        if self.replay_buffer is not None:
             checkpoint["replay_buffer"] = self.replay_buffer
-        if self.model:
+        if self.model is not None:
             checkpoint["model"] = self.model.state_dict()
 
         # NOTE: We specifically DO NOT save the environment.

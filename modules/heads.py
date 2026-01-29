@@ -3,7 +3,7 @@ import torch
 from torch import nn, Tensor
 from modules.dense import build_dense
 from modules.network_block import NetworkBlock
-from modules.utils import zero_weights_initializer
+from modules.utils import zero_weights_initializer, initialize_module
 from agent_configs.base_config import Config
 
 
@@ -47,10 +47,10 @@ class BaseHead(nn.Module):
                 self.output_layer.apply(self.config.prob_layer_initializer)
             else:
                 self.output_layer.apply(zero_weights_initializer)
-        elif self.output_layer.initialize:
+        elif hasattr(self.output_layer, "initialize"):
             self.output_layer.initialize(initializer)
         else:
-            self.output_layer.apply(initializer)
+            initialize_module(self.output_layer, initializer)
 
     def reset_noise(self):
         if self.backbone.reset_noise:

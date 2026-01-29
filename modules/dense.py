@@ -4,25 +4,6 @@ import torch
 from torch import nn, Tensor, functional
 
 
-class Dense(nn.Module):
-    def __init__(
-        self, in_features: int, out_features: int, bias: bool = True, *args, **kwargs
-    ):
-        super(Dense, self).__init__(*args, **kwargs)
-        self.layer = nn.Linear(
-            in_features=in_features, out_features=out_features, bias=bias
-        )
-
-    def initialize(self, initializer: Callable[[Tensor], None]) -> None:
-        initializer(self.layer.weight)
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        return self.layer(inputs)
-
-    def extra_repr(self) -> str:
-        return self.layer.extra_repr()
-
-
 class NoisyDense(nn.Module):
     """See https://arxiv.org/pdf/1706.10295."""
 
@@ -118,7 +99,7 @@ class NoisyDense(nn.Module):
 
 def build_dense(in_features: int, out_features: int, sigma: float = 0):
     if sigma == 0:
-        return Dense(in_features, out_features)
+        return nn.Linear(in_features, out_features)
     else:
         return NoisyDense(in_features, out_features)
 

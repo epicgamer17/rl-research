@@ -1,6 +1,6 @@
 from typing import Callable
 from torch import Tensor
-from utils.utils import to_lists
+from utils.utils import to_lists, initialize_module
 from modules.conv import Conv2dStack
 
 from modules.dense import DenseStack, build_dense
@@ -101,6 +101,9 @@ class SupervisedNetwork(nn.Module):
             sigma=self.config.noisy_sigma,
         )
 
+        self.quant = torch.ao.quantization.QuantStub()
+        self.dequant = torch.ao.quantization.DeQuantStub()
+
     def initialize(self, initializer: Callable[[Tensor], None]) -> None:
         if self.has_residual_layers:
             self.residual_layers.initialize(initializer)
@@ -108,15 +111,16 @@ class SupervisedNetwork(nn.Module):
             self.conv_layers.initialize(initializer)
         if self.has_dense_layers:
             self.dense_layers.initialize(initializer)
-        self.output_layer.initialize(
-            initializer
+        initialize_module(
+            self.output_layer, initializer
         )  # OUTPUT LAYER TO IMPLIMENT INTIALIZING WITH CONSTANT OF 0.01
 
     def forward(self, inputs: Tensor):
         if self.has_conv_layers:
             assert inputs.dim() == 4
 
-        x = inputs
+        x = self.quant(inputs)
+
         if self.has_residual_layers:
             x: Tensor = self.residual_layers(x)
         # print(x.shape)
@@ -128,6 +132,7 @@ class SupervisedNetwork(nn.Module):
         if self.has_dense_layers:
             x: Tensor = self.dense_layers(x)
         x: Tensor = self.output_layer(x).view(-1, self.output_size)
+        x = self.dequant(x)
         return x.softmax(dim=-1)
 
     def reset_noise(self):

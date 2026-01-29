@@ -375,11 +375,6 @@ class Network(nn.Module):
             if isinstance(m, DenseStack):
                 for layer in m._layers:
                     if len(layer) == 2:
-                        from modules.dense import Dense
-
-                        if isinstance(layer[0], Dense):
-                            layer[0] = layer[0].layer
-
                         torch.ao.quantization.fuse_modules(
                             layer, ["0", "1"], inplace=True
                         )
