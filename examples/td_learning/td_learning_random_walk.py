@@ -26,7 +26,6 @@ NOTE: This is a simple almost tabular example of TD(lambda).
 """
 
 # TODO: dont inline the env/ or state-space logic into the functions/scripts, use a proper env or put it elsewhere so it can be reused.
-# TODO: should we use the existing functions for computing td error for value and stuff?
 
 import torch
 import numpy as np
@@ -36,7 +35,11 @@ from typing import List, Tuple
 from pathlib import Path
 
 from atomic_rl.envs.mdp.random_walk import RandomWalkEnv
-from atomic_rl.td import semi_gradient_td_update_, compute_accumulating_traces
+from atomic_rl.td import (
+    compute_v_td_target,
+    semi_gradient_td_update_,
+    compute_accumulating_traces,
+)
 
 
 # --- CONSTANTS ---
@@ -125,10 +128,17 @@ def random_walk_episode(
                 terminated=torch.tensor([False]),  # Only clear trace after episode
             ).squeeze(0)
 
-            # 3. Compute TD error and Apply semi-gradient Update
+            # 3. Compute TD target & error and Apply semi-gradient Update
             v_t = torch.dot(weights, phi_t)
-            v_next = torch.dot(weights, phi_next) * (1.0 - float(terminated))
-            td_error = reward + 1.0 * v_next - v_t
+            v_next = torch.dot(weights, phi_next)
+
+            td_target = compute_v_td_target(
+                next_values=v_next.unsqueeze(0),
+                rewards=torch.tensor([reward], dtype=torch.float32),
+                terminated=torch.tensor([terminated], dtype=torch.bool),
+                gamma=torch.tensor([1.0], dtype=torch.float32),
+            ).squeeze(0)
+            td_error = td_target - v_t
 
             semi_gradient_td_update_(
                 error=td_error,

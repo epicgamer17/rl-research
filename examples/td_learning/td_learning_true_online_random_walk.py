@@ -13,7 +13,11 @@ from typing import List, Tuple
 from pathlib import Path
 
 from atomic_rl.envs.mdp.random_walk import RandomWalkEnv
-from atomic_rl.td import true_online_td_update_, compute_true_online_traces
+from atomic_rl.td import (
+    compute_v_td_target,
+    true_online_td_update_,
+    compute_true_online_traces,
+)
 
 
 # --- CONSTANTS ---
@@ -68,8 +72,15 @@ def true_online_random_walk_episode(
             # 3. Compute and Apply True Online TD Update
             # Notice how v_old goes in, and the new v_next comes out to be used in the next step
             v_t = torch.dot(weights, phi_t)
-            v_next = torch.dot(weights, phi_next) * (1.0 - float(terminated))
-            td_error = torch.tensor(reward, dtype=torch.float32) + 1.0 * v_next - v_t
+            v_next = torch.dot(weights, phi_next)
+
+            td_target = compute_v_td_target(
+                next_values=v_next.unsqueeze(0),
+                rewards=torch.tensor([reward], dtype=torch.float32),
+                terminated=torch.tensor([terminated], dtype=torch.bool),
+                gamma=torch.tensor([1.0], dtype=torch.float32),
+            ).squeeze(0)
+            td_error = td_target - v_t
 
             true_online_td_update_(
                 error=td_error,

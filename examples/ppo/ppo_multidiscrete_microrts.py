@@ -343,7 +343,9 @@ for iteration in range(MAX_ITERATIONS):
                 old_log_probs=mb["logprobs"], new_log_probs=new_log_probs
             )
             mb_advantages = standardize_tensor(mb["advantages"])
-            pg_loss, pg_info = compute_clipped_surrogate_loss(ratio, mb_advantages, CLIP_COEF)
+            pg_loss, pg_info = compute_clipped_surrogate_loss(
+                ratio, mb_advantages, CLIP_COEF
+            )
 
             # 3. Value Loss
             critic_loss, _ = compute_clipped_mse_loss(
