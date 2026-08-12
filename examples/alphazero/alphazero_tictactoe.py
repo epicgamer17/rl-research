@@ -14,6 +14,8 @@ Single-Process Architecture:
       and updates network weights.
     - Evaluator: Periodically evaluates the model against a Random baseline in PettingZoo tictactoe_v3,
       logging metrics to W&B.
+
+    NOTE: Additional efficiency could be squeezed out during self-play by stepping environments using direct tensor operations (e.g. tictactoe_dynamics_fn) rather than PettingZoo AEC environments. However, in the interest of showcasing how PettingZoo environments can be used, and because AlphaZero is the main focus, we choose to showcase it.
 """
 
 import copy
@@ -234,7 +236,15 @@ class VectorizedSelfPlayCollector:
         num_simulations: int = NUM_MCTS_SIMULATIONS,
     ) -> torch.Tensor:
         completed_tds = []
-        obs_tensors, legal_mask_tensors, curr_player_list = [], [], []
+        root_embed = torch.empty(
+            (self.num_envs, 2, 3, 3), device=self.device, dtype=torch.float32
+        )
+        legal_masks = torch.empty(
+            (self.num_envs, 9), device=self.device, dtype=torch.bool
+        )
+        curr_players = torch.empty(
+            (self.num_envs,), device=self.device, dtype=torch.long
+        )
 
         for b_idx, env in enumerate(self.envs):
             obs, reward, term, trunc, _ = env.last()
@@ -260,21 +270,17 @@ class VectorizedSelfPlayCollector:
                 env.reset()
                 obs, reward, term, trunc, _ = env.last()
 
-            curr_player_list.append(get_agent_index(env))
-            obs_tensors.append(
-                torch.tensor(
-                    obs["observation"], device=self.device, dtype=torch.float32
+            curr_players[b_idx] = get_agent_index(env)
+            root_embed[b_idx].copy_(
+                torch.from_numpy(obs["observation"]).to(
+                    device=self.device, dtype=torch.float32
                 )
             )
-            legal_mask_tensors.append(
-                torch.tensor(obs["action_mask"], device=self.device, dtype=torch.bool)
+            legal_masks[b_idx].copy_(
+                torch.from_numpy(obs["action_mask"]).to(
+                    device=self.device, dtype=torch.bool
+                )
             )
-
-        root_embed = torch.stack(obs_tensors, dim=0)
-        legal_masks = torch.stack(legal_mask_tensors, dim=0)
-        curr_players = torch.tensor(
-            curr_player_list, device=self.device, dtype=torch.long
-        )
 
         action_probs = run_batched_mcts(
             actor_model,
@@ -298,7 +304,6 @@ class VectorizedSelfPlayCollector:
                 values=[TEMPERATURE_EXPLORATION, TEMPERATURE_EXPLOITATION],
             )
 
-
             if temp == 0.0:
                 action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
                 action_idx = action_idx_tensor.squeeze().item()
@@ -308,7 +313,7 @@ class VectorizedSelfPlayCollector:
                 action_idx = action_idx_t.item()
 
             self.trajectories[b_idx].append(
-                (root_embed[b_idx].cpu(), target_policy.cpu(), curr_player)
+                (root_embed[b_idx].clone().cpu(), target_policy.cpu(), curr_player)
             )
             env.step(action_idx)
 

@@ -15,7 +15,9 @@ Multiprocessing Architecture:
     - Evaluator Process: Periodically evaluates the shared model against a Random
       baseline in PettingZoo tictactoe_v3, logging metrics to W&B asynchronously.
 
-    NOTE: Although or MCTS is based on mctx, we use vector values for each player for rewards and values. This does two things. First and most important, it allows the MCTS to work on n-player games, cooperative or competitive. Second it is more inline with PettingZoo standards, which return a reward for each player, not a single scalar reward. For this example, we use the knowledge that Tic Tac Toe is zero sum, on another game you could avoid using that knowledge, and have the agent predict and learn multiple values and rewards for each state.
+    NOTE: Although our MCTS is based on mctx, we use vector values for each player for rewards and values. This does two things. First and most important, it allows the MCTS to work on n-player games, cooperative or competitive. Second it is more inline with PettingZoo standards, which return a reward for each player, not a single scalar reward. For this example, we use the knowledge that Tic Tac Toe is zero sum, on another game you could avoid using that knowledge, and have the agent predict and learn multiple values and rewards for each state.
+
+    NOTE: Additional efficiency could be squeezed out during self-play by stepping environments using direct tensor operations (e.g. tictactoe_dynamics_fn) rather than PettingZoo AEC environments. However, in the interest of showcasing how PettingZoo environments can be used, and because AlphaZero is the main focus, we choose to showcase it.
 """
 
 import random
@@ -254,7 +256,15 @@ def actor_worker(
             local_model.load_state_dict(shared_model.state_dict())
 
         completed_tds = []
-        obs_tensors, legal_mask_tensors, curr_player_list = [], [], []
+        root_embed = torch.empty(
+            (envs_per_actor, 2, 3, 3), device=device, dtype=torch.float32
+        )
+        legal_masks = torch.empty(
+            (envs_per_actor, 9), device=device, dtype=torch.bool
+        )
+        curr_players = torch.empty(
+            (envs_per_actor,), device=device, dtype=torch.long
+        )
 
         for b_idx, env in enumerate(envs):
             obs, reward, term, trunc, _ = env.last()
@@ -280,17 +290,17 @@ def actor_worker(
                 env.reset()
                 obs, reward, term, trunc, _ = env.last()
 
-            curr_player_list.append(get_agent_index(env))
-            obs_tensors.append(
-                torch.tensor(obs["observation"], device=device, dtype=torch.float32)
+            curr_players[b_idx] = get_agent_index(env)
+            root_embed[b_idx].copy_(
+                torch.from_numpy(obs["observation"]).to(
+                    device=device, dtype=torch.float32
+                )
             )
-            legal_mask_tensors.append(
-                torch.tensor(obs["action_mask"], device=device, dtype=torch.bool)
+            legal_masks[b_idx].copy_(
+                torch.from_numpy(obs["action_mask"]).to(
+                    device=device, dtype=torch.bool
+                )
             )
-
-        root_embed = torch.stack(obs_tensors, dim=0)
-        legal_masks = torch.stack(legal_mask_tensors, dim=0)
-        curr_players = torch.tensor(curr_player_list, device=device, dtype=torch.long)
 
         action_probs = run_batched_mcts(
             local_model,
@@ -314,7 +324,6 @@ def actor_worker(
                 values=[TEMPERATURE_EXPLORATION, TEMPERATURE_EXPLOITATION],
             )
 
-
             if temp == 0.0:
                 action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
                 action_idx = action_idx_tensor.squeeze().item()
@@ -324,7 +333,7 @@ def actor_worker(
                 action_idx = action_idx_t.item()
 
             trajectories[b_idx].append(
-                (root_embed[b_idx].cpu(), target_policy.cpu(), curr_player)
+                (root_embed[b_idx].clone().cpu(), target_policy.cpu(), curr_player)
             )
             env.step(action_idx)
 
