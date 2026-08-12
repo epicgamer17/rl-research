@@ -18,6 +18,8 @@ Multiprocessing Architecture:
     - 1 Async Evaluator Process: Periodically evaluates the shared model against
     both a Random baseline and a Perfect (negamax) opponent in the background,
     logging metrics to W&B asynchronously.
+
+    NOTE: Although or MCTS is based on mctx, we use vector values for each player for rewards and values. This does two things. First and most important, it allows the MCTS to work on n-player games, cooperative or competitive. Second it is more inline with PettingZoo standards, which return a reward for each player, not a single scalar reward. For this example, we use the knowledge that Tic Tac Toe is zero sum, on another game you could avoid using that knowledge, and have the agent predict and learn multiple values and rewards for each state.
 """
 
 import random
@@ -50,16 +52,17 @@ import wandb
 
 # TODO: use get_legal_action_mask
 # TODO: use argmax selector for evaluation
+# TODO: Update so that +1 always means canonically winning. So player 2 should not learn to predict -1 in winning positions like i think we do right now. We should correctly use the pettingzoo reward vector that is returned for the value of a state.
 # ---------------------------------------------------------------------------
 # Hyperparameters & Constants
 # ---------------------------------------------------------------------------
 TOTAL_TRAINING_STEPS = 20000
 NUM_ACTORS = 3
-ENVS_PER_ACTOR = 3  # 4 parallel vectorized environments per actor
+ENVS_PER_ACTOR = 3  # 3 parallel vectorized environments per actor
 MIN_BUFFER_SIZE = 64
 EVAL_INTERVAL_STEPS = 250
 PARAM_SYNC_INTERVAL = 100
-NUM_MCTS_SIMULATIONS = 50
+NUM_MCTS_SIMULATIONS = 25
 
 # MCTS PUCT Search Constants
 C_PUCT = 1.25
@@ -84,7 +87,7 @@ SEED = 42
 
 
 # ============================================================================
-# 1. Dual-Head AlphaZero ResNet Neural Network
+# 1. Dual-Head AlphaZero ResNet Neural Network (Scalar Value Head)
 # ============================================================================
 class TicTacToeNet(nn.Module):
     def __init__(
@@ -131,8 +134,6 @@ class TicTacToeNet(nn.Module):
 # ============================================================================
 # 2. Thread & Process-Safe Shared Replay Buffer
 # ============================================================================
-
-
 class SharedReplayBuffer:
     def __init__(self, capacity: int, shapes: Dict[str, Any], device: torch.device):
         self.buffer_state = init_buffer(capacity, shapes, device=device)
@@ -180,40 +181,63 @@ def apply_action_mask(logits: torch.Tensor, legal_mask: torch.Tensor) -> torch.T
 
 
 def create_recurrent_fn(local_model: nn.Module) -> Callable:
-    """Creates an mctx-compliant recurrent_fn for PyTorch MCTS."""
+    """Creates an N-player-compliant recurrent_fn for PyTorch MCTS."""
 
-    def recurrent_fn(
-        actions_taken: torch.Tensor, embeddings: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        # 1. Step environment dynamics (AlphaZero simulator or MuZero world model)
+    def recurrent_fn(actions_taken: torch.Tensor, embeddings: torch.Tensor) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        # 1. Step environment dynamics (reward_p0 is ALWAYS P0 absolute: +1 for P0 win, -1 for P1 win)
         (
             next_embed,
-            reward,
+            reward_p0,
             next_to_play,
             is_terminal,
             next_legal_mask,
         ) = tictactoe_dynamics_fn(embeddings, actions_taken)
 
-        # 2. Evaluate policy logits and value network predictions for the next state
+        # 2. Evaluate policy logits and scalar value prediction for next state
         with torch.no_grad():
             canonical_next = embeddings_to_canonical(next_embed)
-            logits, value = local_model(canonical_next)
+            logits, scalar_value = local_model(canonical_next)
 
-        # 3. Mask illegal actions for the internal child node using min_logit
+        # 3. Mask illegal actions
         masked_logits = apply_action_mask(logits, next_legal_mask)
 
-        # 4. Handle discounts and terminal states
-        # For alternating-turn zero-sum games: non-terminal discount is -1.0, terminal is 0.0
-        discount = torch.where(
-            is_terminal,
-            torch.zeros_like(reward),
-            -torch.ones_like(reward),
+        # 4. Value Conversion to Absolute [P0, P1]:
+        # scalar_value is canonical for next_to_play.
+        # If next_to_play == 0, v_p0 = scalar_value.
+        # If next_to_play == 1, v_p0 = -scalar_value.
+        v_p0 = torch.where(next_to_play == 0, scalar_value, -scalar_value)
+        value_vec = torch.stack([v_p0, -v_p0], dim=-1)
+
+        # Terminal nodes have 0 future value
+        value_vec = torch.where(
+            is_terminal.unsqueeze(-1), torch.zeros_like(value_vec), value_vec
         )
 
-        # 5. Zero out network value for terminal states (terminal nodes have no future return)
-        value = torch.where(is_terminal, torch.zeros_like(value), value)
+        # Reward Conversion to Absolute [P0, P1]:
+        reward_vec = torch.stack([reward_p0, -reward_p0], dim=-1)
 
-        return masked_logits, value, reward, discount, next_embed
+        # Discounts: 1.0 for non-terminal, 0.0 for terminal
+        discount_vec = torch.where(
+            is_terminal.unsqueeze(-1),
+            torch.zeros_like(reward_vec),
+            torch.ones_like(reward_vec),
+        )
+
+        return (
+            masked_logits,
+            value_vec,
+            reward_vec,
+            discount_vec,
+            next_embed,
+            next_to_play,
+        )
 
     return recurrent_fn
 
@@ -258,29 +282,36 @@ def actor_worker(
         root_embed[..., 1] = players.view(-1, 1, 1).expand(-1, 3, 3).float()
         legal_mask = boards.view(envs_per_actor, -1) == 0.0
 
-        # Root Model Prediction
+        # Root Model Prediction (Scalar Head)
         with torch.no_grad():
             canonical_x = embeddings_to_canonical(root_embed)
-            root_logits, root_value = local_model(canonical_x)
+            root_logits, root_scalar_value = local_model(canonical_x)
 
-        # Execute MCTS Search
+        # Map scalar value to vector [P0, P1] based on active player
+        # Convert root_scalar_value (acting player perspective) to P0 perspective
+        v_p0_root = torch.where(players == 0, root_scalar_value, -root_scalar_value)
+        root_vector_value = torch.stack([v_p0_root, -v_p0_root], dim=-1)
+
+        # Execute N-Player MCTS Search
         search_action, action_probs, tree = mcts_search(
             root_embeddings=root_embed,
             root_logits=root_logits,
-            root_value=root_value,
+            root_value=root_vector_value,
+            root_to_play=players,
             recurrent_fn=recurrent_fn,
             num_simulations=num_simulations,
             num_actions=9,
+            num_players=2,
             legal_mask=legal_mask,
             dirichlet_epsilon=DIRICHLET_EPSILON,
             dirichlet_alpha=DIRICHLET_ALPHA,
             pb_c_init=C_PUCT,
-            temperature=1.0,  # Keeps target policy distributions smooth
+            temperature=1.0,
         )
 
         completed_samples = []
 
-        # Step each env in the search batch forward
+        # Step each env forward
         for b_idx in range(envs_per_actor):
             move_counts[b_idx] += 1
             curr_player = players[b_idx].item()
@@ -411,15 +442,23 @@ def evaluator_worker(
 
                     with torch.no_grad():
                         canonical_x = embeddings_to_canonical(root_embed)
-                        root_logits, root_value = local_model(canonical_x)
+                        root_logits, root_scalar_value = local_model(canonical_x)
+
+                    player_t = torch.tensor([player], device=device, dtype=torch.long)
+                    v_p0_root = torch.where(
+                        player_t == 0, root_scalar_value, -root_scalar_value
+                    )
+                    root_vector_value = torch.stack([v_p0_root, -v_p0_root], dim=-1)
 
                     search_action, action_probs, tree = mcts_search(
                         root_embeddings=root_embed,
                         root_logits=root_logits,
-                        root_value=root_value,
+                        root_value=root_vector_value,
+                        root_to_play=player_t,
                         recurrent_fn=recurrent_fn,
                         num_simulations=NUM_MCTS_SIMULATIONS,
                         num_actions=9,
+                        num_players=2,
                         legal_mask=action_mask.unsqueeze(0),
                         dirichlet_epsilon=0.0,
                         pb_c_init=C_PUCT,
@@ -567,8 +606,6 @@ def learner_worker(
 # ============================================================================
 # 4. Main Multiprocessing Setup
 # ============================================================================
-
-
 def model_creator_fn() -> TicTacToeNet:
     return TicTacToeNet(num_filters=NUM_FILTERS, num_res_blocks=NUM_RES_BLOCKS)
 

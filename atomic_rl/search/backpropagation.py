@@ -22,9 +22,11 @@ def backpropagate_(
     Args:
         tree: The MCTS tree TensorDict matching mctx structure.
         trajectory: List of (node_idx, action_idx, mask) tuples from root down to leaf.
-        leaf_value: The predicted value of the leaf node [B].
+        leaf_value: The predicted value of the leaf node [B, num_players].
     """
+    # TODO: I think this is still okay for n players. But double check
     batch_size = tree.batch_size[0]
+    num_players = tree["node_values"].shape[-1]
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
 
@@ -33,15 +35,16 @@ def backpropagate_(
         f"tree node buffers must be flat [B, N], got shape "
         f"{tuple(tree['node_visits'].shape)}"
     )
-    assert leaf_value.shape == (batch_size,), (
-        f"leaf_value shape mismatch: expected [{batch_size}], got {tuple(leaf_value.shape)}"
-    )
+    assert leaf_value.shape == (
+        batch_size,
+        num_players,
+    ), f"leaf_value shape mismatch: expected [{batch_size}, {num_players}], got {tuple(leaf_value.shape)}"
 
     # Running return starts at the evaluated leaf node value.
     # The leaf node itself was initialized by expand_node_ (node_visits=1,
     # node_values=raw value), matching mctx's update_tree_node, so backprop does
     # not touch it again.
-    running_value = leaf_value.clone()
+    running_value = leaf_value.clone()  # [B, num_players]
 
     # Iterate backwards through trajectory (leaf -> root)
     for node_idx, action_idx, mask in reversed(trajectory):
@@ -52,37 +55,59 @@ def backpropagate_(
         if b_idx.numel() == 0:
             continue
 
-        # Fetch child node id for the transition (n_idx, a_idx); -1 if the edge
-        # has not been expanded this simulation (e.g. terminal lanes).
-        child_idx = tree["children_index"][b_idx, n_idx, a_idx]
-        has_child = child_idx >= 0
+        # NOTE: Removed for vectorized. Is this correct?
+        # # Fetch child node id for the transition (n_idx, a_idx); -1 if the edge
+        # # has not been expanded this simulation (e.g. terminal lanes).
+        # child_idx = tree["children_index"][b_idx, n_idx, a_idx]
+        # has_child = child_idx >= 0
 
-        if has_child.any():
-            cb_idx = b_idx[has_child]
-            cn_idx = n_idx[has_child]
-            ca_idx = a_idx[has_child]
-            cc_idx = child_idx[has_child]
+        # if has_child.any():
+        #     cb_idx = b_idx[has_child]
+        #     cn_idx = n_idx[has_child]
+        #     ca_idx = a_idx[has_child]
+        #     cc_idx = child_idx[has_child]
 
-            # Store the child node value on the edge (mctx semantics), so that
-            # get_qvalues computes Q(s, a) = reward + discount * V(s').
-            tree["children_values"][cb_idx, cn_idx, ca_idx] = tree["node_values"][
-                cb_idx, cc_idx
-            ]
+        #     # Store the child node value on the edge (mctx semantics), so that
+        #     # get_qvalues computes Q(s, a) = reward + discount * V(s').
+        #     tree["children_values"][cb_idx, cn_idx, ca_idx] = tree["node_values"][
+        #         cb_idx, cc_idx
+        #     ]
 
         # Fetch reward and discount for transition from (n_idx, a_idx)
-        rewards = tree["children_rewards"][b_idx, n_idx, a_idx]
-        discounts = tree["children_discounts"][b_idx, n_idx, a_idx]
+        rewards = tree["children_rewards"][
+            b_idx, n_idx, a_idx
+        ]  # [b_active, num_players]
+        discounts = tree["children_discounts"][
+            b_idx, n_idx, a_idx
+        ]  # [b_active, num_players]
 
         # Accumulate return for parent node s_t: G_t = R_t + discount_t * G_{t+1}
-        step_return = rewards + discounts * running_value[b_idx]
+        step_return = (
+            rewards + discounts * running_value[b_idx]
+        )  # [b_active, num_players]
         running_value[b_idx] = step_return
 
         # Update parent node (s_t) statistics (includes Root node at t=0)
         tree["node_visits"][b_idx, n_idx] += 1
-        n_visits = tree["node_visits"][b_idx, n_idx].to(tree["node_values"].dtype)
+        n_visits = (
+            tree["node_visits"][b_idx, n_idx]
+            .unsqueeze(-1)
+            .to(tree["node_values"].dtype)
+        )
 
         old_node_v = tree["node_values"][b_idx, n_idx]
         tree["node_values"][b_idx, n_idx] += (step_return - old_node_v) / n_visits
 
         # Update child edge (s_t, a_t) visit statistics
         tree["children_visits"][b_idx, n_idx, a_idx] += 1
+        c_visits = (
+            tree["children_visits"][b_idx, n_idx, a_idx]
+            .unsqueeze(-1)
+            .to(tree["node_values"].dtype)
+        )  # [B_active, 1]
+
+        # For vectorized
+        old_edge_q = tree["children_values"][b_idx, n_idx, a_idx]  # [B_active, P]
+        tree["children_values"][b_idx, n_idx, a_idx] += (
+            step_return - old_edge_q
+        ) / c_visits

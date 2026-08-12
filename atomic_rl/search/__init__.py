@@ -2,6 +2,8 @@
 
 # TODO: basically make this a pytorch port of mctx. Leave it at that, maybe change the api a little to match the library, but functionally, and function wise just port it.
 
+# TODO:URGENT/MAJOR: Don't force cananonical values in MCTS
+
 from .backpropagation import backpropagate_
 from .expansion import expand_node_
 from .policies import get_mcts_visit_policy
@@ -13,3 +15,7 @@ from .qtransforms import (
 from .search import mcts_search
 from .selection import puct_score, select_leaf
 from .tree import init_mcts_tree
+
+"""
+Our MCTS implementation is essenitally a rewrite of mctx, https://github.com/google-deepmind/mctx but in PyTorch. We have however added additional features, with more planned in the future. Those include n-player game functionality and sampled muzero functionality.
+"""

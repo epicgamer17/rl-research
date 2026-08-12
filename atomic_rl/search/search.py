@@ -22,19 +22,22 @@ from .policies import get_mcts_visit_policy
 def mcts_search(
     root_embeddings: torch.Tensor,
     root_logits: torch.Tensor,
-    root_value: torch.Tensor,
+    root_value: torch.Tensor,  # [B, num_players]
+    root_to_play: torch.Tensor,  # [B]
     recurrent_fn: Callable[
         [torch.Tensor, torch.Tensor],
         Tuple[
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
+            torch.Tensor,  # logits: [B, num_actions]
+            torch.Tensor,  # value: [B, num_players]
+            torch.Tensor,  # reward: [B, num_players]
+            torch.Tensor,  # discount: [B, num_players]
+            torch.Tensor,  # next_embeddings: [B, D...]
+            torch.Tensor,  # next_to_play: [B]
         ],
     ],
     num_simulations: int,
     num_actions: int,
+    num_players: int,
     *,
     legal_mask: Optional[torch.Tensor] = None,
     qtransform: Callable = qtransform_by_parent_and_siblings,
@@ -44,7 +47,7 @@ def mcts_search(
     pb_c_init: float = 1.25,
     temperature: float = 1.0,
 ) -> Tuple[torch.Tensor, torch.Tensor, TensorDict]:
-    """Runs batched MuZero MCTS search matching mctx semantics."""
+    """Runs batched N-player MuZero MCTS search matching mctx semantics."""
     device = root_embeddings.device
     assert (
         isinstance(num_simulations, int)
@@ -54,40 +57,43 @@ def mcts_search(
     assert (
         isinstance(num_actions, int) and not isinstance(num_actions, bool)
     ) and num_actions >= 1, f"num_actions must be an int >= 1, got {num_actions!r}"
-    assert dirichlet_epsilon >= 0, f"dirichlet_epsilon must be >= 0, got {dirichlet_epsilon}"
+    assert (
+        isinstance(num_players, int) and num_players >= 1
+    ), f"num_players must be an int >= 1, got {num_players!r}"
+    assert (
+        dirichlet_epsilon >= 0
+    ), f"dirichlet_epsilon must be >= 0, got {dirichlet_epsilon}"
     assert dirichlet_alpha >= 0, f"dirichlet_alpha must be >= 0, got {dirichlet_alpha}"
     assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
     assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
     assert temperature >= 0, f"temperature must be >= 0, got {temperature}"
-    assert root_embeddings.ndim >= 2, (
-        f"root_embeddings must be at least 2D [B, D...], got shape "
-        f"{tuple(root_embeddings.shape)}"
-    )
+
+    assert (
+        root_embeddings.ndim >= 2
+    ), f"root_embeddings must be at least 2D [B, D...], got shape {tuple(root_embeddings.shape)}"
     batch_size = root_embeddings.shape[0]
+
     assert root_logits.shape == (batch_size, num_actions), (
         f"root_logits shape mismatch: expected [{batch_size}, {num_actions}], "
         f"got {tuple(root_logits.shape)}"
     )
-    assert root_value.shape == (batch_size,), (
-        f"root_value shape mismatch: expected [{batch_size}], got {tuple(root_value.shape)}"
+    assert root_value.shape == (batch_size, num_players), (
+        f"root_value shape mismatch: expected [{batch_size}, {num_players}], "
+        f"got {tuple(root_value.shape)}"
     )
+    assert root_to_play.shape == (
+        batch_size,
+    ), f"root_to_play shape mismatch: expected [{batch_size}], got {tuple(root_to_play.shape)}"
+
     if legal_mask is not None:
         assert legal_mask.shape == (batch_size, num_actions), (
             f"legal_mask shape mismatch: expected [{batch_size}, {num_actions}], "
             f"got {tuple(legal_mask.shape)}"
         )
-    assert root_logits.device == root_embeddings.device, (
-        f"root_logits device {root_logits.device} does not match "
-        f"root_embeddings device {root_embeddings.device}"
-    )
-    assert root_value.device == root_embeddings.device, (
-        f"root_value device {root_value.device} does not match "
-        f"root_embeddings device {root_embeddings.device}"
-    )
 
     batch_range = torch.arange(batch_size, device=device)
 
-    # 1. Apply Dirichlet noise to root logits if enabled (Masking is handled inside init_mcts_tree)
+    # 1. Apply Dirichlet noise to root logits
     curr_root_logits = root_logits.clone()
     if dirichlet_epsilon > 0.0:
         curr_root_logits = add_dirichlet_noise(
@@ -97,13 +103,15 @@ def mcts_search(
             mask=legal_mask,
         )
 
-    # 2. Initialize Tree State
+    # 2. Initialize N-Player Tree State
     tree = init_mcts_tree(
         root_embeddings=root_embeddings,
         root_logits=curr_root_logits,
         root_value=root_value,
+        root_to_play=root_to_play,
         num_simulations=num_simulations,
         num_actions=num_actions,
+        num_players=num_players,
         legal_mask=legal_mask,
     )
 
@@ -120,15 +128,11 @@ def mcts_search(
         if not trajectory:
             break
 
-        # Only lanes that found a fresh leaf need to evaluate the model and expand.
-        # Lanes that stopped at a terminal node must not call the recurrent function
-        # with a stale action; their backup value is their stored node value (0.0 for
-        # terminal nodes), which is anyway nullified by the terminal discount of 0.0.
         b_idx = batch_range[expansion_mask]
-        leaf_value = tree["node_values"].new_zeros(batch_size)
+        leaf_value = tree["node_values"].new_zeros(batch_size, num_players)
 
         if b_idx.numel() > 0:
-            # B. Model Dynamics Step (subset of batch that is actually expanding)
+            # B. Model Dynamics Step
             parent_embeddings = tree["embeddings"][b_idx, leaf_parents[b_idx]]
             (
                 prior_logits,
@@ -136,23 +140,29 @@ def mcts_search(
                 reward,
                 discount,
                 next_embeddings,
+                next_to_play,
             ) = recurrent_fn(leaf_actions[b_idx], parent_embeddings)
+
             leaf_value[b_idx] = value
 
-            # Scatter the model outputs back into full-batch buffers; expand_node_
-            # expects full-batch arrays and filters them internally via `masks`.
+            # Scatter model outputs into full-batch arrays
             prior_logits_full = root_logits.new_zeros(batch_size, num_actions)
-            value_full = tree["node_values"].new_zeros(batch_size)
-            reward_full = tree["children_rewards"].new_zeros(batch_size)
-            discount_full = tree["children_discounts"].new_zeros(batch_size)
+            value_full = tree["node_values"].new_zeros(batch_size, num_players)
+            reward_full = tree["children_rewards"].new_zeros(batch_size, num_players)
+            discount_full = tree["children_discounts"].new_zeros(
+                batch_size, num_players
+            )
             next_embeddings_full = root_embeddings.new_zeros(
                 (batch_size, *root_embeddings.shape[1:])
             )
+            players_full = tree["to_play"].new_zeros(batch_size)
+
             prior_logits_full[b_idx] = prior_logits
             value_full[b_idx] = value
             reward_full[b_idx] = reward
             discount_full[b_idx] = discount
             next_embeddings_full[b_idx] = next_embeddings
+            players_full[b_idx] = next_to_play
 
             # C. Expansion Phase
             expand_node_(
@@ -164,6 +174,7 @@ def mcts_search(
                 rewards=reward_full,
                 discounts=discount_full,
                 next_embeddings=next_embeddings_full,
+                players=players_full,
                 legal_mask=None,
                 masks=expansion_mask,
             )

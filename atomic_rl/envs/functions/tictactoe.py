@@ -40,6 +40,7 @@ def check_tictactoe_winner(board: torch.Tensor) -> Tuple[torch.Tensor, torch.Ten
     return winner, is_terminal
 
 
+# TODO: make this output more pettingzoo esc (vectors for n-player search and stuff, instead of always p0 perspective). A good position should always be evaluated with a +
 def tictactoe_dynamics_fn(
     embeddings: torch.Tensor, actions_taken: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -98,12 +99,9 @@ def tictactoe_dynamics_fn(
 
     winner, is_terminal = check_tictactoe_winner(board)
 
-    p0_win_reward = torch.where(current_player == 0, 1.0, -1.0)
-    p1_win_reward = torch.where(current_player == 1, 1.0, -1.0)
-
-    reward = embeddings.new_zeros(batch_size)
-    reward = torch.where(winner == 1.0, p0_win_reward, reward)
-    reward = torch.where(winner == -1.0, p1_win_reward, reward)
+    # ABSOLUTE REWARD FROM P0 PERSPECTIVE:
+    # +1.0 if P0 won, -1.0 if P1 won, 0.0 otherwise.
+    reward_p0 = winner.clone()
 
     next_to_play = 1 - current_player
 
@@ -113,7 +111,7 @@ def tictactoe_dynamics_fn(
 
     next_legal_mask = board.view(batch_size, -1) == 0
 
-    return next_embeddings, reward, next_to_play, is_terminal, next_legal_mask
+    return next_embeddings, reward_p0, next_to_play, is_terminal, next_legal_mask
 
 
 def get_canonical_obs(board_3x3: torch.Tensor, player: int) -> torch.Tensor:

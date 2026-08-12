@@ -28,12 +28,12 @@ def puct_score(
         f"tree node buffers must be flat [B, N], got shape "
         f"{tuple(tree['node_visits'].shape)}"
     )
-    assert parent_nodes.shape == (batch_size,), (
-        f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
-    )
-    assert isinstance(depth, int) and depth >= 0, (
-        f"depth must be a non-negative int, got {depth!r}"
-    )
+    assert parent_nodes.shape == (
+        batch_size,
+    ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    assert (
+        isinstance(depth, int) and depth >= 0
+    ), f"depth must be a non-negative int, got {depth!r}"
     assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
     assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
 
@@ -57,6 +57,7 @@ def puct_score(
     )
 
     # 3. Compute transformed Q-value score
+    # NOTE: qtransform does the slicing for player, so return is [B, num_actions] (i think thats right?)
     value_score = qtransform(tree, parent_nodes)  # [B, num_actions]
 
     # 4. Add tiny uniform noise for tie breaking (matches mctx)
@@ -106,9 +107,9 @@ def select_leaf(
         f"tree node buffers must be flat [B, N], got shape "
         f"{tuple(tree['node_visits'].shape)}"
     )
-    assert isinstance(max_depth, int) and max_depth >= 1, (
-        f"max_depth must be an int >= 1, got {max_depth!r}"
-    )
+    assert (
+        isinstance(max_depth, int) and max_depth >= 1
+    ), f"max_depth must be an int >= 1, got {max_depth!r}"
     assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
     assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
 

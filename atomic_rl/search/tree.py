@@ -8,8 +8,10 @@ def init_mcts_tree(
     root_embeddings: torch.Tensor,
     root_logits: torch.Tensor,
     root_value: torch.Tensor,
+    root_to_play: torch.Tensor,
     num_simulations: int,
     num_actions: int,
+    num_players: int = 2,
     legal_mask: Optional[torch.Tensor] = None,  # [B, num_actions] True for legal
 ) -> TensorDict:
     """Initializes the MCTS tree structure as a TensorDict matching mctx semantics.
@@ -20,6 +22,7 @@ def init_mcts_tree(
         root_value: Initial value estimate at the root [B]
         num_simulations: Number of simulations to perform.
         num_actions: Number of possible actions.
+        num_players: Number of players. Used for slicing rewards, discounts and values for n-player games (more than 2).
         legal_mask: Boolean mask of legal actions at root [B, num_actions]
 
     Returns:
@@ -44,7 +47,8 @@ def init_mcts_tree(
     )
     assert root_value.shape == (
         batch_size,
-    ), f"root_value shape mismatch: expected [{batch_size}], got {tuple(root_value.shape)}"
+        num_players,
+    ), f"root_value shape mismatch: expected [{batch_size, num_players}], got {tuple(root_value.shape)}"
     if legal_mask is not None:
         assert legal_mask.shape == (batch_size, num_actions), (
             f"legal_mask shape mismatch: expected [{batch_size}, {num_actions}], "
@@ -60,10 +64,10 @@ def init_mcts_tree(
                 (batch_size, max_nodes), dtype=torch.long
             ),
             "raw_values": root_embeddings.new_zeros(
-                (batch_size, max_nodes), dtype=torch.float32
+                (batch_size, max_nodes, num_players), dtype=torch.float32
             ),
             "node_values": root_embeddings.new_zeros(
-                (batch_size, max_nodes), dtype=torch.float32
+                (batch_size, max_nodes, num_players), dtype=torch.float32
             ),
             # NO_PARENT initialized to -1
             "parents": root_embeddings.new_full(
@@ -83,17 +87,20 @@ def init_mcts_tree(
                 (batch_size, max_nodes, num_actions), dtype=torch.long
             ),
             "children_rewards": root_embeddings.new_zeros(
-                (batch_size, max_nodes, num_actions)
+                (batch_size, max_nodes, num_actions, num_players), dtype=torch.float32
             ),
             "children_discounts": root_embeddings.new_ones(
-                (batch_size, max_nodes, num_actions)
+                (batch_size, max_nodes, num_actions, num_players), dtype=torch.float32
             ),
             "children_values": root_embeddings.new_zeros(
-                (batch_size, max_nodes, num_actions)
+                (batch_size, max_nodes, num_actions, num_players), dtype=torch.float32
             ),
             # Model & Environment States
             "embeddings": root_embeddings.new_zeros(
                 (batch_size, max_nodes, *root_embeddings.shape[1:])
+            ),
+            "to_play": root_embeddings.new_zeros(
+                (batch_size, max_nodes), dtype=torch.long
             ),
             "is_terminal": root_embeddings.new_zeros(
                 (batch_size, max_nodes), dtype=torch.bool
@@ -122,6 +129,8 @@ def init_mcts_tree(
     tree["embeddings"][:, 0] = root_embeddings
     tree["raw_values"][:, 0] = root_value
     tree["node_values"][:, 0] = root_value
+    tree["to_play"][:, 0] = root_to_play
+    tree["is_terminal"][:, 0] = False
     tree["children_prior_logits"][:, 0] = masked_root_logits
 
     return tree

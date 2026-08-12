@@ -4,7 +4,9 @@ from tensordict import TensorDict
 from typing import Union
 
 
-def get_qvalues(tree: TensorDict, parent_nodes: torch.Tensor) -> torch.Tensor:
+def get_qvalues(
+    tree: TensorDict, parent_nodes: torch.Tensor, active_players: torch.Tensor
+) -> torch.Tensor:
     """Computes Q-values for parent_nodes matching mctx.Tree.qvalues().
 
     Q(s, a) = rewards(s, a) + discounts(s, a) * V(s')
@@ -16,11 +18,21 @@ def get_qvalues(tree: TensorDict, parent_nodes: torch.Tensor) -> torch.Tensor:
         batch_size,
     ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
 
-    rewards = tree["children_rewards"][batch_range, parent_nodes]
-    discounts = tree["children_discounts"][batch_range, parent_nodes]
-    values = tree["children_values"][batch_range, parent_nodes]
+    # Fetch N-player tensors
+    rewards = tree["children_rewards"][batch_range, parent_nodes]  # [B, num_actions, P]
+    discounts = tree["children_discounts"][
+        batch_range, parent_nodes
+    ]  # [B, num_actions, P]
+    values = tree["children_values"][batch_range, parent_nodes]  # [B, num_actions, P]
 
-    return rewards + discounts * values
+    # Compute vector Q-values for all players: [B, num_actions, P]
+    q_vec = rewards + discounts * values
+
+    # Slice for the acting player p at each batch element -> [B, num_actions]
+    p_idx = active_players.view(-1, 1, 1).expand(-1, q_vec.shape[1], 1)
+    q_active = q_vec.gather(2, p_idx).squeeze(-1)
+
+    return q_active
 
 
 def _format_bound(
@@ -36,13 +48,14 @@ def _format_bound(
     return val
 
 
-def qtransform_identity(tree, parent_nodes):
+def qtransform_identity(tree: TensorDict, parent_nodes: torch.Tensor) -> torch.Tensor:
     """AlphaZero/AlphaGo Zero: raw mean-action Q(s,a)=reward+discount*V(s'); no normalization."""
-    return get_qvalues(tree, parent_nodes)
+    batch_range = torch.arange(tree.batch_size[0], device=tree.device)
+    active_players = tree["to_play"][batch_range, parent_nodes]
+    return get_qvalues(tree, parent_nodes, active_players)
 
 
 # TODO: soft min max stats? efficient_zero.pdf
-# TODO: change interface to be more like mctx? where this takes in a tree? or should we just add a visit_count?
 def qtransform_by_min_max(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
@@ -60,6 +73,8 @@ def qtransform_by_min_max(
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
+    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
+
     assert parent_nodes.shape == (
         batch_size,
     ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
@@ -71,7 +86,7 @@ def qtransform_by_min_max(
     ), f"max_value must be scalar or [B], got shape {tuple(max_value.shape)}"
 
     # Extract Q-values and visit counts for candidate actions: [B, A]
-    qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
+    qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
 
     min_val = _format_bound(min_value, qvalues)
@@ -87,6 +102,7 @@ def qtransform_by_min_max(
     return normalized
 
 
+# TODO: should q transforms slice for player or should the slicing be done after? I think they need to slice for the player internally
 def qtransform_by_parent_and_siblings(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
@@ -102,13 +118,16 @@ def qtransform_by_parent_and_siblings(
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
+    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
+
     assert parent_nodes.shape == (
         batch_size,
     ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
 
-    qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
+    qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
-    node_value = tree["node_values"][batch_range, parent_nodes].unsqueeze(-1)  # [B, 1]
+    node_values_vec = tree["node_values"][batch_range, parent_nodes]  # [B, P]
+    node_value = node_values_vec.gather(1, active_players.unsqueeze(-1))  # [B, 1]
 
     # Safe Q-values: unvisited actions take parent node_value
     safe_qvalues = torch.where(visit_counts > 0, qvalues, node_value)
@@ -144,13 +163,16 @@ def qtransform_completed_by_mix_value(
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
 
+    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
+
     assert parent_nodes.shape == (
         batch_size,
     ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
 
-    qvalues = get_qvalues(tree, parent_nodes)  # [B, A]
+    qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
-    raw_value = tree["raw_values"][batch_range, parent_nodes]  # [B]
+    raw_value_vec = tree["raw_values"][batch_range, parent_nodes]  # [B, P]
+    raw_value = raw_value_vec.gather(1, active_players.unsqueeze(-1)).squeeze(-1)  # [B]
     prior_logits = tree["children_prior_logits"][batch_range, parent_nodes]  # [B, A]
     prior_probs = F.softmax(prior_logits, dim=-1)  # [B, A]
 

@@ -112,3 +112,25 @@ TODO: in the readme, for features or examples with interactive demos on my websi
 Direct Call to Action: At the bottom or top of your README, kindly remind visitors: "If you find this project useful or are using its implementations, please consider giving it a 🌟 to support development!"
 
 TODO standardize naming convention in the search sub library. what is plural and what is not
+
+Optimization 1: Optimize get_qvalues with Advanced Indexing
+Replace .gather() with direct PyTorch 2D advanced indexing, which avoids the overhead of .expand() and .gather():
+
+Python
+# SLOW:
+p_idx = active_players.view(-1, 1, 1).expand(-1, q_vec.shape[1], 1)
+q_active = q_vec.gather(2, p_idx).squeeze(-1)
+
+# FAST (Direct 2D Indexing):
+q_active = q_vec[batch_range[:, None], torch.arange(q_vec.shape[1], device=tree.device), active_players[:, None]]
+Optimization 2: Avoid torch.stack in recurrent_fn
+Avoid torch.stack inside recurrent_fn by pre-allocating or writing directly into a 2D buffer:
+
+Python
+# FAST (In-place array assignment without stack allocations):
+value_vec = scalar_value.unsqueeze(-1).repeat(1, 2)
+value_vec[:, 1] *= -1.0
+# If player 1 is active, flip signs:
+value_vec = torch.where((next_to_play == 0).unsqueeze(-1), value_vec, -value_vec)
+
+URGENT/MAJOR: Don't force cananonical values in MCTS
