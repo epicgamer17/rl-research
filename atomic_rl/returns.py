@@ -182,7 +182,7 @@ def compute_td_lambda_returns(
     values: torch.Tensor,
     next_values: torch.Tensor,
     gamma: float,
-    lam: float,
+    gae_lambda: float,
 ) -> torch.Tensor:
     """
     Computes TD(lambda) returns.
@@ -195,6 +195,7 @@ def compute_td_lambda_returns(
         Note: The returned tensor is not explicitly detached.
     """
     advantages = compute_gae(
-        rewards, terminated, truncated, values, next_values, gamma, lam
+        rewards, terminated, truncated, values, next_values, gamma, gae_lambda
     )
     return advantages + values.detach()
+

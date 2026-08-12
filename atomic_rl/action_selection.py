@@ -10,7 +10,7 @@ import torch.nn.functional as F
 #   implemented there — consult it when aligning behavior with the released code.
 
 
-def expected_value(predictions: torch.Tensor, support: torch.Tensor) -> torch.Tensor:
+def compute_expected_value(predictions: torch.Tensor, support: torch.Tensor) -> torch.Tensor:
     """
     Calculate expected values from a categorical distribution over a support.
 
@@ -191,7 +191,7 @@ def apply_action_mask(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return torch.where(
         mask_bool,
         logits,
-        torch.tensor(-1e8, device=logits.device, dtype=logits.dtype),
+        logits.new_tensor(-1e8),
     )
 
 
@@ -210,7 +210,7 @@ def compute_masked_entropy(
     p_log_p = torch.where(
         mask_bool,
         p_log_p,
-        torch.tensor(0.0, device=logits.device, dtype=logits.dtype),
+        logits.new_zeros(()),
     )
     return -p_log_p.sum(dim=-1)
 

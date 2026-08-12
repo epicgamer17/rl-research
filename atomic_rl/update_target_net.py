@@ -1,8 +1,11 @@
+"""
+Target Network Parameter Update Utilities.
+
+Stateful in-place functions for soft (EMA) and hard updating target network weights.
+"""
+
 import torch
 import torch.nn as nn
-import numpy as np
-from typing import Any, Optional, Tuple, Callable
-from .utils import ema_update
 
 
 # NOTE: This is a stateful function which is not ideal for the functional paradigm but follows standard pytorch and ml conventions.
@@ -18,9 +21,14 @@ def soft_update_target_network_(
         target_model (nn.Module): The target network to update.
         tau (float): The soft update coefficient.
     """
+    assert 0.0 <= tau <= 1.0, f"tau must be in [0, 1], got {tau}"
     with torch.no_grad():
         for target_param, param in zip(target_model.parameters(), model.parameters()):
-            target_param.copy_(ema_update(target_param, param, tau))
+            assert (
+                target_param.shape == param.shape
+            ), f"Parameter shape mismatch: {target_param.shape} vs {param.shape}"
+            # TODO: why not             target_param.copy_(ema_update(target_param, param, tau))? Is this not cleaner?
+            target_param.copy_((1.0 - tau) * target_param + tau * param)
 
 
 # NOTE: This is a stateful function which is not ideal for the functional paradigm but follows standard pytorch and ml conventions.

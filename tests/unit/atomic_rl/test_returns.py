@@ -463,7 +463,7 @@ def test_td_lambda_returns():
         values=values,
         next_values=next_values,
         gamma=gamma,
-        lam=lam,
+        gae_lambda=lam,
     )
 
     expected = torch.tensor([[3.61, 2.0]])
