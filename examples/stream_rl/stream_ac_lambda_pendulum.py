@@ -308,8 +308,9 @@ for step in range(MAX_STEPS):
             return_buffer.pop(0)
 
         explained_var = compute_explained_variance(
-            np.array(return_buffer), np.array(value_buffer)
-        )
+            torch.tensor(return_buffer, device=device),
+            torch.tensor(value_buffer, device=device),
+        ).item()
 
         wandb.log(
             {

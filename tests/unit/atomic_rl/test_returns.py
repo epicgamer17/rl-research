@@ -426,8 +426,8 @@ def test_gae_assertions():
             gae_lambda=0.95,
         )
 
-    # Dimensionality mismatch (1D input)
-    with pytest.raises(AssertionError, match="Expected at least 2D rewards"):
+    # Dimensionality mismatch (1D input with default time_dim=1)
+    with pytest.raises(AssertionError, match="is out of bounds"):
         compute_gae(
             rewards=torch.randn(4),
             terminated=torch.randn(4),
@@ -519,6 +519,21 @@ def test_returns_shape_mismatch_assertion():
     with pytest.raises(AssertionError, match="Exact shape mismatch"):
         compute_gae(r, t, t, v_bad, r, gamma=0.99, gae_lambda=0.95)
 
-    with pytest.raises(AssertionError, match="Exact shape mismatch"):
-        compute_n_step_returns(r, t, t, v_bad, r, gamma=0.99, n=2)
+
+def test_returns_custom_time_dim():
+    """Verify that return functions support custom time_dim (e.g. time_dim=0 for [T] trajectories)."""
+    T = 5
+    r = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0])
+    t = torch.zeros(T)
+    v = torch.tensor([0.5, 0.5, 0.5, 0.5, 0.5])
+    nv = torch.tensor([0.5, 0.5, 0.5, 0.5, 0.5])
+
+    mc = compute_mc_returns(r, t, t, gamma=0.9, time_dim=0)
+    assert mc.shape == (T,)
+
+    gae = compute_gae(r, t, t, v, nv, gamma=0.9, gae_lambda=0.95, time_dim=0)
+    assert gae.shape == (T,)
+
+    nstep = compute_n_step_returns(r, t, t, v, nv, gamma=0.9, n=2, time_dim=0)
+    assert nstep.shape == (T,)
 

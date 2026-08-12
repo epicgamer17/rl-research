@@ -16,60 +16,58 @@ def compute_expected_value(
     """
     Calculate expected values from a categorical distribution over a support.
 
-    Works for both Q-value prediction [B, A, N] and state-value prediction [B, N].
+    Works for both Q-value prediction [*Batch, A, N] and state-value prediction [*Batch, N].
 
     Args:
-        predictions: Logits output from the model [B, A, N] or [B, N].
-        support: The support for the distribution [N], [B, N], or [B, A, N].
+        predictions: Logits output from the model [*Batch, A, N] or [*Batch, N].
+        support: The support for the distribution [N], [*Batch, N], or [*Batch, A, N].
 
     Returns:
-        The expected values of shape [B, A] or [B].
+        The expected values of shape [*Batch, A] or [*Batch].
     """
-    # Fail Fast: Enforce exact dimensionality explicitly
-    assert predictions.ndim in [
-        2,
-        3,
-    ], f"Expected 2D [B, N] or 3D [B, A, N] predictions, got {predictions.shape}"
+    assert (
+        predictions.shape[-1] == support.shape[-1]
+    ), f"Atoms dimension mismatch in compute_expected_value: predictions {predictions.shape} vs support {support.shape}"
 
     probs = F.softmax(predictions, dim=-1)
 
     # Broadcast support safely to match probs
     if support.ndim == 1:
-        # Support is [N], broadcast to match [..., N]
         support = support.expand_as(probs)
     else:
         assert (
             support.shape == probs.shape
-        ), f"If support is not 1D, it must match predictions shape exactly. Got {support.shape}"
+        ), f"If support is not 1D, it must match predictions shape exactly. Got {support.shape} vs {probs.shape}"
 
     # Dot product over the atoms dimension
-    values = (probs * support).sum(dim=-1)
-
-    # Returns [B] if input was [B, N], or [B, A] if input was [B, A, N]
-    return values
+    return (probs * support).sum(dim=-1)
 
 
 def argmax_selector(
     predictions: torch.Tensor,
 ) -> Tuple[torch.Tensor, dict]:
     """
-    Selects the action with the maximum value.
-    Expects predictions to have a batch dimension [B, ...].
+    Selects the action with the maximum value along dim=-1 (with random tie-breaking).
+    Supports any [*Batch, Num_Actions] prediction shape.
 
     Args:
-        predictions: The model predictions (e.g. Q-values or logits).
+        predictions: The model predictions (e.g. Q-values or logits) [*Batch, Num_Actions].
 
     Returns:
         A tuple containing:
-            - The selected actions of shape [B, 1].
+            - The selected actions of shape [*Batch, 1].
             - An empty info dictionary.
     """
+    assert (
+        predictions.ndim >= 1
+    ), f"Expected at least 1D predictions, got {predictions.shape}"
+
     # Add microscopic noise to break ties randomly
     noise = torch.rand_like(predictions) * 1e-8
     vals_with_noise = predictions + noise
 
-    # Force [B, 1] output for consistency
-    action = torch.argmax(vals_with_noise, dim=1, keepdim=True)
+    # Force [*Batch, 1] output for consistency
+    action = torch.argmax(vals_with_noise, dim=-1, keepdim=True)
     return action, {}
 
 
@@ -183,12 +181,20 @@ def with_epsilon_greedy(selector_fn: Callable) -> Callable:
     return epsilon_greedy_selector
 
 
-# TODO: should we make this work for q value selection? or should we at least make it more clear with the args?
 def apply_action_mask(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """
     Explicitly replaces logits of invalid actions with a large negative number (-1e8).
     This forces the probability of these actions to approach 0 after softmax.
+
+    Supports single discrete, MultiDiscrete, sequence [B, T, A], and multi-agent logits [B, N, A].
     """
+    assert (
+        logits.shape == mask.shape
+    ), f"Exact shape mismatch in apply_action_mask! logits: {logits.shape}, mask: {mask.shape}"
+    assert (
+        mask.sum(dim=-1).gt(0).all()
+    ), "Encountered a mask where an environment/state has 0 valid actions."
+
     mask_bool = mask.to(torch.bool)
     return torch.where(
         mask_bool,
@@ -217,36 +223,48 @@ def compute_masked_entropy(
     return -p_log_p.sum(dim=-1)
 
 
-# TODO: do we need this? or at least can we make it more generic? this feels very DQN specific.
-def gather_q_values(q_values: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+def gather_q_values(
+    q_values: torch.Tensor,
+    actions: torch.Tensor,
+    dim: int = 1,
+) -> torch.Tensor:
     """
-    Gathers the Q-values for the given actions.
+    Gathers Q-values for selected action indices along the specified action dimension (`dim`).
 
     Rule Enforcement (Explicit over Implicit):
-    Expects Q-values to be [B, A] or [B, A, Atoms] and actions to be [B] or [B, 1].
-    Will return [B] or [B, Atoms].
+    Expects Q-values to have an action dimension at index `dim`.
+    Supports single-agent [B, A], distributional [B, A, Atoms], multi-player [B, A, N_players],
+    and sequence Q-values [B, T, A].
 
     Args:
-        q_values: The predicted Q-values from the model.
-        actions: The action indices.
+        q_values: Q-values tensor [*Batch, Num_Actions, *Channels].
+        actions: Action indices tensor [*Batch] or [*Batch, 1].
+        dim: Dimension index of the action space in `q_values` (default: 1).
 
     Returns:
-        The Q-values for the selected actions. (Note: Returns a view of the gathered tensor)
+        The Q-values for the selected actions [*Batch, *Channels] with the action dimension removed.
     """
-    assert q_values.ndim in [2, 3], f"Expected 2D or 3D q_values, got {q_values.shape}"
-    if actions.ndim == 2:
-        actions = actions.squeeze(-1)
-    assert actions.ndim == 1, f"Expected 1D actions [B], got {actions.shape}"
+    assert q_values.ndim >= 2, f"Expected at least 2D q_values, got {q_values.shape}"
 
-    # Use gather for robustness across 2D and 3D
-    if q_values.ndim == 2:
-        # [B, A] -> [B, 1] -> [B]
-        return q_values.gather(1, actions.unsqueeze(-1).long()).squeeze(-1)
-    else:
-        # [B, A, Atoms] -> [B, 1, Atoms] -> [B, Atoms]
-        atoms = q_values.shape[-1]
-        actions_expanded = actions.view(-1, 1, 1).expand(-1, -1, atoms).long()
-        return q_values.gather(1, actions_expanded).squeeze(1)
+    # Normalize negative dim to positive rank index
+    if dim < 0:
+        dim = q_values.ndim + dim
+
+    # Standardize actions to have a 1-sized dimension at `dim` if passed as [*Batch]
+    # TODO: instead of this check, should we just enforce this behaviour with an assert?
+    if actions.ndim == q_values.ndim - 1:
+        actions = actions.unsqueeze(dim)
+
+    # Expand actions across any trailing channel dimensions (e.g. Atoms, N_players)
+    actions_expanded = actions
+    while actions_expanded.ndim < q_values.ndim:
+        actions_expanded = actions_expanded.unsqueeze(-1)
+
+    target_shape = list(q_values.shape)
+    target_shape[dim] = 1
+    actions_expanded = actions_expanded.expand(target_shape).long()
+
+    return q_values.gather(dim, actions_expanded).squeeze(dim)
 
 
 def add_dirichlet_noise(
@@ -301,3 +319,30 @@ def add_dirichlet_noise(
         noisy_logits = noisy_logits.masked_fill(mask == 0, -float("inf"))
 
     return noisy_logits
+
+
+def reduce_ensemble_q_values(
+    q_ensemble: torch.Tensor,
+    reduction: str = "min",
+    ensemble_dim: int = 0,
+) -> torch.Tensor:
+    """
+    Reduces an ensemble of Q-function predictions (e.g. Double DQN, SAC, REDQ, TD3).
+
+    Args:
+        q_ensemble: Tensor of Q-values containing an ensemble dimension (e.g. [N_ensemble, B, A]).
+        reduction: Reduction method: "min" (pessimistic Q-learning), "mean", or "std".
+        ensemble_dim: Index of the ensemble dimension (default: 0).
+
+    Returns:
+        torch.Tensor: Reduced Q-values tensor with the ensemble dimension removed.
+    """
+    assert q_ensemble.ndim >= 2, f"Expected at least 2D q_ensemble, got {q_ensemble.shape}"
+    if reduction == "min":
+        return torch.min(q_ensemble, dim=ensemble_dim).values
+    elif reduction == "mean":
+        return torch.mean(q_ensemble, dim=ensemble_dim)
+    elif reduction == "std":
+        return torch.std(q_ensemble, dim=ensemble_dim)
+    else:
+        raise ValueError(f"Unknown reduction '{reduction}'. Expected 'min', 'mean', or 'std'.")

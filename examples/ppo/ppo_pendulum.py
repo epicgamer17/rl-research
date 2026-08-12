@@ -376,9 +376,8 @@ for iteration in range(MAX_ITERATIONS):
     # Logging
     if iteration % 10 == 0:
         explained_var = compute_explained_variance(
-            flat_returns.detach().cpu().numpy(),
-            flat_data["values"].detach().cpu().numpy(),
-        )
+            flat_returns, flat_data["values"]
+        ).item()
 
         log_dict = {
             "learning_rate": scheduler.get_last_lr()[0],

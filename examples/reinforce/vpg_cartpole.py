@@ -177,8 +177,8 @@ for episode in range(MAX_EPISODES):
     if episode % 100 == 0:
         # Calculate explained variance
         explained_var = compute_explained_variance(
-            returns.detach().cpu().numpy(), values.detach().cpu().numpy()
-        )
+            returns, values
+        ).item()
 
         # W&B handles scalars and histograms of tensors (like priorities) automatically.
         log_dict = info_dict.copy()

@@ -191,8 +191,8 @@ for episode in range(MAX_EPISODES):
 
     if episode % 100 == 0:
         explained_var = compute_explained_variance(
-            returns.detach().cpu().numpy(), values_tensor.detach().cpu().numpy()
-        )
+            returns, values_tensor
+        ).item()
         log_dict = info_dict.copy()
         log_dict.update(
             {

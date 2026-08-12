@@ -308,8 +308,8 @@ for iteration in range(MAX_ITERATIONS):
 
     if iteration % 100 == 0:
         explained_var = compute_explained_variance(
-            returns.detach().cpu().numpy(), buffer.data["values"].detach().cpu().numpy()
-        )
+            returns, buffer.data["values"]
+        ).item()
 
         log_dict = info_dict.copy()
         log_dict.update(

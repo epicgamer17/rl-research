@@ -206,11 +206,11 @@ def test_with_epsilon_greedy_mask_assertions():
 
 def test_action_selection_assertions():
     """Test that action selection functions raise assertions on invalid input shapes."""
-    # compute_expected_value
+    # compute_expected_value atoms dimension mismatch
     with pytest.raises(
-        AssertionError, match="Expected 2D \[B, N\] or 3D \[B, A, N\] predictions"
+        AssertionError, match="Atoms dimension mismatch in compute_expected_value"
     ):
-        compute_expected_value(torch.randn(2), torch.randn(2))
+        compute_expected_value(torch.randn(2, 3), torch.randn(2, 4))
     with pytest.raises(
         AssertionError,
         match="If support is not 1D, it must match predictions shape exactly.",
@@ -290,13 +290,26 @@ def test_gather_q_values_3d():
     torch.testing.assert_close(out, expected)
 
 
+def test_gather_q_values_custom_dim():
+    from atomic_rl.action_selection import gather_q_values
+
+    # q_values: [B, T, A] -> [1, 2, 3] (Batch 1, Time 2, Actions 3)
+    q_values = torch.tensor([[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]]])
+    actions = torch.tensor([[2, 0]])  # [1, 2] -> Time 0: Action 2 (30.0), Time 1: Action 0 (40.0)
+
+    out = gather_q_values(q_values, actions, dim=2)
+    assert out.shape == (1, 2)
+    torch.testing.assert_close(out, torch.tensor([[30.0, 40.0]]))
+
+    # Also test dim=-1
+    out_neg_dim = gather_q_values(q_values, actions, dim=-1)
+    assert out_neg_dim.shape == (1, 2)
+    torch.testing.assert_close(out_neg_dim, torch.tensor([[30.0, 40.0]]))
+
+
 def test_gather_q_values_assertions():
     from atomic_rl.action_selection import gather_q_values
 
-    # Invalid q_values dimensions (4D)
-    with pytest.raises(AssertionError, match="Expected 2D or 3D q_values"):
-        gather_q_values(torch.randn(2, 2, 2, 2), torch.tensor([0, 0]))
-
-    # Invalid action dimensions (2D but wrong shape, or 3D)
-    with pytest.raises(AssertionError, match="Expected 1D actions"):
-        gather_q_values(torch.randn(2, 3), torch.tensor([[0, 1], [1, 0]]))
+    # Invalid 1D q_values
+    with pytest.raises(AssertionError, match="Expected at least 2D q_values"):
+        gather_q_values(torch.randn(2), torch.tensor([0]))

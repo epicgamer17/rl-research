@@ -70,6 +70,9 @@ PyTorch allows implicit broadcasting (e.g., adding a [Batch, 1] tensor to a [Bat
 Functions that operate on sequence metrics or values (such as returns, GAE, and TD-targets) MUST support arbitrary trailing value channels `[B, T, *Channels]` (e.g. `[B, T, 1]` for single-agent scalar, `[B, T, N_players]` for MARL vector values, `[B, T, F]` for multi-objective rewards).
 Functions MUST enforce EXACT shape equality across input tensors (`assert tensor_a.shape == tensor_b.shape`) to fail fast at the origin if shapes mismatch, explicitly preventing accidental PyTorch broadcasting errors across players or features.
 Functions MUST NEVER attempt to guess semantic meanings of trailing dimensions or automatically squeeze/unsqueeze dimensions internally.
+Public functional APIs MUST enforce a Single Contract (Torch-Native First). Public functions should accept and return `torch.Tensor` directly, avoiding dynamic `isinstance` branching for NumPy arrays inside mathematical kernels.
+Functions that operate along specific axes (e.g. time $T$, action space $A$, or ensemble $N$) MUST accept explicit, defaulted `dim` parameters (`time_dim: int = 1`, `dim: int = 1`, `ensemble_dim: int = 0`). This allows functions to work on unbatched `[T, ...]`, batched `[B, T, ...]`, and ensemble `[N, B, ...]` tensors without magic rank-guessing.
+When input ranks are unambiguous (such as 1D action indices `[B]` passed to Q-value gathering with 2D Q-values `[B, A]`), functions may auto-unsqueeze (`actions.ndim == q_values.ndim - 1`) to provide friendly, ergonomic caller loops (Usability over Performance).
 If a function returns a view of a tensor rather than an allocated copy, it must be documented.
 If a function fundamentally requires a contiguous block of memory (common when reshaping after a .transpose()), use .contiguous() explicitly and document why it is necessary.
 
