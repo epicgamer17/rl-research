@@ -1,139 +1,111 @@
-"""
-AlphaZero on PettingZoo TicTacToe
-==================================
+"""AlphaZero on PettingZoo TicTacToe (Single-Process Version)
+
+================================================================================
 
 Paper Reference:
-    "Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm"
+    "Mastering Chess and Shogi by Self-Play with a General Reinforcement
+    Learning Algorithm"
     Silver et al., Science 2018 (arXiv 2017: https://arxiv.org/abs/1712.01815)
-    "Mastering the Game of Go without Human Knowledge"
-    Silver et al., Nature 2017 (AlphaGo Zero)
 
-Algorithm Summary:
-    AlphaZero is a general reinforcement learning algorithm for two-player zero-sum games
-    that learns entirely through self-play, starting from random initial weights without
-    any domain-specific human knowledge or demonstration data.
+Single-Process Architecture:
+    - Self-Play Collector: Steps vectorized environments simultaneously using batched MCTS
+      (root embeddings shape [NUM_VECTOR_ENVS, 3, 3, 2]).
+    - Learner: Continuously samples minibatches from ReplayBuffer, computes policy and value loss,
+      and updates weights.
+    - Evaluator: Periodically evaluates the model against a Random baseline in PettingZoo tictactoe_v3,
+      logging metrics to W&B.
 
-TODO: In my own words. This is AI Generated
-Key Contributions & Ideas:
-    1. Tabula Rasa Self-Play: The agent plays games against itself using Monte Carlo Tree Search (MCTS) guided by a single deep neural network. The neural network learns from the outcomes of its own self-play games.
-    2. Dual-Head Neural Network f_theta(s) = (p, v): A single network takes board representations and outputs both a policy vector p (prior probabilities for all possible moves) and a scalar value prediction v in [-1, +1] estimating expected outcome from the current player's perspective.
-    3. MCTS as Policy Improvement: MCTS search uses network predictions (p, v) to guide node selection (PUCT algorithm). The visit count distribution pi at the root after search acts as a strongly improved policy target compared to raw network priors p.
-    4. Policy Iteration Loop:
-       - Self-Play: Execute MCTS to generate games, storing (s_t, pi_t, z_t) tuples where z_t is the final outcome (-1, 0, +1) relative to player at turn t.
-       - Network Optimization: Train (p, v) by minimizing combined cross-entropy policy loss and MSE value loss: L = (z - v)^2 - pi^T * log(p) + c||theta||^2.
-
-Differences in this Implementation:
-    - Environment: Uses PettingZoo's `tictactoe_v3` environment for evaluation and self-play.
-    - Lightweight Dynamics: Inlines a fast 9-cell 3x3 board simulator for MCTS tree transitions,
-      avoiding environment copy overhead during search.
-    - All-in-one Self-Contained Example: Includes network, dynamics simulator, loss function,
-      self-play collector, replay buffer, and baseline evaluation harness.
-
-NOTE: We do not follow the convention of using the gym env as a simulator and encourage the user to extract the dynamics from the env and attempt to remove unecessary overhead to improve the training speed and MCTS speed. Although it may be possible, AlphaZero is not the focus of the library, as mentioned below, and some environments from PettingZoo and Gym can have trouble with copy operations leading to courrupted data.
-
-NOTE: Focus of the library (when it comes to search based algos) is not on AlphaZero-like algorithms, but MuZero-like ones. This is here as a stepping stone for people looking to understand MuZero better, but in general I encourage you to look into model learned algorithms (like Dreamerv3, MuZero, etc.) over model given ones.
-
-TODO: some hyperparameter tuning. it works well, but still loses sometimes to a random bot, which i remember when i had muzero working on the older library never happened. I imagine alphazero should be better.
-
-TODO: training on a similarly sized model takes way longer than it did before. figure out why and how the current system can be improved and optimized to run faster. a training run used to take about 20 minutes for 20k steps on MuZero with 3 Resnet blocks per component and 24 filters each, batch size 8, 25 simulations, 3 torch mp actor processes, and batched mcts with a search batch size of 5, also unroll of 5. now its well over an hour, probably over 2 with the alphazero params which should be faster in terms of wall clock time. on mac on cpu
-
-TODO: why didn't we use any of our returns.py or returns/ folder or whatever (compute_mc_return fn). is it because we are not working on whole game sequences? should we update to use that?
+    NOTE: Although our MCTS is based on mctx, we use vector values for each player for rewards and values.
+    This does two things. First and most important, it allows the MCTS to work on n-player games,
+    cooperative or competitive. Second, it is more in line with PettingZoo standards, which return a reward
+    for each player, not a single scalar reward. For this example, we use the knowledge that Tic Tac Toe
+    is zero sum; on another game you could avoid using that knowledge, and have the agent predict and learn
+    multiple values and rewards for each state.
 """
 
 import copy
 import random
-from collections import deque
+import time
+from typing import Any, Callable, Dict, List, Tuple
+
+from atomic_rl.action_selection import sample_distribution
+from atomic_rl.buffers.replay import (
+    circular_write_strategy_,
+    init_buffer,
+    uniform_sample,
+)
+from atomic_rl.envs.functions.tictactoe import (
+    check_tictactoe_winner,
+    embeddings_to_canonical,
+    get_canonical_obs,
+    tictactoe_dynamics_fn,
+)
+from atomic_rl.losses import cross_entropy_loss, mse_loss
+from atomic_rl.networks import ResNetBackbone
+from atomic_rl.search import get_mcts_visit_policy, mcts_search
+from pettingzoo.classic import tictactoe_v3
+
+from tensordict import TensorDict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, List, Dict
-from tensordict import TensorDict
 import wandb
-from atomic_rl.search import mcts_search, get_mcts_visit_policy
-from atomic_rl.losses import cross_entropy_loss, mse_loss
-from atomic_rl.action_selection import argmax_selector, sample_distribution
-from atomic_rl.buffers.replay import (
-    init_buffer,
-    circular_write_strategy_,
-    uniform_sample,
-    BufferState,
-)
-from pettingzoo.classic import tictactoe_v3
+
+# TODO: use get_legal_action_mask
+# TODO: use argmax selector for evaluation
+# TODO: Update so that +1 always means canonically winning. So player 2 should not learn to predict -1 in winning positions like i think we do right now. We should correctly use the pettingzoo reward vector that is returned for the value of a state.
+# TODO: why didn't we use any of our returns.py or returns/ folder or whatever (compute_mc_return fn). is it because we are not working on whole game sequences? should we update to use that?
 
 
 # ---------------------------------------------------------------------------
-# Hyperparameters & Constants (Matching AlphaZero Paper Conventions)
+# Hyperparameters & Constants
 # ---------------------------------------------------------------------------
-# Self-Play & MCTS Simulation Parameters
-TOTAL_TRAINING_STEPS = (
-    10000  # Total continuous training steps (1 SGD step per training loop)
-)
-NUM_VECTOR_ENVS = 4  # Number of parallel vectorized self-play environments per step
-MIN_BUFFER_SIZE = 64  # Warmup buffer size before SGD optimization begins
-EVAL_INTERVAL = 100  # Evaluate vs Random agent every N training steps
-PARAM_SYNC_INTERVAL = (
-    100  # Sync actor network weights from learner network every N steps
-)
+TOTAL_TRAINING_STEPS = 20000
+NUM_VECTOR_ENVS = 4  # Parallel vectorized self-play environments
+MIN_BUFFER_SIZE = 64
+EVAL_INTERVAL_STEPS = 250
+PARAM_SYNC_INTERVAL = 100
 NUM_MCTS_SIMULATIONS = 25
 
-# MCTS PUCT Search Constants (Silver et al., 2017/2018)
-C_PUCT = 1.25  # PUCT exploration coefficient c_puct = 1.25
-DIRICHLET_ALPHA = 1.0  # Dirichlet noise alpha (0.3 for games with ~9 moves)
-DIRICHLET_EPSILON = 0.25  # Exploration noise fraction epsilon = 0.25
+# MCTS PUCT Search Constants
+C_PUCT = 1.25
+DIRICHLET_ALPHA = 0.3
+DIRICHLET_EPSILON = 0.25
 
-# Temperature Schedule Constants (Silver et al. 2017/2018)
-# tau = 1.0 for first TEMP_THRESHOLD_MOVES moves in self-play, then tau -> 0.0 (greedy)
-TEMP_THRESHOLD_MOVES = 5  # First N moves use tau = 1.0, remaining moves use tau = 0.0
-TEMPERATURE_EXPLORATION = 1.0  # Temperature tau = 1.0 for initial exploratory moves
-TEMPERATURE_EXPLOITATION = 0.0  # Temperature tau = 0.0 (greedy) for remaining moves
-TEMPERATURE_EVAL = 0.0  # Temperature tau = 0.0 (greedy) for evaluation games
+# Temperature Schedule Constants
+TEMP_THRESHOLD_MOVES = 5
+TEMPERATURE_EXPLORATION = 1.0
+TEMPERATURE_EXPLOITATION = 0.0
 
-# Optimization & Architecture Parameters
+# Optimization & Network Parameters
 BATCH_SIZE = 48
 REPLAY_BUFFER_CAPACITY = 10000
 LEARNING_RATE = 1e-3
-WEIGHT_DECAY = 1e-4  # L2 regularization weight decay c = 10^-4
-NUM_FILTERS = 24  # 16 filters per ResNet block
+WEIGHT_DECAY = 1e-4
+NUM_FILTERS = 24
 NUM_RES_BLOCKS = 6
 
-# Evaluation & Seed
 NUM_EVAL_GAMES = 100
 SEED = 42
 
 
 # ============================================================================
-# 1. Dual-Head AlphaZero ResNet Neural Network
+# 1. Dual-Head AlphaZero ResNet Neural Network (Scalar Value Head)
 # ============================================================================
-
-
 class TicTacToeNet(nn.Module):
-    """
-    AlphaZero Dual-Head ResNet Architecture for TicTacToe.
-
-    Input: [B, 3, 3, 3] canonical state representation:
-           - Channel 0: Active player pieces (1.0 where active player has pieces)
-           - Channel 1: Opponent pieces (1.0 where opponent has pieces)
-           - Channel 2: Player turn encoding plane (1.0 for Player 0 / 'X', 0.0 for Player 1 / 'O')
-
-    Outputs:
-        - policy_logits: [B, 9] unnormalized move action logits
-        - value: [B, 1] predicted state evaluation scalar in [-1, +1]
-    """
-
     def __init__(
         self, num_filters: int = NUM_FILTERS, num_res_blocks: int = NUM_RES_BLOCKS
     ):
         super().__init__()
-        # Initial Convolutional Block
         self.conv_in = nn.Conv2d(3, num_filters, kernel_size=3, padding=1)
         self.bn_in = nn.BatchNorm2d(num_filters)
 
-        # Residual Tower (2-3 ResNet Blocks of 16 filters)
-        self.res_blocks = nn.ModuleList(
-            [ResNetBlock(num_filters) for _ in range(num_res_blocks)]
+        self.res_blocks = ResNetBackbone(
+            in_channels=num_filters,
+            num_filters=num_filters,
+            num_blocks=num_res_blocks,
         )
 
-        # Policy Head (AlphaZero paper specification): Conv(1x1, 2 filters) -> BN -> ReLU -> FC(9)
         self.policy_head = nn.Sequential(
             nn.Conv2d(num_filters, 2, kernel_size=1),
             nn.BatchNorm2d(2),
@@ -142,7 +114,6 @@ class TicTacToeNet(nn.Module):
             nn.Linear(2 * 3 * 3, 9),
         )
 
-        # Value Head (AlphaZero paper specification): Conv(1x1, 1 filter) -> BN -> ReLU -> FC(16) -> ReLU -> FC(1) -> Tanh
         self.value_head = nn.Sequential(
             nn.Conv2d(num_filters, 1, kernel_size=1),
             nn.BatchNorm2d(1),
@@ -156,150 +127,223 @@ class TicTacToeNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         features = F.relu(self.bn_in(self.conv_in(x)))
-        for block in self.res_blocks:
-            features = block(features)
+        features = self.res_blocks(features)
 
         policy_logits = self.policy_head(features)
         value = self.value_head(features)
-        return policy_logits, value
-
-
-from atomic_rl.envs.functions.tictactoe import (
-    check_tictactoe_winner,
-    tictactoe_dynamics_fn,
-    get_canonical_obs,
-    embeddings_to_canonical,
-    get_legal_actions_mask,
-)
+        return policy_logits, value.squeeze(-1)
 
 
 # ============================================================================
-# 4. Self-Play Episode Data Collector
+# 2. Helpers & Recurrent Function Creator
 # ============================================================================
+# TODO: i think we have a function for this already. Use it.
+def apply_action_mask(logits: torch.Tensor, legal_mask: torch.Tensor) -> torch.Tensor:
+    """Masks illegal actions to the minimum finite value of the dtype."""
+    min_logit = torch.finfo(logits.dtype).min
+    return logits.masked_fill(~legal_mask, min_logit)
 
 
-def run_self_play_game(
-    model: nn.Module,
-    num_simulations: int = NUM_MCTS_SIMULATIONS,
-    device: torch.device = torch.device("cpu"),
-) -> List[Dict[str, torch.Tensor]]:
-    """
-    Executes a single game of self-play using MCTS and active-player canonical observations.
-    Uses fast tensor board dynamics directly, eliminating environment dictionary and string parsing overhead.
-    """
-    model.eval()
-    board = torch.zeros((3, 3), device=device)
-    player = 0
-    move_count = 0
-    trajectory = []
+def create_recurrent_fn(local_model: nn.Module) -> Callable:
+    """Creates an N-player-compliant recurrent_fn for PyTorch MCTS."""
 
-    def expansion_fn(embeddings):
+    def recurrent_fn(actions_taken: torch.Tensor, embeddings: torch.Tensor) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        # 1. Step environment dynamics (reward_p0 is ALWAYS P0 absolute: +1 for P0 win, -1 for P1 win)
+        (
+            next_embed,
+            reward_p0,
+            next_to_play,
+            is_terminal,
+            next_legal_mask,
+        ) = tictactoe_dynamics_fn(embeddings, actions_taken)
+
+        # 2. Evaluate policy logits and scalar value prediction for next state
         with torch.no_grad():
-            canonical_x = embeddings_to_canonical(embeddings)
-            logits, value = model(canonical_x)
-            return logits, value.squeeze(-1)
+            canonical_next = embeddings_to_canonical(next_embed)
+            logits, scalar_value = local_model(canonical_next)
 
-    while True:
-        move_count += 1
-        action_mask = board.view(-1) == 0
+        # 3. Mask illegal actions
+        masked_logits = apply_action_mask(logits, next_legal_mask)
 
-        canonical_obs = get_canonical_obs(board, player)
+        # 4. Value Conversion to Absolute [P0, P1]:
+        # scalar_value is canonical for next_to_play.
+        # If next_to_play == 0, v_p0 = scalar_value.
+        # If next_to_play == 1, v_p0 = -scalar_value.
+        v_p0 = torch.where(next_to_play == 0, scalar_value, -scalar_value)
+        value_vec = torch.stack([v_p0, -v_p0], dim=-1)
 
-        root_embed = board.new_zeros(1, 3, 3, 2)
-        root_embed[0, ..., 0] = board
-        root_embed[0, ..., 1] = float(player)
+        # Terminal nodes have 0 future value
+        value_vec = torch.where(
+            is_terminal.unsqueeze(-1), torch.zeros_like(value_vec), value_vec
+        )
 
-        # Run batched MCTS search
-        tree = mcts_search(
+        # Reward Conversion to Absolute [P0, P1]:
+        reward_vec = torch.stack([reward_p0, -reward_p0], dim=-1)
+
+        # Discounts: 1.0 for non-terminal, 0.0 for terminal
+        discount_vec = torch.where(
+            is_terminal.unsqueeze(-1),
+            torch.zeros_like(reward_vec),
+            torch.ones_like(reward_vec),
+        )
+
+        return (
+            masked_logits,
+            value_vec,
+            reward_vec,
+            discount_vec,
+            next_embed,
+            next_to_play,
+        )
+
+    return recurrent_fn
+
+
+# ============================================================================
+# 3. Vectorized Self-Play Collector
+# ============================================================================
+class VectorizedSelfPlayCollector:
+    def __init__(self, num_envs: int, device: torch.device):
+        self.num_envs = num_envs
+        self.device = device
+        self.boards = torch.zeros(num_envs, 3, 3, device=device)
+        self.players = torch.zeros(num_envs, dtype=torch.long, device=device)
+        self.move_counts = [0] * num_envs
+        self.trajectories = [[] for _ in range(num_envs)]
+
+    def collect_step(
+        self,
+        actor_model: nn.Module,
+        recurrent_fn: Callable,
+        num_simulations: int = NUM_MCTS_SIMULATIONS,
+    ) -> List[Dict[str, torch.Tensor]]:
+        # Construct root embeddings for search batch size [B, 3, 3, 2]
+        root_embed = self.boards.new_zeros(self.num_envs, 3, 3, 2)
+        root_embed[..., 0] = self.boards
+        root_embed[..., 1] = self.players.view(-1, 1, 1).expand(-1, 3, 3).float()
+        legal_mask = self.boards.view(self.num_envs, -1) == 0.0
+
+        # Root Model Prediction (Scalar Head)
+        with torch.no_grad():
+            canonical_x = embeddings_to_canonical(root_embed)
+            root_logits, root_scalar_value = actor_model(canonical_x)
+
+        # Map scalar value to vector [P0, P1] based on active player
+        v_p0_root = torch.where(
+            self.players == 0, root_scalar_value, -root_scalar_value
+        )
+        root_vector_value = torch.stack([v_p0_root, -v_p0_root], dim=-1)
+
+        # Execute N-Player MCTS Search
+        search_action, action_probs, tree = mcts_search(
             root_embeddings=root_embed,
+            root_logits=root_logits,
+            root_value=root_vector_value,
+            root_to_play=self.players,
+            recurrent_fn=recurrent_fn,
             num_simulations=num_simulations,
             num_actions=9,
-            expansion_fn=expansion_fn,
-            dynamics_fn=tictactoe_dynamics_fn,
-            root_to_play=board.new_tensor([player], dtype=torch.long),
-            root_legal_mask=action_mask.unsqueeze(0),
-            pb_c_init=C_PUCT,
+            num_players=2,
+            legal_mask=legal_mask,
             dirichlet_epsilon=DIRICHLET_EPSILON,
             dirichlet_alpha=DIRICHLET_ALPHA,
+            pb_c_init=C_PUCT,
+            temperature=1.0,
         )
 
-        root_visits = tree["children_visits"][0, 0]  # [9]
+        completed_samples = []
 
-        # Target policy for Neural Network loss is ALWAYS regular visit count distribution (tau = 1.0)
-        target_policy = get_mcts_visit_policy(
-            root_visits.unsqueeze(0), temperature=1.0
-        ).squeeze(0)
+        # Step each env forward
+        for b_idx in range(self.num_envs):
+            self.move_counts[b_idx] += 1
+            curr_player = self.players[b_idx].item()
 
-        # Action selection temperature schedule (tau = 1.0 for first N moves, tau = 0.0 thereafter)
-        temp = (
-            TEMPERATURE_EXPLORATION
-            if move_count <= TEMP_THRESHOLD_MOVES
-            else TEMPERATURE_EXPLOITATION
-        )
-        action_policy = get_mcts_visit_policy(
-            root_visits.unsqueeze(0), temperature=temp
-        ).squeeze(0)
+            # Target policy from search
+            target_policy = action_probs[b_idx]
 
-        # Sample action using atomic_rl.action_selection helpers
-        if temp > 0.0:
-            dist = torch.distributions.Categorical(probs=action_policy)
-            action_idx_tensor, _ = sample_distribution(dist, explore=True)
-            action_idx = action_idx_tensor.item()
-        else:
-            action_idx_tensor, _ = argmax_selector(action_policy.unsqueeze(0))
-            action_idx = action_idx_tensor.squeeze().item()
+            # Select action according to move-count temperature schedule
+            temp = (
+                TEMPERATURE_EXPLORATION
+                if self.move_counts[b_idx] <= TEMP_THRESHOLD_MOVES
+                else TEMPERATURE_EXPLOITATION
+            )
 
-        trajectory.append(
-            {
-                "state": canonical_obs.squeeze(0).cpu(),
-                "target_policy": target_policy.cpu(),
-                "player": player,
-            }
-        )
+            if temp == 0.0:
+                action_idx = target_policy.argmax(dim=-1).item()
+            else:
+                dist = torch.distributions.Categorical(probs=target_policy)
+                action_idx_t, _ = sample_distribution(dist, explore=True)
+                action_idx = action_idx_t.item()
 
-        # Update local board state directly
-        row, col = action_idx // 3, action_idx % 3
-        piece = 1.0 if player == 0 else -1.0
-        board[row, col] = piece
+            canonical_obs = get_canonical_obs(self.boards[b_idx], curr_player).squeeze(
+                0
+            )
 
-        winner, is_terminal = check_tictactoe_winner(board.unsqueeze(0))
+            self.trajectories[b_idx].append(
+                {
+                    "state": canonical_obs.cpu(),
+                    "target_policy": target_policy.cpu(),
+                    "player": curr_player,
+                }
+            )
 
-        if is_terminal.item():
-            p0_reward = winner.item()
-            p1_reward = -p0_reward
-            samples = []
-            for step in trajectory:
-                pl = step["player"]
-                z = p0_reward if pl == 0 else p1_reward
-                samples.append(
-                    {
-                        "state": step["state"],
-                        "target_policy": step["target_policy"],
-                        "target_value": torch.tensor([z], dtype=torch.float32),
-                    }
-                )
-            return samples
+            # Fast internal dynamics step
+            row, col = action_idx // 3, action_idx % 3
+            piece = 1.0 if curr_player == 0 else -1.0
+            self.boards[b_idx, row, col] = piece
 
-        player = 1 - player
+            winner, is_term = check_tictactoe_winner(self.boards[b_idx].unsqueeze(0))
+
+            if is_term.item():
+                p0_reward = winner.item()
+                p1_reward = -p0_reward
+
+                for step in self.trajectories[b_idx]:
+                    pl = step["player"]
+                    z = p0_reward if pl == 0 else p1_reward
+                    completed_samples.append(
+                        {
+                            "state": step["state"],
+                            "target_policy": step["target_policy"],
+                            "target_value": torch.tensor([z], dtype=torch.float32),
+                        }
+                    )
+
+                # Reset environment for new game
+                self.boards[b_idx].zero_()
+                self.players[b_idx] = 0
+                self.move_counts[b_idx] = 0
+                self.trajectories[b_idx] = []
+            else:
+                self.players[b_idx] = 1 - curr_player
+
+        return completed_samples
 
 
 # ============================================================================
-# 5. Baseline Evaluator (AlphaZero vs. Random Player)
+# 4. Baseline Evaluator (AlphaZero vs. Random Player)
 # ============================================================================
-
-
 def evaluate_vs_random(
     model: nn.Module,
     num_games: int = NUM_EVAL_GAMES,
     num_simulations: int = NUM_MCTS_SIMULATIONS,
     device: torch.device = torch.device("cpu"),
 ) -> Dict[str, float]:
-    """
-    Evaluates trained AlphaZero model against a Random agent.
+    """Evaluates trained AlphaZero model against a Random agent.
+
     Plays half games as Player 0 ('player_1'), half as Player 1 ('player_2').
     Tracks separate P1 and P2 statistics.
     """
     model.eval()
+    recurrent_fn = create_recurrent_fn(model)
+
     p1_wins, p1_draws, p1_losses = 0, 0, 0
     p2_wins, p2_draws, p2_losses = 0, 0, 0
 
@@ -328,35 +372,36 @@ def evaluate_vs_random(
             legal_actions = action_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
 
             if player == az_player:
-
-                def expansion_fn(embeddings):
-                    with torch.no_grad():
-                        canonical_x = embeddings_to_canonical(embeddings)
-                        logits, value = model(canonical_x)
-                        return logits, value.squeeze(-1)
-
                 root_embed = board_3x3.new_zeros(1, 3, 3, 2)
                 root_embed[0, ..., 0] = board_3x3
                 root_embed[0, ..., 1] = float(player)
 
-                tree = mcts_search(
+                with torch.no_grad():
+                    canonical_x = embeddings_to_canonical(root_embed)
+                    root_logits, root_scalar_value = model(canonical_x)
+
+                player_t = torch.tensor([player], device=device, dtype=torch.long)
+                v_p0_root = torch.where(
+                    player_t == 0, root_scalar_value, -root_scalar_value
+                )
+                root_vector_value = torch.stack([v_p0_root, -v_p0_root], dim=-1)
+
+                search_action, action_probs, tree = mcts_search(
                     root_embeddings=root_embed,
+                    root_logits=root_logits,
+                    root_value=root_vector_value,
+                    root_to_play=player_t,
+                    recurrent_fn=recurrent_fn,
                     num_simulations=num_simulations,
                     num_actions=9,
-                    expansion_fn=expansion_fn,
-                    dynamics_fn=tictactoe_dynamics_fn,
-                    root_to_play=board_3x3.new_tensor([player], dtype=torch.long),
-                    root_legal_mask=action_mask.unsqueeze(0),
-                    pb_c_init=C_PUCT,
+                    num_players=2,
+                    legal_mask=action_mask.unsqueeze(0),
                     dirichlet_epsilon=0.0,
+                    pb_c_init=C_PUCT,
+                    temperature=0.0,
                 )
 
-                root_visits = tree["children_visits"][0, 0]
-                action_policy = get_mcts_visit_policy(
-                    root_visits.unsqueeze(0), temperature=TEMPERATURE_EVAL
-                ).squeeze(0)
-                action_idx_tensor, _ = argmax_selector(action_policy.unsqueeze(0))
-                action_idx = action_idx_tensor.squeeze().item()
+                action_idx = search_action[0].item()
             else:
                 action_idx = random.choice(legal_actions)
 
@@ -366,7 +411,6 @@ def evaluate_vs_random(
 
             env.step(action_idx)
 
-        # Separate P1 vs P2 scoring
         if az_player == 0:
             if az_reward > 0:
                 p1_wins += 1
@@ -401,41 +445,34 @@ def evaluate_vs_random(
 
 
 # ============================================================================
-# 6. Main AlphaZero Training Loop
+# 5. Main AlphaZero Training Loop
 # ============================================================================
-
-
 def train_alphazero_tictactoe():
-    """
-    Main AlphaZero self-play training script.
-    """
+    """Main AlphaZero self-play training script."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Set random seeds for reproducibility
-    rng_key = torch.Generator(device=device)
-    rng_key.manual_seed(SEED)
+    torch.manual_seed(SEED)
     random.seed(SEED)
 
     learner_model = TicTacToeNet(
         num_filters=NUM_FILTERS, num_res_blocks=NUM_RES_BLOCKS
     ).to(device)
     actor_model = copy.deepcopy(learner_model).to(device)
+    actor_model.eval()
 
     optimizer = torch.optim.Adam(
         learner_model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
     )
+    rng_key = torch.Generator(device=device)
+    rng_key.manual_seed(SEED)
 
-    # Initialize Replay Buffer using atomic_rl.buffers.replay
     buffer_shapes = {
         "state": (3, 3, 3),
         "target_policy": (9,),
         "target_value": (1,),
     }
-    replay_buffer_state = init_buffer(
-        REPLAY_BUFFER_CAPACITY, buffer_shapes, device=device
-    )
+    buffer_state = init_buffer(REPLAY_BUFFER_CAPACITY, buffer_shapes, device=device)
 
-    # Initialize W&B tracking
     wandb.init(
         project="alphazero-tictactoe",
         name=f"alphazero_continuous_res{NUM_RES_BLOCKS}_f{NUM_FILTERS}_sims{NUM_MCTS_SIMULATIONS}_envs{NUM_VECTOR_ENVS}",
@@ -443,7 +480,7 @@ def train_alphazero_tictactoe():
             "total_training_steps": TOTAL_TRAINING_STEPS,
             "num_vector_envs": NUM_VECTOR_ENVS,
             "min_buffer_size": MIN_BUFFER_SIZE,
-            "eval_interval": EVAL_INTERVAL,
+            "eval_interval_steps": EVAL_INTERVAL_STEPS,
             "param_sync_interval": PARAM_SYNC_INTERVAL,
             "num_mcts_simulations": NUM_MCTS_SIMULATIONS,
             "c_puct": C_PUCT,
@@ -462,13 +499,15 @@ def train_alphazero_tictactoe():
     )
     wandb.define_metric("*", step_metric="global_step")
 
+    collector = VectorizedSelfPlayCollector(NUM_VECTOR_ENVS, device=device)
+    actor_recurrent_fn = create_recurrent_fn(actor_model)
+
     initial_eval = evaluate_vs_random(
         learner_model,
         num_games=NUM_EVAL_GAMES,
         num_simulations=NUM_MCTS_SIMULATIONS,
         device=device,
     )
-
     wandb.log(
         {
             "global_step": 0,
@@ -485,39 +524,37 @@ def train_alphazero_tictactoe():
     )
 
     for step in range(1, TOTAL_TRAINING_STEPS + 1):
-        # 1. Continuous Self-Play Data Collection using Actor Network
-        new_samples = []
-        for _ in range(NUM_VECTOR_ENVS):
-            game_samples = run_self_play_game(
-                actor_model, num_simulations=NUM_MCTS_SIMULATIONS, device=device
-            )
-            new_samples.extend(game_samples)
+        if step % PARAM_SYNC_INTERVAL == 0:
+            actor_model.load_state_dict(learner_model.state_dict())
 
-        if len(new_samples) > 0:
+        completed_samples = collector.collect_step(
+            actor_model=actor_model,
+            recurrent_fn=actor_recurrent_fn,
+            num_simulations=NUM_MCTS_SIMULATIONS,
+        )
+
+        if len(completed_samples) > 0:
             batch_td = TensorDict(
                 {
-                    "state": torch.stack([s["state"] for s in new_samples]),
+                    "state": torch.stack([s["state"] for s in completed_samples]),
                     "target_policy": torch.stack(
-                        [s["target_policy"] for s in new_samples]
+                        [s["target_policy"] for s in completed_samples]
                     ),
                     "target_value": torch.stack(
-                        [s["target_value"] for s in new_samples]
+                        [s["target_value"] for s in completed_samples]
                     ),
                 },
-                batch_size=[len(new_samples)],
+                batch_size=[len(completed_samples)],
             ).to(device)
-            replay_buffer_state, _ = circular_write_strategy_(
-                replay_buffer_state, batch_td
-            )
+            buffer_state, _ = circular_write_strategy_(buffer_state, batch_td)
 
-        if replay_buffer_state.size < MIN_BUFFER_SIZE:
+        if buffer_state.size < MIN_BUFFER_SIZE:
             continue
 
-        # 2. Continuous 1-Step Network SGD Optimization using uniform_sample from atomic_rl.buffers.replay
-        minibatch = uniform_sample(replay_buffer_state, rng_key, BATCH_SIZE)
-        states = minibatch["state"]
-        target_policies = minibatch["target_policy"]
-        target_values = minibatch["target_value"]
+        minibatch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+        states = minibatch["state"].to(device)
+        target_policies = minibatch["target_policy"].to(device)
+        target_values = minibatch["target_value"].to(device)
 
         policy_logits, predicted_value = learner_model(states)
 
@@ -531,44 +568,29 @@ def train_alphazero_tictactoe():
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(learner_model.parameters(), max_norm=1.0)
         optimizer.step()
 
-        # 3. Synchronize Actor Network weights from Learner Network periodically
-        if step % PARAM_SYNC_INTERVAL == 0:
-            actor_model.load_state_dict(learner_model.state_dict())
-
-        # Log continuous step metrics to W&B
         log_dict = {
             "global_step": step,
             "loss/total": loss.item(),
             "loss/policy": policy_loss.item(),
             "loss/value": value_loss.item(),
-            "buffer/size": replay_buffer_state.size,
-            "search/mcts_simulations": NUM_MCTS_SIMULATIONS,
-            "search/c_puct": C_PUCT,
+            "buffer/size": buffer_state.size,
         }
 
-        # 3. Periodic Evaluation against Random Baseline
-        if step % EVAL_INTERVAL == 0 or step == TOTAL_TRAINING_STEPS:
+        if step % EVAL_INTERVAL_STEPS == 0 or step == TOTAL_TRAINING_STEPS:
             eval_metrics = evaluate_vs_random(
                 learner_model,
                 num_games=NUM_EVAL_GAMES,
                 num_simulations=NUM_MCTS_SIMULATIONS,
                 device=device,
             )
+            log_dict.update(eval_metrics)
 
-            log_dict.update(
-                {
-                    "eval/win_rate": eval_metrics["eval/win_rate"],
-                    "eval/draw_rate": eval_metrics["eval/draw_rate"],
-                    "eval/loss_rate": eval_metrics["eval/loss_rate"],
-                    "eval/p1_win_rate": eval_metrics["eval/p1_win_rate"],
-                    "eval/p1_draw_rate": eval_metrics["eval/p1_draw_rate"],
-                    "eval/p1_loss_rate": eval_metrics["eval/p1_loss_rate"],
-                    "eval/p2_win_rate": eval_metrics["eval/p2_win_rate"],
-                    "eval/p2_draw_rate": eval_metrics["eval/p2_draw_rate"],
-                    "eval/p2_loss_rate": eval_metrics["eval/p2_loss_rate"],
-                }
+        if step % 100 == 0:
+            print(
+                f"[Step {step}/{TOTAL_TRAINING_STEPS}] Loss: {loss.item():.4f} | Buffer: {buffer_state.size}"
             )
 
         wandb.log(log_dict)

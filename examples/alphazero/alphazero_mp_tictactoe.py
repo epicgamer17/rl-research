@@ -53,6 +53,7 @@ import wandb
 # TODO: use get_legal_action_mask
 # TODO: use argmax selector for evaluation
 # TODO: Update so that +1 always means canonically winning. So player 2 should not learn to predict -1 in winning positions like i think we do right now. We should correctly use the pettingzoo reward vector that is returned for the value of a state.
+# TODO: why didn't we use any of our returns.py or returns/ folder or whatever (compute_mc_return fn). is it because we are not working on whole game sequences? should we update to use that?
 # ---------------------------------------------------------------------------
 # Hyperparameters & Constants
 # ---------------------------------------------------------------------------
