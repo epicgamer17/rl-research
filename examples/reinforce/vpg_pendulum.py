@@ -7,7 +7,7 @@ The Critic predicts state values to compute advantages.
 NOTE: very similar to A2C/A3C
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

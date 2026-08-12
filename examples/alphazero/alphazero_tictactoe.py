@@ -37,7 +37,7 @@ from atomic_rl.envs.functions.tictactoe import tictactoe_dynamics_fn
 from atomic_rl.envs.wrappers import PettingZooChannelFirstWrapper
 from atomic_rl.evaluation import evaluate_pettingzoo_vs_random
 from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
-from atomic_rl.networks import ResNetBackbone
+from atomic_rl.networks.architectures import ResNetBackbone
 from atomic_rl.schedules import get_stepwise_schedule
 from atomic_rl.search import mcts_search
 from pettingzoo.classic import tictactoe_v3

@@ -31,17 +31,6 @@ def set_seed(seed: int) -> None:
         torch.mps.manual_seed(seed)
 
 
-def _allocate_tensordict(
-    shapes: dict, batch_size: List[int], device: str = "cpu"
-) -> TensorDict:
-    """Allocates a zeroed TensorDict of any arbitrary geometry."""
-    data = TensorDict({}, batch_size=batch_size, device=device)
-    for key, shape in shapes.items():
-        dtype = torch.long if "action" in key else torch.float32
-        data.set(key, torch.zeros((*batch_size, *shape), dtype=dtype, device=device))
-    return data
-
-
 # TODO: unify our custom initializers. some operate on layers others on modules. Probably should for the most part be modules. However some initializations only apply to certain layers (output layers). could we do this with a higher order function?
 def make_gnt_init(
     init_fn: Callable[[torch.Tensor], None],

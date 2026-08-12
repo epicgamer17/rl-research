@@ -1,4 +1,4 @@
-from ...initialization import _allocate_tensordict
+from ...utils import _allocate_tensordict
 from .state import BufferState, PERBufferState
 from .write import compute_is_weights
 import torch

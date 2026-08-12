@@ -18,7 +18,7 @@ In summary, PER is a simple but effective technique that can significantly impro
 NOTE: below we only implement the TD error based priority method for simplicity.
 """
 
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_, set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -51,7 +51,7 @@ from atomic_rl.utils import (
     to_numpy_action,
 )
 from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # Constants
 BATCH_SIZE = 128

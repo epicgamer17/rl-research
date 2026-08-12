@@ -1,12 +1,12 @@
 import pytest
-from atomic_rl.initialization import (
-    _allocate_tensordict,
+from atomic_rl.networks.initialization import (
     make_gnt_init,
     layer_init_,
     sparse_init_weight_,
     set_seed,
     make_sparse_init,
 )
+from atomic_rl.utils import _allocate_tensordict
 import torch.nn as nn
 import torch
 import random

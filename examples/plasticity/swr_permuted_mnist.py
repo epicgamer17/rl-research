@@ -14,7 +14,7 @@ which uses a wider architecture (2 hidden layers of 2000 units), the Adam optimi
 and a larger batch size of 64.
 """
 
-from atomic_rl.initialization import make_gnt_init
+from atomic_rl.networks.initialization import make_gnt_init
 import torch
 import torch.nn as nn
 import torch.optim as optim

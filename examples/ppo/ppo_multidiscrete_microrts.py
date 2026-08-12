@@ -2,7 +2,7 @@
 # TODO: compare with 37 implementation details of PPO results
 # TODO: attempt a cleanup if possible
 # TODO: notes on multi discrete
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_, set_seed
 import torch
 import torch.nn as nn
 import torch.optim as optim

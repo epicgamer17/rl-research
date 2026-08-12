@@ -7,7 +7,7 @@ Standard DQN Target: $Y_{t}^{DQN} \equiv R_{t+1} + \gamma \max_{a} Q(S_{t+1}, a;
 NOTE: this is implemented inline with common Rainbow Implementations and may not be in line with the original paper.
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -35,7 +35,7 @@ from atomic_rl.action_selection import (
 )
 from atomic_rl.schedules import get_linear_schedule
 from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # Constants
 BATCH_SIZE = 128

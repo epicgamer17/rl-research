@@ -1,7 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
-from atomic_rl.networks.noisy_linear import NoisyLinear
+from atomic_rl.networks.architectures.noisy_linear import NoisyLinear
 
 pytestmark = pytest.mark.unit
 

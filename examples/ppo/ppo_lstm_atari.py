@@ -2,7 +2,7 @@
 # TODO: compare with 37 implementation details of PPO results
 # TODO: attempt a cleanup if possible
 # TODO: notes on PPO + LSTM
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_, set_seed
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -42,7 +42,7 @@ from atomic_rl.normalization import (
     standardize_tensor,
 )
 from atomic_rl.envs.wrappers import FireResetEnv
-from atomic_rl.networks import AtariCNN
+from atomic_rl.networks.architectures import AtariCNN
 from tensordict import TensorDict
 
 # Constants

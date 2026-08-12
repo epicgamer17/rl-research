@@ -39,7 +39,7 @@ from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
 )
-from atomic_rl.initialization import (
+from atomic_rl.networks.initialization import (
     set_seed,
     lecun_uniform_,
     make_sparse_init,

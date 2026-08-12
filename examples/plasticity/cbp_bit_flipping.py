@@ -7,7 +7,7 @@ time (bit flips) and the target is more complex than the learner, the best
 approximation continually changes, requiring the learner to track it.
 """
 
-from atomic_rl.initialization import make_gnt_init
+from atomic_rl.networks.initialization import make_gnt_init
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

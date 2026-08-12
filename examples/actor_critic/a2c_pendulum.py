@@ -5,7 +5,7 @@ STRUCTURALLY SIMILAR TO a2c_cartpole.py but adapted for continuous actions.
 Uses standard Gymnasium Vector Envs and the functional rollout buffer system.
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

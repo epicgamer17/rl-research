@@ -10,7 +10,7 @@ Compared to PPO, A2C is typically less sample-efficient and less stable on compl
 tasks like HalfCheetah, as it lacks the trust-region / clipping constraints that PPO provides.
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

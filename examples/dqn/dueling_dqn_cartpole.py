@@ -13,7 +13,7 @@ Note this is implemented inline with common Rainbow Implementations and may not 
 TODO: Can this be applied to any feature prediction or only q values? Or is it only predicting tensors of features or something? Can this be expanded beyond q values to something more general?
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -41,7 +41,7 @@ from atomic_rl.action_selection import (
 )
 from atomic_rl.schedules import get_linear_schedule
 from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # Constants
 BATCH_SIZE = 128

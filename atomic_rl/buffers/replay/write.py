@@ -1,4 +1,4 @@
-from ...initialization import _allocate_tensordict
+from ...utils import _allocate_tensordict
 from .state import BufferState, PERBufferState
 import torch
 from tensordict import TensorDict

@@ -19,7 +19,7 @@ Resource Budgeting: Controlled by: k (SWR) or replacement_rate (CBP).
 """
 
 # TODO: should this use ema?
-from atomic_rl.initialization import make_gnt_init
+from atomic_rl.networks.initialization import make_gnt_init
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

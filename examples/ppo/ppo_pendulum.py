@@ -20,7 +20,7 @@ Key Implementation Details:
 
 # TODO: not working, i know it worked before, i think when i was using pufferlib, but strangely pufferlib stopped cartpole from working well.
 # TODO: attempt a cleanup if possible
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_, set_seed
 import torch
 import torch.nn as nn
 import torch.optim as optim

@@ -9,6 +9,18 @@ from tensordict import TensorDict
 # NOTE: DONT LET THIS FILE BUILD UP AND HAVE A LOT FUNCTIONS, THAT IS A SIGN OF BAD ORGANIZATION.
 
 
+def _allocate_tensordict(
+    shapes: dict, batch_size: List[int], device: str = "cpu"
+) -> TensorDict:
+    """Allocates a zeroed TensorDict of any arbitrary geometry."""
+    data = TensorDict({}, batch_size=batch_size, device=device)
+    for key, shape in shapes.items():
+        dtype = torch.long if "action" in key else torch.float32
+        data.set(key, torch.zeros((*batch_size, *shape), dtype=dtype, device=device))
+    return data
+
+
+
 # TODO: do we need the inplace and not inplace operations?
 def ema_update(
     old_ema: torch.Tensor, new_value: torch.Tensor, alpha: float

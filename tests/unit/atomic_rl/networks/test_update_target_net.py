@@ -1,7 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
-from atomic_rl.update_target_net import (
+from atomic_rl.networks.update_target_net import (
     hard_update_target_network_,
     soft_update_target_network_,
 )

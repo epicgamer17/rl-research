@@ -11,7 +11,7 @@ Task:
 - Seed reset at the beginning of each algorithm/parameter run.
 """
 
-from atomic_rl.initialization import set_seed
+from atomic_rl.networks.initialization import set_seed
 import torch
 import math
 import os

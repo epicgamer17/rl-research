@@ -35,7 +35,7 @@ import torch.nn.functional as F
 import wandb
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.initialization import set_seed, lecun_uniform_, make_sparse_init
+from atomic_rl.networks.initialization import set_seed, lecun_uniform_, make_sparse_init
 from atomic_rl.optimizer import AdaptiveObGD
 from atomic_rl.td import compute_v_td_target, compute_accumulating_traces
 

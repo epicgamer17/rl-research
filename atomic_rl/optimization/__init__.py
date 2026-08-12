@@ -1,4 +1,4 @@
-from . import metaoptimization
+from . import metaoptimizers
 from .apply_gradients import apply_gradients_
 from .obgd import obgd_update_, obgd_td_update_, ObGD
 from .adaptive_obgd import (

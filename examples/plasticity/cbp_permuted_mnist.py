@@ -3,7 +3,7 @@ Example: CBP vs Standard Adam on Online Permuted MNIST
 """
 
 # TODO: improve and make plots and stuff like SWR example
-from atomic_rl.initialization import make_gnt_init
+from atomic_rl.networks.initialization import make_gnt_init
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

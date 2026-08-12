@@ -4,7 +4,7 @@ APE-X DQN implemented with torch.multiprocessing.
 
 # TODO: attempt a cleanup if possible
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import os
 import time
 import torch
@@ -38,7 +38,7 @@ from atomic_rl.action_selection import (
 )
 from atomic_rl.schedules import get_ape_x_epsilon
 from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # --- Constants ---
 ENV_NAME = "CartPole-v1"

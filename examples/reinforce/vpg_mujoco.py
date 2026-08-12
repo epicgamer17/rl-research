@@ -11,7 +11,7 @@ poor sample efficiency on complex tasks like HalfCheetah. Without the clipping o
 KL-divergence constraints of PPO, VPG updates can be too large, leading to instability.
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

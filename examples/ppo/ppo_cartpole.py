@@ -25,7 +25,7 @@ TODO: More on pessemistic lower bound, what it means, why its useful, etc
 """
 
 # TODO: attempt a cleanup if possible
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_, set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

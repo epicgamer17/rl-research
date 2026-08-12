@@ -9,7 +9,7 @@ The main idea of the paper was that there had been several incremental improveme
 6. Noisy Nets
 """
 
-from atomic_rl.initialization import set_seed
+from atomic_rl.networks.initialization import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,13 +38,13 @@ from atomic_rl.action_selection import (
     gather_q_values,
 )
 from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 from atomic_rl.metrics import log_distributional_metrics
 from atomic_rl.utils import (
     to_tensor,
     to_numpy_action,
 )
-from atomic_rl.networks.noisy_linear import NoisyLinear
+from atomic_rl.networks.architectures.noisy_linear import NoisyLinear
 
 # --- Constants ---
 BATCH_SIZE = 128

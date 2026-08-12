@@ -9,15 +9,14 @@ from . import action_selection
 from . import bptt
 from . import buffers
 from . import evaluation
-from . import initialization
 from . import losses
 from . import metrics
-from . import optimizer
+from . import networks
+from . import optimization
 from . import returns
 from . import schedules
 from . import search
 from . import td
-from . import update_target_net
 from . import utils
 
 __all__ = [
@@ -25,10 +24,10 @@ __all__ = [
     "bptt",
     "buffers",
     "evaluation",
-    "initialization",
     "losses",
     "metrics",
-    "optimizer",
+    "networks",
+    "optimization",
     "returns",
     "schedules",
     "search",

@@ -1,7 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
-from atomic_rl.networks.resnet import (
+from atomic_rl.networks.architectures.resnet import (
     ResNetBlock2d,
     ResNetBlock1d,
     ResNetBackbone,
