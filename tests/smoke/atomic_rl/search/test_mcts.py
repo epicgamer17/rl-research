@@ -35,20 +35,29 @@ def test_mcts_search_loop():
 
     root_logits, root_value = dummy_expansion(root_embeddings)
 
-    def recurrent_fn(actions, embeddings):
-        next_emb, rewards, _ = dummy_dynamics(embeddings, actions)
+    def recurrent_fn(actions, embeddings, to_play=None):
+        next_emb, rewards, next_to_play = dummy_dynamics(embeddings, actions)
         logits, values = dummy_expansion(next_emb)
-        discount = torch.full((embeddings.shape[0],), gamma)
-        return logits, values, rewards, discount, next_emb
+        discount = torch.full((embeddings.shape[0], 1), gamma)
+        return (
+            logits,
+            values.unsqueeze(-1),
+            rewards.unsqueeze(-1),
+            discount,
+            next_emb,
+            next_to_play,
+        )
 
     # Explicitly deactivate dirichlet noise injection to avoid mock patching utils modules
-    search_action, action_probs, tree = mcts_search(
+    action_probs, tree = mcts_search(
         root_embeddings=root_embeddings,
         root_logits=root_logits,
-        root_value=root_value,
+        root_value=root_value.unsqueeze(-1),
+        root_to_play=torch.zeros(batch_size, dtype=torch.long),
         recurrent_fn=recurrent_fn,
         num_simulations=num_simulations,
         num_actions=num_actions,
+        num_players=1,
         dirichlet_epsilon=0.0,
     )
 

@@ -28,22 +28,25 @@ def test_mcts_search_root_legal_mask():
 
     root_logits, root_value = expansion_fn(root_embed)
 
-    def recurrent_fn(actions, embeds):
-        next_embeds, rewards, _, is_terminal = dummy_dynamics_fn(embeds, actions)
+    def recurrent_fn(actions, embeds, to_play=None):
+        next_embeds, rewards, next_to_play, is_terminal = dummy_dynamics_fn(embeds, actions)
         logits, values = expansion_fn(next_embeds)
-        values = torch.where(is_terminal, torch.zeros_like(values), values)
+        values = torch.where(is_terminal, torch.zeros_like(values), values).unsqueeze(-1)
+        rewards = rewards.unsqueeze(-1)
         discount = torch.where(
-            is_terminal, torch.zeros_like(values), torch.ones_like(values)
+            is_terminal.unsqueeze(-1), torch.zeros_like(values), torch.ones_like(values)
         )
-        return logits, values, rewards, discount, next_embeds
+        return logits, values, rewards, discount, next_embeds, next_to_play
 
-    search_action, action_probs, tree = mcts_search(
+    action_probs, tree = mcts_search(
         root_embeddings=root_embed,
         root_logits=root_logits,
-        root_value=root_value,
+        root_value=root_value.unsqueeze(-1),
+        root_to_play=torch.zeros(1, dtype=torch.long),
         recurrent_fn=recurrent_fn,
         num_simulations=20,
         num_actions=3,
+        num_players=1,
         legal_mask=root_legal_mask,
         dirichlet_epsilon=0.5,
         dirichlet_alpha=0.3,
@@ -67,12 +70,12 @@ def test_mcts_search_dynamics_fn_legal_mask():
     def expansion_fn(embeds):
         # Always return raw unmasked logits where Action 1 is highest
         logits = torch.tensor([[1.0, 10.0, 1.0]])
-        values = torch.tensor([0.5])
+        values = torch.tensor([[0.5]])
         return logits, values
 
     def dynamics_fn_with_mask(embeds, actions):
         next_embeds = torch.zeros_like(embeds)
-        rewards = torch.zeros(1)
+        rewards = torch.zeros(1, 1)
         next_to_play = torch.zeros(1, dtype=torch.long)
         is_terminal = torch.zeros(1, dtype=torch.bool)
         # 5th item: dynamics returns legal mask for next state (Action 1 illegal in expanded nodes)
@@ -84,26 +87,28 @@ def test_mcts_search_dynamics_fn_legal_mask():
 
     root_logits, root_value = expansion_fn(root_embed)
 
-    def recurrent_fn(actions, embeds):
-        next_embeds, rewards, _, is_terminal, next_legal_mask = dynamics_fn_with_mask(
+    def recurrent_fn(actions, embeds, to_play=None):
+        next_embeds, rewards, next_to_play, is_terminal, next_legal_mask = dynamics_fn_with_mask(
             embeds, actions
         )
         logits, values = expansion_fn(next_embeds)
         # Mask illegal actions for the child node inside the recurrent_fn
         masked_logits = torch.where(next_legal_mask, logits, -1e9)
-        values = torch.where(is_terminal, torch.zeros_like(values), values)
+        values = torch.where(is_terminal.unsqueeze(-1), torch.zeros_like(values), values)
         discount = torch.where(
-            is_terminal, torch.zeros_like(values), torch.ones_like(values)
+            is_terminal.unsqueeze(-1), torch.zeros_like(values), torch.ones_like(values)
         )
-        return masked_logits, values, rewards, discount, next_embeds
+        return masked_logits, values, rewards, discount, next_embeds, next_to_play
 
-    search_action, action_probs, tree = mcts_search(
+    action_probs, tree = mcts_search(
         root_embeddings=root_embed,
         root_logits=root_logits,
         root_value=root_value,
+        root_to_play=torch.zeros(1, dtype=torch.long),
         recurrent_fn=recurrent_fn,
         num_simulations=10,
         num_actions=3,
+        num_players=1,
         legal_mask=root_legal_mask,
         dirichlet_epsilon=0.0,
     )

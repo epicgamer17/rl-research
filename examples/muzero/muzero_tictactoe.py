@@ -116,6 +116,8 @@ from atomic_rl.buffers.replay import (
     uniform_sample,
     BufferState,
 )
+from atomic_rl.evaluation import evaluate_pettingzoo_vs_random
+from atomic_rl.envs.wrappers import PettingZooChannelFirstWrapper
 from pettingzoo.classic import tictactoe_v3
 
 # ---------------------------------------------------------------------------
@@ -435,85 +437,26 @@ def evaluate_vs_random(
     num_simulations: int = NUM_MCTS_SIMULATIONS,
     device: torch.device = torch.device("cpu"),
 ) -> Dict[str, float]:
-    """
-    Evaluates trained MuZero model against a Random agent.
-    """
+    """Evaluates trained MuZero model against a Random agent using PettingZoo evaluation helper."""
     model.eval()
-    p1_wins, p1_draws, p1_losses = 0, 0, 0
-    p2_wins, p2_draws, p2_losses = 0, 0, 0
 
-    for game_i in range(num_games):
-        az_player = 0 if game_i % 2 == 0 else 1
-        az_agent_name = "player_1" if az_player == 0 else "player_2"
-        env = tictactoe_v3.env()
-        env.reset()
+    def select_eval_action(env, curr_player_idx, obs_t, action_mask_t):
+        with torch.no_grad():
+            _, init_logits, _ = model.initial_inference(obs_t.unsqueeze(0))
+        masked_logits = apply_action_mask(init_logits, action_mask_t.unsqueeze(0))
+        target_policy = F.softmax(masked_logits, dim=-1).squeeze(0)
+        action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
+        return action_idx_tensor.squeeze().item()
 
-        board_3x3 = torch.zeros(3, 3, device=device)
-        az_reward = 0.0
-
-        for agent in env.agent_iter():
-            obs, reward, termination, truncation, info = env.last()
-            if agent == az_agent_name and reward != 0:
-                az_reward = reward
-
-            if termination or truncation:
-                env.step(None)
-                continue
-
-            player = 0 if agent == "player_1" else 1
-            action_mask = torch.tensor(
-                obs["action_mask"], device=device, dtype=torch.bool
-            )
-            legal_actions = action_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
-
-            if player == az_player:
-                canonical_obs = get_canonical_obs(board_3x3, player)
-                with torch.no_grad():
-                    _, init_logits, _ = model.initial_inference(canonical_obs)
-
-                masked_logits = torch.where(action_mask.unsqueeze(0), init_logits, -1e9)
-                target_policy = F.softmax(masked_logits, dim=-1).squeeze(0)
-                action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
-                action_idx = action_idx_tensor.squeeze().item()
-            else:
-                action_idx = random.choice(legal_actions)
-
-            row, col = action_idx // 3, action_idx % 3
-            piece = 1.0 if player == 0 else -1.0
-            board_3x3[row, col] = piece
-            env.step(action_idx)
-
-        if az_player == 0:
-            if az_reward > 0:
-                p1_wins += 1
-            elif az_reward < 0:
-                p1_losses += 1
-            else:
-                p1_draws += 1
-        else:
-            if az_reward > 0:
-                p2_wins += 1
-            elif az_reward < 0:
-                p2_losses += 1
-            else:
-                p2_draws += 1
-
+    metrics = evaluate_pettingzoo_vs_random(
+        env_fn=lambda: PettingZooChannelFirstWrapper(tictactoe_v3.env()),
+        select_action_fn=select_eval_action,
+        num_games=num_games,
+        device=device,
+    )
     model.train()
-    total_p1 = max(1, p1_wins + p1_draws + p1_losses)
-    total_p2 = max(1, p2_wins + p2_draws + p2_losses)
-    total_all = num_games
+    return metrics
 
-    return {
-        "eval/win_rate": (p1_wins + p2_wins) / total_all,
-        "eval/draw_rate": (p1_draws + p2_draws) / total_all,
-        "eval/loss_rate": (p1_losses + p2_losses) / total_all,
-        "eval/p1_win_rate": p1_wins / total_p1,
-        "eval/p1_draw_rate": p1_draws / total_p1,
-        "eval/p1_loss_rate": p1_losses / total_p1,
-        "eval/p2_win_rate": p2_wins / total_p2,
-        "eval/p2_draw_rate": p2_draws / total_p2,
-        "eval/p2_loss_rate": p2_losses / total_p2,
-    }
 
 
 # ============================================================================

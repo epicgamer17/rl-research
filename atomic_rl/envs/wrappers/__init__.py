@@ -18,6 +18,7 @@ from .normalization import (
     WelfordNormalizeObservation,
     WelfordNormalizeReward,
 )
+from .pettingzoo import PettingZooChannelFirstWrapper
 from .pomdp import FlickeringObservation, VecFlickeringObservation
 
 __all__ = [
@@ -34,6 +35,7 @@ __all__ = [
     "FireResetEnv",
     "FlickeringObservation",
     "NormalizeObservation",
+    "PettingZooChannelFirstWrapper",
     "RunningMeanStd",
     "VecFlickeringObservation",
     "VecNormalize",
@@ -44,3 +46,4 @@ __all__ = [
     "WelfordNormalizeObservation",
     "WelfordNormalizeReward",
 ]
+

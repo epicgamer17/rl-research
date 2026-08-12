@@ -20,6 +20,7 @@ from tensordict import TensorDict
 from functools import partial
 from typing import Tuple, Dict, Any, Callable, List
 
+from atomic_rl.buffers import SharedPERBuffer
 from atomic_rl.buffers.replay import (
     init_per_buffer,
     sample_per,
@@ -83,73 +84,7 @@ class DuelingDQN(nn.Module):
         return v + a - a.mean(dim=1, keepdim=True)
 
 
-class SharedPERBuffer:
-    def __init__(self, capacity: int, shapes: Dict[str, Any]):
-        self.buffer_state = init_per_buffer(capacity, shapes)
-        # Move all tensors to shared memory
-        self.buffer_state.data.share_memory_()
-        self.buffer_state.sum_tree.share_memory_()
-        self.buffer_state.min_tree.share_memory_()
-
-        self.lock = mp.Lock()
-
-        # We need to share the pointer and size too.
-        # PERBufferState is a dataclass, so we might need to wrap its scalars in mp.Value if we want them shared.
-        self._pointer = mp.Value("i", 0)
-        self._size = mp.Value("i", 0)
-        self._max_priority = mp.Value("d", 1.0)
-
-        # This is a local function from with_per_tracking, which is not picklable.
-        # We'll initialize it in __init__ and __setstate__.
-        self.per_add = with_per_tracking(circular_write_strategy_)
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        # Don't pickle the non-picklable local function
-        if "per_add" in state:
-            del state["per_add"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        # Re-initialize the local function after unpickling
-        self.per_add = with_per_tracking(circular_write_strategy_)
-
-    def add_transitions(self, transitions: TensorDict):
-        with self.lock:
-            # Sync state from shared scalars
-            self.buffer_state.pointer = self._pointer.value
-            self.buffer_state.size = self._size.value
-            self.buffer_state.max_priority = self._max_priority.value
-
-            self.buffer_state = self.per_add(self.buffer_state, transitions)
-
-            # Sync back to shared scalars
-            self._pointer.value = self.buffer_state.pointer
-            self._size.value = self.buffer_state.size
-            self._max_priority.value = self.buffer_state.max_priority
-
-    def sample_batch(
-        self, batch_size: int, beta: float, min_size: int = 0
-    ) -> Tuple[Any, torch.Tensor, torch.Tensor]:
-        with self.lock:
-            if self._size.value < min_size:
-                return None, None, None
-
-            # Sync state
-            self.buffer_state.size = self._size.value
-
-            beta_tensor = torch.tensor(beta, dtype=torch.float32)
-            return sample_per(self.buffer_state, batch_size, beta_tensor)
-
-    def update_priorities(
-        self, tree_indices: torch.Tensor, td_errors: torch.Tensor, alpha: float
-    ):
-        with self.lock:
-            self.buffer_state = update_priorities(
-                self.buffer_state, tree_indices, td_errors, alpha
-            )
-            self._max_priority.value = self.buffer_state.max_priority
+# SharedPERBuffer is imported from atomic_rl.buffers
 
 
 def actor_worker(

@@ -25,7 +25,7 @@ def mcts_search(
     root_value: torch.Tensor,  # [B, num_players]
     root_to_play: torch.Tensor,  # [B]
     recurrent_fn: Callable[
-        [torch.Tensor, torch.Tensor],
+        [torch.Tensor, torch.Tensor, torch.Tensor],
         Tuple[
             torch.Tensor,  # logits: [B, num_actions]
             torch.Tensor,  # value: [B, num_players]
@@ -46,8 +46,12 @@ def mcts_search(
     pb_c_base: float = 19652.0,
     pb_c_init: float = 1.25,
     temperature: float = 1.0,
-) -> Tuple[torch.Tensor, torch.Tensor, TensorDict]:
-    """Runs batched N-player MuZero MCTS search matching mctx semantics."""
+) -> Tuple[torch.Tensor, TensorDict]:
+    """Runs batched N-player MuZero MCTS search matching mctx semantics.
+
+    Returns:
+        Tuple[torch.Tensor, TensorDict]: (action_probs [B, A], tree TensorDict)
+    """
     device = root_embeddings.device
     assert (
         isinstance(num_simulations, int)
@@ -134,6 +138,7 @@ def mcts_search(
         if b_idx.numel() > 0:
             # B. Model Dynamics Step
             parent_embeddings = tree["embeddings"][b_idx, leaf_parents[b_idx]]
+            parent_to_play = tree["to_play"][b_idx, leaf_parents[b_idx]]
             (
                 prior_logits,
                 value,
@@ -141,7 +146,9 @@ def mcts_search(
                 discount,
                 next_embeddings,
                 next_to_play,
-            ) = recurrent_fn(leaf_actions[b_idx], parent_embeddings)
+            ) = recurrent_fn(
+                leaf_actions[b_idx], parent_embeddings, parent_to_play
+            )
 
             leaf_value[b_idx] = value
 
@@ -186,13 +193,9 @@ def mcts_search(
             leaf_value=leaf_value,
         )
 
-    # 4. Extract Visit Policy and Select Actions
+    # 4. Extract Visit Policy Target
     root_visits = tree["children_visits"][:, 0]  # [B, A]
     action_probs = get_mcts_visit_policy(root_visits, temperature=temperature)
 
-    if temperature == 0.0:
-        selected_action = action_probs.argmax(dim=-1)
-    else:
-        selected_action = torch.multinomial(action_probs, num_samples=1).squeeze(-1)
+    return action_probs, tree
 
-    return selected_action, action_probs, tree

@@ -8,6 +8,7 @@ except PackageNotFoundError:
 from . import action_selection
 from . import bptt
 from . import buffers
+from . import evaluation
 from . import initialization
 from . import losses
 from . import metrics
@@ -23,6 +24,7 @@ __all__ = [
     "action_selection",
     "bptt",
     "buffers",
+    "evaluation",
     "initialization",
     "losses",
     "metrics",
@@ -33,5 +35,6 @@ __all__ = [
     "td",
     "utils",
 ]
+
 
 

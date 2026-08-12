@@ -32,13 +32,16 @@ import wandb
 from atomic_rl.search import mcts_search, get_mcts_visit_policy
 from atomic_rl.losses import cross_entropy_loss, mse_loss
 from atomic_rl.action_selection import argmax_selector, sample_distribution
+from atomic_rl.buffers import SharedReplayBuffer
 from atomic_rl.buffers.replay import (
     init_buffer,
     circular_write_strategy_,
     uniform_sample,
     BufferState,
 )
+from atomic_rl.evaluation import evaluate_pettingzoo_vs_random
 from atomic_rl.envs.functions.tictactoe import check_tictactoe_winner, get_canonical_obs
+from atomic_rl.envs.wrappers import PettingZooChannelFirstWrapper
 from pettingzoo.classic import tictactoe_v3
 
 
@@ -209,40 +212,7 @@ class MuZeroTicTacToeNet(nn.Module):
 # ============================================================================
 
 
-class SharedReplayBuffer:
-    def __init__(self, capacity: int, shapes: Dict[str, Any], device: torch.device):
-        self.buffer_state = init_buffer(capacity, shapes, device=device)
-        self.buffer_state.data.share_memory_()
-
-        self.lock = mp.Lock()
-        self._pointer = mp.Value("i", 0)
-        self._size = mp.Value("i", 0)
-
-    def add_samples(self, samples_td: TensorDict):
-        with self.lock:
-            self.buffer_state.pointer = self._pointer.value
-            self.buffer_state.size = self._size.value
-
-            self.buffer_state, _ = circular_write_strategy_(
-                self.buffer_state, samples_td
-            )
-
-            self._pointer.value = self.buffer_state.pointer
-            self._size.value = self.buffer_state.size
-
-    def sample_batch(
-        self, rng_key: torch.Generator, batch_size: int, min_size: int = 0
-    ) -> TensorDict:
-        with self.lock:
-            if self._size.value < min_size:
-                return None
-
-            self.buffer_state.size = self._size.value
-            return uniform_sample(self.buffer_state, rng_key, batch_size)
-
-    @property
-    def size(self) -> int:
-        return self._size.value
+# SharedReplayBuffer is imported from atomic_rl.buffers
 
 
 # ============================================================================
@@ -382,16 +352,14 @@ def actor_worker(
             )
 
             row, col = action_idx // 3, action_idx % 3
-            piece = 1.0 if curr_player == 0 else -1.0
-            boards[b_idx, row, col] = piece
-
-            winner, is_term = check_tictactoe_winner(boards[b_idx].unsqueeze(0))
+            rewards_vec, is_term = check_tictactoe_winner(boards[b_idx].unsqueeze(0))
 
             if is_term.item():
+                p0_win_val = rewards_vec[0, 0].item()
                 p0_reward = 0.5
-                if winner.item() > 0:
+                if p0_win_val > 0:
                     p0_reward = 1.0
-                elif winner.item() < 0:
+                elif p0_win_val < 0:
                     p0_reward = 0.0
 
                 p1_reward = 1.0 - p0_reward
@@ -437,96 +405,32 @@ def evaluator_worker(
     shared_model: nn.Module,
     eval_queue: mp.Queue,
     num_eval_games: int = NUM_EVAL_GAMES,
-    eval_interval_steps: int = EVAL_INTERVAL_STEPS,
     device_str: str = "cpu",
 ):
+
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.eval()
 
+    def select_eval_action(env, curr_player_idx, obs_t, action_mask_t):
+        with torch.no_grad():
+            _, init_logits, _ = local_model.initial_inference(obs_t.unsqueeze(0))
+        masked_logits = apply_action_mask(init_logits, action_mask_t.unsqueeze(0))
+        target_policy = F.softmax(masked_logits, dim=-1).squeeze(0)
+        action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
+        return action_idx_tensor.squeeze().item()
+
     while True:
-        time.sleep(2.0)
         local_model.load_state_dict(shared_model.state_dict())
-
-        p1_wins, p1_draws, p1_losses = 0, 0, 0
-        p2_wins, p2_draws, p2_losses = 0, 0, 0
-
-        for game_i in range(num_eval_games):
-            az_player = 0 if game_i % 2 == 0 else 1
-            az_agent_name = "player_1" if az_player == 0 else "player_2"
-            env = tictactoe_v3.env()
-            env.reset()
-
-            board_3x3 = torch.zeros(3, 3, device=device)
-            az_reward = 0.0
-
-            for agent in env.agent_iter():
-                obs, reward, termination, truncation, info = env.last()
-                if agent == az_agent_name and reward != 0:
-                    az_reward = reward
-
-                if termination or truncation:
-                    env.step(None)
-                    continue
-
-                player = 0 if agent == "player_1" else 1
-                action_mask = torch.tensor(
-                    obs["action_mask"], device=device, dtype=torch.bool
-                )
-                legal_actions = action_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
-
-                if player == az_player:
-                    canonical_obs = get_canonical_obs(board_3x3, player)
-                    with torch.no_grad():
-                        _, init_logits, _ = local_model.initial_inference(canonical_obs)
-
-                    masked_logits = torch.where(
-                        action_mask.unsqueeze(0), init_logits, -1e9
-                    )
-                    target_policy = F.softmax(masked_logits, dim=-1).squeeze(0)
-                    action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
-                    action_idx = action_idx_tensor.squeeze().item()
-                    if action_idx not in legal_actions:
-                        action_idx = random.choice(legal_actions)
-                else:
-                    action_idx = random.choice(legal_actions)
-
-                row, col = action_idx // 3, action_idx % 3
-                piece = 1.0 if player == 0 else -1.0
-                board_3x3[row, col] = piece
-                env.step(action_idx)
-
-            if az_player == 0:
-                if az_reward > 0:
-                    p1_wins += 1
-                elif az_reward < 0:
-                    p1_losses += 1
-                else:
-                    p1_draws += 1
-            else:
-                if az_reward > 0:
-                    p2_wins += 1
-                elif az_reward < 0:
-                    p2_losses += 1
-                else:
-                    p2_draws += 1
-
-        total_p1 = max(1, p1_wins + p1_draws + p1_losses)
-        total_p2 = max(1, p2_wins + p2_draws + p2_losses)
-        total_all = num_eval_games
-
-        eval_metrics = {
-            "eval/win_rate": (p1_wins + p2_wins) / total_all,
-            "eval/draw_rate": (p1_draws + p2_draws) / total_all,
-            "eval/loss_rate": (p1_losses + p2_losses) / total_all,
-            "eval/p1_win_rate": p1_wins / total_p1,
-            "eval/p1_draw_rate": p1_draws / total_p1,
-            "eval/p1_loss_rate": p1_losses / total_p1,
-            "eval/p2_win_rate": p2_wins / total_p2,
-            "eval/p2_draw_rate": p2_draws / total_p2,
-            "eval/p2_loss_rate": p2_losses / total_p2,
-        }
+        eval_metrics = evaluate_pettingzoo_vs_random(
+            env_fn=lambda: PettingZooChannelFirstWrapper(tictactoe_v3.env()),
+            select_action_fn=select_eval_action,
+            num_games=num_eval_games,
+            device=device,
+        )
         eval_queue.put(eval_metrics)
+
+
 
 
 def learner_worker(

@@ -34,8 +34,6 @@ from atomic_rl.search import (
 from atomic_rl.search.qtransforms import get_qvalues
 from atomic_rl.envs.functions.tictactoe import (
     check_tictactoe_winner,
-    embeddings_to_canonical,
-    get_canonical_obs,
     tictactoe_dynamics_fn,
 )
 
@@ -56,18 +54,19 @@ def _embed(board, player):
     return emb
 
 
-def _recurrent_fn(actions_taken, embeddings):
+def _recurrent_fn(actions_taken, embeddings, to_play):
     """The mp example's exact pattern: tictactoe dynamics + masked child priors."""
-    next_embed, reward, _, is_terminal, next_legal_mask = tictactoe_dynamics_fn(
-        embeddings, actions_taken
+    next_embed, reward_vec, next_to_play, is_terminal, next_legal_mask = tictactoe_dynamics_fn(
+        embeddings, actions_taken, to_play
     )
     logits = embeddings.new_zeros(embeddings.shape[0], NUM_ACTIONS)
     logits = logits.masked_fill(~next_legal_mask, MIN_LOGIT)
-    value = embeddings.new_zeros(embeddings.shape[0])
-    discount = torch.where(
-        is_terminal, torch.zeros_like(reward), -torch.ones_like(reward)
+    v_p0 = torch.zeros(embeddings.shape[0])
+    value_vec = torch.stack([v_p0, -v_p0], dim=-1)
+    discount_vec = torch.where(
+        is_terminal.unsqueeze(-1), torch.zeros_like(reward_vec), torch.ones_like(reward_vec)
     )
-    return logits, value, reward, discount, next_embed
+    return logits, value_vec, reward_vec, discount_vec, next_embed, next_to_play
 
 
 # ============================================================================
@@ -75,14 +74,15 @@ def _recurrent_fn(actions_taken, embeddings):
 # ============================================================================
 def test_dynamics_p2_places_minus_one_and_flips_turn():
     """P2 (to_play=1) must drop a -1 piece and hand the turn back to P1."""
-    next_embed, reward, next_to_play, is_terminal, legal = tictactoe_dynamics_fn(
+    next_embed, reward_vec, next_to_play, is_terminal, legal = tictactoe_dynamics_fn(
         _embed([[0] * 3, [0] * 3, [0] * 3], 1), torch.tensor([4])
     )
     assert next_embed[0, 1, 1, 0].item() == -1.0  # P2 owns the center
     assert next_embed[0, ..., 1].tolist() == [[0] * 3, [0] * 3, [0] * 3]  # P1 next
     assert next_to_play.item() == 0
     assert is_terminal.item() is False
-    assert reward.item() == 0.0
+    assert reward_vec[0, 0].item() == 0.0
+    assert reward_vec[0, 1].item() == 0.0
     assert legal[0, 4].item() is False  # center now occupied
     assert legal[0, 0].item() is True
 
@@ -90,28 +90,31 @@ def test_dynamics_p2_places_minus_one_and_flips_turn():
 def test_dynamics_p2_win_and_loss_reward_sign():
     """Terminal rewards are from the mover's POV; a P2 win is a P1 loss and
     vice-versa, and the reward sign is color-symmetric."""
-    # P2 (to_play=1) completes the first row with -1, -1, -1 -> P2 won
-    _, reward, _, is_term, legal = tictactoe_dynamics_fn(
+    # P2 (to_play=1) completes the first row with -1, -1, -1 -> P2 won (P0 reward is -1.0, P1 reward is +1.0)
+    _, reward_vec, _, is_term, legal = tictactoe_dynamics_fn(
         _embed([[-1, -1, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([2])
     )
-    assert reward.item() == 1.0
+    assert reward_vec[0, 0].item() == -1.0
+    assert reward_vec[0, 1].item() == 1.0
     assert is_term.item() is True
     assert legal.sum().item() == 6.0  # terminal row full, six cells still empty
 
-    # Mirror: P1 (to_play=0) completes the same row with +1, +1, +1 -> P1 won
-    _, reward, _, is_term, _ = tictactoe_dynamics_fn(
+    # Mirror: P1 (to_play=0) completes the same row with +1, +1, +1 -> P1 won (P0 reward is +1.0, P1 reward is -1.0)
+    _, reward_vec, _, is_term, _ = tictactoe_dynamics_fn(
         _embed([[1, 1, 0], [0, 0, 0], [0, 0, 0]], 0), torch.tensor([2])
     )
-    assert reward.item() == 1.0
+    assert reward_vec[0, 0].item() == 1.0
+    assert reward_vec[0, 1].item() == -1.0
     assert is_term.item() is True
 
     # The mover never returns -1 on its own move (it always lays its own piece);
     # a loss is only realised across the alternating discount as the opponent's
     # +1 win is backed up (covered by test_qvalues_p2_root_sign_parity).
-    _, reward, _, is_term, _ = tictactoe_dynamics_fn(
+    _, reward_vec, _, is_term, _ = tictactoe_dynamics_fn(
         _embed([[1, 0, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([1])
     )
-    assert reward.item() == 0.0
+    assert reward_vec[0, 0].item() == 0.0
+    assert reward_vec[0, 1].item() == 0.0
     assert is_term.item() is False
 
 
@@ -132,42 +135,13 @@ def test_dynamics_color_swap_mirror_symmetry():
 
     torch.testing.assert_close(next_a[..., 0], -next_b[..., 0])
     assert to_a.item() == 1 - to_b.item()
-    assert reward_a.item() == reward_b.item()  # same mover-perspective reward
+    torch.testing.assert_close(reward_a, reward_b)
     assert term_a.item() == term_b.item()
     torch.testing.assert_close(legal_a, legal_b)
 
 
 # ============================================================================
-# 2. Canonical observations
-# ============================================================================
-def test_canonical_color_swap_differs_only_by_turn_plane():
-    """Mirror states must produce identical my/opp planes; only the turn plane
-    (channel 2, absolute color hint) differs."""
-    board_a = [[1, 0, -1], [0, 1, 0], [0, -1, 0]]
-    can_a = embeddings_to_canonical(_embed(board_a, 0))  # [1, 3, 3, 3]
-    can_b = embeddings_to_canonical(_embed([[-v for v in row] for row in board_a], 1))
-
-    torch.testing.assert_close(can_a[0, 0], can_b[0, 0])  # my pieces
-    torch.testing.assert_close(can_a[0, 1], can_b[0, 1])  # opp pieces
-    assert can_a[0, 2].all().item()  # player 0 turn plane is 1
-    assert not can_b[0, 2].any().item()  # player 1 turn plane is 0
-
-
-def test_canonicals_agree_for_both_players():
-    """The replay canonical (get_canonical_obs) must EXACTLY match the MCTS
-    canonical (embeddings_to_canonical) for every state, P1 or P2."""
-    for player, board in [
-        (0, [[1, 0, 0], [0, 0, 0], [-1, 0, 1]]),
-        (1, [[-1, 0, 0], [0, 0, 0], [1, 0, -1]]),
-    ]:
-        emb = _embed(board, player)
-        from_canonical = get_canonical_obs(torch.tensor(board), player).squeeze(0)
-        from_embeddings = embeddings_to_canonical(emb)[0]
-        torch.testing.assert_close(from_canonical, from_embeddings)
-
-
-# ============================================================================
-# 3. Search has no side-bias (the key P2 guarantee)
+# 2. Search has no side-bias (the key P2 guarantee)
 # ============================================================================
 def test_search_p2_root_identical_process_to_p1_root():
     """Given identical rollouts, a P2-to-move root and a P1-to-move root must
@@ -183,25 +157,29 @@ def test_search_p2_root_identical_process_to_p1_root():
     legal = torch.ones(1, NUM_ACTIONS, dtype=torch.bool)
 
     torch.manual_seed(seed)
-    _, probs_p1, tree_p1 = mcts_search(
+    probs_p1, tree_p1 = mcts_search(
         _embed(empty, 0),
         torch.zeros(1, NUM_ACTIONS),
-        torch.zeros(1),
+        torch.zeros(1, 2),
+        torch.tensor([0]),
         rec,
         num_simulations=100,
         num_actions=NUM_ACTIONS,
+        num_players=2,
         legal_mask=legal,
         dirichlet_epsilon=0.0,
         temperature=1.0,
     )
     torch.manual_seed(seed)
-    _, probs_p2, tree_p2 = mcts_search(
+    probs_p2, tree_p2 = mcts_search(
         _embed(empty, 1),
         torch.zeros(1, NUM_ACTIONS),
-        torch.zeros(1),
+        torch.zeros(1, 2),
+        torch.tensor([1]),
         rec,
         num_simulations=100,
         num_actions=NUM_ACTIONS,
+        num_players=2,
         legal_mask=legal,
         dirichlet_epsilon=0.0,
         temperature=1.0,
@@ -223,13 +201,15 @@ def test_search_p2_finds_forced_win_mirrored_by_p1():
 
     def root_visits(board, player):
         legal = (torch.tensor(board).view(-1) == 0).unsqueeze(0)
-        _, _, tree = mcts_search(
+        _, tree = mcts_search(
             _embed(board, player),
             torch.zeros(1, NUM_ACTIONS),
-            torch.zeros(1),
+            torch.zeros(1, 2),
+            torch.tensor([player]),
             _recurrent_fn,
             num_simulations=64,
             num_actions=NUM_ACTIONS,
+            num_players=2,
             legal_mask=legal,
             dirichlet_epsilon=0.0,
             temperature=0.0,
@@ -257,13 +237,15 @@ def test_search_p2_blocks_forced_loss_mirrored_by_p1():
 
     def root_visits(board, player):
         legal = (torch.tensor(board).view(-1) == 0).unsqueeze(0)
-        _, _, tree = mcts_search(
+        _, tree = mcts_search(
             _embed(board, player),
             torch.zeros(1, NUM_ACTIONS),
-            torch.zeros(1),
+            torch.zeros(1, 2),
+            torch.tensor([player]),
             _recurrent_fn,
             num_simulations=sims,
             num_actions=NUM_ACTIONS,
+            num_players=2,
             legal_mask=legal,
             dirichlet_epsilon=0.0,
             temperature=0.0,
@@ -286,25 +268,28 @@ def test_qvalues_p2_root_sign_parity():
     P2 win and -1 for an action that makes P1 win, so PUCT selects the win."""
     B, A, S = 1, 3, 8
     tree = init_mcts_tree(
-        _embed([[1, 1, 0], [0, 0, 0], [0, 0, 0]], 1),  # P2 to move
-        torch.zeros(B, A),
-        torch.zeros(B),
+        root_embeddings=_embed([[1, 1, 0], [0, 0, 0], [0, 0, 0]], 1),  # P2 to move
+        root_logits=torch.zeros(B, A),
+        root_value=torch.zeros(B, 2),
+        root_to_play=torch.tensor([1]),
         num_simulations=S,
         num_actions=A,
+        num_players=2,
     )
     # Hand-built two terminal edges: a0 = P2 wins, a1 = P1 wins (mirror blocks)
     for action, child, reward in ((0, 1, 1.0), (1, 2, -1.0)):
         tree["children_index"][0, 0, action] = child
-        tree["children_rewards"][0, 0, action] = reward
+        tree["children_rewards"][0, 0, action, 1] = reward
+        tree["children_rewards"][0, 0, action, 0] = -reward
         tree["children_discounts"][0, 0, action] = 0.0  # terminal
         tree["node_values"][0, child] = 0.0
         tree["node_visits"][0, child] = 1
         tree["is_terminal"][0, child] = True
     tree["node_visits"][0, 0] = 10
 
-    q = get_qvalues(tree, torch.tensor([0]))
-    assert q[0, 0].item() == pytest.approx(1.0)  # P2's winning move
-    assert q[0, 1].item() == pytest.approx(-1.0)  # P1's winning move
+    q = get_qvalues(tree, torch.tensor([0]), torch.tensor([1]))
+    assert q[0, 0, 1].item() == pytest.approx(1.0)  # P2's winning move from P2 perspective
+    assert q[0, 1, 1].item() == pytest.approx(-1.0)  # P1's winning move from P2 perspective
 
     # Normalized scores put the P2-winning action first; PUCT must descend into it
     _, _, _, trajectory = select_leaf(tree, pb_c_base=19652.0, pb_c_init=1.25)
@@ -328,18 +313,21 @@ def test_mcts_search_p2_seed_reproducibility():
 
     def run():
         torch.manual_seed(seed)
-        action, probs, tree = mcts_search(
+        probs, tree = mcts_search(
             _embed(board, 1),  # P2 to move
             torch.zeros(1, NUM_ACTIONS),
-            torch.zeros(1),
+            torch.zeros(1, 2),
+            torch.tensor([1]),
             _recurrent_fn,
             num_simulations=60,
             num_actions=NUM_ACTIONS,
+            num_players=2,
             legal_mask=legal,
             dirichlet_epsilon=0.25,
             dirichlet_alpha=1.0,
             temperature=1.0,
         )
+        action = torch.multinomial(probs, num_samples=1).squeeze(-1)
         return action, probs, tree["children_visits"][:, 0].clone()
 
     a1, p1, v1 = run()
@@ -368,13 +356,15 @@ def test_visit_policy_multinomial_is_seed_dependent():
 
 def test_winner_check_is_color_symmetric():
     """check_tictactoe_winner treats mirrored rows identically."""
-    winner_term_a, term_a = check_tictactoe_winner(
+    reward_a, term_a = check_tictactoe_winner(
         torch.tensor([[1, 1, 1], [0, 0, 0], [0, 0, 0]])[None]
     )
-    winner_term_b, term_b = check_tictactoe_winner(
+    reward_b, term_b = check_tictactoe_winner(
         torch.tensor([[-1, -1, -1], [0, 0, 0], [0, 0, 0]])[None]
     )
-    assert winner_term_a.item() == 1.0
-    assert winner_term_b.item() == -1.0
+    assert reward_a[0, 0].item() == 1.0
+    assert reward_a[0, 1].item() == -1.0
+    assert reward_b[0, 0].item() == -1.0
+    assert reward_b[0, 1].item() == 1.0
     assert term_a.item() is True
     assert term_b.item() is True

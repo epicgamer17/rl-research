@@ -10,3 +10,4 @@ from .write import (
 )
 from .sampling import sample_per, uniform_sample
 from .accumulate import make_n_step_accumulator, make_padded_chunk_accumulator
+from .shared_replay import SharedReplayBuffer, SharedPERBuffer
