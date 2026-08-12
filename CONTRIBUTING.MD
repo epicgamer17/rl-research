@@ -67,6 +67,9 @@ If a functional operation mathematically does not require gradients (like comput
 Never use .item(), .tolist(), or .numpy() inside the functional core or the main orchestration loop. These operations trigger a CUDA Synchronization, forcing the GPU to wait for the CPU, destroying performance.
 Avoid Python for loops over batch or feature dimensions at all costs. This is an absolute prerequisite if you want your functions to be friendly to torch.compile(). (If an operation is notoriously hard to vectorize, explore torch.vmap).
 PyTorch allows implicit broadcasting (e.g., adding a [Batch, 1] tensor to a [Batch, Features] tensor). While efficient, this is a massive source of silent bugs. Require explicit .unsqueeze() calls in the code so the reader can visually track how the dimensions are aligning before an operation.
+Functions that operate on sequence metrics or values (such as returns, GAE, and TD-targets) MUST support arbitrary trailing value channels `[B, T, *Channels]` (e.g. `[B, T, 1]` for single-agent scalar, `[B, T, N_players]` for MARL vector values, `[B, T, F]` for multi-objective rewards).
+Functions MUST enforce EXACT shape equality across input tensors (`assert tensor_a.shape == tensor_b.shape`) to fail fast at the origin if shapes mismatch, explicitly preventing accidental PyTorch broadcasting errors across players or features.
+Functions MUST NEVER attempt to guess semantic meanings of trailing dimensions or automatically squeeze/unsqueeze dimensions internally.
 If a function returns a view of a tensor rather than an allocated copy, it must be documented.
 If a function fundamentally requires a contiguous block of memory (common when reshaping after a .transpose()), use .contiguous() explicitly and document why it is necessary.
 

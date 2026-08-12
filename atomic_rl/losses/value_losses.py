@@ -22,18 +22,20 @@ def compute_clipped_mse_loss(
     and then takes the maximum of the unclipped and clipped MSE losses. This provides
     a pessimistic estimate of the value, which can help stabilize training.
 
+    Supports arbitrary tensor shapes [*Batch, *Channels] (e.g. [B, 1], [B, N_players], [B, F_objectives]).
+
     Args:
-        predictions: The current predictions (e.g. new state values).
-        targets: The target values (e.g. returns).
-        old_predictions: The predictions from the previous iteration.
+        predictions: The current predictions [*Batch, *Channels].
+        targets: The target values (e.g. returns) [*Batch, *Channels].
+        old_predictions: The predictions from the previous iteration [*Batch, *Channels].
         clip_coef: The clipping coefficient.
 
     Returns:
-        Tuple[torch.Tensor, dict]: The clipped MSE loss (raw) and logging info.
+        Tuple[torch.Tensor, dict]: The raw element-wise clipped MSE loss [*Batch, *Channels] and logging info.
     """
     assert (
         predictions.shape == old_predictions.shape == targets.shape
-    ), f"Shape mismatch: pred {predictions.shape}, old {old_predictions.shape}, targets {targets.shape}"
+    ), f"Exact shape mismatch in compute_clipped_mse_loss: predictions {predictions.shape}, old {old_predictions.shape}, targets {targets.shape}"
 
     # Explicitly detach old_predictions to prevent gradient leak
     old_predictions = old_predictions.detach()

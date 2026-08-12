@@ -415,7 +415,7 @@ def test_gae_assertions():
     """Test that GAE raises assertions on invalid input shapes."""
     rewards = torch.randn(4, 10)
     # Shape mismatch
-    with pytest.raises(AssertionError, match="Shape mismatch in GAE inputs"):
+    with pytest.raises(AssertionError, match="Exact shape mismatch"):
         compute_gae(
             rewards=rewards,
             terminated=torch.randn(4, 11),
@@ -426,14 +426,14 @@ def test_gae_assertions():
             gae_lambda=0.95,
         )
 
-    # Dimensionality mismatch
-    with pytest.raises(AssertionError, match="Expected 2D rewards"):
+    # Dimensionality mismatch (1D input)
+    with pytest.raises(AssertionError, match="Expected at least 2D rewards"):
         compute_gae(
-            rewards=torch.randn(4, 10, 1),
-            terminated=torch.randn(4, 10, 1),
-            truncated=torch.randn(4, 10, 1),
-            values=torch.randn(4, 10, 1),
-            next_values=torch.randn(4, 10, 1),
+            rewards=torch.randn(4),
+            terminated=torch.randn(4),
+            truncated=torch.randn(4),
+            values=torch.randn(4),
+            next_values=torch.randn(4),
             gamma=0.99,
             gae_lambda=0.95,
         )
@@ -468,3 +468,57 @@ def test_td_lambda_returns():
 
     expected = torch.tensor([[3.61, 2.0]])
     torch.testing.assert_close(returns, expected)
+
+
+def test_returns_multidimensional_channels():
+    """
+    Verify that compute_gae, compute_n_step_returns, and compute_mc_returns
+    natively support 3D [B, T, Channels] and 4D [B, T, N, F] shapes.
+    """
+    # 3D Single Agent / PPO [B, T, 1]
+    shape_3d = (2, 5, 1)
+    r3 = torch.randn(shape_3d)
+    t3 = torch.zeros(shape_3d)
+    v3 = torch.randn(shape_3d)
+    nv3 = torch.randn(shape_3d)
+    gae_3d = compute_gae(r3, t3, t3, v3, nv3, gamma=0.99, gae_lambda=0.95)
+    assert gae_3d.shape == shape_3d
+
+    # 3D Multi-Player [B, T, 4]
+    shape_mp = (2, 5, 4)
+    rmp = torch.randn(shape_mp)
+    tmp = torch.zeros(shape_mp)
+    vmp = torch.randn(shape_mp)
+    nvmp = torch.randn(shape_mp)
+    gae_mp = compute_gae(rmp, tmp, tmp, vmp, nvmp, gamma=0.99, gae_lambda=0.95)
+    assert gae_mp.shape == shape_mp
+
+    # 4D Multi-Agent Multi-Objective [B, T, 2, 3]
+    shape_4d = (2, 4, 2, 3)
+    r4 = torch.randn(shape_4d)
+    t4 = torch.zeros(shape_4d)
+    v4 = torch.randn(shape_4d)
+    nv4 = torch.randn(shape_4d)
+    gae_4d = compute_gae(r4, t4, t4, v4, nv4, gamma=0.99, gae_lambda=0.95)
+    assert gae_4d.shape == shape_4d
+
+    n_step_4d = compute_n_step_returns(r4, t4, t4, v4, nv4, gamma=0.99, n=3)
+    assert n_step_4d.shape == shape_4d
+
+    mc_4d = compute_mc_returns(r4, t4, t4, gamma=0.99)
+    assert mc_4d.shape == shape_4d
+
+
+def test_returns_shape_mismatch_assertion():
+    """Verify fail-fast protection against accidental broadcasting mistakes."""
+    # Attempting to mix [B, T, 4] rewards with [B, T, 1] values
+    r = torch.randn(2, 5, 4)
+    v_bad = torch.randn(2, 5, 1)
+    t = torch.zeros(2, 5, 4)
+
+    with pytest.raises(AssertionError, match="Exact shape mismatch"):
+        compute_gae(r, t, t, v_bad, r, gamma=0.99, gae_lambda=0.95)
+
+    with pytest.raises(AssertionError, match="Exact shape mismatch"):
+        compute_n_step_returns(r, t, t, v_bad, r, gamma=0.99, n=2)
+

@@ -190,7 +190,7 @@ def test_clipped_mse_loss():
     assert "value/clipped_loss" in info
 
     # Test shape mismatch
-    with pytest.raises(AssertionError, match="Shape mismatch"):
+    with pytest.raises(AssertionError, match="Exact shape mismatch"):
         compute_clipped_mse_loss(predictions, targets[:2], old_predictions, clip_coef)
 
 
