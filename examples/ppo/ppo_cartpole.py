@@ -52,6 +52,7 @@ from atomic_rl.metrics import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
     store_rollout_step_,
+    flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
     yield_shuffled_minibatches,
@@ -153,9 +154,9 @@ shapes = {
     "observations": obs_shape,
     "actions": (1,),
     "logprobs": (1,),
-    "rewards": (),
-    "terminated": (),
-    "truncated": (),
+    "rewards": (1,),
+    "terminated": (1,),
+    "truncated": (1,),
     "values": (1,),
     "logits": (num_actions,),
 }
@@ -165,8 +166,6 @@ buffer = init_rollout_buffer(
     shapes=shapes,
     device=device,
 )
-
-# Pre-allocate rollout buffers using the new functional system
 
 rng_key = torch.Generator(device=device)
 rng_key.manual_seed(SEED)
@@ -210,9 +209,9 @@ for iteration in range(MAX_ITERATIONS):
                     "observations": obs_tensor,
                     "actions": action,
                     "logprobs": info_dict["log_prob"].detach(),
-                    "rewards": to_tensor(reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": to_tensor(reward, device=device).unsqueeze(-1),
+                    "terminated": to_tensor(terminated, device=device).unsqueeze(-1),
+                    "truncated": to_tensor(truncated, device=device).unsqueeze(-1),
                     "values": value.detach(),
                     "logits": logits.detach(),
                 },
@@ -263,23 +262,21 @@ for iteration in range(MAX_ITERATIONS):
         rewards=buffer.data["rewards"],
         terminated=buffer.data["terminated"],
         truncated=buffer.data["truncated"],
-        values=buffer.data["values"].squeeze(-1),
-        next_values=next_values.squeeze(-1),
+        values=buffer.data["values"],
+        next_values=next_values,
         gamma=GAMMA,
         gae_lambda=GAE_LAMBDA,
     )
 
-    # Explicit mathematical derivation (Explicit over implicit, no redundant compute)
-    returns = advantages.unsqueeze(-1) + buffer.data["values"]
+    # Explicit mathematical derivation
+    returns = advantages + buffer.data["values"]
 
-    # Flatten buffer for loss calculations
+    # Store advantages and returns in rollout buffer before flattening
+    buffer.data["advantages"] = advantages
+    buffer.data["returns"] = returns
+
+    # Flatten buffer for loss calculations (flattens all fields including advantages & returns)
     flat_data = flatten_rollout_buffer(buffer)
-    flat_advantages = advantages.view(-1, 1)
-    flat_returns = returns.view(-1, 1)
-
-    # Add advantages and returns to flat_data for easier minibatch sampling
-    flat_data["advantages"] = flat_advantages
-    flat_data["returns"] = flat_returns
 
     # 3. The Update Loop (Multiple Epochs & Minibatches)
     epoch_losses = []
@@ -360,9 +357,8 @@ for iteration in range(MAX_ITERATIONS):
     # Logging
     if iteration % 10 == 0:
         explained_var = compute_explained_variance(
-            flat_returns.detach().cpu().numpy(),
-            flat_data["values"].detach().cpu().numpy(),
-        )
+            flat_data["returns"], flat_data["values"]
+        ).item()
 
         log_dict = {
             "learning_rate": scheduler.get_last_lr()[0],
@@ -371,10 +367,10 @@ for iteration in range(MAX_ITERATIONS):
             "loss/policy": pg_loss.item(),
             "loss/entropy": ent_loss.item(),
             "value/mean": flat_data["values"].mean().item(),
-            "value/return_mean": flat_returns.mean().item(),
+            "value/return_mean": flat_data["returns"].mean().item(),
             "value/explained_variance": explained_var,
-            "advantages/mean": flat_advantages.mean().item(),
-            "advantages/std": flat_advantages.std().item(),
+            "advantages/mean": flat_data["advantages"].mean().item(),
+            "advantages/std": flat_data["advantages"].std().item(),
             "ppo/clip_fraction": np.mean(clip_fractions),
             "ppo/approx_kl": np.mean(approx_kls),
             "global_step": global_step,

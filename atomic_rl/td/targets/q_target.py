@@ -8,39 +8,42 @@ from .value_target import compute_v_td_target
 
 
 def compute_q_td_target(
-    next_q_values: torch.Tensor,  # [B, A]
-    next_actions: torch.Tensor,  # [B]
-    rewards: torch.Tensor,  # [B]
-    terminated: torch.Tensor,  # [B]
-    gamma: torch.Tensor,  # [B]
+    next_q_values: torch.Tensor,
+    next_actions: torch.Tensor,
+    rewards: torch.Tensor,
+    terminated: torch.Tensor,
+    gamma: torch.Tensor | float,
 ) -> torch.Tensor:
     """
-    Calculates the TD target for scalar Q-values.
-    Composes the V-target function by extracting the value of the next state.
+    Calculates the TD target for Q-values.
+    Composes the V-target function by extracting the value of the next state V(s') = Q(s', a').
+
+    Supports scalar Q-values [B, A] as well as multi-channel / multi-player Q-values [B, A, *Channels].
 
     Args:
-        next_q_values: Q-values of the next states.
-        next_actions: Indices of the actions taken in the next states (greedy for Q-learning, sampled for SARSA).
-        rewards: Rewards for the transitions.
-        terminated: Booleans indicating whether the episodes terminated.
-        gamma: Discount factors.
+        next_q_values: Q-values of the next states [B, A, *Channels] or [B, A].
+        next_actions: Action indices [B] or [B, 1].
+        rewards: Rewards for transitions [B, *Channels] or [B].
+        terminated: Termination flags [B, *Channels] or [B].
+        gamma: Discount factor(s) (scalar float or tensor).
 
     Returns:
-        torch.Tensor: The detached TD target of shape [B]. Gradients will NOT flow through this tensor.
+        torch.Tensor: Detached TD target [B, *Channels] or [B].
     """
     assert (
-        next_q_values.ndim == 2
-    ), f"Expected 2D next_q_values [B, A], got {next_q_values.shape}"
+        next_q_values.ndim >= 2
+    ), f"Expected next_q_values to have at least 2 dimensions [Batch, Actions, *Channels], got shape {next_q_values.shape}"
     assert (
-        next_actions.ndim == 1
-    ), f"Expected [B] next_actions, got {next_actions.shape}"
+        rewards.shape == terminated.shape
+    ), f"Exact shape mismatch in compute_q_td_target! rewards: {rewards.shape}, terminated: {terminated.shape}"
 
-    # 1. Extract the Q-value of the selected next action -> This IS V(s')
-    next_values = torch.gather(next_q_values, 1, next_actions.unsqueeze(-1)).squeeze(-1)
+    from ...action_selection import gather_q_values
 
-    # 2. Compute standard V-target
-    target = compute_v_td_target(next_values, rewards, terminated, gamma)
-    return target.detach()
+    # 1. Extract V(s') by gathering Q(s', a') for chosen next actions
+    next_values = gather_q_values(next_q_values, next_actions)
+
+    # 2. Compute V-target with exact shape equality assertions
+    return compute_v_td_target(next_values, rewards, terminated, gamma)
 
 
 def compute_categorical_q_td_target(

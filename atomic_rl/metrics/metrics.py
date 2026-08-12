@@ -79,19 +79,37 @@ def compute_stable_rank(activations: torch.Tensor) -> float:
     return squared_sv.sum().item() / max_sq_sv
 
 
-def compute_explained_variance(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+def compute_explained_variance(
+    y_true: torch.Tensor, y_pred: torch.Tensor
+) -> torch.Tensor:
     """
-    Computes the explained variance of a regression problem.
+    Computes the explained variance of a value prediction / regression problem.
     Formula: 1 - Var(y_true - y_pred) / Var(y_true)
 
+    Single Contract (Torch-Native First):
+    Expects y_true and y_pred to be torch.Tensors of identical shape [*Batch, *Channels].
+
     Args:
-        y_true (np.ndarray): The ground truth returns.
-        y_pred (np.ndarray): The predicted values.
+        y_true: Ground truth target returns [*Batch, *Channels].
+        y_pred: Predicted state values V(s) [*Batch, *Channels].
 
     Returns:
-        float: The explained variance. 1.0 is perfect prediction, 0.0 or less means it is bad.
+        torch.Tensor: Scalar 0D tensor containing the explained variance.
+                      1.0 represents perfect prediction, 0.0 or negative means poor prediction, NaN for zero variance.
     """
-    var_y = np.var(y_true)
+    assert isinstance(y_true, torch.Tensor) and isinstance(y_pred, torch.Tensor), (
+        f"Expected PyTorch Tensors for y_true and y_pred, got {type(y_true)} and {type(y_pred)}"
+    )
+    assert y_true.shape == y_pred.shape, (
+        f"Exact shape mismatch in compute_explained_variance! y_true: {y_true.shape}, y_pred: {y_pred.shape}"
+    )
+
+    var_y = torch.var(y_true)
     if var_y == 0:
-        return np.nan
-    return 1 - np.var(y_true - y_pred) / var_y
+        return y_true.new_tensor(float("nan"))
+
+    var_diff = torch.var(y_true - y_pred)
+    return 1.0 - (var_diff / var_y)
+
+
+

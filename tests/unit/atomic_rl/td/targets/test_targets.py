@@ -101,34 +101,49 @@ def test_compute_v_td_target():
     torch.testing.assert_close(target, expected)
 
 
+def test_td_multidimensional_channels():
+    """Verify that compute_v_td_target and compute_q_td_target support [*Batch, *Channels]."""
+    # 1D [B] scalar Q-target
+    next_q_1d = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])  # [2, 3]
+    next_actions_1d = torch.tensor([2, 0])  # [2]
+    rewards_1d = torch.tensor([0.5, 1.0])  # [2]
+    term_1d = torch.tensor([0.0, 1.0])  # [2]
+
+    target_1d = compute_q_td_target(next_q_1d, next_actions_1d, rewards_1d, term_1d, gamma=0.9)
+    assert target_1d.shape == (2,)
+    torch.testing.assert_close(target_1d, torch.tensor([3.2, 1.0]))
+
+    # 2D [B, 1] single-agent value channel Q-target
+    next_q_2d = torch.tensor([[[1.0], [2.0], [3.0]], [[4.0], [5.0], [6.0]]])  # [2, 3, 1]
+    next_actions_2d = torch.tensor([[2], [0]])  # [2, 1]
+    rewards_2d = torch.tensor([[0.5], [1.0]])  # [2, 1]
+    term_2d = torch.tensor([[0.0], [1.0]])  # [2, 1]
+
+    target_2d = compute_q_td_target(next_q_2d, next_actions_2d, rewards_2d, term_2d, gamma=0.9)
+    assert target_2d.shape == (2, 1)
+    torch.testing.assert_close(target_2d, torch.tensor([[3.2], [1.0]]))
+
+    # 3D [B, N_players] multi-player Q-target
+    # Batch=1, Actions=2, Players=2
+    next_q_3d = torch.tensor([[[1.0, -1.0], [3.0, -3.0]]])  # [1, 2, 2]
+    next_actions_3d = torch.tensor([[1]])  # [1, 1]
+    rewards_3d = torch.tensor([[0.5, -0.5]])  # [1, 2]
+    term_3d = torch.tensor([[0.0, 0.0]])  # [1, 2]
+
+    target_3d = compute_q_td_target(next_q_3d, next_actions_3d, rewards_3d, term_3d, gamma=0.9)
+    assert target_3d.shape == (1, 2)
+    torch.testing.assert_close(target_3d, torch.tensor([[3.2, -3.2]]))
+
+
 def test_td_assertions():
-    with pytest.raises(AssertionError, match="Expected 1D next_values"):
+    with pytest.raises(AssertionError, match="Exact shape mismatch in compute_v_td_target"):
         compute_v_td_target(
-            torch.randn(2, 2), torch.randn(2), torch.randn(2), torch.randn(2)
+            torch.randn(2, 2), torch.randn(2, 1), torch.randn(2, 2), 0.9
         )
 
-    with pytest.raises(AssertionError, match="Shape mismatch"):
+    with pytest.raises(AssertionError, match="Exact shape mismatch in compute_v_td_target"):
         compute_v_td_target(
-            torch.randn(2), torch.randn(3), torch.randn(2), torch.randn(2)
-        )
-
-    with pytest.raises(AssertionError, match="Expected 2D next_q_values"):
-        compute_q_td_target(
-            torch.randn(2),
-            torch.randn(2),
-            torch.randn(2),
-            torch.randn(2),
-            torch.randn(2),
-        )
-
-    with pytest.raises(AssertionError, match=r"Expected \[B\] next_actions"):
-
-        compute_q_td_target(
-            torch.randn(2, 2),
-            torch.randn(2, 2),
-            torch.randn(2),
-            torch.randn(2),
-            torch.randn(2),
+            torch.randn(2), torch.randn(3), torch.randn(2), 0.9
         )
 
     with pytest.raises(AssertionError, match="Expected 3D next_logits"):

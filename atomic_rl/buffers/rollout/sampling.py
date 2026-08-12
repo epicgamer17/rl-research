@@ -18,7 +18,10 @@ def get_rollout_next_values(
     values = buffer.data["values"]
 
     if "truncated" in buffer.data.keys():
-        truncated_steps = buffer.data["truncated"].bool().nonzero(as_tuple=False)
+        truncated_mask = buffer.data["truncated"].bool()
+        if truncated_mask.ndim > 2:
+            truncated_mask = truncated_mask.any(dim=tuple(range(2, truncated_mask.ndim)))
+        truncated_steps = truncated_mask.nonzero(as_tuple=False)
         if truncated_steps.numel() > 0:
             expected_records = {
                 (int(step), int(env_idx)) for env_idx, step in truncated_steps

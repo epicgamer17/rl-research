@@ -125,9 +125,9 @@ shapes = {
     "observations": obs_shape,
     "actions": (1,),
     "logprobs": (1,),
-    "rewards": (),
-    "terminated": (),
-    "truncated": (),
+    "rewards": (1,),
+    "terminated": (1,),
+    "truncated": (1,),
     "values": (1,),
     "logits": (num_actions,),
 }
@@ -169,9 +169,9 @@ for iteration in range(MAX_ITERATIONS):
                     "observations": obs_tensor,
                     "actions": action,
                     "logprobs": info_dict["log_prob"].detach(),
-                    "rewards": to_tensor(reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": to_tensor(reward, device=device).unsqueeze(-1),
+                    "terminated": to_tensor(terminated, device=device).unsqueeze(-1),
+                    "truncated": to_tensor(truncated, device=device).unsqueeze(-1),
                     "values": value.detach(),
                     "logits": logits.detach(),
                 },
@@ -188,16 +188,11 @@ for iteration in range(MAX_ITERATIONS):
                 trunc_mask = truncated[env_indices]
                 if trunc_mask.any():
                     record_truncations_(
-                        buffer,
-                        step,
-                        torch.as_tensor(
-                            env_indices[trunc_mask], dtype=torch.long, device=device
-                        ),
-                        torch.as_tensor(
-                            final_obs[trunc_mask], dtype=torch.float32, device=device
-                        ),
+                        buffer=buffer,
+                        step=step,
+                        truncated_envs=to_tensor(env_indices[trunc_mask], device),
+                        final_observations=to_tensor(final_obs[trunc_mask], device),
                     )
-            # Update state for next tick
 
             if "final_info" in info:
                 for item in info["final_info"]:
@@ -210,31 +205,31 @@ for iteration in range(MAX_ITERATIONS):
                             }
                         )
 
+            # NOTE: obs = next_obs is moved to here.
             obs = next_obs
 
         # Compute last values for the re-evaluation pass
-        last_obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
+        last_obs_tensor = to_tensor(obs, device=device)
         _, last_values = model(last_obs_tensor)
 
-        # Calculate Loss & Gradients
+        # Calculate Next Values (handling truncations)
         next_values = get_rollout_next_values(
             buffer, last_values, get_value_fn=lambda obs: model(obs)[1], device=device
         )
 
     # --- 3. The Update Loop ---
-    # TODO: could we change what return and advantage functions expect so we dont need to squeeze here?
     returns = compute_n_step_returns(
         rewards=buffer.data["rewards"],
         terminated=buffer.data["terminated"],
         truncated=buffer.data["truncated"],
-        values=buffer.data["values"].squeeze(-1),
-        next_values=next_values.squeeze(-1),
+        values=buffer.data["values"],
+        next_values=next_values,
         gamma=GAMMA,
         n=N_STEP,
     )
 
     # 2. Define Baseline & Calculate Raw Advantage (Explicit Math)
-    baseline = buffer.data["values"].detach().squeeze(-1)
+    baseline = buffer.data["values"].detach()
     advantages = returns - baseline
 
     # 3. Optional Scaling

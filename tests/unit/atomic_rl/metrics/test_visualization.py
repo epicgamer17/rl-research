@@ -19,26 +19,27 @@ pytestmark = pytest.mark.unit
 
 
 def test_compute_explained_variance():
-    y_true = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    y_true = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])
 
     # 1. Perfect prediction
-    y_pred_perfect = y_true.copy()
-    assert compute_explained_variance(y_true, y_pred_perfect) == 1.0
+    y_pred_perfect = y_true.clone()
+    torch.testing.assert_close(
+        compute_explained_variance(y_true, y_pred_perfect), torch.tensor(1.0)
+    )
 
     # 2. Constant mean prediction (explained variance = 0)
-    y_pred_mean = np.full_like(y_true, np.mean(y_true))
-    # var(y_true - mean) = var(y_true). 1 - 1 = 0
-    assert math.isclose(
-        compute_explained_variance(y_true, y_pred_mean), 0.0, abs_tol=1e-7
+    y_pred_mean = torch.full_like(y_true, torch.mean(y_true))
+    torch.testing.assert_close(
+        compute_explained_variance(y_true, y_pred_mean), torch.tensor(0.0), atol=1e-6, rtol=1e-6
     )
 
     # 3. Bad prediction
     y_pred_bad = y_true * -1
-    assert compute_explained_variance(y_true, y_pred_bad) < 0.0
+    assert compute_explained_variance(y_true, y_pred_bad).item() < 0.0
 
     # 4. Zero variance case
-    y_true_zero = np.array([1.0, 1.0, 1.0])
-    assert np.isnan(compute_explained_variance(y_true_zero, y_true_zero))
+    y_true_zero = torch.tensor([1.0, 1.0, 1.0])
+    assert torch.isnan(compute_explained_variance(y_true_zero, y_true_zero))
 
 
 @patch("wandb.Table")
