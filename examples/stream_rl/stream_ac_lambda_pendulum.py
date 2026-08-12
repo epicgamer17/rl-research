@@ -42,6 +42,8 @@ from atomic_rl.td import compute_v_td_target, compute_accumulating_traces
 from atomic_rl.utils import (
     to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
     compute_welford_stats,
 )
 from atomic_rl.metrics import compute_explained_variance

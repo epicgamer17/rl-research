@@ -37,7 +37,8 @@ from atomic_rl.initialization import set_seed, lecun_uniform_, make_sparse_init
 from atomic_rl.optimizer import AdaptiveObGD, apply_gradients_
 from atomic_rl.td import compute_v_td_target, compute_accumulating_traces
 
-from atomic_rl.utils import to_tensor, compute_welford_stats
+from atomic_rl.utils import to_tensor
+from atomic_rl.normalization import compute_welford_stats
 from atomic_rl.envs.streams.ett import make_ettm2_stream
 
 # ---------------------------------------------------------------------------

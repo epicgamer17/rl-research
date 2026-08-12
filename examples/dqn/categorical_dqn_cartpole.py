@@ -38,7 +38,7 @@ from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     uniform_sample,
 )
-from atomic_rl.losses import cross_entropy_loss
+from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.action_selection import (
     argmax_selector,
     expected_value,
@@ -226,7 +226,7 @@ for step in range(MAX_STEPS):
         pred_sa_logits = gather_q_values(logits, batch["action"])
 
         # 5. Loss Calculation (Pure Primitive)
-        loss, info_dict = cross_entropy_loss(pred_sa_logits, td_target)
+        loss, info_dict = compute_cross_entropy_loss(pred_sa_logits, td_target)
         loss = loss.mean()
 
         # Apply Updates

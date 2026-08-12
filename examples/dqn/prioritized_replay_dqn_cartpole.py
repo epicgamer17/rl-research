@@ -39,7 +39,7 @@ from atomic_rl.buffers.replay import (
     with_per_tracking,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.losses import with_per_weights, mse_loss
+from atomic_rl.losses import with_per_weights, compute_mse_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
@@ -223,7 +223,7 @@ for step in range(MAX_STEPS):
         pred_sa = gather_q_values(q_values, batch["action"])
 
         # 5. Loss Calculation (PER weighted MSE)
-        per_loss_fn = with_per_weights(mse_loss, is_weights)
+        per_loss_fn = with_per_weights(compute_mse_loss, is_weights)
         loss, info_dict = per_loss_fn(pred_sa, td_target)
 
         # Apply Updates

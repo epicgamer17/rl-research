@@ -2,15 +2,15 @@ import pytest
 import torch
 import torch.nn as nn
 from atomic_rl.losses import (
-    mse_loss,
-    huber_loss,
-    cross_entropy_loss,
+    compute_mse_loss,
+    compute_huber_loss,
+    compute_cross_entropy_loss,
     with_per_weights,
-    policy_gradient_loss,
-    entropy_loss,
+    compute_policy_gradient_loss,
+    compute_entropy_loss,
     probability_ratio,
-    clipped_surrogate_loss,
-    clipped_mse_loss,
+    compute_clipped_surrogate_loss,
+    compute_clipped_mse_loss,
     with_sequence_mask,
 )
 import math
@@ -22,7 +22,7 @@ def test_mse_loss():
     predictions = torch.tensor([1.0, 2.0, 3.0])
     targets = torch.tensor([1.5, 2.0, 2.5])
 
-    raw_losses, info = mse_loss(predictions, targets)
+    raw_losses, info = compute_mse_loss(predictions, targets)
 
     expected_losses = torch.tensor([0.25, 0.0, 0.25])
     torch.testing.assert_close(raw_losses, expected_losses)
@@ -35,7 +35,7 @@ def test_huber_loss():
     targets = torch.tensor([1.1, 1.0])
     delta = 1.0
 
-    raw_losses, info = huber_loss(predictions, targets, delta=delta)
+    raw_losses, info = compute_huber_loss(predictions, targets, delta=delta)
 
     expected_losses = torch.tensor([0.005, 3.5])
     torch.testing.assert_close(raw_losses, expected_losses)
@@ -46,7 +46,7 @@ def test_cross_entropy_loss():
     predictions = torch.tensor([[10.0, 0.0, 0.0]])
     targets = torch.tensor([[1.0, 0.0, 0.0]])
 
-    raw_losses, info = cross_entropy_loss(predictions, targets)
+    raw_losses, info = compute_cross_entropy_loss(predictions, targets)
 
     assert raw_losses.item() < 0.01
     assert "priorities" in info
@@ -73,7 +73,7 @@ def test_policy_gradient_loss():
     advantages = torch.tensor([1.0, -1.0])
     log_probs = torch.tensor([-0.5, -2.0])
 
-    raw_loss, info = policy_gradient_loss(advantages, log_probs)
+    raw_loss, info = compute_policy_gradient_loss(advantages, log_probs)
 
     torch.testing.assert_close(raw_loss, torch.tensor([0.5, -2.0]))
     assert info["loss/policy_gradient"] == (0.5 - 2.0) / 2.0
@@ -83,14 +83,14 @@ def test_entropy_loss():
     # Test Discrete (Categorical)
     logits = torch.tensor([[0.0, 0.0]])
     dist = torch.distributions.Categorical(logits=logits)
-    loss, info = entropy_loss(dist)
+    loss, info = compute_entropy_loss(dist)
     expected_entropy = math.log(2.0)
     assert math.isclose(loss.item(), -expected_entropy, rel_tol=1e-5)
     assert math.isclose(info["loss/entropy"].item(), -expected_entropy, rel_tol=1e-5)
 
     logits = torch.tensor([[100.0, 0.0]])
     dist = torch.distributions.Categorical(logits=logits)
-    loss, info = entropy_loss(dist)
+    loss, info = compute_entropy_loss(dist)
     assert abs(loss.item()) < 1e-5
 
     # Test Continuous (Normal)
@@ -98,7 +98,7 @@ def test_entropy_loss():
     std = torch.tensor([[1.0, 1.0]])
     dist = torch.distributions.Normal(mu, std)
     dist = torch.distributions.Independent(dist, 1)
-    loss, info = entropy_loss(dist)
+    loss, info = compute_entropy_loss(dist)
     # Entropy of Normal(0, 1) is 0.5 * log(2 * pi * e) approx 1.4189
     expected_entropy = (
         0.5 * math.log(2 * math.pi * math.e) * 2
@@ -133,7 +133,7 @@ def test_clipped_surrogate_loss():
     # Case 3: ratio=1.3, adv=-1.0 (negative adv, ratio > 1.2) -> unclipped -1.3, clipped 1.2*-1 = -1.2 -> objective min(-1.3, -1.2) = -1.3
     # Case 4: ratio=0.7, adv=-1.0 (negative adv, ratio < 0.8) -> unclipped -0.7, clipped 0.8*-1 = -0.8 -> objective min(-0.7, -0.8) = -0.8
 
-    loss, info = clipped_surrogate_loss(ratio, advantages, clip_coef)
+    loss, info = compute_clipped_surrogate_loss(ratio, advantages, clip_coef)
 
     expected_loss = torch.tensor([-0.9, -1.1, 1.3, 0.8])
     torch.testing.assert_close(loss, expected_loss)
@@ -146,7 +146,7 @@ def test_clipped_surrogate_loss():
 
     # Test shape mismatch
     with pytest.raises(AssertionError, match="Shape mismatch"):
-        clipped_surrogate_loss(ratio, advantages[:2], clip_coef)
+        compute_clipped_surrogate_loss(ratio, advantages[:2], clip_coef)
 
 
 def test_clipped_mse_loss():
@@ -180,7 +180,7 @@ def test_clipped_mse_loss():
     # clipped_loss = (4.3 - 1.5)^2 = 7.84
     # max(6.25, 7.84) * 0.5 = 3.92
 
-    loss, info = clipped_mse_loss(predictions, targets, old_predictions, clip_coef)
+    loss, info = compute_clipped_mse_loss(predictions, targets, old_predictions, clip_coef)
 
     expected_loss = torch.tensor([0.125, 0.125, 1.125, 3.92])
     torch.testing.assert_close(loss, expected_loss)
@@ -191,25 +191,25 @@ def test_clipped_mse_loss():
 
     # Test shape mismatch
     with pytest.raises(AssertionError, match="Shape mismatch"):
-        clipped_mse_loss(predictions, targets[:2], old_predictions, clip_coef)
+        compute_clipped_mse_loss(predictions, targets[:2], old_predictions, clip_coef)
 
 
 def test_losses_assertions():
     with pytest.raises(AssertionError, match="Shape mismatch"):
-        mse_loss(torch.randn(2), torch.randn(3))
+        compute_mse_loss(torch.randn(2), torch.randn(3))
 
     with pytest.raises(AssertionError, match="Shape mismatch"):
-        cross_entropy_loss(torch.randn(2), torch.randn(3))
+        compute_cross_entropy_loss(torch.randn(2), torch.randn(3))
 
     with pytest.raises(AssertionError, match="Shape mismatch"):
-        huber_loss(torch.randn(2), torch.randn(3))
+        compute_huber_loss(torch.randn(2), torch.randn(3))
 
     with pytest.raises(AssertionError, match="Shape mismatch"):
-        policy_gradient_loss(torch.randn(2), torch.randn(3))
+        compute_policy_gradient_loss(torch.randn(2), torch.randn(3))
 
     dist = torch.distributions.Normal(torch.zeros(1, 2), torch.ones(1, 2))
     with pytest.raises(AssertionError, match="Expected 1D entropy"):
-        entropy_loss(dist)
+        compute_entropy_loss(dist)
 
 
 # ==========================================

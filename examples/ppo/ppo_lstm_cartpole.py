@@ -14,10 +14,10 @@ from atomic_rl.action_selection import sample_distribution
 from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
-    clipped_surrogate_loss,
-    entropy_loss,
+    compute_clipped_surrogate_loss,
+    compute_entropy_loss,
     probability_ratio,
-    clipped_mse_loss,
+    compute_clipped_mse_loss,
 )
 from torch.optim.lr_scheduler import LinearLR
 from atomic_rl.metrics import compute_explained_variance
@@ -32,9 +32,13 @@ from atomic_rl.buffers.rollout import (
     yield_sequential_minibatches,
 )
 from atomic_rl.utils import (
-    standardize_tensor,
     to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
+)
+from atomic_rl.envs.utils import (
     extract_vector_env_final_obs,
 )
 from atomic_rl.envs.wrappers import (
@@ -500,12 +504,12 @@ def train_ppo(use_lstm: bool = False):
                 )
                 mb_advantages = standardize_tensor(mb["advantages"])
 
-                pg_loss, pg_info = clipped_surrogate_loss(
+                pg_loss, pg_info = compute_clipped_surrogate_loss(
                     ratio=ratio, advantages=mb_advantages, clip_coef=CLIP_COEF
                 )
                 pg_loss = pg_loss.mean()
 
-                critic_loss, _ = clipped_mse_loss(
+                critic_loss, _ = compute_clipped_mse_loss(
                     predictions=new_values,
                     old_predictions=mb["values"],
                     targets=mb["returns"],
@@ -513,7 +517,7 @@ def train_ppo(use_lstm: bool = False):
                 )
                 critic_loss = critic_loss.mean()
 
-                ent_loss, _ = entropy_loss(dist)
+                ent_loss, _ = compute_entropy_loss(dist)
                 ent_loss = ent_loss.mean()
 
                 loss = pg_loss + CRITIC_COEFF * critic_loss + ENTROPY_COEFF * ent_loss

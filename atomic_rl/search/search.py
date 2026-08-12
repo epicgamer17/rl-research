@@ -1,7 +1,7 @@
 import torch
 from tensordict import TensorDict
 from typing import Tuple, Callable, Optional
-from ..utils import add_dirichlet_noise
+from ..action_selection import add_dirichlet_noise
 from .backpropagation import backpropagate_
 from .expansion import expand_node_
 from .selection import select_leaf

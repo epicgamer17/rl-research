@@ -15,11 +15,11 @@ from atomic_rl.action_selection import sample_distribution
 from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
-    clipped_surrogate_loss,
-    entropy_loss,
+    compute_clipped_surrogate_loss,
+    compute_entropy_loss,
     probability_ratio,
-    clipped_mse_loss,
-    mse_loss,
+    compute_clipped_mse_loss,
+    compute_mse_loss,
 )
 from torch.optim.lr_scheduler import LinearLR
 from atomic_rl.metrics import compute_explained_variance
@@ -32,9 +32,11 @@ from atomic_rl.buffers.rollout import (
 )
 from atomic_rl.utils import (
     ema_update,
-    standardize_tensor,
     to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
 )
 from atomic_rl.envs.wrappers import FireResetEnv
 from atomic_rl.networks import AtariCNN
@@ -209,7 +211,7 @@ for iteration in range(MAX_ITERATIONS):
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
-                from atomic_rl.utils import extract_vector_env_final_obs
+                from atomic_rl.envs.utils import extract_vector_env_final_obs
 
                 env_indices, final_obs = extract_vector_env_final_obs(info)
                 # Filter to only record environments that were truncated
@@ -293,7 +295,7 @@ for iteration in range(MAX_ITERATIONS):
             mb_advantages = mb["advantages"]
             mb_advantages = standardize_tensor(mb_advantages)
 
-            pg_loss, pg_info = clipped_surrogate_loss(
+            pg_loss, pg_info = compute_clipped_surrogate_loss(
                 ratio=ratio,
                 advantages=mb_advantages,
                 clip_coef=CLIP_COEF,
@@ -301,7 +303,7 @@ for iteration in range(MAX_ITERATIONS):
             pg_loss = pg_loss.mean()
 
             # 2. Value Loss
-            critic_loss, _ = clipped_mse_loss(
+            critic_loss, _ = compute_clipped_mse_loss(
                 predictions=new_values,
                 old_predictions=mb["values"],
                 targets=mb["returns"],
@@ -310,7 +312,7 @@ for iteration in range(MAX_ITERATIONS):
             critic_loss = critic_loss.mean()
 
             # 3. Entropy Loss
-            ent_loss, _ = entropy_loss(dist)
+            ent_loss, _ = compute_entropy_loss(dist)
             ent_loss = ent_loss.mean()
 
             # Total Loss

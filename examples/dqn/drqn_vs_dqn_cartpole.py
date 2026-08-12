@@ -17,7 +17,7 @@ from atomic_rl.buffers.replay import (
     uniform_sample,
     make_padded_chunk_accumulator,
 )
-from atomic_rl.losses import mse_loss, with_sequence_mask
+from atomic_rl.losses import compute_mse_loss, with_sequence_mask
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,

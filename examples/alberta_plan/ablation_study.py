@@ -283,7 +283,7 @@ def run_experiment(config: str):
             v_next_for_td = v_next_target
 
         # --- Backbone Update ---
-        loss = F.mse_loss(v_current_grad, (reward + gamma * v_next_target).detach())
+        loss = F.compute_mse_loss(v_current_grad, (reward + gamma * v_next_target).detach())
         opt.zero_grad()
         loss.backward()
 

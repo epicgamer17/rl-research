@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 import math
 from atomic_rl.action_selection import (
-    expected_value,
+    compute_expected_value,
     argmax_selector,
     sample_distribution,
     with_epsilon_greedy,
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 
 def test_expected_value():
     """
-    Test the expected_value function.
+    Test the compute_expected_value function.
     Analytical Oracle:
     predictions = [[0, 100]] (logits) -> probs = [0, 1]
     support = [[-1, 1]]
@@ -25,19 +25,19 @@ def test_expected_value():
     support = torch.tensor([[[-1.0, 1.0], [-1.0, 1.0]]])  # [1, 2, 2]
 
     # Expected: First action should have value ~1.0, second action ~-1.0
-    values = expected_value(predictions, support)
+    values = compute_expected_value(predictions, support)
 
     assert values.shape == (1, 2), f"Expected shape (1, 2), got {values.shape}"
     torch.testing.assert_close(values, torch.tensor([[1.0, -1.0]]))
 
     # Test with 1D support
     support_1d = torch.tensor([-1.0, 1.0])
-    values_1d = expected_value(predictions, support_1d)
+    values_1d = compute_expected_value(predictions, support_1d)
     torch.testing.assert_close(values_1d, torch.tensor([[1.0, -1.0]]))
 
 
 def test_expected_value_2d_input():
-    """Test the expected_value function with 2D state-value predictions [B, N]."""
+    """Test the compute_expected_value function with 2D state-value predictions [B, N]."""
     # Batch size 2, 3 atoms
     predictions = torch.tensor(
         [
@@ -47,7 +47,7 @@ def test_expected_value_2d_input():
     )
     support = torch.tensor([-1.0, 0.0, 1.0])  # 1D Support
 
-    values = expected_value(predictions, support)
+    values = compute_expected_value(predictions, support)
     assert values.shape == (2,)
     torch.testing.assert_close(values, torch.tensor([0.0, -1.0]), atol=1e-4, rtol=1e-4)
 
@@ -206,16 +206,16 @@ def test_with_epsilon_greedy_mask_assertions():
 
 def test_action_selection_assertions():
     """Test that action selection functions raise assertions on invalid input shapes."""
-    # expected_value
+    # compute_expected_value
     with pytest.raises(
         AssertionError, match="Expected 2D \[B, N\] or 3D \[B, A, N\] predictions"
     ):
-        expected_value(torch.randn(2), torch.randn(2))
+        compute_expected_value(torch.randn(2), torch.randn(2))
     with pytest.raises(
         AssertionError,
         match="If support is not 1D, it must match predictions shape exactly.",
     ):
-        expected_value(torch.randn(1, 2, 3), torch.randn(2, 3))
+        compute_expected_value(torch.randn(1, 2, 3), torch.randn(2, 3))
 
 
 def test_sample_distribution_not_implemented():

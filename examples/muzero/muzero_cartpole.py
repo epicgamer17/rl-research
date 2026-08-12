@@ -82,7 +82,7 @@ from tensordict import TensorDict
 import wandb
 
 from atomic_rl.search import mcts_search, get_mcts_visit_policy
-from atomic_rl.losses import cross_entropy_loss, mse_loss
+from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.action_selection import argmax_selector, sample_distribution
 from atomic_rl.buffers.replay import (
     init_buffer,
@@ -453,32 +453,38 @@ def train_muzero_cartpole():
         # Step k = 0: Initial representation & prediction
         sk, p_logits, v_logits = learner_model.initial_inference(obs_batch)
 
-        raw_p_loss, _ = cross_entropy_loss(p_logits, target_policies)
+        raw_p_loss, _ = compute_cross_entropy_loss(p_logits, target_policies)
         
         # Categorical cross-entropy over 601-atom discrete support bins for value and reward (Note 13, 27)
         # TODO: confirm that this behaviour for question 7 is correct
-        v_target_two_hot = scalar_to_two_hot(h_transform(target_values.squeeze(-1)))
-        raw_v_loss, _ = cross_entropy_loss(v_logits, v_target_two_hot)
+        v_target_two_hot = scalar_to_two_hot(target_values, VALUE_SUPPORT_SIZE)
+        raw_v_loss, _ = compute_cross_entropy_loss(v_logits, v_target_two_hot)
 
         # Loss scaling: 1/K on each unrolled head (Note 29)
         # TODO: confirm that this behaviour for question 29 is correct
-        total_loss = (raw_p_loss.mean() + raw_v_loss.mean()) * (1.0 / UNROLL_STEPS_K)
+        total_loss = (raw_p_loss.mean() + raw_v_loss.mean()) * (1.0 / NUM_UNROLL_STEPS)
 
         # Unroll K hypothetical steps recurrently
-        for k in range(1, UNROLL_STEPS_K + 1):
+        for k in range(1, NUM_UNROLL_STEPS + 1):
+            target_policies = minibatch["target_policy_seq"][:, k]
+            target_values = minibatch["target_value_seq"][:, k]
+            target_rewards = minibatch["target_reward_seq"][:, k - 1]
+            actions_k = minibatch["action_seq"][:, k - 1].unsqueeze(-1)
             # Scale gradient by 1/2 at start of dynamics function (Note 30)
             # TODO: confirm that this behaviour for question 30 is correct
             sk.register_hook(lambda g: g * 0.5)
 
-            r_logits_k, sk, p_logits_k, v_logits_k = learner_model.recurrent_inference(sk, actions)
+            sk, r_logits_k, p_logits_k, v_logits_k = learner_model.recurrent_step(
+                sk, actions_k
+            )
 
-            raw_pk_loss, _ = cross_entropy_loss(p_logits_k, target_policies)
+            raw_pk_loss, _ = compute_cross_entropy_loss(p_logits_k, target_policies)
             
             vk_target_two_hot = scalar_to_two_hot(h_transform(target_values.squeeze(-1)))
-            raw_vk_loss, _ = cross_entropy_loss(v_logits_k, vk_target_two_hot)
+            raw_vk_loss, _ = compute_cross_entropy_loss(v_logits_k, vk_target_two_hot)
 
             rk_target_two_hot = scalar_to_two_hot(h_transform(rewards.squeeze(-1)))
-            raw_rk_loss, _ = cross_entropy_loss(r_logits_k, rk_target_two_hot)
+            raw_rk_loss, _ = compute_cross_entropy_loss(r_logits_k, rk_target_two_hot)
 
             step_loss = (raw_pk_loss.mean() + raw_vk_loss.mean() + raw_rk_loss.mean()) * (1.0 / UNROLL_STEPS_K)
             total_loss += step_loss

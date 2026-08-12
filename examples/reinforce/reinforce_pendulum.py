@@ -19,13 +19,15 @@ import wandb
 from atomic_rl.action_selection import sample_distribution
 from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
-from atomic_rl.losses import policy_gradient_loss
+from atomic_rl.losses import compute_policy_gradient_loss
 from atomic_rl.utils import (
     ema_update_,
-    standardize_tensor,
-    scale_tensor_by_std,
     to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
+    scale_tensor_by_std,
 )
 
 # Constants
@@ -152,7 +154,7 @@ for episode in range(MAX_EPISODES):
     # 3. Optional Scaling
     advantages = scale_tensor_by_std(raw_advantages)
 
-    loss, info_dict = policy_gradient_loss(
+    loss, info_dict = compute_policy_gradient_loss(
         advantages=advantages,
         log_probs=torch.stack(log_probs).flatten(),
     )

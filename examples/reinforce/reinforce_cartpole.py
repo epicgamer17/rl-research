@@ -23,13 +23,15 @@ from functools import partial
 from atomic_rl.action_selection import sample_distribution
 from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
-from atomic_rl.losses import policy_gradient_loss
+from atomic_rl.losses import compute_policy_gradient_loss
 from atomic_rl.utils import (
     ema_update_,
-    standardize_tensor,
-    scale_tensor_by_std,
     to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
+    scale_tensor_by_std,
 )
 
 # Constants
@@ -144,7 +146,7 @@ for episode in range(MAX_EPISODES):
     advantages = scale_tensor_by_std(raw_advantages)
 
     # Others: learn a baseline with a neural network (advantage) (not done here)
-    loss, info_dict = policy_gradient_loss(
+    loss, info_dict = compute_policy_gradient_loss(
         advantages=advantages,  # NOTE: calculate this outside
         log_probs=torch.stack(log_probs),
     )

@@ -30,7 +30,7 @@ from atomic_rl.buffers.replay import (
     make_n_step_accumulator,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.losses import with_per_weights, cross_entropy_loss
+from atomic_rl.losses import with_per_weights, compute_cross_entropy_loss
 from atomic_rl.td import compute_categorical_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
@@ -289,7 +289,7 @@ for step in range(MAX_STEPS):
         pred_sa_logits = gather_q_values(logits, batch["action"])
 
         # 5. Loss Calculation (PER weighted Cross Entropy)
-        per_loss_fn = with_per_weights(cross_entropy_loss, is_weights)
+        per_loss_fn = with_per_weights(compute_cross_entropy_loss, is_weights)
         loss, info_dict = per_loss_fn(pred_sa_logits, td_target)
 
         # Apply Gradients

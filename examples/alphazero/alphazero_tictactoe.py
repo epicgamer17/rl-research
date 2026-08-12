@@ -36,7 +36,7 @@ from atomic_rl.envs import get_agent_index, get_terminal_rewards_vec
 from atomic_rl.envs.functions.tictactoe import tictactoe_dynamics_fn
 from atomic_rl.envs.wrappers import PettingZooChannelFirstWrapper
 from atomic_rl.evaluation import evaluate_pettingzoo_vs_random
-from atomic_rl.losses import cross_entropy_loss, mse_loss
+from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.networks import ResNetBackbone
 from atomic_rl.schedules import get_stepwise_schedule
 from atomic_rl.search import mcts_search
@@ -411,10 +411,10 @@ def train_alphazero_tictactoe():
 
         policy_logits, predicted_value = learner_model(states)
 
-        raw_p_loss, _ = cross_entropy_loss(policy_logits, target_policies)
+        raw_p_loss, _ = compute_cross_entropy_loss(policy_logits, target_policies)
         policy_loss = raw_p_loss.mean()
 
-        raw_v_loss, _ = mse_loss(predicted_value.view(-1), target_values.view(-1))
+        raw_v_loss, _ = compute_mse_loss(predicted_value.view(-1), target_values.view(-1))
         value_loss = raw_v_loss.mean()
 
         loss = policy_loss + value_loss

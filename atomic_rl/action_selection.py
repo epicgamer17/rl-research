@@ -10,7 +10,9 @@ import torch.nn.functional as F
 #   implemented there — consult it when aligning behavior with the released code.
 
 
-def compute_expected_value(predictions: torch.Tensor, support: torch.Tensor) -> torch.Tensor:
+def compute_expected_value(
+    predictions: torch.Tensor, support: torch.Tensor
+) -> torch.Tensor:
     """
     Calculate expected values from a categorical distribution over a support.
 
@@ -245,3 +247,57 @@ def gather_q_values(q_values: torch.Tensor, actions: torch.Tensor) -> torch.Tens
         atoms = q_values.shape[-1]
         actions_expanded = actions.view(-1, 1, 1).expand(-1, -1, atoms).long()
         return q_values.gather(1, actions_expanded).squeeze(1)
+
+
+def add_dirichlet_noise(
+    logits: torch.Tensor,
+    epsilon: float,
+    alpha: float,
+    mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """
+    Adds Dirichlet noise to the given logits for exploration.
+    Formula: P(s, a) = (1 - epsilon) * P(s, a) + epsilon * noise
+    where noise ~ Dirichlet(alpha).
+
+    Args:
+        logits: The logits to add noise to [..., Num_Actions].
+        epsilon: The weight of the noise.
+        alpha: The concentration parameter of the Dirichlet distribution.
+        mask: Optional boolean mask [..., Num_Actions] of valid actions.
+
+    Returns:
+        The logits with added noise.
+    """
+
+    # 0. Convert logits to probs
+    masked_logits = logits.clone()
+    if mask is not None:
+        masked_logits = masked_logits.masked_fill(mask == 0, -float("inf"))
+    probs = torch.softmax(masked_logits, dim=-1)
+
+    # 1. Sample noise from Dirichlet distribution
+    num_actions = probs.shape[-1]
+    alphas = torch.full((num_actions,), alpha, device=probs.device, dtype=probs.dtype)
+
+    # torch.distributions.Dirichlet handles batch shapes correctly via .sample()
+    dist = torch.distributions.Dirichlet(alphas)
+    noise = dist.sample(probs.shape[:-1])  # [..., Num_Actions]
+
+    if mask is not None:
+        # Mask out noise for illegal actions
+        noise = noise * mask.to(probs.dtype)
+
+        # Re-normalize the noise so it still sums to 1.0 across valid actions
+        # Add 1e-8 to prevent division by zero in case of severe precision issues
+        noise = noise / torch.clamp(noise.sum(dim=-1, keepdim=True), min=1e-8)
+
+    noisy_probs = (1.0 - epsilon) * probs + epsilon * noise
+    noisy_logits = torch.log(torch.clamp(noisy_probs, min=1e-8))
+
+    # Preserve the mask in log-space so masked/illegal actions get exactly 0.0
+    # probability after softmax (log(1e-8) would leak a tiny nonzero prior).
+    if mask is not None:
+        noisy_logits = noisy_logits.masked_fill(mask == 0, -float("inf"))
+
+    return noisy_logits

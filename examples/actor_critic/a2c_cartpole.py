@@ -35,7 +35,7 @@ from functools import partial
 from atomic_rl.action_selection import sample_distribution
 from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_n_step_returns
-from atomic_rl.losses import policy_gradient_loss, huber_loss, mse_loss, entropy_loss
+from atomic_rl.losses import compute_policy_gradient_loss, compute_huber_loss, compute_mse_loss, compute_entropy_loss
 from torch.optim.lr_scheduler import LinearLR
 from atomic_rl.metrics import compute_explained_variance
 from atomic_rl.buffers.rollout import (
@@ -46,9 +46,11 @@ from atomic_rl.buffers.rollout import (
     get_rollout_next_values,
 )
 from atomic_rl.utils import (
-    standardize_tensor,
     to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
 )
 from tensordict import TensorDict
 
@@ -179,7 +181,7 @@ for iteration in range(MAX_ITERATIONS):
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
-                from atomic_rl.utils import extract_vector_env_final_obs
+                from atomic_rl.envs.utils import extract_vector_env_final_obs
 
                 env_indices, final_obs = extract_vector_env_final_obs(info)
                 # Filter to only record environments that were truncated
@@ -251,18 +253,18 @@ for iteration in range(MAX_ITERATIONS):
     # dist has batch shape [B]. flat_data["actions"] is [B, 1]. Squeeze for log_prob, unsqueeze output.
     new_log_probs = dist.log_prob(flat_data["actions"].squeeze(-1)).unsqueeze(-1)
 
-    pg_loss, info_dict = policy_gradient_loss(
+    pg_loss, info_dict = compute_policy_gradient_loss(
         advantages=flat_advantages,
         log_probs=new_log_probs,
     )
 
-    ent_loss, _ = entropy_loss(dist)
+    ent_loss, _ = compute_entropy_loss(dist)
     ent_loss = ent_loss.mean()
 
     pg_loss = pg_loss.mean()
 
     # NOTE: i use my mse_loss from losses.py, but we don't need priorities here since it's not off policy.
-    critic_loss, _ = mse_loss(predictions=new_values, targets=flat_returns.detach())
+    critic_loss, _ = compute_mse_loss(predictions=new_values, targets=flat_returns.detach())
     critic_loss = critic_loss.mean()
 
     loss = pg_loss + CRITIC_COEFF * critic_loss - ENTROPY_COEFF * ent_loss

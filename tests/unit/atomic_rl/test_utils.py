@@ -4,13 +4,19 @@ import numpy as np
 from atomic_rl.utils import (
     ema_update,
     ema_update_,
-    standardize_tensor,
-    scale_tensor_by_std,
     to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
+    scale_tensor_by_std,
     compute_welford_stats,
-    add_dirichlet_noise,
+)
+from atomic_rl.envs.features import (
     compute_tile_coding_features,
+)
+from atomic_rl.action_selection import (
+    add_dirichlet_noise,
 )
 
 pytestmark = pytest.mark.unit
@@ -104,7 +110,7 @@ def test_utils_assertions():
 def test_extract_vector_env_final_obs():
     """Test extraction of final observations from Gymnasium info dict."""
     import numpy as np
-    from atomic_rl.utils import extract_vector_env_final_obs
+    from atomic_rl.envs.utils import extract_vector_env_final_obs
 
     # 1. No final observations
     info_none = {}
@@ -146,7 +152,7 @@ def test_extract_vector_env_final_obs():
 def test_extract_vector_env_final_obs_edge_cases():
     """Test edge cases for extract_vector_env_final_obs."""
     import numpy as np
-    from atomic_rl.utils import extract_vector_env_final_obs
+    from atomic_rl.envs.utils import extract_vector_env_final_obs
 
     # 1. Info is not a dict (e.g., PufferLib list)
     info_list = ["some", "data"]
@@ -167,7 +173,7 @@ def test_extract_vector_env_final_obs_edge_cases():
 
 
 def test_add_dirichlet_noise():
-    from atomic_rl.utils import add_dirichlet_noise
+    from atomic_rl.action_selection import add_dirichlet_noise
 
     probs = torch.tensor([[1.0, 0.0], [0.5, 0.5]])
     epsilon = 0.25

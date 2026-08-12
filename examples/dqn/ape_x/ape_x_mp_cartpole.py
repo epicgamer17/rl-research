@@ -30,7 +30,7 @@ from atomic_rl.buffers.replay import (
     make_n_step_accumulator,
     PERBufferState,
 )
-from atomic_rl.losses import huber_loss
+from atomic_rl.losses import compute_huber_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
@@ -332,7 +332,7 @@ def main():
     )
     my_selector_fn = argmax_selector
     my_target_fn = compute_q_td_target
-    my_loss_fn = huber_loss
+    my_loss_fn = compute_huber_loss
 
     # Shared model for weight syncing
     shared_model = my_model_creator()

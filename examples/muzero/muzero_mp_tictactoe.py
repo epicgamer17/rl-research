@@ -30,7 +30,7 @@ from tensordict import TensorDict
 import wandb
 
 from atomic_rl.search import mcts_search, get_mcts_visit_policy
-from atomic_rl.losses import cross_entropy_loss, mse_loss
+from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.action_selection import argmax_selector, sample_distribution
 from atomic_rl.buffers import SharedReplayBuffer
 from atomic_rl.buffers.replay import (
@@ -490,25 +490,31 @@ def learner_worker(
         # Initial inference k=0
         sk, p_logits, v_pred = local_model.initial_inference(obs_batch)
 
-        raw_p_loss, _ = cross_entropy_loss(p_logits, target_policies)
-        raw_v_loss, _ = mse_loss(v_pred.view(-1), target_values.view(-1))
+        raw_p_loss, _ = compute_cross_entropy_loss(p_logits, target_policies)
+        raw_v_loss, _ = compute_mse_loss(v_pred.view(-1), target_values.view(-1))
 
-        total_loss = (raw_p_loss.mean() + raw_v_loss.mean()) * (1.0 / unroll_steps_k)
+        # Loss scaling: 1/K on each unrolled head (Note 51)
+        # TODO: confirm that this behaviour for question 51 is correct
+        total_loss = (raw_p_loss.mean() + raw_v_loss.mean()) * (1.0 / UNROLL_STEPS_K)
 
-        # Recurrent unrolling K steps
-        for k in range(1, unroll_steps_k + 1):
-            sk.register_hook(lambda g: g * 0.5)
+        # Unroll K hypothetical steps recurrently
+        for k in range(1, UNROLL_STEPS_K + 1):
+            target_policies = minibatch["target_policy_seq"][:, k]
+            target_values = minibatch["target_value_seq"][:, k]
 
-            action_planes = encode_action_plane(
-                actions[0].item(), device=device
-            ).expand(batch_size, -1, -1, -1)
+            # Use action from sequence at step k-1 (shape [B])
+            action = minibatch["action_seq"][:, k - 1]
+            action_planes = (
+                torch.zeros((action.size(0), 1, 3, 3), device=device) + action.view(-1, 1, 1, 1).float() / 8.0
+            )
 
-            rk, sk, p_logits_k, v_pred_k = local_model.recurrent_inference(
+            # Recurrent Dynamics & Prediction
+            sk, p_logits_k, v_pred_k = local_model.recurrent_inference(
                 sk, action_planes
             )
 
-            raw_pk_loss, _ = cross_entropy_loss(p_logits_k, target_policies)
-            raw_vk_loss, _ = mse_loss(v_pred_k.view(-1), target_values.view(-1))
+            raw_pk_loss, _ = compute_cross_entropy_loss(p_logits_k, target_policies)
+            raw_vk_loss, _ = compute_mse_loss(v_pred_k.view(-1), target_values.view(-1))
 
             step_loss = (raw_pk_loss.mean() + raw_vk_loss.mean()) * (
                 1.0 / unroll_steps_k

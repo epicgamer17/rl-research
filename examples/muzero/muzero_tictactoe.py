@@ -108,7 +108,7 @@ from atomic_rl.networks import ResNetBlock
 import wandb
 
 from atomic_rl.search import mcts_search, get_mcts_visit_policy
-from atomic_rl.losses import cross_entropy_loss, mse_loss
+from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.action_selection import argmax_selector, sample_distribution
 from atomic_rl.buffers.replay import (
     init_buffer,
@@ -575,8 +575,8 @@ def train_muzero_tictactoe():
         # Step k = 0: Initial representation & prediction
         sk, p_logits, v_pred = learner_model.initial_inference(obs_batch)
 
-        raw_p_loss, _ = cross_entropy_loss(p_logits, target_policies)
-        raw_v_loss, _ = mse_loss(v_pred.view(-1), target_values.view(-1))
+        raw_p_loss, _ = compute_cross_entropy_loss(p_logits, target_policies)
+        raw_v_loss, _ = compute_mse_loss(v_pred.view(-1), target_values.view(-1))
 
         # Loss scaling: 1/K on each unrolled head (Note 51)
         # TODO: confirm that this behaviour for question 51 is correct
@@ -595,8 +595,8 @@ def train_muzero_tictactoe():
                 sk, action_planes
             )
 
-            raw_pk_loss, _ = cross_entropy_loss(p_logits_k, target_policies)
-            raw_vk_loss, _ = mse_loss(v_pred_k.view(-1), target_values.view(-1))
+            raw_pk_loss, _ = compute_cross_entropy_loss(p_logits_k, target_policies)
+            raw_vk_loss, _ = compute_mse_loss(v_pred_k.view(-1), target_values.view(-1))
 
             step_loss = (raw_pk_loss.mean() + raw_vk_loss.mean()) * (
                 1.0 / UNROLL_STEPS_K

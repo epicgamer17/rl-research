@@ -25,7 +25,7 @@ from atomic_rl.buffers.replay import (
     uniform_sample,
     make_n_step_accumulator,
 )
-from atomic_rl.losses import mse_loss
+from atomic_rl.losses import compute_mse_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
@@ -206,7 +206,7 @@ for step in range(MAX_STEPS):
         pred_sa = gather_q_values(q_values, batch["action"])
 
         # 5. Loss Calculation (Pure Primitive)
-        loss, info_dict = mse_loss(pred_sa, td_target)
+        loss, info_dict = compute_mse_loss(pred_sa, td_target)
         loss = loss.mean()
 
         # Apply Updates

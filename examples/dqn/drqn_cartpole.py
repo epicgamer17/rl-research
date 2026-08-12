@@ -26,7 +26,7 @@ from atomic_rl.action_selection import (
     gather_q_values,
     with_epsilon_greedy,
 )
-from atomic_rl.losses import mse_loss, with_sequence_mask
+from atomic_rl.losses import compute_mse_loss, with_sequence_mask
 from atomic_rl.update_target_net import hard_update_target_network_
 from atomic_rl.buffers.replay import (
     circular_write_strategy_,
@@ -308,7 +308,7 @@ def train():
             flat_mask = valid_mask.flatten()
 
             # Use sequence-aware loss
-            loss_fn = with_sequence_mask(mse_loss, flat_mask)
+            loss_fn = with_sequence_mask(compute_mse_loss, flat_mask)
             loss, info_dict = loss_fn(q_pred_flat, td_targets_flat)
             loss = loss.mean()
 
