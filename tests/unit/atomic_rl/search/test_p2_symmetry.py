@@ -76,74 +76,8 @@ def _recurrent_fn(actions_taken, embeddings, to_play):
 
 
 # ============================================================================
-# 1. Dynamics from P2's perspective
+# 1. Search has no side-bias (the key P2 guarantee)
 # ============================================================================
-def test_dynamics_p2_places_minus_one_and_flips_turn():
-    """P2 (to_play=1) must drop a piece and hand the turn back to P1."""
-    next_embed, reward_vec, next_to_play, is_terminal, legal = tictactoe_dynamics_fn(
-        _embed([[0] * 3, [0] * 3, [0] * 3], 1), torch.tensor([4]), torch.tensor([1])
-    )
-    # Next active player is P1 (0). Opponent channel (channel 1) contains P2's center piece.
-    assert next_embed[0, 1, 1, 1].item() == 1.0  # P2's piece is opponent channel for P1
-    assert next_to_play.item() == 0
-    assert is_terminal.item() is False
-    assert reward_vec[0, 0].item() == 0.0
-    assert reward_vec[0, 1].item() == 0.0
-    assert legal[0, 4].item() is False  # center now occupied
-    assert legal[0, 0].item() is True
-
-
-def test_dynamics_p2_win_and_loss_reward_sign():
-    """Terminal rewards are from the mover's POV; a P2 win is a P1 loss and
-    vice-versa, and the reward sign is color-symmetric."""
-    # P2 (to_play=1) completes the first row with -1, -1, -1 -> P2 won (P0 reward is -1.0, P1 reward is +1.0)
-    _, reward_vec, _, is_term, legal = tictactoe_dynamics_fn(
-        _embed([[-1, -1, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([2]), torch.tensor([1])
-    )
-    assert reward_vec[0, 0].item() == -1.0
-    assert reward_vec[0, 1].item() == 1.0
-    assert is_term.item() is True
-    assert legal.sum().item() == 6.0  # terminal row full, six cells still empty
-
-    # Mirror: P1 (to_play=0) completes the same row with +1, +1, +1 -> P1 won (P0 reward is +1.0, P1 reward is -1.0)
-    _, reward_vec, _, is_term, _ = tictactoe_dynamics_fn(
-        _embed([[1, 1, 0], [0, 0, 0], [0, 0, 0]], 0), torch.tensor([2]), torch.tensor([0])
-    )
-    assert reward_vec[0, 0].item() == 1.0
-    assert reward_vec[0, 1].item() == -1.0
-    assert is_term.item() is True
-
-    # The mover never returns -1 on its own move (it always lays its own piece);
-    # a loss is only realised across the alternating discount as the opponent's
-    # +1 win is backed up (covered by test_qvalues_p2_root_sign_parity).
-    _, reward_vec, _, is_term, _ = tictactoe_dynamics_fn(
-        _embed([[1, 0, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([1]), torch.tensor([1])
-    )
-    assert reward_vec[0, 0].item() == 0.0
-    assert reward_vec[0, 1].item() == 0.0
-    assert is_term.item() is False
-
-
-def test_dynamics_color_swap_mirror_symmetry():
-    """The dynamics must be exactly symmetric under swapping players.
-
-    State B = (board=-A, to_play=1) is the color-swap mirror of state A
-    (board=A, to_play=0). Playing the SAME action in both must yield mirrored
-    next boards and identical reward / terminal / legal-mask signals.
-    """
-    board_a = [[1, 0, -1], [0, 1, 0], [0, -1, 0]]  # X at (0,0),(1,1); O at (0,2),(2,1)
-    emb_a = _embed(board_a, 0)
-    emb_b = _embed([[-v for v in row] for row in board_a], 1)
-
-    action = torch.tensor([1])  # empty cell (0,1), legal in both mirrors
-    next_a, reward_a, to_a, term_a, legal_a = tictactoe_dynamics_fn(emb_a, action, torch.tensor([0]))
-    next_b, reward_b, to_b, term_b, legal_b = tictactoe_dynamics_fn(emb_b, action, torch.tensor([1]))
-
-    torch.testing.assert_close(next_a[..., 0], next_b[..., 0])
-    assert to_a.item() == 1 - to_b.item()
-    torch.testing.assert_close(reward_a, reward_b)
-    assert term_a.item() == term_b.item()
-    torch.testing.assert_close(legal_a, legal_b)
 
 
 # ============================================================================

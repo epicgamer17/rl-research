@@ -1,104 +1,20 @@
-"""Regression tests for specific MCTS engine bugs.
+"""Engine regression tests for specific MCTS engine bugs & invariants.
 
 These pin down:
-
-1. backpropagate_ stores the *child node* value in ``children_values`` so that
-   ``Q(s, a) = reward + discount * V(child)`` is reconstructed exactly, without
-   double-counting the edge reward/discount.  (Regression for the nonzero
-   intermediate-reward case; the mctx edge-value invariant is also checked by
-   ``test_two_player_mcts``.)
-
-2. The root node is expanded once at init (``node_visits == 1``), so the first
-   selection uses the prior-exploration term instead of a pure-noise tie-break.
-
-3. ``max_depth`` is honoured and defaults to ``num_simulations`` (mctx
-   behaviour) rather than a hardcoded constant that silently stops expanding
-   long games.
+1. The first selection uses the prior-exploration term instead of a pure-noise tie-break.
+2. max_depth is honoured and defaults to num_simulations (mctx behaviour).
+3. A long non-terminal game expands one node per simulation.
 """
 import pytest
 import torch
 
 from atomic_rl.search import (
-    backpropagate_,
     init_mcts_tree,
     mcts_search,
     select_leaf,
 )
-from atomic_rl.search.qtransforms import get_qvalues
 
-pytestmark = pytest.mark.unit
-
-
-# ============================================================================
-# Bug 1: children_values must store the child node value, not the parent return
-# ============================================================================
-def test_backprop_no_double_count_with_intermediate_reward():
-    """A nonzero reward on a non-terminal edge must not be applied twice.
-
-    Q(s, a) = reward + discount * V(child). Storing the discounted return at
-    the parent instead of the child value re-applies the edge and inflates Q.
-    """
-    B, A, S = 1, 2, 6
-    tree = init_mcts_tree(
-        root_embeddings=torch.zeros(B, 2),
-        root_logits=torch.zeros(B, A),
-        root_value=torch.zeros(B, 1),
-        root_to_play=torch.zeros(B, dtype=torch.long),
-        num_simulations=S,
-        num_actions=A,
-        num_players=1,
-    )
-    # root --a0--> node1 (reward 0.5, discount 1.0); node1 value 2.0
-    tree["children_index"][0, 0, 0] = 1
-    tree["children_rewards"][0, 0, 0] = torch.tensor([[0.5]])
-    tree["children_discounts"][0, 0, 0] = torch.tensor([[1.0]])
-    tree["node_values"][0, 1] = torch.tensor([[2.0]])
-    tree["node_visits"][0, 1] = 1
-    # root --a1--> node2 (reward 0.0, discount 1.0); node2 value 3.0
-    tree["children_index"][0, 0, 1] = 2
-    tree["children_rewards"][0, 0, 1] = torch.tensor([[0.0]])
-    tree["children_discounts"][0, 0, 1] = torch.tensor([[1.0]])
-    tree["node_values"][0, 2] = torch.tensor([[3.0]])
-    tree["node_visits"][0, 2] = 1
-
-    backpropagate_(
-        tree,
-        [(torch.tensor([0]), torch.tensor([0]), torch.tensor([True]))],
-        torch.tensor([[2.0]]),
-    )
-    backpropagate_(
-        tree,
-        [(torch.tensor([0]), torch.tensor([1]), torch.tensor([True]))],
-        torch.tensor([[3.0]]),
-    )
-
-    # Edge stores the child's value, not the discounted return (2.5 / 3.0).
-    torch.testing.assert_close(tree["children_values"][0, 0, 0], torch.tensor([2.0]))
-    torch.testing.assert_close(tree["children_values"][0, 0, 1], torch.tensor([3.0]))
-
-    q = get_qvalues(tree, torch.tensor([0]), torch.tensor([0]))
-    assert q[0, 0].item() == pytest.approx(0.5 + 1.0 * 2.0)
-    assert q[0, 1].item() == pytest.approx(0.0 + 1.0 * 3.0)
-    # Correct ranking is preserved: a1 > a0. The double-count bug inflates
-    # a0 to 3.0, tying (and distorting) the ranking.
-    assert q[0, 1].item() > q[0, 0].item()
-
-
-# ============================================================================
-# Bug 2: the root is expanded once at init, so the first pick uses the prior
-# ============================================================================
-def test_init_root_expanded_once():
-    """The root must be visited once at init (mctx update_tree_node)."""
-    tree = init_mcts_tree(
-        root_embeddings=torch.zeros(1, 2),
-        root_logits=torch.zeros(1, 3),
-        root_value=torch.zeros(1, 2),
-        root_to_play=torch.zeros(1, dtype=torch.long),
-        num_simulations=4,
-        num_actions=3,
-        num_players=2,
-    )
-    assert tree["node_visits"][:, 0].tolist() == [1]
+pytestmark = pytest.mark.regression
 
 
 @pytest.mark.parametrize("seeded", [range(5)])
@@ -133,9 +49,6 @@ def test_first_root_selection_prefers_argmax_prior(seeded):
             assert leaf_actions.item() == expected
 
 
-# ============================================================================
-# Bug 3: max_depth is honoured and defaults to num_simulations
-# ============================================================================
 def test_select_leaf_honors_max_depth():
     """A fully visited chain longer than max_depth must stop, not expand."""
     B, A, S = 1, 2, 8

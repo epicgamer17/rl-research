@@ -3,6 +3,9 @@ import torch
 import numpy as np
 import pytest
 
+mctx = pytest.importorskip("mctx")
+jax = pytest.importorskip("jax")
+
 from atomic_rl.search import init_mcts_tree
 from atomic_rl.search.fpu import (
     fpu_zero,

@@ -1,4 +1,4 @@
-"""Unit tests for AlphaZero TicTacToe network components and search functions."""
+"""Smoke tests for AlphaZero TicTacToe network components and search functions."""
 
 import torch
 import pytest
@@ -7,6 +7,8 @@ from examples.alphazero.alphazero_mp_tictactoe import (
     create_recurrent_fn,
     run_batched_mcts,
 )
+
+pytestmark = pytest.mark.smoke
 
 
 def test_alphazero_net_shapes():

@@ -3,9 +3,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-import jax
+mctx = pytest.importorskip("mctx")
+jax = pytest.importorskip("jax")
 import jax.numpy as jnp
-import mctx
 
 from tensordict import TensorDict
 from atomic_rl.search import (

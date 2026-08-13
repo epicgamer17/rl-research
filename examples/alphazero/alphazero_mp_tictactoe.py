@@ -18,8 +18,6 @@ Multiprocessing Architecture:
     NOTE: Although our MCTS is based on mctx, we use vector values for each player for rewards and values. This does two things. First and most important, it allows the MCTS to work on n-player games, cooperative or competitive. Second it is more inline with PettingZoo standards, which return a reward for each player, not a single scalar reward. For this example, we use the knowledge that Tic Tac Toe is zero sum, on another game you could avoid using that knowledge, and have the agent predict and learn multiple values and rewards for each state.
 
     NOTE: Additional efficiency could be squeezed out during self-play by stepping environments using direct tensor operations (e.g. tictactoe_dynamics_fn) rather than PettingZoo AEC environments. However, in the interest of showcasing how PettingZoo environments can be used, and because AlphaZero is the main focus, we choose to showcase it.
-
-    NOTE: AlphaZero, in our testing, appears to be extremely sensitive to the qtransform used. qtrasnform_by_parent_and_sibling is does not learn well, niether does qtrasnform_by_min_max. qtrasnform_identity works well. This is likely because MCTX chooses to initialize unvisited nodes with a 0.0 *normalized* q value, instead of a 0.0 before normalized q value. qtransform_identity is faithful to the original paper but not in mctx. It's possible (if not likely) this is not a problem at higher simulation counts. TODO: Does this also effect MuZero? How can this be combatted?
 """
 
 import functools
@@ -47,7 +45,7 @@ from atomic_rl.schedules import get_stepwise_schedule
 from atomic_rl.search import (
     fpu_zero,
     mcts_search,
-    qtransform_by_parent_and_siblings,
+    qtransform_by_min_max,
 )
 from pettingzoo.classic import tictactoe_v3
 
@@ -241,7 +239,10 @@ def run_batched_mcts(
         pb_c_init=C_PUCT,
         temperature=temperature,
         qtransform=functools.partial(
-            qtransform_by_parent_and_siblings, fpu_fn=fpu_zero
+            qtransform_by_min_max,
+            fpu_fn=fpu_zero,
+            min_value=torch.tensor(-1.0),
+            max_value=torch.tensor(1.0),
         ),
     )
     return action_probs

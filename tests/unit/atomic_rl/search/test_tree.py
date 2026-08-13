@@ -28,3 +28,18 @@ def test_init_mcts_tree_geometry():
     assert torch.all(tree["children_index"] == -1)
     assert tree["node_counts"].tolist() == [1, 1]  # Only the root is occupied initially
     torch.testing.assert_close(tree["embeddings"][:, 0], root_embeddings)
+
+
+def test_init_root_expanded_once():
+    """Verify that the root node is marked with node_visits == 1 upon initialization."""
+    tree = init_mcts_tree(
+        root_embeddings=torch.zeros(1, 2),
+        root_logits=torch.zeros(1, 3),
+        root_value=torch.zeros(1, 2),
+        root_to_play=torch.zeros(1, dtype=torch.long),
+        num_simulations=4,
+        num_actions=3,
+        num_players=2,
+    )
+    assert tree["node_visits"][:, 0].tolist() == [1]
+

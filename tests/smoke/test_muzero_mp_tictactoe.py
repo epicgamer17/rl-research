@@ -1,4 +1,4 @@
-"""Unit tests for MuZero TicTacToe network components and search functions."""
+"""Smoke tests for MuZero TicTacToe network components and search functions."""
 
 import torch
 import pytest
@@ -10,6 +10,8 @@ from examples.muzero.muzero_mp_tictactoe import (
     create_recurrent_fn,
     run_batched_mcts,
 )
+
+pytestmark = pytest.mark.smoke
 
 
 def test_encode_action_plane():
