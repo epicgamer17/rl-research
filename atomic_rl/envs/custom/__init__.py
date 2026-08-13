@@ -12,7 +12,3 @@ register(
     max_episode_steps=100,
 )
 
-register(
-    id="custom_gym_envs/LeducHoldem-v0",
-    entry_point="atomic_rl.envs.custom.envs.leduc_holdem:LeducHoldemEnv",
-)

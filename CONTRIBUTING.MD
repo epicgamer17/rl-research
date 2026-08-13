@@ -97,7 +97,20 @@ All components should make their behaviour clear. It should not be possible for 
 *envs/* 
 This layer contains the environments used in the examples.
 These environments are not only gym or RL environments, they can also be any function that returns data/examples that can be used to train or learn a model.
-Some examples of what should exist here: 
+By default, if an environment exists in a major standard library, use that library instead of creating a new one or re-inventing the wheel. 
+
+Standard Environment Library Guidelines (What to use and when)
+- Single-Agent Control & Atari: Use Gymnasium (`gym.make("CartPole-v1")`, `gym.make("Pendulum-v1")`, `gym.make("PongNoFrameskip-v4")`).
+- Continuous Control & Robotics: Use MuJoCo via Gymnasium (`gym.make("HalfCheetah-v4")`, `gym.make("Hopper-v4")`).
+- Multi-Agent & Board/Card Games: Use PettingZoo (`pettingzoo.classic.tictactoe_v3`, `pettingzoo.classic.leduc_holdem_v4`, `pettingzoo.classic.connect_four_v6`).
+- Grid Worlds & Symbolic Navigation: Use MiniGrid (`minigrid`) or standard Gymnasium environments.
+- Game-Theoretic Benchmarks: Use PettingZoo or OpenSpiel / RLCard.
+- Real-Time Strategy: Use MicroRTS (`gym_microrts`).
+
+Custom environments inside `atomic_rl/envs/` (under `mdp/`, `streams/`, or `custom/`) are ONLY permitted when an environment does not exist in standard libraries or is modified for a specific research requirement (e.g. Sutton's non-stationary tracking streams, synthetic plasticity tasks, or Catan initial placement).
+The `envs/functions` folder should include pure helper functions for envs (e.g., hand-coded dynamics functions for search algorithms). 
+
+Some examples of what could exist here: 
 - all gym environments
 - all openAI Gym environments
 - all deepMind Environments
@@ -107,10 +120,8 @@ Some examples of what should exist here:
 Essentially the goal here is to provide reusable "environments" that can be used to train or learn a model. Many of these will be used by the examples, but they can also be used by other examples, or by other projects. 
 These tend to be based of experiments from papers, but they don't have to be. For example the Permuted MNIST. 
 Wrappers for environments should be included here as well. Things like some of the wrappers for gym environments used in PPO for Atari. 
-By default if possible existing gym envs etc should be used instead of creating new ones. But if an env doesn't exist or needs to be modified for a specific purpose (e.g. for an algorithm), then it should be included here.
-The envs/functions folder should include helper functions for envs. Things like hand-coded dynamics functions, etc. 
-
 --- 
+
 
 Rough file structure: 
 1. 1 file per feature

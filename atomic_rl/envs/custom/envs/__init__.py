@@ -1,4 +1,3 @@
-from .leduc_holdem import LeducHoldemEnv
 from .matching_pennies import (
     MatchingPenniesEnv,
     MatchingPenniesGymEnv,
@@ -6,8 +5,8 @@ from .matching_pennies import (
 from .catan import CatanAECEnv
 
 __all__ = [
-    "LeducHoldemEnv",
     "MatchingPenniesEnv",
     "MatchingPenniesGymEnv",
     "CatanAECEnv",
 ]
+

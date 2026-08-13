@@ -47,7 +47,7 @@ def true_online_random_walk_episode(
     Runs a single random walk episode and updates weights online using True Online TD(lambda).
     """
     env = RandomWalkEnv(num_states=NUM_NON_TERMINAL_STATES, start_state=START_STATE)
-    phi_t = env.reset()
+    phi_t, _ = env.reset()
     traces = torch.zeros_like(weights)
 
     # Explicitly calculate the initial v_old using the starting weights
@@ -56,7 +56,7 @@ def true_online_random_walk_episode(
     with torch.inference_mode():
         while True:
             # 1. Take a step in the environment
-            phi_next, reward, terminated = env.step()
+            phi_next, reward, terminated, truncated, _ = env.step()
 
             # 2. Update True Online Eligibility Trace
             # compute_true_online_traces expects [batch, features]

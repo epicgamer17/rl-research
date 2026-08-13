@@ -104,7 +104,7 @@ class MatchingPenniesEnv(AECEnv):
     def reset(self, seed=None, options=None):
         """Reset the environment."""
         if seed is not None:
-            np.random.seed(seed)
+            self._np_random = np.random.default_rng(seed)
 
         self.agents = self.possible_agents[:]
         self.agent_selector = agent_selector(self.agents)

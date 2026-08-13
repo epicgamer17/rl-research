@@ -82,11 +82,11 @@ def generate_training_sets(
         episodes = []
         for _ in range(episodes_per_set):
             episode = []
-            phi_t = env.reset()
+            phi_t, _ = env.reset()
             while True:
-                phi_next, reward, terminated = env.step()
+                phi_next, reward, terminated, truncated, _ = env.step()
                 episode.append((phi_t, reward, phi_next, terminated))
-                if terminated:
+                if terminated or truncated:
                     break
                 phi_t = phi_next
             episodes.append(episode)
@@ -109,13 +109,13 @@ def random_walk_episode(
         Updated weights after one episode.
     """
     env = RandomWalkEnv(num_states=NUM_NON_TERMINAL_STATES, start_state=START_STATE)
-    phi_t = env.reset()
+    phi_t, _ = env.reset()
     traces = torch.zeros_like(weights)
 
     with torch.inference_mode():
         while True:
             # 1. Take a step in the environment
-            phi_next, reward, terminated = env.step()
+            phi_next, reward, terminated, truncated, _ = env.step()
 
             # 2. Update Eligibility Trace: e_t = gamma * lambda * e_{t-1} + phi_t
             # Note: Gamma is 1.0 for this task.

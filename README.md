@@ -55,6 +55,35 @@ Complete, runnable algorithms (DQN, PPO, A2C, AlphaZero, MuZero, TD-learning, an
 
 ---
 
+## 🌍 Supported Environments & Ecosystem
+
+`atomic-rl` integrates seamlessly with standard Python RL ecosystem libraries rather than re-inventing the wheel:
+
+| Ecosystem / Library | Target Domain | Status & Integration |
+|---|---|---|
+| **Gymnasium** | Classic Control, Box2D, Discrete & Continuous MDPs | Full Native Support (`gym.make(...)`) |
+| **MuJoCo** (`gymnasium[mujoco]`) | High-Dimensional Continuous Robotics | Full Support (`HalfCheetah-v4`, `Hopper-v4`, `Ant-v4`) |
+| **PettingZoo** (`pettingzoo[classic]`) | Multi-Agent Classic Board/Card Games & MPE | Full AEC & Parallel API Support (`tictactoe_v3`, `leduc_holdem_v4`) |
+| **Atari (ALE / Shimmy)** | Pixel-based Visual Control | Supported via Atari Wrappers (`PongNoFrameskip-v4`) |
+| **MicroRTS** (`gym_microrts`) | Multi-Discrete Real-Time Strategy | Supported via Multi-Discrete PPO |
+| **MiniGrid** (`minigrid`) | Grid-world Navigation & POMDPs | Fully Compatible |
+
+### 🧪 Demonstrated Environments in `examples/`
+
+| Category | Environment | Example Scripts |
+|---|---|---|
+| **Discrete Control** | `CartPole-v1` | `examples/dqn/`, `examples/ppo/`, `examples/actor_critic/`, `examples/stream_rl/` |
+| **Continuous Control** | `Pendulum-v1`, `HalfCheetah-v4` | `examples/ppo/ppo_pendulum.py`, `examples/ppo/ppo_mujoco.py`, `examples/actor_critic/` |
+| **Visual Control** | `PongNoFrameskip-v4` | `examples/ppo/ppo_atari.py`, `examples/ppo/ppo_lstm_atari.py` |
+| **Multi-Discrete** | `MicroRTS` | `examples/ppo/ppo_multidiscrete_microrts.py` |
+| **Multi-Agent Board Games** | `tictactoe_v3` (PettingZoo) | `examples/alphazero/alphazero_tictactoe.py`, `alphazero_mp_tictactoe.py` |
+| **Plasticity & Continual Learning** | Permuted MNIST, Bit-Flipping, ETTm2 | `examples/plasticity/`, `examples/stream_rl/` |
+| **Meta-Optimization & Tracking** | Drifting Concept, Non-Stationary Random Walk | `examples/meta_optimization/idbd_feature_selection.py`, `auto_step.py` |
+| **Tabular & Linear MDPs** | Sutton's Random Walk, Baird's Counterexample | `examples/td_learning/` |
+
+---
+
+
 ## 💡 The Philosophy: Resolving the RL Paradigm War
 
 Developing Reinforcement Learning algorithms typically forces researchers to choose between three flawed paradigms:

@@ -191,9 +191,6 @@ def apply_action_mask(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     assert (
         logits.shape == mask.shape
     ), f"Exact shape mismatch in apply_action_mask! logits: {logits.shape}, mask: {mask.shape}"
-    assert (
-        mask.sum(dim=-1).gt(0).all()
-    ), "Encountered a mask where an environment/state has 0 valid actions."
 
     mask_bool = mask.to(torch.bool)
     return torch.where(
@@ -337,7 +334,9 @@ def reduce_ensemble_q_values(
     Returns:
         torch.Tensor: Reduced Q-values tensor with the ensemble dimension removed.
     """
-    assert q_ensemble.ndim >= 2, f"Expected at least 2D q_ensemble, got {q_ensemble.shape}"
+    assert (
+        q_ensemble.ndim >= 2
+    ), f"Expected at least 2D q_ensemble, got {q_ensemble.shape}"
     if reduction == "min":
         return torch.min(q_ensemble, dim=ensemble_dim).values
     elif reduction == "mean":
@@ -345,4 +344,6 @@ def reduce_ensemble_q_values(
     elif reduction == "std":
         return torch.std(q_ensemble, dim=ensemble_dim)
     else:
-        raise ValueError(f"Unknown reduction '{reduction}'. Expected 'min', 'mean', or 'std'.")
+        raise ValueError(
+            f"Unknown reduction '{reduction}'. Expected 'min', 'mean', or 'std'."
+        )

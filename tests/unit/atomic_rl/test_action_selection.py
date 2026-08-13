@@ -237,6 +237,16 @@ def test_apply_action_mask():
     torch.testing.assert_close(masked, expected)
 
 
+def test_apply_action_mask_zero_valid_actions():
+    from atomic_rl.action_selection import apply_action_mask
+
+    logits = torch.tensor([[1.0, 2.0, 3.0]])
+    mask = torch.tensor([[0, 0, 0]])
+    masked = apply_action_mask(logits, mask)
+    expected = torch.tensor([[-1e8, -1e8, -1e8]])
+    torch.testing.assert_close(masked, expected)
+
+
 def test_compute_masked_entropy():
     from atomic_rl.action_selection import compute_masked_entropy
 
