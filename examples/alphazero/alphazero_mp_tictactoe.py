@@ -19,7 +19,7 @@ Multiprocessing Architecture:
 
     NOTE: Additional efficiency could be squeezed out during self-play by stepping environments using direct tensor operations (e.g. tictactoe_dynamics_fn) rather than PettingZoo AEC environments. However, in the interest of showcasing how PettingZoo environments can be used, and because AlphaZero is the main focus, we choose to showcase it.
 
-    NOTE: AlphaZero, in our testing, appears to be extremely sensitive to the qtransform used. qtrasnform_by_parent_and_sibling is does not learn well, niether does qtrasnform_by_min_max. qtrasnform_identity works well. This has to do with how unvisited children are valued compared to the priors. qtransform_identity is faithful to the original paper but not in mctx. It's possible (if not likely) this is not a problem at higher simulation counts. TODO: Does this also effect MuZero? How can this be combatted?
+    NOTE: AlphaZero, in our testing, appears to be extremely sensitive to the qtransform used. qtrasnform_by_parent_and_sibling is does not learn well, niether does qtrasnform_by_min_max. qtrasnform_identity works well. This is likely because MCTX chooses to initialize unvisited nodes with a 0.0 *normalized* q value, instead of a 0.0 before normalized q value. qtransform_identity is faithful to the original paper but not in mctx. It's possible (if not likely) this is not a problem at higher simulation counts. TODO: Does this also effect MuZero? How can this be combatted?
 """
 
 import functools
@@ -45,8 +45,9 @@ from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.networks.architectures import ResNetBackbone
 from atomic_rl.schedules import get_stepwise_schedule
 from atomic_rl.search import (
+    fpu_zero,
     mcts_search,
-    qtransform_identity,
+    qtransform_by_parent_and_siblings,
 )
 from pettingzoo.classic import tictactoe_v3
 
@@ -239,7 +240,9 @@ def run_batched_mcts(
         dirichlet_alpha=DIRICHLET_ALPHA,
         pb_c_init=C_PUCT,
         temperature=temperature,
-        qtransform=qtransform_identity,
+        qtransform=functools.partial(
+            qtransform_by_parent_and_siblings, fpu_fn=fpu_zero
+        ),
     )
     return action_probs
 

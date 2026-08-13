@@ -7,7 +7,17 @@
 from .backpropagation import backpropagate_
 from .expansion import expand_node_
 from .policies import get_mcts_visit_policy
+from .fpu import (
+    FPUFn,
+    fpu_zero,
+    fpu_constant,
+    fpu_parent_value,
+    fpu_mixed_value,
+    fpu_min_value,
+)
 from .qtransforms import (
+    get_qvalues,
+    get_completed_qvalues,
     qtransform_completed_by_mix_value,
     qtransform_by_parent_and_siblings,
     qtransform_by_min_max,

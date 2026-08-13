@@ -1,7 +1,15 @@
+import functools
 import torch
 import torch.nn.functional as F
 from tensordict import TensorDict
-from typing import Union, Optional
+from typing import Union, Optional, Tuple
+from .fpu import (
+    FPUFn,
+    fpu_zero,
+    fpu_parent_value,
+    fpu_mixed_value,
+    fpu_min_value,
+)
 
 
 def get_qvalues(
@@ -35,6 +43,41 @@ def get_qvalues(
     return q_active
 
 
+def get_completed_qvalues(
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,  # [B]
+    *,
+    fpu_fn: FPUFn = fpu_zero,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Computes Q-values for parent_nodes and completes unvisited actions using `fpu_fn`.
+
+    Returns:
+        completed_qvalues: [B, num_actions]
+        visit_counts: [B, num_actions]
+    """
+    batch_size = tree.batch_size[0]
+    batch_range = torch.arange(batch_size, device=tree.device)
+    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
+
+    assert parent_nodes.shape == (
+        batch_size,
+    ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+
+    qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]
+    visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
+
+    # Evaluate FPU strategy callable
+    unvisited_value = fpu_fn(tree, parent_nodes)  # [B]
+
+    # Expand unvisited value for broadcasting over actions: [B, 1]
+    unvisited_exp = (
+        unvisited_value.unsqueeze(-1) if unvisited_value.ndim == 1 else unvisited_value
+    )
+
+    completed_qvalues = torch.where(visit_counts > 0, qvalues, unvisited_exp)
+    return completed_qvalues, visit_counts
+
+
 def _format_bound(
     val: Union[torch.Tensor, float], target_tensor: torch.Tensor
 ) -> torch.Tensor:
@@ -51,101 +94,81 @@ def _format_bound(
 def qtransform_identity(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
+    *,
+    fpu_fn: FPUFn = fpu_zero,
 ) -> torch.Tensor:
-    """
-    Returns unnormalized Q-values for parent_nodes.
+    """Returns completed Q-values for parent_nodes without normalization.
+
     Shape: [B, num_actions].
     """
-    batch_size = tree.batch_size[0]
-    batch_range = torch.arange(batch_size, device=tree.device)
-    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
-    return get_qvalues(tree, parent_nodes, active_players)
+    completed_qvalues, _ = get_completed_qvalues(tree, parent_nodes, fpu_fn=fpu_fn)
+    return completed_qvalues
 
 
-# TODO: soft min max stats? efficient_zero.pdf
 def qtransform_by_min_max(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
     *,
     min_value: torch.Tensor,  # [B] or scalar
     max_value: torch.Tensor,  # [B] or scalar
+    fpu_fn: Optional[FPUFn] = None,
     epsilon: float = 1e-8,
 ) -> torch.Tensor:
-    """
-    Returns Q-values normalized by the given `min_value` and `max_value`.
+    """Returns Q-values normalized by the given `min_value` and `max_value`.
 
-    Unvisited actions receive a normalized value of 0.0.
+    If `fpu_fn` is None, defaults to `functools.partial(fpu_min_value, min_value=min_value)`
+    for full backward compatibility with mctx semantics (unvisited actions mapped to min_value).
+    Pass `fpu_fn=fpu_zero` to assign 0.0 before normalization (mapping to 0.5 in [0, 1] for min=-1, max=1).
     Shape: [B, num_actions].
     """
-    batch_size = tree.batch_size[0]
-    batch_range = torch.arange(batch_size, device=tree.device)
+    if fpu_fn is None:
+        fpu_fn = functools.partial(fpu_min_value, min_value=min_value)
 
-    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
+    completed_qvalues, _ = get_completed_qvalues(tree, parent_nodes, fpu_fn=fpu_fn)
 
-    assert parent_nodes.shape == (
-        batch_size,
-    ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
-    # assert (
-    #     min_value.ndim <= 1
-    # ), f"min_value must be scalar or [B], got shape {tuple(min_value.shape)}"
-    # assert (
-    #     max_value.ndim <= 1
-    # ), f"max_value must be scalar or [B], got shape {tuple(max_value.shape)}"
+    min_val = _format_bound(min_value, completed_qvalues)
+    max_val = _format_bound(max_value, completed_qvalues)
 
-    # Extract Q-values and visit counts for candidate actions: [B, A]
-    qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]
-    visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
-
-    min_val = _format_bound(min_value, qvalues)
-    max_val = _format_bound(max_value, qvalues)
-
-    # Assign min_value to unvisited actions prior to normalization
-    value_score = torch.where(visit_counts > 0, qvalues, min_val)
-
-    # Safe normalization
     denom = torch.clamp(max_val - min_val, min=epsilon)
-    normalized = (value_score - min_val) / denom
+    normalized = (completed_qvalues - min_val) / denom
 
     return normalized
 
 
-# TODO: should q transforms slice for player or should the slicing be done after? I think they need to slice for the player internally
 def qtransform_by_parent_and_siblings(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
     *,
+    fpu_fn: Optional[FPUFn] = None,
     epsilon: float = 1e-8,
 ) -> torch.Tensor:
-    """
-    Returns Q-values normalized by min/max over V(parent) and visited Q-values.
+    """Returns Q-values normalized by min/max over V(parent) and visited Q-values.
 
-    Unvisited actions receive a normalized value of 0.0.
+    If `fpu_fn` is None, defaults to `functools.partial(fpu_min_value, min_value=min_value)`
+    where min_value is computed dynamically over parent value and safe Q-values (matching mctx).
     Shape: [B, num_actions].
     """
     batch_size = tree.batch_size[0]
     batch_range = torch.arange(batch_size, device=tree.device)
-
     active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
-
-    assert parent_nodes.shape == (
-        batch_size,
-    ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
 
     qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]
     visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
     node_values_vec = tree["node_values"][batch_range, parent_nodes]  # [B, P]
     node_value = node_values_vec.gather(1, active_players.unsqueeze(-1))  # [B, 1]
 
-    # Safe Q-values: unvisited actions take parent node_value
+    # Calculate safe_qvalues (unvisited -> parent node_value) to derive dynamic min/max bounds
     safe_qvalues = torch.where(visit_counts > 0, qvalues, node_value)
-
-    # Dynamic min and max across siblings and parent
     min_value = torch.minimum(node_value, safe_qvalues.amin(dim=-1, keepdim=True))
     max_value = torch.maximum(node_value, safe_qvalues.amax(dim=-1, keepdim=True))
 
-    completed_by_min = torch.where(visit_counts > 0, qvalues, min_value)
+    if fpu_fn is None:
+        fpu_fn = functools.partial(fpu_min_value, min_value=min_value.squeeze(-1))
+
+    completed_qvalues, _ = get_completed_qvalues(tree, parent_nodes, fpu_fn=fpu_fn)
+
     denom = torch.clamp(max_value - min_value, min=epsilon)
-    normalized = (completed_by_min - min_value) / denom
+    normalized = (completed_qvalues - min_value) / denom
 
     return normalized
 
@@ -154,48 +177,24 @@ def qtransform_completed_by_mix_value(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
     *,
+    fpu_fn: Optional[FPUFn] = None,
+    use_mixed_value: bool = True,
     value_scale: float = 0.1,
     maxvisit_init: float = 50.0,
     rescale_values: bool = True,
-    use_mixed_value: bool = True,
     epsilon: float = 1e-8,
 ) -> torch.Tensor:
-    """
-    Computes completed Q-values for Gumbel MuZero.
+    """Computes completed Q-values for Gumbel MuZero.
 
-    Missing Q-values for unvisited actions are replaced by the mixed value (V_mix).
     Applies linear scaling: (maxvisit_init + max(visit_counts)) * value_scale * completed_qvalues.
     Shape: [B, num_actions].
     """
-    batch_size = tree.batch_size[0]
-    batch_range = torch.arange(batch_size, device=tree.device)
+    if fpu_fn is None:
+        fpu_fn = fpu_mixed_value if use_mixed_value else fpu_parent_value
 
-    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
-
-    assert parent_nodes.shape == (
-        batch_size,
-    ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
-
-    qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]
-    visit_counts = tree["children_visits"][batch_range, parent_nodes]  # [B, A]
-    raw_value_vec = tree["raw_values"][batch_range, parent_nodes]  # [B, P]
-    raw_value = raw_value_vec.gather(1, active_players.unsqueeze(-1)).squeeze(-1)  # [B]
-    prior_logits = tree["children_prior_logits"][batch_range, parent_nodes]  # [B, A]
-    prior_probs = F.softmax(prior_logits, dim=-1)  # [B, A]
-
-    if use_mixed_value:
-        value = _compute_mixed_value(
-            raw_value,
-            qvalues=qvalues,
-            visit_counts=visit_counts,
-            prior_probs=prior_probs,
-        )  # [B]
-    else:
-        value = raw_value
-
-    completed_qvalues = _complete_qvalues(
-        qvalues, visit_counts=visit_counts, value=value
-    )  # [B, A]
+    completed_qvalues, visit_counts = get_completed_qvalues(
+        tree, parent_nodes, fpu_fn=fpu_fn
+    )
 
     if rescale_values:
         completed_qvalues = _rescale_qvalues(completed_qvalues, epsilon)
@@ -211,17 +210,6 @@ def _rescale_qvalues(qvalues: torch.Tensor, epsilon: float) -> torch.Tensor:
     max_value = qvalues.amax(dim=-1, keepdim=True)
     denom = torch.clamp(max_value - min_value, min=epsilon)
     return (qvalues - min_value) / denom
-
-
-def _complete_qvalues(
-    qvalues: torch.Tensor,
-    *,
-    visit_counts: torch.Tensor,
-    value: torch.Tensor,  # [B]
-) -> torch.Tensor:
-    """Replaces unvisited actions with value [B, 1]."""
-    val_expanded = value.unsqueeze(-1) if value.ndim == 1 else value
-    return torch.where(visit_counts > 0, qvalues, val_expanded)
 
 
 def _compute_mixed_value(

@@ -65,7 +65,7 @@ def puct_score(
     scores = value_score + policy_score + noise
 
     # 5. Mask invalid actions at root and internal nodes
-    # TODO: needed for qidentity to work for alphazero, but feels hacky
+    # TODO: needed for qidentity and also vmix i think, to work for alphazero, but feels hacky. Make this simpler and less guessy. Follow simple not easy here
     legal_mask = (prior_logits > -1e7) & torch.isfinite(prior_logits)
     if depth == 0 and "root_legal_mask" in tree.keys():
         legal_mask = legal_mask & tree["root_legal_mask"]
