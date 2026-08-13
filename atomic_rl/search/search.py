@@ -46,6 +46,7 @@ def mcts_search(
     pb_c_base: float = 19652.0,
     pb_c_init: float = 1.25,
     temperature: float = 1.0,
+    max_depth: Optional[int] = None,
 ) -> Tuple[torch.Tensor, TensorDict]:
     """Runs batched N-player MuZero MCTS search matching mctx semantics.
 
@@ -71,6 +72,10 @@ def mcts_search(
     assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
     assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
     assert temperature >= 0, f"temperature must be >= 0, got {temperature}"
+    assert max_depth is None or (
+        isinstance(max_depth, int) and not isinstance(max_depth, bool)
+        and max_depth >= 1
+    ), f"max_depth must be an int >= 1 or None, got {max_depth!r}"
 
     assert (
         root_embeddings.ndim >= 2
@@ -127,6 +132,7 @@ def mcts_search(
             pb_c_base=pb_c_base,
             pb_c_init=pb_c_init,
             qtransform=qtransform,
+            max_depth=max_depth,
         )
 
         if not trajectory:

@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from tensordict import TensorDict
-from typing import Tuple, Callable, List
+from typing import Tuple, Callable, List, Optional
 from .qtransforms import qtransform_by_parent_and_siblings
 
 
@@ -83,7 +83,7 @@ def select_leaf(
     pb_c_init: float = 1.25,
     qtransform: Callable = qtransform_by_parent_and_siblings,
     scoring_fn: Callable = puct_score,
-    max_depth: int = 512,
+    max_depth: Optional[int] = None,
 ) -> Tuple[
     torch.Tensor,
     torch.Tensor,
@@ -91,6 +91,11 @@ def select_leaf(
     List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
 ]:
     """Selects leaf nodes to expand by descending the search tree.
+
+    Args:
+        max_depth: Maximum number of edges from the root to descend before
+            giving up on finding an unvisited node. Defaults to the number of
+            search simulations (the tree width), matching mctx.
 
     Returns:
         leaf_parents: Parent node indices [B] where expansion occurs.
@@ -103,12 +108,15 @@ def select_leaf(
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
 
+    if max_depth is None:
+        max_depth = tree["node_visits"].shape[-1] - 1
+
     assert tree["node_visits"].ndim == 2, (
         f"tree node buffers must be flat [B, N], got shape "
         f"{tuple(tree['node_visits'].shape)}"
     )
     assert (
-        isinstance(max_depth, int) and max_depth >= 1
+        isinstance(max_depth, int) and not isinstance(max_depth, bool) and max_depth >= 1
     ), f"max_depth must be an int >= 1, got {max_depth!r}"
     assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
     assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"

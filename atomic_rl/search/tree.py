@@ -132,5 +132,9 @@ def init_mcts_tree(
     tree["to_play"][:, 0] = root_to_play
     tree["is_terminal"][:, 0] = False
     tree["children_prior_logits"][:, 0] = masked_root_logits
+    # The root is expanded once at init (mctx update_tree_node), so the first
+    # selection uses sqrt(1) * pb_c * prior (argmax-prior) rather than a
+    # noise-only tie-break from a zero visit count.
+    tree["node_visits"][:, 0] = 1
 
     return tree

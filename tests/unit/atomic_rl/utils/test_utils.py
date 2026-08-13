@@ -7,7 +7,7 @@ from atomic_rl.utils import (
     to_tensor,
     to_numpy_action,
 )
-from atomic_rl.normalization import (
+from atomic_rl.utils.normalization import (
     standardize_tensor,
     scale_tensor_by_std,
     compute_welford_stats,

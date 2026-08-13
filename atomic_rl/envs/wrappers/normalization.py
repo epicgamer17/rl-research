@@ -6,7 +6,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from atomic_rl.normalization import compute_welford_stats
+from atomic_rl.utils.normalization import compute_welford_stats
 
 # Reference: https://github.com/mohmdelsayed/streaming-drl/blob/main/src/normalization_wrappers.py
 #   The authors' wrappers (NormalizeObservation, ScaleReward, ObservationTraces,

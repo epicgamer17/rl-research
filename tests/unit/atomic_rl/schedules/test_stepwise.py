@@ -37,8 +37,8 @@ def test_stepwise_schedule_multi_threshold_scalar():
     assert get_stepwise_schedule(5, thresholds, values) == 1.0
     assert get_stepwise_schedule(6, thresholds, values) == 0.5
     assert get_stepwise_schedule(10, thresholds, values) == 0.5
-    assert get_stepwise_schedule(11, thresholds, values) == 0.1
-    assert get_stepwise_schedule(100, thresholds, values) == 0.1
+    assert get_stepwise_schedule(11, thresholds, values) == pytest.approx(0.1)
+    assert get_stepwise_schedule(100, thresholds, values) == pytest.approx(0.1)
 
 
 def test_stepwise_schedule_multi_threshold_tensor():

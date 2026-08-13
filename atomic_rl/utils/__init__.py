@@ -5,7 +5,11 @@ from .utils import (
     to_tensor,
     to_numpy_action,
 )
-from .normalization import compute_welford_stats
+from .normalization import (
+    compute_welford_stats,
+    standardize_tensor,
+    scale_tensor_by_std,
+)
 
 __all__ = [
     "_allocate_tensordict",
@@ -14,4 +18,6 @@ __all__ = [
     "to_tensor",
     "to_numpy_action",
     "compute_welford_stats",
+    "standardize_tensor",
+    "scale_tensor_by_std",
 ]

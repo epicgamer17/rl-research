@@ -55,24 +55,6 @@ def backpropagate_(
         if b_idx.numel() == 0:
             continue
 
-        # NOTE: Removed for vectorized. Is this correct?
-        # # Fetch child node id for the transition (n_idx, a_idx); -1 if the edge
-        # # has not been expanded this simulation (e.g. terminal lanes).
-        # child_idx = tree["children_index"][b_idx, n_idx, a_idx]
-        # has_child = child_idx >= 0
-
-        # if has_child.any():
-        #     cb_idx = b_idx[has_child]
-        #     cn_idx = n_idx[has_child]
-        #     ca_idx = a_idx[has_child]
-        #     cc_idx = child_idx[has_child]
-
-        #     # Store the child node value on the edge (mctx semantics), so that
-        #     # get_qvalues computes Q(s, a) = reward + discount * V(s').
-        #     tree["children_values"][cb_idx, cn_idx, ca_idx] = tree["node_values"][
-        #         cb_idx, cc_idx
-        #     ]
-
         # Fetch reward and discount for transition from (n_idx, a_idx)
         rewards = tree["children_rewards"][
             b_idx, n_idx, a_idx
@@ -87,6 +69,16 @@ def backpropagate_(
         )  # [b_active, num_players]
         running_value[b_idx] = step_return
 
+        # Store the child node value on the edge (mctx semantics), so that
+        # get_qvalues computes Q(s, a) = reward + discount * V(s'). Every
+        # trajectory edge points at a child that was already expanded (the
+        # deepest edge is the leaf just expanded by expand_node_), so the child
+        # index is always valid (>= 0).
+        child_idx = tree["children_index"][b_idx, n_idx, a_idx]
+        tree["children_values"][b_idx, n_idx, a_idx] = tree["node_values"][
+            b_idx, child_idx
+        ]
+
         # Update parent node (s_t) statistics (includes Root node at t=0)
         tree["node_visits"][b_idx, n_idx] += 1
         n_visits = (
@@ -100,14 +92,3 @@ def backpropagate_(
 
         # Update child edge (s_t, a_t) visit statistics
         tree["children_visits"][b_idx, n_idx, a_idx] += 1
-        c_visits = (
-            tree["children_visits"][b_idx, n_idx, a_idx]
-            .unsqueeze(-1)
-            .to(tree["node_values"].dtype)
-        )  # [B_active, 1]
-
-        # For vectorized
-        old_edge_q = tree["children_values"][b_idx, n_idx, a_idx]  # [B_active, P]
-        tree["children_values"][b_idx, n_idx, a_idx] += (
-            step_return - old_edge_q
-        ) / c_visits

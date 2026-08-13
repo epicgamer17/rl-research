@@ -4,7 +4,7 @@ import torch.nn as nn
 from typing import Tuple
 from unittest.mock import Mock, patch
 
-from atomic_rl.plasticity import (
+from atomic_rl.optimization.plasticity import (
     _compute_gradient_utility,
     _compute_magnitude_utility,
     _get_threshold_pruning_mask,

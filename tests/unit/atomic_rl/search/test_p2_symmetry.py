@@ -47,10 +47,16 @@ MIN_LOGIT = torch.finfo(torch.float32).min
 # Helpers
 # ============================================================================
 def _embed(board, player):
-    """Builds a [1, 3, 3, 2] embedding from a 3x3 board and to_play."""
+    """Builds a [1, 3, 3, 2] PettingZoo 2-channel embedding from a 3x3 board and player."""
+    b = torch.tensor(board, dtype=torch.float32)
     emb = torch.zeros(1, 3, 3, 2)
-    emb[0, ..., 0] = torch.tensor(board)
-    emb[0, ..., 1] = player
+    p_val = player.item() if isinstance(player, torch.Tensor) else player
+    if p_val == 0:
+        emb[0, ..., 0] = (b == 1.0).float()
+        emb[0, ..., 1] = (b == -1.0).float()
+    else:
+        emb[0, ..., 0] = (b == -1.0).float()
+        emb[0, ..., 1] = (b == 1.0).float()
     return emb
 
 
@@ -73,12 +79,12 @@ def _recurrent_fn(actions_taken, embeddings, to_play):
 # 1. Dynamics from P2's perspective
 # ============================================================================
 def test_dynamics_p2_places_minus_one_and_flips_turn():
-    """P2 (to_play=1) must drop a -1 piece and hand the turn back to P1."""
+    """P2 (to_play=1) must drop a piece and hand the turn back to P1."""
     next_embed, reward_vec, next_to_play, is_terminal, legal = tictactoe_dynamics_fn(
-        _embed([[0] * 3, [0] * 3, [0] * 3], 1), torch.tensor([4])
+        _embed([[0] * 3, [0] * 3, [0] * 3], 1), torch.tensor([4]), torch.tensor([1])
     )
-    assert next_embed[0, 1, 1, 0].item() == -1.0  # P2 owns the center
-    assert next_embed[0, ..., 1].tolist() == [[0] * 3, [0] * 3, [0] * 3]  # P1 next
+    # Next active player is P1 (0). Opponent channel (channel 1) contains P2's center piece.
+    assert next_embed[0, 1, 1, 1].item() == 1.0  # P2's piece is opponent channel for P1
     assert next_to_play.item() == 0
     assert is_terminal.item() is False
     assert reward_vec[0, 0].item() == 0.0
@@ -92,7 +98,7 @@ def test_dynamics_p2_win_and_loss_reward_sign():
     vice-versa, and the reward sign is color-symmetric."""
     # P2 (to_play=1) completes the first row with -1, -1, -1 -> P2 won (P0 reward is -1.0, P1 reward is +1.0)
     _, reward_vec, _, is_term, legal = tictactoe_dynamics_fn(
-        _embed([[-1, -1, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([2])
+        _embed([[-1, -1, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([2]), torch.tensor([1])
     )
     assert reward_vec[0, 0].item() == -1.0
     assert reward_vec[0, 1].item() == 1.0
@@ -101,7 +107,7 @@ def test_dynamics_p2_win_and_loss_reward_sign():
 
     # Mirror: P1 (to_play=0) completes the same row with +1, +1, +1 -> P1 won (P0 reward is +1.0, P1 reward is -1.0)
     _, reward_vec, _, is_term, _ = tictactoe_dynamics_fn(
-        _embed([[1, 1, 0], [0, 0, 0], [0, 0, 0]], 0), torch.tensor([2])
+        _embed([[1, 1, 0], [0, 0, 0], [0, 0, 0]], 0), torch.tensor([2]), torch.tensor([0])
     )
     assert reward_vec[0, 0].item() == 1.0
     assert reward_vec[0, 1].item() == -1.0
@@ -111,7 +117,7 @@ def test_dynamics_p2_win_and_loss_reward_sign():
     # a loss is only realised across the alternating discount as the opponent's
     # +1 win is backed up (covered by test_qvalues_p2_root_sign_parity).
     _, reward_vec, _, is_term, _ = tictactoe_dynamics_fn(
-        _embed([[1, 0, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([1])
+        _embed([[1, 0, 0], [0, 0, 0], [0, 0, 0]], 1), torch.tensor([1]), torch.tensor([1])
     )
     assert reward_vec[0, 0].item() == 0.0
     assert reward_vec[0, 1].item() == 0.0
@@ -130,10 +136,10 @@ def test_dynamics_color_swap_mirror_symmetry():
     emb_b = _embed([[-v for v in row] for row in board_a], 1)
 
     action = torch.tensor([1])  # empty cell (0,1), legal in both mirrors
-    next_a, reward_a, to_a, term_a, legal_a = tictactoe_dynamics_fn(emb_a, action)
-    next_b, reward_b, to_b, term_b, legal_b = tictactoe_dynamics_fn(emb_b, action)
+    next_a, reward_a, to_a, term_a, legal_a = tictactoe_dynamics_fn(emb_a, action, torch.tensor([0]))
+    next_b, reward_b, to_b, term_b, legal_b = tictactoe_dynamics_fn(emb_b, action, torch.tensor([1]))
 
-    torch.testing.assert_close(next_a[..., 0], -next_b[..., 0])
+    torch.testing.assert_close(next_a[..., 0], next_b[..., 0])
     assert to_a.item() == 1 - to_b.item()
     torch.testing.assert_close(reward_a, reward_b)
     assert term_a.item() == term_b.item()
@@ -288,8 +294,8 @@ def test_qvalues_p2_root_sign_parity():
     tree["node_visits"][0, 0] = 10
 
     q = get_qvalues(tree, torch.tensor([0]), torch.tensor([1]))
-    assert q[0, 0, 1].item() == pytest.approx(1.0)  # P2's winning move from P2 perspective
-    assert q[0, 1, 1].item() == pytest.approx(-1.0)  # P1's winning move from P2 perspective
+    assert q[0, 0].item() == pytest.approx(1.0)  # P2's winning move from P2 perspective
+    assert q[0, 1].item() == pytest.approx(-1.0)  # P1's winning move from P2 perspective
 
     # Normalized scores put the P2-winning action first; PUCT must descend into it
     _, _, _, trajectory = select_leaf(tree, pb_c_base=19652.0, pb_c_init=1.25)

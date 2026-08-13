@@ -13,17 +13,19 @@ def test_expand_node():
     num_actions = 2
     root_embeddings = torch.zeros(batch_size, 4)
     root_logits = torch.zeros(batch_size, num_actions)
-    root_value = torch.zeros(batch_size)
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
 
-    tree = init_mcts_tree(root_embeddings, root_logits, root_value, num_simulations, num_actions)
+    tree = init_mcts_tree(root_embeddings, root_logits, root_value, root_to_play, num_simulations, num_actions)
 
     parent_nodes = torch.tensor([0])
     actions_taken = torch.tensor([1])
     policy_logits = torch.tensor([[0.0, 0.0]])  # Softmax will give [0.5, 0.5]
-    values = torch.tensor([0.0])
-    rewards = torch.tensor([1.5])
-    discounts = torch.tensor([0.0])  # is_terminal = (discounts == 0.0)
+    values = torch.tensor([[0.0, 0.0]])
+    rewards = torch.tensor([[1.5, -1.5]])
+    discounts = torch.tensor([[0.0, 0.0]])  # is_terminal = (discounts == 0.0)
     next_embeddings = torch.ones(batch_size, 4)
+    next_players = torch.tensor([1])
 
     # Run expansion
     expand_node_(
@@ -35,13 +37,14 @@ def test_expand_node():
         rewards,
         discounts,
         next_embeddings,
+        next_players,
     )
 
     # Assert structural mutations
     assert tree["children_index"][0, 0, 1].item() == 1  # Parent points to child index 1
     assert tree["node_counts"][0].item() == 2  # Total nodes incremented to 2
     torch.testing.assert_close(tree["embeddings"][0, 1], next_embeddings[0])
-    assert tree["children_rewards"][0, 0, 1].item() == 1.5
+    assert tree["children_rewards"][0, 0, 1, 0].item() == 1.5
     assert tree["is_terminal"][0, 1].item() is True
     torch.testing.assert_close(
         torch.softmax(tree["children_prior_logits"][0, 1], dim=-1),

@@ -21,7 +21,7 @@ TODO: add CBP Notes.
 import torch
 import torch.nn as nn
 from typing import Callable, Iterable, Optional
-from .utils import ema_update, ema_update_
+from atomic_rl.utils import ema_update, ema_update_
 
 # TODO: some messy is instance checks. these are necessary for IDBD and linear value heads and stuff, but maybe there is a cleaner way to do this.
 

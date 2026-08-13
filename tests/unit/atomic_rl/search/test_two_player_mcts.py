@@ -81,7 +81,7 @@ def test_init_tree_root_fields():
     # Root value/visits
     torch.testing.assert_close(tree["node_values"][:, 0], torch.tensor([[0.4, -0.4], [-0.6, 0.6]]))
     torch.testing.assert_close(tree["raw_values"][:, 0], torch.tensor([[0.4, -0.4], [-0.6, 0.6]]))
-    assert tree["node_visits"][:, 0].tolist() == [0, 0]
+    assert tree["node_visits"][:, 0].tolist() == [1, 1]  # root expanded once at init (mctx)
     # Neutral edge stats: discounts default to 1.0, everything else 0/-1
     assert torch.all(tree["children_discounts"][:, 0] == 1.0)
     assert torch.all(tree["children_visits"][:, 0] == 0)
@@ -209,10 +209,10 @@ def test_backprop_alternating_chain_negamax():
     ]
     backpropagate_(tree, trajectory, leaf_value=torch.tensor([[0.4, -0.4]]))
 
-    # Edge values must equal the child node values
+    # Edge values must equal the child node values (mctx semantics)
     torch.testing.assert_close(tree["children_values"][0, 1, 1], torch.tensor([0.4, -0.4]))
-    # Node 1's visit accounting
-    assert tree["node_visits"][0, 0].item() == 1
+    # Node 1's visit accounting (root was expanded once at init, then backed up)
+    assert tree["node_visits"][0, 0].item() == 2
     assert tree["node_visits"][0, 1].item() == 2
     assert tree["node_visits"][0, 2].item() == 1
 
@@ -245,7 +245,8 @@ def test_backprop_does_not_double_count_leaf():
 
     assert tree["node_visits"][0, 1].item() == 1
     torch.testing.assert_close(tree["node_values"][0, 1], torch.tensor([0.6, -0.6]))
-    assert tree["node_visits"][0, 0].item() == 1
+    # Root is initialized with a visit (mctx update_tree_node), then backed up once
+    assert tree["node_visits"][0, 0].item() == 2
 
 
 # ============================================================================
@@ -276,9 +277,8 @@ def test_qvalues_alternating_sign_convention():
     tree["children_visits"][0, 0, 0] = 4
     tree["children_visits"][0, 0, 1] = 4
 
-    q = get_qvalues(tree, torch.tensor([0]))
-    torch.testing.assert_close(q[0, 0], torch.tensor([-0.9, 0.9]))
-    torch.testing.assert_close(q[0, 1], torch.tensor([-0.2, 0.2]))
+    q = get_qvalues(tree, torch.tensor([0]), torch.tensor([0]))
+    torch.testing.assert_close(q[0], torch.tensor([-0.9, -0.2]))
 
 
 def test_qtransform_parent_siblings_alternating():
@@ -393,7 +393,7 @@ def test_search_alternating_game_preserves_edge_invariant():
     )
 
     assert tree["node_counts"].tolist() == [S + 1, S + 1]
-    assert tree["node_visits"][:, 0].tolist() == [S, S]
+    assert tree["node_visits"][:, 0].tolist() == [S + 1, S + 1]
     assert tree["children_visits"][:, 0].sum(dim=-1).tolist() == [S, S]
     torch.testing.assert_close(action_probs.sum(dim=-1), torch.ones(B))
     assert torch.all(action_probs >= 0.0)
@@ -435,7 +435,7 @@ def test_search_alternating_mp_style_tictactoe():
 
     assert not torch.isnan(tree["node_values"]).any()
     assert not torch.isnan(tree["children_values"]).any()
-    assert tree["node_visits"][:, 0].sum(dim=-1).item() == S
+    assert tree["node_visits"][:, 0].sum(dim=-1).item() == S + 1
     torch.testing.assert_close(action_probs.sum(dim=-1), torch.ones(B))
     _check_edge_child_value_invariant(tree)
     occupied = torch.zeros(9, dtype=torch.bool)

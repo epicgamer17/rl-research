@@ -14,10 +14,11 @@ def test_init_mcts_tree_geometry():
     embedding_dim = 8
     root_embeddings = torch.randn(batch_size, embedding_dim)
     root_logits = torch.randn(batch_size, num_actions)
-    root_value = torch.randn(batch_size)
+    root_value = torch.randn(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
 
     tree = init_mcts_tree(
-        root_embeddings, root_logits, root_value, num_simulations, num_actions
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations, num_actions
     )
     max_nodes = num_simulations + 1  # 5 slots
 

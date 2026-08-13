@@ -33,6 +33,6 @@ def get_stepwise_schedule(
     boundaries = torch.tensor(thresholds, device=step_t.device, dtype=step_float.dtype)
     vals = torch.tensor(values, device=step_t.device, dtype=torch.float32)
 
-    indices = torch.bucketize(step_float, boundaries, right=True)
+    indices = torch.bucketize(step_float, boundaries, right=False)
     out = vals[indices]
     return out.item() if step_t.ndim == 0 else out

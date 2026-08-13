@@ -26,11 +26,12 @@ def test_qtrasforms_by_min_max_standard():
 
     root_embeddings = torch.zeros(batch_size, 2)
     root_logits = torch.zeros(batch_size, 3)
-    root_value = torch.zeros(batch_size)
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
     tree = init_mcts_tree(
-        root_embeddings, root_logits, root_value, num_simulations=2, num_actions=3
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=2, num_actions=3
     )
-    tree["children_values"][:, 0] = q_values
+    tree["children_values"][:, 0, :, 0] = q_values
     tree["children_visits"][:, 0] = 1
 
     normalized = qtransform_by_min_max(
@@ -52,11 +53,12 @@ def test_qtrasforms_by_min_max_division_by_zero():
 
     root_embeddings = torch.zeros(batch_size, 2)
     root_logits = torch.zeros(batch_size, 2)
-    root_value = torch.zeros(batch_size)
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
     tree = init_mcts_tree(
-        root_embeddings, root_logits, root_value, num_simulations=2, num_actions=2
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=2, num_actions=2
     )
-    tree["children_values"][:, 0] = q_values
+    tree["children_values"][:, 0, :, 0] = q_values
     tree["children_visits"][:, 0] = 1
 
     # Should safely treat span as epsilon to map (q_values - min_q) / epsilon -> 0.0
@@ -88,11 +90,12 @@ def test_puct_score_mathematical_correctness():
 
     root_embeddings = torch.zeros(1, 2)
     root_logits = torch.log(priors)  # Raw logits that softmax to [0.4, 0.6]
-    root_value = torch.zeros(1)
+    root_value = torch.zeros(1, 2)
+    root_to_play = torch.zeros(1, dtype=torch.long)
     tree = init_mcts_tree(
-        root_embeddings, root_logits, root_value, num_simulations=4, num_actions=2
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=4, num_actions=2
     )
-    tree["children_values"][0, 0] = q_values
+    tree["children_values"][0, 0, :, 0] = q_values
     tree["children_visits"][0, 0] = visits.to(torch.long)
     tree["node_visits"][0, 0] = int(total_visits.item())
 
@@ -135,13 +138,15 @@ def test_puct_score_zero_prior_guard():
     """Verify that masked illegal root actions receive an extreme penalty and legal ones stay positive."""
     root_embeddings = torch.zeros(1, 2)
     root_logits = torch.tensor([[10.0, 5.0]])
-    root_value = torch.zeros(1)
+    root_value = torch.zeros(1, 2)
+    root_to_play = torch.zeros(1, dtype=torch.long)
     legal_mask = torch.tensor([[False, True]])  # Action 0 masked as illegal
 
     tree = init_mcts_tree(
         root_embeddings,
         root_logits,
         root_value,
+        root_to_play,
         num_simulations=4,
         num_actions=2,
         legal_mask=legal_mask,
@@ -163,9 +168,10 @@ def test_select_leaf_early_termination():
     batch_size = 2
     root_embeddings = torch.zeros(batch_size, 2)
     root_logits = torch.zeros(batch_size, 2)
-    root_value = torch.zeros(batch_size)
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
     tree = init_mcts_tree(
-        root_embeddings, root_logits, root_value, num_simulations=5, num_actions=2
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=5, num_actions=2
     )
 
     # Setup logits to perfectly direct the deterministic argmax choice
@@ -212,11 +218,12 @@ def test_select_leaf_deterministic_path():
     batch_size = 1
     root_embeddings = torch.zeros(batch_size, 4)
     root_logits = torch.zeros(batch_size, 2)
-    root_value = torch.zeros(batch_size)
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
 
     # Allocate standard tree structure
     tree = init_mcts_tree(
-        root_embeddings, root_logits, root_value, num_simulations=4, num_actions=2
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=4, num_actions=2
     )
 
     # Establish topology linking Node 0 to Node 2 via Action 1
