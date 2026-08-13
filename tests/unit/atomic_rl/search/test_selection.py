@@ -7,6 +7,7 @@ from atomic_rl.search import (
     init_mcts_tree,
     puct_score,
     qtransform_by_min_max,
+    qtransform_identity,
     select_leaf,
 )
 
@@ -132,6 +133,65 @@ def test_puct_score_mathematical_correctness():
     expected_scores = expected_norm_q + exploration_factor * priors
 
     torch.testing.assert_close(calculated_scores, expected_scores, atol=1e-6, rtol=1e-6)
+
+
+def test_search_py_puct_scoring_math_verification():
+    """
+    Verify the Upper Confidence Bound calculation using the MuZero PUCT formula
+    for the search_py backend.
+
+    Setup:
+    - Node visit count N(s) = 10
+    - Action A: Q = 0.5, P = 0.3, N(s,a) = 5
+    - Action B: Q = 0.2, P = 0.7, N(s,a) = 0
+
+    Expected math (hand-calculated):
+    - expected_score_a = 1.19773083
+    - expected_score_b = 2.76823163
+    """
+    import math
+
+    batch_size = 1
+    num_actions = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.log(torch.tensor([[0.3, 0.7]]))
+    root_value = torch.tensor([[0.2]])
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=10, num_actions=num_actions, num_players=1
+    )
+
+    tree["node_visits"][0, 0] = 10
+    tree["children_visits"][0, 0] = torch.tensor([5, 0], dtype=torch.long)
+    tree["children_rewards"][0, 0, :, 0] = torch.tensor([0.0, 0.0])
+    tree["children_discounts"][0, 0, :, 0] = torch.tensor([1.0, 1.0])
+    tree["children_values"][0, 0, :, 0] = torch.tensor([0.5, 0.2])
+
+    qtransform = functools.partial(
+        qtransform_by_min_max,
+        min_value=torch.tensor([0.2]),
+        max_value=torch.tensor([0.5]),
+    )
+
+    scores = puct_score(
+        tree,
+        torch.tensor([0]),
+        depth=0,
+        pb_c_init=1.25,
+        pb_c_base=19652.0,
+        qtransform=qtransform,
+    )
+
+    score_a = scores[0, 0].item()
+    score_b = scores[0, 1].item()
+
+    expected_score_a = 1.19773083
+    expected_score_b = 2.76823163
+
+    assert math.isclose(score_a, expected_score_a, rel_tol=1e-5), f"Action A score {score_a} != {expected_score_a}"
+    assert math.isclose(score_b, expected_score_b, rel_tol=1e-5), f"Action B score {score_b} != {expected_score_b}"
+    assert score_b > score_a
 
 
 def test_puct_score_zero_prior_guard():
@@ -262,3 +322,48 @@ def test_select_leaf_deterministic_path():
     assert node_step_2.item() == 2
     assert action_step_2.item() == 0
     assert mask_step_2.item() is True
+
+
+def test_puct_score_internal_node_masking_with_qtransform_identity():
+    """Verify that internal nodes (depth > 0) properly mask illegal actions when using qtransform_identity."""
+    batch_size = 1
+    num_actions = 3
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.tensor([[0.0, 0.0, 0.0]])
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=num_actions,
+    )
+
+    # Set up node 1 (an internal node, depth = 1)
+    tree["node_visits"][0, 1] = 5
+    # Action 0 is legal, Q = -0.5
+    # Action 1 is illegal, masked with -1e8
+    # Action 2 is legal, Q = -0.2
+    tree["children_prior_logits"][0, 1] = torch.tensor([0.0, -1e8, 0.0])
+    tree["children_values"][0, 1, :, 0] = torch.tensor([-0.5, 0.0, -0.2])
+    tree["children_visits"][0, 1] = torch.tensor([2, 0, 3], dtype=torch.long)
+
+    # Evaluate PUCT score at depth 1 with qtransform_identity
+    scores = puct_score(
+        tree,
+        torch.tensor([1]),
+        depth=1,
+        qtransform=qtransform_identity,
+    )
+
+    # Action 1 must be masked out to min_val despite having unvisited raw Q of 0.0
+    min_val = torch.finfo(torch.float32).min
+    assert scores[0, 1].item() == min_val
+    # Legal actions 0 and 2 must have valid finite scores
+    assert scores[0, 0].item() > min_val
+    assert scores[0, 2].item() > min_val
+    # Action 2 should have a higher score than Action 0 because Q(-0.2) > Q(-0.5)
+    assert scores[0, 2].item() > scores[0, 0].item()

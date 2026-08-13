@@ -246,6 +246,8 @@ class ResNetBackbone(nn.Module):
         num_blocks (int): Number of stacked residual blocks.
         dim (int): Spatial dimension, 1 or 2. Defaults to 2.
         pre_activation (bool): Use pre-activation layout if True. Defaults to False.
+        norm_type (str, optional): Normalization type: "batch" for BatchNorm, "group" for GroupNorm,
+            or None for no normalization. Defaults to "batch".
     """
 
     def __init__(
@@ -255,15 +257,26 @@ class ResNetBackbone(nn.Module):
         num_blocks: int = 4,
         dim: int = 2,
         pre_activation: bool = False,
+        norm_type: Optional[str] = "batch",
     ):
         super().__init__()
         self.dim = dim
+        self.norm_type = norm_type
         conv_cls = nn.Conv2d if dim == 2 else nn.Conv1d
-        norm_cls = nn.BatchNorm2d if dim == 2 else nn.BatchNorm1d
+
+        def _make_norm(num_channels: int) -> nn.Module:
+            if norm_type == "batch":
+                return nn.BatchNorm2d(num_channels) if dim == 2 else nn.BatchNorm1d(num_channels)
+            elif norm_type == "group":
+                return nn.GroupNorm(num_groups=min(32, num_channels), num_channels=num_channels)
+            elif norm_type is None:
+                return nn.Identity()
+            else:
+                raise ValueError(f"Unsupported norm_type '{norm_type}'")
 
         self.stem = nn.Sequential(
-            conv_cls(in_channels, num_filters, kernel_size=3, padding=1, bias=False),
-            norm_cls(num_filters),
+            conv_cls(in_channels, num_filters, kernel_size=3, padding=1, bias=(norm_type is None)),
+            _make_norm(num_filters),
             nn.ReLU(),
         )
 
@@ -275,10 +288,11 @@ class ResNetBackbone(nn.Module):
                         num_filters,
                         num_filters,
                         pre_activation=pre_activation,
+                        norm_type=norm_type,
                     )
                 )
             else:
-                blocks.append(ResNetBlock1d(num_filters, num_filters))
+                blocks.append(ResNetBlock1d(num_filters, num_filters, norm_type=norm_type))
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

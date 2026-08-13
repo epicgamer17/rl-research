@@ -18,25 +18,21 @@ from .normalization import (
     WelfordNormalizeObservation,
     WelfordNormalizeReward,
 )
-from .pettingzoo import PettingZooChannelFirstWrapper
+from .pettingzoo import (
+    FrameStackWrapper,
+    PettingZooChannelFirstWrapper,
+    TwoPlayerPlayerPlaneWrapper,
+)
 from .pomdp import FlickeringObservation, VecFlickeringObservation
 
 __all__ = [
-    # "ChannelLastToFirstWrapper",
-    # "AppendAgentSelectionWrapper",
-    # "TwoPlayerPlayerPlaneWrapper",
-    # "FrameStackWrapper",
-    # "InitialMovesWrapper",
-    # "CatanatronWrapper",
-    # "EpisodeTrigger",
-    # "RecordVideo",
-    # "GymRecordVideo",
-    # "wrap_recording",
     "FireResetEnv",
     "FlickeringObservation",
+    "FrameStackWrapper",
     "NormalizeObservation",
     "PettingZooChannelFirstWrapper",
     "RunningMeanStd",
+    "TwoPlayerPlayerPlaneWrapper",
     "VecFlickeringObservation",
     "VecNormalize",
     "VecNormalizeObservation",

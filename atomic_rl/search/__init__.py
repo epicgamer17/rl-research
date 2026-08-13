@@ -11,6 +11,7 @@ from .qtransforms import (
     qtransform_completed_by_mix_value,
     qtransform_by_parent_and_siblings,
     qtransform_by_min_max,
+    qtransform_identity,
 )
 from .search import mcts_search
 from .selection import puct_score, select_leaf

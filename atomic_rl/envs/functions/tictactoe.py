@@ -65,10 +65,16 @@ def tictactoe_dynamics_fn(
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
             (next_embeddings [B, 2, 3, 3] or [B, 3, 3, 2], reward_vec [B, 2], next_to_play [B], is_terminal [B], next_legal_mask [B, 9])
     """
-    is_chw = embeddings.ndim == 4 and embeddings.shape[1] == 2
+    is_chw = embeddings.ndim == 4 and (
+        embeddings.shape[2] == 3 and embeddings.shape[3] == 3
+    )
     batch_size = embeddings.shape[0]
     device = embeddings.device
     batch_range = torch.arange(batch_size, device=device)
+
+    total_channels = embeddings.shape[1] if is_chw else embeddings.shape[-1]
+    has_player_plane = total_channels % 2 == 1
+    num_frames = (total_channels - 1) // 2 if has_player_plane else total_channels // 2
 
     if is_chw:
         my_pieces = embeddings[:, 0].clone()  # [B, 3, 3]
@@ -101,7 +107,7 @@ def tictactoe_dynamics_fn(
             f" - Illegal Actions Attempted: {illegal_actions}\n"
         )
 
-    new_my_pieces = my_pieces
+    new_my_pieces = my_pieces.clone()
     new_my_pieces[batch_range, row, col] = 1.0
 
     # Signed board for winner check (+1 for P0, -1 for P1)
@@ -116,11 +122,39 @@ def tictactoe_dynamics_fn(
 
     next_to_play = 1 - to_play
 
-    # Next state's active player is opponent -> swap piece channels!
+    # Next state's active player is opponent -> swap piece channels across historical frames!
+    next_channels = []
+
+    # 1. Next Frame 0 (Current step T+1)
+    next_channels.append(opp_pieces)
+    next_channels.append(new_my_pieces)
+
+    # 2. Shift historical frames (Frame 1..K-1) per agent-turn (2 steps) matching PettingZoo FrameStackWrapper
+    for i in range(1, num_frames):
+        if is_chw:
+            hist_next_active = embeddings[:, 2 * i + 1] if 2 * i + 1 < total_channels - (1 if has_player_plane else 0) else embeddings.new_zeros(embeddings.shape[0], 3, 3)
+            hist_prev_active = embeddings[:, 2 * (i - 1)]
+        else:
+            hist_next_active = embeddings[..., 2 * i + 1] if 2 * i + 1 < total_channels - (1 if has_player_plane else 0) else embeddings.new_zeros(embeddings.shape[0], 3, 3)
+            hist_prev_active = embeddings[..., 2 * (i - 1)]
+
+        next_channels.append(hist_next_active)
+        next_channels.append(hist_prev_active)
+
+    # 3. Next Player Plane (if included)
+    if has_player_plane:
+        p_val = (
+            (next_to_play == 0)
+            .to(dtype=embeddings.dtype)
+            .view(-1, 1, 1)
+            .expand(-1, 3, 3)
+        )
+        next_channels.append(p_val)
+
     if is_chw:
-        next_embeddings = torch.stack([opp_pieces, new_my_pieces], dim=1)
+        next_embeddings = torch.stack(next_channels, dim=1)
     else:
-        next_embeddings = torch.stack([opp_pieces, new_my_pieces], dim=-1)
+        next_embeddings = torch.stack(next_channels, dim=-1)
 
     occupied = (new_my_pieces == 1.0) | (opp_pieces == 1.0)
     next_legal_mask = (~occupied).view(batch_size, -1)

@@ -64,11 +64,14 @@ def puct_score(
     noise = 1e-7 * torch.rand_like(value_score)
     scores = value_score + policy_score + noise
 
-    # 5. Mask root invalid actions at depth 0
+    # 5. Mask invalid actions at root and internal nodes
+    # TODO: needed for qidentity to work for alphazero, but feels hacky
+    legal_mask = (prior_logits > -1e7) & torch.isfinite(prior_logits)
     if depth == 0 and "root_legal_mask" in tree.keys():
-        legal_mask = tree["root_legal_mask"]  # [B, num_actions]
-        min_val = torch.finfo(scores.dtype).min
-        scores = torch.where(legal_mask, scores, min_val)
+        legal_mask = legal_mask & tree["root_legal_mask"]
+
+    min_val = torch.finfo(scores.dtype).min
+    scores = torch.where(legal_mask, scores, min_val)
 
     return scores
 
@@ -116,7 +119,9 @@ def select_leaf(
         f"{tuple(tree['node_visits'].shape)}"
     )
     assert (
-        isinstance(max_depth, int) and not isinstance(max_depth, bool) and max_depth >= 1
+        isinstance(max_depth, int)
+        and not isinstance(max_depth, bool)
+        and max_depth >= 1
     ), f"max_depth must be an int >= 1, got {max_depth!r}"
     assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
     assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"

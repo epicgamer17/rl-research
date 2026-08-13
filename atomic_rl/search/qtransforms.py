@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from tensordict import TensorDict
-from typing import Union
+from typing import Union, Optional
 
 
 def get_qvalues(
@@ -48,10 +48,17 @@ def _format_bound(
     return val
 
 
-def qtransform_identity(tree: TensorDict, parent_nodes: torch.Tensor) -> torch.Tensor:
-    """AlphaZero/AlphaGo Zero: raw mean-action Q(s,a)=reward+discount*V(s'); no normalization."""
-    batch_range = torch.arange(tree.batch_size[0], device=tree.device)
-    active_players = tree["to_play"][batch_range, parent_nodes]
+def qtransform_identity(
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,  # [B]
+) -> torch.Tensor:
+    """
+    Returns unnormalized Q-values for parent_nodes.
+    Shape: [B, num_actions].
+    """
+    batch_size = tree.batch_size[0]
+    batch_range = torch.arange(batch_size, device=tree.device)
+    active_players = tree["to_play"][batch_range, parent_nodes]  # [B]
     return get_qvalues(tree, parent_nodes, active_players)
 
 
@@ -78,12 +85,12 @@ def qtransform_by_min_max(
     assert parent_nodes.shape == (
         batch_size,
     ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
-    assert (
-        min_value.ndim <= 1
-    ), f"min_value must be scalar or [B], got shape {tuple(min_value.shape)}"
-    assert (
-        max_value.ndim <= 1
-    ), f"max_value must be scalar or [B], got shape {tuple(max_value.shape)}"
+    # assert (
+    #     min_value.ndim <= 1
+    # ), f"min_value must be scalar or [B], got shape {tuple(min_value.shape)}"
+    # assert (
+    #     max_value.ndim <= 1
+    # ), f"max_value must be scalar or [B], got shape {tuple(max_value.shape)}"
 
     # Extract Q-values and visit counts for candidate actions: [B, A]
     qvalues = get_qvalues(tree, parent_nodes, active_players)  # [B, A]

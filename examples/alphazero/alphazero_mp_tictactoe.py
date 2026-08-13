@@ -18,8 +18,11 @@ Multiprocessing Architecture:
     NOTE: Although our MCTS is based on mctx, we use vector values for each player for rewards and values. This does two things. First and most important, it allows the MCTS to work on n-player games, cooperative or competitive. Second it is more inline with PettingZoo standards, which return a reward for each player, not a single scalar reward. For this example, we use the knowledge that Tic Tac Toe is zero sum, on another game you could avoid using that knowledge, and have the agent predict and learn multiple values and rewards for each state.
 
     NOTE: Additional efficiency could be squeezed out during self-play by stepping environments using direct tensor operations (e.g. tictactoe_dynamics_fn) rather than PettingZoo AEC environments. However, in the interest of showcasing how PettingZoo environments can be used, and because AlphaZero is the main focus, we choose to showcase it.
+
+    NOTE: AlphaZero, in our testing, appears to be extremely sensitive to the qtransform used. qtrasnform_by_parent_and_sibling is does not learn well, niether does qtrasnform_by_min_max. qtrasnform_identity works well. This has to do with how unvisited children are valued compared to the priors. qtransform_identity is faithful to the original paper but not in mctx. It's possible (if not likely) this is not a problem at higher simulation counts. TODO: Does this also effect MuZero? How can this be combatted?
 """
 
+import functools
 import random
 import time
 from typing import Callable, Dict, List, Tuple
@@ -32,12 +35,19 @@ from atomic_rl.action_selection import (
 from atomic_rl.buffers import SharedReplayBuffer
 from atomic_rl.envs import get_agent_index, get_terminal_rewards_vec
 from atomic_rl.envs.functions.tictactoe import tictactoe_dynamics_fn
-from atomic_rl.envs.wrappers import PettingZooChannelFirstWrapper
+from atomic_rl.envs.wrappers import (
+    FrameStackWrapper,
+    PettingZooChannelFirstWrapper,
+    TwoPlayerPlayerPlaneWrapper,
+)
 from atomic_rl.evaluation import evaluate_pettingzoo_vs_random
 from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.networks.architectures import ResNetBackbone
 from atomic_rl.schedules import get_stepwise_schedule
-from atomic_rl.search import mcts_search
+from atomic_rl.search import (
+    mcts_search,
+    qtransform_identity,
+)
 from pettingzoo.classic import tictactoe_v3
 
 from tensordict import TensorDict
@@ -55,16 +65,21 @@ import wandb
 # Hyperparameters & Constants
 # ---------------------------------------------------------------------------
 TOTAL_TRAINING_STEPS = 20000
-NUM_ACTORS = 3
+NUM_ACTORS = 2
 ENVS_PER_ACTOR = 3
 MIN_BUFFER_SIZE = 64
 EVAL_INTERVAL_STEPS = 250
 PARAM_SYNC_INTERVAL = 100
 NUM_MCTS_SIMULATIONS = 25
 
+# Frame Stacking & Player Plane Constants
+FRAME_STACK = 3
+INCLUDE_PLAYER_PLANE = True
+NUM_CHANNELS = 2 * FRAME_STACK + (1 if INCLUDE_PLAYER_PLANE else 0)  # 7 channels
+
 # MCTS PUCT Search Constants
 C_PUCT = 1.25
-DIRICHLET_ALPHA = 0.3
+DIRICHLET_ALPHA = 2.0
 DIRICHLET_EPSILON = 0.25
 
 # Temperature Schedule Constants
@@ -84,15 +99,28 @@ NUM_EVAL_GAMES = 100
 SEED = 42
 
 
+def make_env():
+    """Constructs a PettingZoo TicTacToe env wrapped with frame stacking and player plane."""
+    env = PettingZooChannelFirstWrapper(tictactoe_v3.env())
+    if FRAME_STACK > 1:
+        env = FrameStackWrapper(env, k=FRAME_STACK, channel_first=True)
+    if INCLUDE_PLAYER_PLANE:
+        env = TwoPlayerPlayerPlaneWrapper(env, channel_first=True)
+    return env
+
+
 # ============================================================================
 # 1. Dual-Head AlphaZero ResNet Neural Network
 # ============================================================================
 class TicTacToeNet(nn.Module):
     def __init__(
-        self, num_filters: int = NUM_FILTERS, num_res_blocks: int = NUM_RES_BLOCKS
+        self,
+        in_channels: int = NUM_CHANNELS,
+        num_filters: int = NUM_FILTERS,
+        num_res_blocks: int = NUM_RES_BLOCKS,
     ):
         super().__init__()
-        self.conv_in = nn.Conv2d(2, num_filters, kernel_size=3, padding=1)
+        self.conv_in = nn.Conv2d(in_channels, num_filters, kernel_size=3, padding=1)
         self.bn_in = nn.BatchNorm2d(num_filters)
         self.res_blocks = ResNetBackbone(
             in_channels=num_filters,
@@ -211,6 +239,7 @@ def run_batched_mcts(
         dirichlet_alpha=DIRICHLET_ALPHA,
         pb_c_init=C_PUCT,
         temperature=temperature,
+        qtransform=qtransform_identity,
     )
     return action_probs
 
@@ -236,9 +265,7 @@ def actor_worker(
     torch.manual_seed(SEED + actor_id * 1000)
     random.seed(SEED + actor_id * 1000)
 
-    envs = [
-        PettingZooChannelFirstWrapper(tictactoe_v3.env()) for _ in range(envs_per_actor)
-    ]
+    envs = [make_env() for _ in range(envs_per_actor)]
     for env in envs:
         env.reset()
 
@@ -257,14 +284,10 @@ def actor_worker(
 
         completed_tds = []
         root_embed = torch.empty(
-            (envs_per_actor, 2, 3, 3), device=device, dtype=torch.float32
+            (envs_per_actor, NUM_CHANNELS, 3, 3), device=device, dtype=torch.float32
         )
-        legal_masks = torch.empty(
-            (envs_per_actor, 9), device=device, dtype=torch.bool
-        )
-        curr_players = torch.empty(
-            (envs_per_actor,), device=device, dtype=torch.long
-        )
+        legal_masks = torch.empty((envs_per_actor, 9), device=device, dtype=torch.bool)
+        curr_players = torch.empty((envs_per_actor,), device=device, dtype=torch.long)
 
         for b_idx, env in enumerate(envs):
             obs, reward, term, trunc, _ = env.last()
@@ -297,9 +320,7 @@ def actor_worker(
                 )
             )
             legal_masks[b_idx].copy_(
-                torch.from_numpy(obs["action_mask"]).to(
-                    device=device, dtype=torch.bool
-                )
+                torch.from_numpy(obs["action_mask"]).to(device=device, dtype=torch.bool)
             )
 
         action_probs = run_batched_mcts(
@@ -349,7 +370,6 @@ def evaluator_worker(
     num_eval_games: int = NUM_EVAL_GAMES,
     device_str: str = "cpu",
 ):
-
     """Background process evaluating model performance asynchronously."""
     device = torch.device(device_str)
     local_model = model_creator().to(device)
@@ -377,13 +397,13 @@ def evaluator_worker(
     while True:
         local_model.load_state_dict(shared_model.state_dict())
         eval_metrics = evaluate_pettingzoo_vs_random(
-            env_fn=lambda: PettingZooChannelFirstWrapper(tictactoe_v3.env()),
+            env_fn=make_env,
             select_action_fn=select_eval_action,
             num_games=num_eval_games,
             device=device,
         )
         eval_queue.put(eval_metrics)
-
+        time.sleep(5)
 
 
 def learner_worker(
@@ -421,6 +441,9 @@ def learner_worker(
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
+            "frame_stack": FRAME_STACK,
+            "include_player_plane": INCLUDE_PLAYER_PLANE,
+            "num_channels": NUM_CHANNELS,
         },
     )
 
@@ -442,7 +465,9 @@ def learner_worker(
         raw_p_loss, _ = compute_cross_entropy_loss(policy_logits, target_policies)
         policy_loss = raw_p_loss.mean()
 
-        raw_v_loss, _ = compute_mse_loss(predicted_value.view(-1), target_values.view(-1))
+        raw_v_loss, _ = compute_mse_loss(
+            predicted_value.view(-1), target_values.view(-1)
+        )
         value_loss = raw_v_loss.mean()
 
         loss = policy_loss + value_loss
@@ -484,7 +509,11 @@ def learner_worker(
 # 4. Main Multiprocessing Pipeline Setup
 # ============================================================================
 def model_creator_fn() -> TicTacToeNet:
-    return TicTacToeNet(num_filters=NUM_FILTERS, num_res_blocks=NUM_RES_BLOCKS)
+    return TicTacToeNet(
+        in_channels=NUM_CHANNELS,
+        num_filters=NUM_FILTERS,
+        num_res_blocks=NUM_RES_BLOCKS,
+    )
 
 
 def main():
@@ -500,7 +529,7 @@ def main():
     shared_model.share_memory()
 
     buffer_shapes = {
-        "state": (2, 3, 3),
+        "state": (NUM_CHANNELS, 3, 3),
         "target_policy": (9,),
         "target_value": (1,),
     }
@@ -536,7 +565,7 @@ def main():
     processes.append(eval_p)
 
     print(
-        f"Launched AlphaZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Evaluator)."
+        f"Launched AlphaZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Evaluator) | {NUM_CHANNELS} Channels (3 Frames + Player Plane)."
     )
     learner_p.join()
 
