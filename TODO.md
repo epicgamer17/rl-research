@@ -1,5 +1,13 @@
 IMPORTANT: create a Layerwise Adaptive ObGD. Uses the norm per layer instead of across the whole network for normalization. Each layer gets its own learning rate. AC Lambda seems to do much better with this, while DQN doesn't suffer.
 
+check if PPO approx kl divergence is right http://joschu.net/blog/kl-approx.html
+
+for policy based models if we do action masking on the logits we can set the logits to -infinity so that after a softmax probablity of sampling is 0
+    1. for action masking properly: 
+        1. https://arxiv.org/pdf/1511.05952 
+        2. https://github.com/neurips2020submission/invalid-action-masking/blob/master/invalid_action_masking/ppo_10x10.py
+        3. https://boring-guy.sh/posts/masking-rl/
+
 remove shape manipulation in functions and move it to the imperative shells, functions should instead assert strict contracts. what shape should buffer keys have? like should rewards be B, 1 or B etc 
 
 implement models and functions from https://coax.readthedocs.io/en/latest/index.html

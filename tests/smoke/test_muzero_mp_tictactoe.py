@@ -4,7 +4,8 @@ import torch
 import pytest
 from examples.muzero.muzero_mp_tictactoe import (
     TicTacToeMuZeroNet,
-    encode_action_plane,
+    NUM_CHANNELS,
+    TICTACTOE_ACTION_ENCODINGS,
     min_max_normalize,
     scale_gradient,
     create_recurrent_fn,
@@ -14,11 +15,9 @@ from examples.muzero.muzero_mp_tictactoe import (
 pytestmark = pytest.mark.smoke
 
 
-def test_encode_action_plane():
-    batch_size = 4
-    device = torch.device("cpu")
+def test_tictactoe_action_encodings():
     actions = torch.tensor([0, 4, 8, 2], dtype=torch.long)
-    planes = encode_action_plane(actions, batch_size, device)
+    planes = TICTACTOE_ACTION_ENCODINGS[actions]
 
     assert planes.shape == (4, 1, 3, 3)
     assert planes[0, 0, 0, 0] == 1.0
@@ -30,7 +29,7 @@ def test_encode_action_plane():
 
 def test_min_max_normalize():
     tensor = torch.tensor([[[[1.0, 2.0], [3.0, 5.0]]]], dtype=torch.float32)
-    normed = min_max_normalize(tensor)
+    normed = min_max_normalize(tensor, dim=(-3, -2, -1))
 
     assert normed.min() == 0.0
     assert normed.max() == 1.0
@@ -49,8 +48,8 @@ def test_scale_gradient():
 
 
 def test_muzero_net_shapes():
-    net = TicTacToeMuZeroNet(num_filters=16, num_res_blocks=2)
-    obs = torch.zeros((2, 2, 3, 3), dtype=torch.float32)
+    net = TicTacToeMuZeroNet(in_channels=NUM_CHANNELS, num_filters=16, num_res_blocks=2)
+    obs = torch.zeros((2, NUM_CHANNELS, 3, 3), dtype=torch.float32)
 
     # 1. Initial inference
     s0, logits, val = net.initial_inference(obs)
@@ -68,12 +67,12 @@ def test_muzero_net_shapes():
 
 
 def test_muzero_batched_mcts():
-    net = TicTacToeMuZeroNet(num_filters=16, num_res_blocks=2)
+    net = TicTacToeMuZeroNet(in_channels=NUM_CHANNELS, num_filters=16, num_res_blocks=2)
     net.eval()
     recurrent_fn = create_recurrent_fn(net)
 
     batch_size = 2
-    root_embed = torch.zeros((batch_size, 2, 3, 3), dtype=torch.float32)
+    root_embed = torch.zeros((batch_size, NUM_CHANNELS, 3, 3), dtype=torch.float32)
     curr_players = torch.tensor([0, 1], dtype=torch.long)
     legal_masks = torch.ones((batch_size, 9), dtype=torch.bool)
 
@@ -90,3 +89,4 @@ def test_muzero_batched_mcts():
 
     assert probs.shape == (batch_size, 9)
     assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))
+

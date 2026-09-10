@@ -27,7 +27,7 @@ def test_qtrasforms_by_min_max_standard():
 
     root_embeddings = torch.zeros(batch_size, 2)
     root_logits = torch.zeros(batch_size, 3)
-    root_value = torch.zeros(batch_size, 2)
+    root_value = torch.stack([min_q, min_q], dim=-1)
     root_to_play = torch.zeros(batch_size, dtype=torch.long)
     tree = init_mcts_tree(
         root_embeddings, root_logits, root_value, root_to_play, num_simulations=2, num_actions=3
@@ -54,7 +54,7 @@ def test_qtrasforms_by_min_max_division_by_zero():
 
     root_embeddings = torch.zeros(batch_size, 2)
     root_logits = torch.zeros(batch_size, 2)
-    root_value = torch.zeros(batch_size, 2)
+    root_value = torch.stack([min_q, min_q], dim=-1)
     root_to_play = torch.zeros(batch_size, dtype=torch.long)
     tree = init_mcts_tree(
         root_embeddings, root_logits, root_value, root_to_play, num_simulations=2, num_actions=2

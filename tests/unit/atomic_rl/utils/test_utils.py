@@ -8,9 +8,10 @@ from atomic_rl.utils import (
     to_numpy_action,
 )
 from atomic_rl.utils.normalization import (
-    standardize_tensor,
-    scale_tensor_by_std,
     compute_welford_stats,
+    min_max_normalize,
+    scale_tensor_by_std,
+    standardize_tensor,
 )
 from atomic_rl.envs.features import (
     compute_tile_coding_features,
@@ -325,3 +326,47 @@ def test_compute_tile_coding_features_structure():
     active_indices = torch.where(phi == 1.0)[0]
     for idx in active_indices:
         assert 144 <= idx.item() < 288
+
+
+# ==========================================
+# Tests for Min-Max Normalization
+# ==========================================
+
+
+def test_min_max_normalize_dimensions_and_scaling():
+    # 1. 1D tensor default
+    t1 = torch.tensor([2.0, 4.0, 6.0, 10.0])
+    n1 = min_max_normalize(t1)
+    assert torch.allclose(n1, torch.tensor([0.0, 0.25, 0.5, 1.0]))
+
+    # 2. 2D tensor with dim=-1
+    t2 = torch.tensor([[0.0, 10.0], [5.0, 15.0]])
+    n2 = min_max_normalize(t2, dim=-1)
+    assert torch.allclose(n2, torch.tensor([[0.0, 1.0], [0.0, 1.0]]))
+
+    # 3. 2D tensor default dim=-1 (normalizes along last feature dim)
+    n2_default = min_max_normalize(t2)
+    assert torch.allclose(n2_default, n2)
+
+    # 4. 3D tensor with specific tuple dim
+    t3 = torch.randn((2, 4, 8))
+    n3 = min_max_normalize(t3, dim=(1, 2))
+    assert n3.shape == (2, 4, 8)
+    assert torch.allclose(n3.amin(dim=(1, 2)), torch.zeros(2), atol=1e-5)
+    assert torch.allclose(n3.amax(dim=(1, 2)), torch.ones(2), atol=1e-5)
+
+    # 5. Custom min_val and max_val
+    n3_custom = min_max_normalize(t1, min_val=-1.0, max_val=1.0)
+    assert torch.allclose(n3_custom, torch.tensor([-1.0, -0.5, 0.0, 1.0]))
+
+    # 6. List of dimensions
+    n3_list = min_max_normalize(t3, dim=[1, 2])
+    assert torch.allclose(n3_list, n3)
+
+    # 7. Native PyTorch error on out-of-range dim
+    with pytest.raises(IndexError, match="Dimension out of range"):
+        min_max_normalize(t2, dim=5)
+
+    # 8. Native PyTorch error on invalid dim type
+    with pytest.raises(TypeError):
+        min_max_normalize(t2, dim="last")

@@ -2,22 +2,27 @@ from .utils import (
     _allocate_tensordict,
     ema_update,
     ema_update_,
-    to_tensor,
+    scale_gradient,
     to_numpy_action,
+    to_tensor,
 )
 from .normalization import (
     compute_welford_stats,
-    standardize_tensor,
+    min_max_normalize,
     scale_tensor_by_std,
+    standardize_tensor,
 )
 
 __all__ = [
     "_allocate_tensordict",
     "ema_update",
     "ema_update_",
-    "to_tensor",
+    "scale_gradient",
     "to_numpy_action",
+    "to_tensor",
     "compute_welford_stats",
-    "standardize_tensor",
+    "min_max_normalize",
     "scale_tensor_by_std",
+    "standardize_tensor",
 ]
+

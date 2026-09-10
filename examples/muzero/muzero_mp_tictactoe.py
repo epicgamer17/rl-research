@@ -36,6 +36,15 @@ Gradient Scaling & Hidden State Normalization:
         2. Gradients passing through the dynamics function input are scaled by 1/2.
         3. Hidden states are scaled using Min-Max normalization to maintain activation stability.
 
+Value Transformations (MuZero Appendix F / Paper p. 4):
+    - Board Games (TicTacToe, Chess, Go): Outcomes are strictly bounded in [-1, 1] with zero
+      intermediate rewards. As documented in the paper, board games use continuous scalar values
+      trained directly with MSE loss without non-linear value transformation or discrete support.
+    - Non-Board Games (e.g. Atari): In environments with unbounded returns, the contractive
+      value transform h(x) = sign(x)(sqrt(|x|+1) - 1) + eps*x and discrete two-hot support projection
+      are used (available via `atomic_rl.transforms.compute_contractive_transform` and
+      `atomic_rl.transforms.compute_two_hot_distribution`).
+
 Multiprocessing Architecture:
     - Actor Workers: Each actor runs batched self-play across parallel PettingZoo TicTacToe environments
       using batched MuZero MCTS. Completed episodes are sliced/padded into length K+1 unroll blocks and
@@ -49,9 +58,10 @@ Multiprocessing Architecture:
     on n-player games (cooperative or competitive) and aligns with PettingZoo multi-agent reward vectors.
 """
 
+import functools
 import random
 import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, List, Tuple
 
 from atomic_rl.action_selection import (
     apply_action_mask,
@@ -60,32 +70,42 @@ from atomic_rl.action_selection import (
 )
 from atomic_rl.buffers import SharedReplayBuffer
 from atomic_rl.envs import get_agent_index, get_terminal_rewards_vec
-from atomic_rl.envs.wrappers import PettingZooChannelFirstWrapper
+from atomic_rl.envs.wrappers import (
+    FrameStackWrapper,
+    PettingZooChannelFirstWrapper,
+    TwoPlayerPlayerPlaneWrapper,
+)
 from atomic_rl.evaluation import evaluate_pettingzoo_vs_random
 from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.networks.architectures import ResNetBackbone
 from atomic_rl.schedules import get_stepwise_schedule
-from atomic_rl.search import mcts_search
+from atomic_rl.search import fpu_zero, mcts_search, qtransform_by_min_max
+from atomic_rl.transforms import build_action_encodings
+from atomic_rl.utils import min_max_normalize, scale_gradient
 from pettingzoo.classic import tictactoe_v3
 
 from tensordict import TensorDict
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-import torch.nn.functional as F
 import wandb
 
 # ---------------------------------------------------------------------------
 # Hyperparameters & Constants
 # ---------------------------------------------------------------------------
 TOTAL_TRAINING_STEPS = 20000
-NUM_ACTORS = 1
+NUM_ACTORS = 2
 ENVS_PER_ACTOR = 3
 MIN_BUFFER_SIZE = 64
 EVAL_INTERVAL_STEPS = 250
 PARAM_SYNC_INTERVAL = 100
 NUM_MCTS_SIMULATIONS = 25
 UNROLL_STEPS = 5
+
+# Frame Stacking & Player Plane Constants
+FRAME_STACK = 3
+INCLUDE_PLAYER_PLANE = True
+NUM_CHANNELS = 2 * FRAME_STACK + (1 if INCLUDE_PLAYER_PLANE else 0)  # 7 channels
 
 # MCTS PUCT Search Constants
 C_PUCT = 1.25
@@ -98,10 +118,11 @@ TEMPERATURE_EXPLORATION = 1.0
 TEMPERATURE_EXPLOITATION = 0.0
 
 # Optimization & Network Parameters
-BATCH_SIZE = 32
+BATCH_SIZE = 48
 REPLAY_BUFFER_CAPACITY = 10000
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
+VALUE_LOSS_WEIGHT = 1.0
 NUM_FILTERS = 24
 NUM_RES_BLOCKS = 3
 
@@ -109,34 +130,30 @@ NUM_EVAL_GAMES = 100
 SEED = 42
 
 
+def make_env():
+    """Constructs a PettingZoo TicTacToe env wrapped with frame stacking and player plane."""
+    env = PettingZooChannelFirstWrapper(tictactoe_v3.env())
+    if FRAME_STACK > 1:
+        env = FrameStackWrapper(env, k=FRAME_STACK, channel_first=True)
+    if INCLUDE_PLAYER_PLANE:
+        env = TwoPlayerPlayerPlaneWrapper(env, channel_first=True)
+    return env
+
+
 # ============================================================================
 # 1. Pure Functional Helpers
 # ============================================================================
-def encode_action_plane(
-    actions: torch.Tensor, batch_size: int, device: torch.device
-) -> torch.Tensor:
-    """Encodes 1D action indices [B] into 2D spatial 1-hot feature planes [B, 1, 3, 3]."""
-    planes = torch.zeros((batch_size, 1, 3, 3), device=device, dtype=torch.float32)
-    rows = actions // 3
-    cols = actions % 3
-    batch_idx = torch.arange(batch_size, device=device)
-    planes[batch_idx, 0, rows, cols] = 1.0
-    return planes
+def tictactoe_action_to_encoding(action: int, target: torch.Tensor) -> None:
+    """Maps 1D action index 0..8 to a 2D spatial 1-hot pixel at (action // 3, action % 3)."""
+    target[0, action // 3, action % 3] = 1.0
 
 
-def scale_gradient(tensor: torch.Tensor, scale: float) -> torch.Tensor:
-    """Scales gradients passing through tensor during backpropagation (MuZero Appendix G)."""
-    return tensor * scale + tensor.detach() * (1.0 - scale)
-
-
-def min_max_normalize(tensor: torch.Tensor) -> torch.Tensor:
-    """Scales hidden state tensor to range [0, 1] per sample (MuZero Appendix G)."""
-    flat = tensor.view(tensor.size(0), -1)
-    min_val = flat.min(dim=-1, keepdim=True)[0].view(-1, 1, 1, 1)
-    max_val = flat.max(dim=-1, keepdim=True)[0].view(-1, 1, 1, 1)
-    denom = max_val - min_val
-    denom = torch.where(denom == 0.0, torch.ones_like(denom), denom)
-    return (tensor - min_val) / denom
+# Pre-materialized [9, 1, 3, 3] action encodings lookup table:
+TICTACTOE_ACTION_ENCODINGS = build_action_encodings(
+    num_actions=9,
+    encoding_shape=(1, 3, 3),
+    mapping_fn=tictactoe_action_to_encoding,
+)
 
 
 # ============================================================================
@@ -153,14 +170,18 @@ class TicTacToeMuZeroNet(nn.Module):
     """
 
     def __init__(
-        self, num_filters: int = NUM_FILTERS, num_res_blocks: int = NUM_RES_BLOCKS
+        self,
+        in_channels: int = NUM_CHANNELS,
+        num_filters: int = NUM_FILTERS,
+        num_res_blocks: int = NUM_RES_BLOCKS,
     ):
         super().__init__()
+        self.in_channels = in_channels
         self.num_filters = num_filters
 
         # 1. Representation Network h(o) -> s^0
         self.representation_stem = nn.Sequential(
-            nn.Conv2d(2, num_filters, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, num_filters, kernel_size=3, padding=1),
             nn.BatchNorm2d(num_filters),
             nn.ReLU(),
         )
@@ -219,25 +240,27 @@ class TicTacToeMuZeroNet(nn.Module):
             nn.Tanh(),
         )
 
+        # Pre-materialized spatial action encodings buffer [9, 1, 3, 3]
+        self.register_buffer("action_encodings", TICTACTOE_ACTION_ENCODINGS.clone())
+
     def representation(self, obs: torch.Tensor) -> torch.Tensor:
-        """h(o) -> initial hidden state s0 [B, num_filters, 3, 3]."""
+        """h(o) -> initial hidden state s0 [B, num_filters, 3, 3] scaled to [0, 1]."""
         x = self.representation_stem(obs)
-        return self.representation_backbone(x)
+        raw_s = self.representation_backbone(x)
+        return min_max_normalize(raw_s, dim=(-3, -2, -1))
 
     def dynamics(
         self, hidden_state: torch.Tensor, actions: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """g(s, a) -> (next_hidden_state [B, num_filters, 3, 3], reward [B, 1])."""
-        batch_size = hidden_state.size(0)
-        device = hidden_state.device
-        if actions.ndim == 1:
-            action_plane = encode_action_plane(actions, batch_size, device)
-        else:
-            action_plane = actions
+        """g(s, a) -> (next_hidden_state [B, num_filters, 3, 3] scaled to [0, 1], reward [B, 1])."""
+        if actions.ndim > 1:
+            actions = actions.squeeze(-1)
+        action_plane = self.action_encodings[actions]
 
         concat_input = torch.cat([hidden_state, action_plane], dim=1)
         x = self.dynamics_stem(concat_input)
-        next_hidden = self.dynamics_backbone(x)
+        raw_next_hidden = self.dynamics_backbone(x)
+        next_hidden = min_max_normalize(raw_next_hidden, dim=(-3, -2, -1))
         reward = self.reward_head(next_hidden)
         return next_hidden, reward
 
@@ -293,7 +316,6 @@ def create_recurrent_fn(model: nn.Module) -> Callable:
                 scalar_value,
             ) = model.recurrent_inference(embeddings, actions_taken)
 
-        next_hidden = min_max_normalize(next_hidden)
         next_to_play = 1 - to_play
 
         # In zero-sum 2-player games, player 0 and player 1 values are inverted.
@@ -302,7 +324,7 @@ def create_recurrent_fn(model: nn.Module) -> Callable:
         value_vec = torch.stack([v_p0, -v_p0], dim=-1)
 
         r_p0 = torch.where(
-            next_to_play == 0, scalar_reward.squeeze(-1), -scalar_reward.squeeze(-1)
+            to_play == 0, scalar_reward.squeeze(-1), -scalar_reward.squeeze(-1)
         )
         reward_vec = torch.stack([r_p0, -r_p0], dim=-1)
 
@@ -336,11 +358,16 @@ def run_batched_mcts(
     with torch.no_grad():
         s0, root_logits, root_scalar_value = model.initial_inference(root_embed)
 
-    s0 = min_max_normalize(s0)
-
     v_p0_root = torch.where(curr_players == 0, root_scalar_value, -root_scalar_value)
     root_vector_value = torch.stack([v_p0_root, -v_p0_root], dim=-1)
     dirichlet_eps = DIRICHLET_EPSILON if explore_dirichlet else 0.0
+
+    qtransform = functools.partial(
+        qtransform_by_min_max,
+        fpu_fn=fpu_zero,
+        min_value=torch.tensor(-1.0),
+        max_value=torch.tensor(1.0),
+    )
 
     action_probs, _ = mcts_search(
         root_embeddings=s0,
@@ -352,6 +379,7 @@ def run_batched_mcts(
         num_actions=9,
         num_players=2,
         legal_mask=legal_masks,
+        qtransform=qtransform,
         dirichlet_epsilon=dirichlet_eps,
         dirichlet_alpha=DIRICHLET_ALPHA,
         pb_c_init=C_PUCT,
@@ -382,14 +410,12 @@ def actor_worker(
     torch.manual_seed(SEED + actor_id * 1000)
     random.seed(SEED + actor_id * 1000)
 
-    envs = [
-        PettingZooChannelFirstWrapper(tictactoe_v3.env()) for _ in range(envs_per_actor)
-    ]
+    envs = [make_env() for _ in range(envs_per_actor)]
     for env in envs:
         env.reset()
 
     move_counts = [0] * envs_per_actor
-    # Trajectory entry: (obs [2,3,3], action int, target_policy [9], player int)
+    # Trajectory entry: (obs [NUM_CHANNELS,3,3], action int, target_policy [9], player int)
     trajectories: List[List[Tuple[torch.Tensor, int, torch.Tensor, int]]] = [
         [] for _ in range(envs_per_actor)
     ]
@@ -404,7 +430,7 @@ def actor_worker(
 
         completed_tds = []
         root_embed = torch.empty(
-            (envs_per_actor, 2, 3, 3), device=device, dtype=torch.float32
+            (envs_per_actor, NUM_CHANNELS, 3, 3), device=device, dtype=torch.float32
         )
         legal_masks = torch.empty((envs_per_actor, 9), device=device, dtype=torch.bool)
         curr_players = torch.empty((envs_per_actor,), device=device, dtype=torch.long)
@@ -435,33 +461,39 @@ def actor_worker(
                             unroll_values.append(
                                 torch.tensor([val_k], dtype=torch.float32)
                             )
-
-                            if k > 0:
-                                act_prev = ep_actions[step_idx - 1]
-                                unroll_actions.append(act_prev)
-                                unroll_rewards.append(
-                                    torch.tensor([0.0], dtype=torch.float32)
-                                )
-                        else:
-                            # Absorbing state padding beyond terminal step:
-                            # In alternating 2-player game, active player flips every step,
-                            # so value target flips sign for alternating players.
-                            last_val = (
-                                unroll_values[-1].item() if unroll_values else 0.0
-                            )
-                            padded_val = -last_val if (k > 0) else last_val
+                        elif step_idx == ep_len:
+                            # Terminal state s_N reached after move ep_actions[ep_len - 1].
+                            # In alternating games, the next player at s_N is the opponent.
+                            # The terminal value target from that player's perspective is their outcome (-1 for loss, 0 for draw).
+                            next_player = 1 - ep_players[ep_len - 1]
+                            val_terminal = rewards_vec[next_player].item()
                             unroll_policies.append(
                                 torch.full((9,), 1.0 / 9.0, dtype=torch.float32)
                             )
                             unroll_values.append(
-                                torch.tensor([padded_val], dtype=torch.float32)
+                                torch.tensor([val_terminal], dtype=torch.float32)
+                            )
+                        else:
+                            # NOTE: We do not perform post-terminal loss masking, as we understand it to be
+                            # the case that the value and reward networks must be trained to predict 0.0 and 0.0
+                            # for absorbing post-terminal states.
+                            unroll_policies.append(
+                                torch.full((9,), 1.0 / 9.0, dtype=torch.float32)
+                            )
+                            unroll_values.append(
+                                torch.tensor([0.0], dtype=torch.float32)
                             )
 
-                            if k > 0:
+                        if k > 0:
+                            prev_act_idx = t + k - 1
+                            # TODO: a bit messy maybe? this is so terminal actions are not overridden.
+                            if prev_act_idx < ep_len:
+                                unroll_actions.append(ep_actions[prev_act_idx])
+                            else:
                                 unroll_actions.append(0)
-                                unroll_rewards.append(
-                                    torch.tensor([0.0], dtype=torch.float32)
-                                )
+                            unroll_rewards.append(
+                                torch.tensor([0.0], dtype=torch.float32)
+                            )
 
                     completed_tds.append(
                         TensorDict(
@@ -572,7 +604,7 @@ def evaluator_worker(
     while True:
         local_model.load_state_dict(shared_model.state_dict())
         eval_metrics = evaluate_pettingzoo_vs_random(
-            env_fn=lambda: PettingZooChannelFirstWrapper(tictactoe_v3.env()),
+            env_fn=make_env,
             select_action_fn=select_eval_action,
             num_games=num_eval_games,
             device=device,
@@ -589,6 +621,7 @@ def learner_worker(
     batch_size: int = BATCH_SIZE,
     learning_rate: float = LEARNING_RATE,
     weight_decay: float = WEIGHT_DECAY,
+    value_loss_weight: float = VALUE_LOSS_WEIGHT,
     unroll_steps: int = UNROLL_STEPS,
     max_steps: int = TOTAL_TRAINING_STEPS,
     device_str: str = "cpu",
@@ -618,6 +651,10 @@ def learner_worker(
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
+            "value_loss_weight": value_loss_weight,
+            "frame_stack": FRAME_STACK,
+            "include_player_plane": INCLUDE_PLAYER_PLANE,
+            "num_channels": NUM_CHANNELS,
         },
     )
 
@@ -638,14 +675,14 @@ def learner_worker(
 
         # 1. Initial Step k=0 Prediction
         s0, p0, v0 = local_model.initial_inference(states)
-        s0 = min_max_normalize(s0)
 
         raw_p_loss_0, _ = compute_cross_entropy_loss(p0, target_policies[:, 0])
         raw_v_loss_0, _ = compute_mse_loss(v0.view(-1), target_values[:, 0].view(-1))
 
         loss_p0 = raw_p_loss_0.mean()
         loss_v0 = raw_v_loss_0.mean()
-        total_loss = (loss_p0 + loss_v0) / float(unroll_steps)
+        # Initial step k=0 uses full weight (1.0), with value loss scaled by value_loss_weight
+        total_loss = loss_p0 + value_loss_weight * loss_v0
 
         curr_s = s0
         step_p_losses = [loss_p0.item()]
@@ -658,7 +695,7 @@ def learner_worker(
             curr_s = scale_gradient(curr_s, 0.5)
 
             next_s, r_k, p_k, v_k = local_model.recurrent_inference(curr_s, act_k)
-            curr_s = min_max_normalize(next_s)
+            curr_s = next_s
 
             raw_p_loss, _ = compute_cross_entropy_loss(p_k, target_policies[:, k])
             raw_v_loss, _ = compute_mse_loss(v_k.view(-1), target_values[:, k].view(-1))
@@ -674,7 +711,7 @@ def learner_worker(
             step_v_losses.append(l_v.item())
             step_r_losses.append(l_r.item())
 
-            step_loss = l_p + l_v + l_r
+            step_loss = l_p + value_loss_weight * l_v + l_r
             total_loss = total_loss + (step_loss / float(unroll_steps))
 
         optimizer.zero_grad()
@@ -717,7 +754,11 @@ def learner_worker(
 # 5. Main Multiprocessing Pipeline Setup
 # ============================================================================
 def model_creator_fn() -> TicTacToeMuZeroNet:
-    return TicTacToeMuZeroNet(num_filters=NUM_FILTERS, num_res_blocks=NUM_RES_BLOCKS)
+    return TicTacToeMuZeroNet(
+        in_channels=NUM_CHANNELS,
+        num_filters=NUM_FILTERS,
+        num_res_blocks=NUM_RES_BLOCKS,
+    )
 
 
 def main():
@@ -733,7 +774,7 @@ def main():
     shared_model.share_memory()
 
     buffer_shapes = {
-        "state": (2, 3, 3),
+        "state": (NUM_CHANNELS, 3, 3),
         "actions": (UNROLL_STEPS,),
         "target_policies": (UNROLL_STEPS + 1, 9),
         "target_values": (UNROLL_STEPS + 1, 1),
@@ -771,13 +812,14 @@ def main():
     processes.append(eval_p)
 
     print(
-        f"Launched MuZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Evaluator)."
+        f"Launched MuZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Evaluator) | {NUM_CHANNELS} Channels ({FRAME_STACK} Frames + Player Plane)."
     )
     learner_p.join()
 
     for p in processes:
         if p.is_alive():
             p.terminate()
+            p.join()
 
     print("MuZero Multiprocessing Training Completed Successfully.")
 

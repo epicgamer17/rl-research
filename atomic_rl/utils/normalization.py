@@ -5,7 +5,7 @@ Pure functional routines for running statistics (Welford algorithm) and tensor s
 """
 
 import torch
-from typing import Tuple
+from typing import Optional, Tuple, Union
 
 
 # TODO: should this be inplace?
@@ -75,3 +75,36 @@ def scale_tensor_by_std(tensor: torch.Tensor, eps: float = 1e-8) -> torch.Tensor
         return torch.zeros_like(tensor)
 
     return tensor / (tensor.std() + eps)
+
+
+def min_max_normalize(
+    tensor: torch.Tensor,
+    dim: Union[int, Tuple[int, ...]] = -1,
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Scales tensor values along specified dimension(s) `dim` to [min_val, max_val].
+
+    Used in MuZero (Appendix G) to bound latent activations to [0, 1] across recurrent steps.
+
+    Args:
+        tensor: Input tensor of shape [*Batch, *Features].
+        dim: Dimension or tuple of dimensions along which to compute min/max (default: -1).
+        min_val: Target minimum value (default 0.0).
+        max_val: Target maximum value (default 1.0).
+        eps: Epsilon to prevent division by zero when min == max.
+
+    Returns:
+        Tensor of identical shape [*Batch, *Features] scaled to [min_val, max_val].
+    """
+    assert max_val > min_val, f"max_val ({max_val}) must be strictly greater than min_val ({min_val})"
+    assert eps > 0, f"eps must be strictly positive, got {eps}"
+
+    t_min = tensor.amin(dim=dim, keepdim=True)
+    t_max = tensor.amax(dim=dim, keepdim=True)
+
+    norm = (tensor - t_min) / torch.clamp(t_max - t_min, min=eps)
+    if min_val == 0.0 and max_val == 1.0:
+        return norm
+    return min_val + norm * (max_val - min_val)

@@ -92,3 +92,15 @@ def backpropagate_(
 
         # Update child edge (s_t, a_t) visit statistics
         tree["children_visits"][b_idx, n_idx, a_idx] += 1
+
+        # Update tree-wide min and max statistics for acting player (MuZero MinMaxStats)
+        if "tree_min_value" in tree.keys():
+            parent_player = tree["to_play"][b_idx, n_idx].unsqueeze(-1)
+            acting_return = step_return.gather(1, parent_player).squeeze(-1)
+            tree["tree_min_value"][b_idx] = torch.minimum(
+                tree["tree_min_value"][b_idx], acting_return
+            )
+            tree["tree_max_value"][b_idx] = torch.maximum(
+                tree["tree_max_value"][b_idx], acting_return
+            )
+

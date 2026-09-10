@@ -20,7 +20,6 @@ def _allocate_tensordict(
     return data
 
 
-
 # TODO: do we need the inplace and not inplace operations?
 def ema_update(
     old_ema: torch.Tensor, new_value: torch.Tensor, alpha: float
@@ -93,3 +92,27 @@ def to_numpy_action(action_tensor: torch.Tensor) -> np.ndarray:
         return res.astype(np.int32)
     # For continuous actions, we keep the original shape and dtype (float32)
     return res
+
+
+def scale_gradient(tensor: torch.Tensor, scale: float) -> torch.Tensor:
+    """Scales gradients passing through tensor during backpropagation (MuZero Appendix G).
+
+    In the forward pass, this acts as an identity function: output == tensor.
+    In the backward pass, incoming gradients are scaled by `scale`:
+        dL/d(tensor) = scale * dL/d(output)
+
+    Used in MuZero to scale gradients entering the dynamics function by 0.5,
+    and to scale individual loss terms by 1/K.
+
+    Args:
+        tensor: Input tensor of arbitrary shape.
+        scale: Scaling coefficient applied to backward gradients.
+
+    Returns:
+        Tensor identical in value and shape to input tensor, with scaled gradients during backprop.
+    """
+    assert isinstance(
+        scale, (int, float)
+    ), f"scale must be a float or int, got {type(scale)}"
+
+    return tensor * scale + tensor.detach() * (1 - scale)

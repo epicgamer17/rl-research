@@ -109,25 +109,55 @@ def qtransform_by_min_max(
     tree: TensorDict,
     parent_nodes: torch.Tensor,  # [B]
     *,
-    min_value: torch.Tensor,  # [B] or scalar
-    max_value: torch.Tensor,  # [B] or scalar
+    min_value: Union[torch.Tensor, float] = float("inf"),  # [B] or scalar
+    max_value: Union[torch.Tensor, float] = float("-inf"),  # [B] or scalar
     fpu_fn: Optional[FPUFn] = None,
     epsilon: float = 1e-8,
 ) -> torch.Tensor:
-    """Returns Q-values normalized by the given `min_value` and `max_value`.
+    """Returns Q-values dynamically normalized to [0, 1] following MuZero MinMaxStats.
 
-    If `fpu_fn` is None, defaults to `functools.partial(fpu_min_value, min_value=min_value)`
+    Bounds are always dynamic:
+    - If `min_value` / `max_value` are omitted (defaults inf / -inf), normalization bounds
+      are derived purely from tree-wide extrema `tree["tree_min_value"]` and `tree["tree_max_value"]`.
+    - If `min_value` / `max_value` are provided (e.g. known initial bounds like [-1, 1]),
+      they act as initial bounds that dynamically expand if the tree observes values
+      exceeding them: min = min(known_min, tree_min), max = max(known_max, tree_max).
+
+    If `fpu_fn` is None, defaults to `functools.partial(fpu_min_value, min_value=effective_min)`
     for full backward compatibility with mctx semantics (unvisited actions mapped to min_value).
     Pass `fpu_fn=fpu_zero` to assign 0.0 before normalization (mapping to 0.5 in [0, 1] for min=-1, max=1).
-    Shape: [B, num_actions].
+
+    Args:
+        tree: The MCTS tree TensorDict containing "tree_min_value" and "tree_max_value".
+        parent_nodes: Parent node indices [B].
+        min_value: Optional known lower bound [B] or scalar (defaults to inf for dynamic tree min).
+        max_value: Optional known upper bound [B] or scalar (defaults to -inf for dynamic tree max).
+        fpu_fn: First Play Urgency strategy callable for unvisited actions.
+        epsilon: Numerical stability constant to prevent division by zero when min == max.
+
+    Returns:
+        Normalized Q-values [B, num_actions] scaled to [0, 1].
     """
+    assert "tree_min_value" in tree.keys(), "tree must contain 'tree_min_value'"
+    assert "tree_max_value" in tree.keys(), "tree must contain 'tree_max_value'"
+
+    tree_min = tree["tree_min_value"]
+    tree_max = tree["tree_max_value"]
+
+    # Dynamic bounds: expand known bounds with tree extrema
+    formatted_min = _format_bound(min_value, tree_min).squeeze(-1)
+    formatted_max = _format_bound(max_value, tree_max).squeeze(-1)
+
+    effective_min = torch.minimum(formatted_min, tree_min)
+    effective_max = torch.maximum(formatted_max, tree_max)
+
     if fpu_fn is None:
-        fpu_fn = functools.partial(fpu_min_value, min_value=min_value)
+        fpu_fn = functools.partial(fpu_min_value, min_value=effective_min)
 
     completed_qvalues, _ = get_completed_qvalues(tree, parent_nodes, fpu_fn=fpu_fn)
 
-    min_val = _format_bound(min_value, completed_qvalues)
-    max_val = _format_bound(max_value, completed_qvalues)
+    min_val = _format_bound(effective_min, completed_qvalues)
+    max_val = _format_bound(effective_max, completed_qvalues)
 
     denom = torch.clamp(max_val - min_val, min=epsilon)
     normalized = (completed_qvalues - min_val) / denom

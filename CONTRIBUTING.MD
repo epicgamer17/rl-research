@@ -75,6 +75,7 @@ Functions that operate along specific axes (e.g. time $T$, action space $A$, or 
 When input ranks are unambiguous (such as 1D action indices `[B]` passed to Q-value gathering with 2D Q-values `[B, A]`), functions may auto-unsqueeze (`actions.ndim == q_values.ndim - 1`) to provide friendly, ergonomic caller loops (Usability over Performance).
 If a function returns a view of a tensor rather than an allocated copy, it must be documented.
 If a function fundamentally requires a contiguous block of memory (common when reshaping after a .transpose()), use .contiguous() explicitly and document why it is necessary.
+Each function should make it's decisions clear. Functions should never make decisions for the user. An example of this is with mctx and qtransforms. mctx makes the decision that the qtrasnform_by_min_max and other qtransforms will use a pesimistic value for FPU, there is no indication of this to the user, and it couples two implementation details together. We want each implementation detail to exist as a function on its own so they can be reused across papers and algorithms.
 
 TorchRL-like conventions
 Never blindly zero-out values using a generic done mask. If an episode is Truncated (hit a time limit), the state still has a bootstrap value, and masking it to 0 artificially corrupts the value function. Your functional TD-learning and return functions must explicitly expect terminated masks, not generic done masks

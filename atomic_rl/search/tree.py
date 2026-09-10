@@ -3,7 +3,7 @@ from tensordict import TensorDict
 from typing import Optional
 
 
-# TODO: should we do something like our replay buffer. Like an init_mcts_tree and then init_stochastic, init_sampled_muzero, etc etc? Or leave it as is?
+# TODO: should we do something like our replay buffer. Like an init_mcts_tree and then init_stochastic, init_sampled_muzero, etc etc? Or leave it as is? Or a higher order functions that wrap or make initializations, like make_stochastic, or make_stochastic_init_mcts_tree or something like that? I think matching the replay buffer is maybe a little cleaner. I'm not sure if we should ALSO make the N-player logic a higher order wrapper or not (i lean not).
 def init_mcts_tree(
     root_embeddings: torch.Tensor,
     root_logits: torch.Tensor,
@@ -105,6 +105,9 @@ def init_mcts_tree(
             "is_terminal": root_embeddings.new_zeros(
                 (batch_size, max_nodes), dtype=torch.bool
             ),
+            # Tree-wide min and max value statistics (MuZero MinMaxStats) [B]
+            "tree_min_value": root_embeddings.new_full((batch_size,), float("inf")),
+            "tree_max_value": root_embeddings.new_full((batch_size,), float("-inf")),
             # Node counter starts at 1 (index 0 is root)
             "node_counts": root_embeddings.new_ones(batch_size, dtype=torch.long),
             # Root action mask (mctx uses root_invalid_actions = ~legal_mask)
@@ -136,5 +139,11 @@ def init_mcts_tree(
     # selection uses sqrt(1) * pb_c * prior (argmax-prior) rather than a
     # noise-only tie-break from a zero visit count.
     tree["node_visits"][:, 0] = 1
+
+    # Initialize tree-wide min/max bounds with acting player root value
+    p_idx = root_to_play.unsqueeze(-1)
+    root_acting_val = root_value.gather(1, p_idx).squeeze(-1)
+    tree["tree_min_value"].copy_(root_acting_val)
+    tree["tree_max_value"].copy_(root_acting_val)
 
     return tree
