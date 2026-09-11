@@ -70,7 +70,22 @@ def test_standardize_tensor():
     low_var = torch.tensor([1.0, 1.0, 1.0])
     res_low = standardize_tensor(low_var)
     # (1-1) / (0 + 1e-8) = 0
-    assert torch.all(res_low == 0.0)
+    # 4. Dimension-specific standardization
+    # 2D tensor: standardizing along dim=-1 (each row independently)
+    mat = torch.tensor([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]])
+    res_dim = standardize_tensor(mat, dim=-1)
+    # Each row [1, 2, 3] standardized -> [-1, 0, 1]
+    expected_dim = torch.tensor([[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]])
+    torch.testing.assert_close(res_dim, expected_dim)
+
+    # Standardizing along dim=0 (each column independently)
+    res_col = standardize_tensor(mat, dim=0)
+    assert res_col.shape == mat.shape
+
+    # Single element along dimension
+    slice_one = torch.tensor([[1.0, 2.0]])
+    res_slice_one = standardize_tensor(slice_one, dim=0)
+    assert torch.all(res_slice_one == 0.0)
 
 
 def test_scale_tensor_by_std():
@@ -95,6 +110,14 @@ def test_scale_tensor_by_std():
     res_low = scale_tensor_by_std(low_var)
     # 0 / (0 + 1e-8) = 0
     assert torch.all(res_low == 0.0)
+
+    # 4. Dimension-specific scaling
+    mat = torch.tensor([[1.0, 3.0], [2.0, 6.0]])
+    res_dim = scale_tensor_by_std(mat, dim=-1)
+    std_row0 = mat[0].std()
+    std_row1 = mat[1].std()
+    expected_mat = torch.stack([mat[0] / std_row0, mat[1] / std_row1])
+    torch.testing.assert_close(res_dim, expected_mat)
 
 
 def test_utils_assertions():

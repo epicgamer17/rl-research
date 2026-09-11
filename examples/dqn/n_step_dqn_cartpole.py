@@ -183,7 +183,7 @@ for step in range(MAX_STEPS):
     # --- 3. The Update Loop ---
     if step > MIN_BUFFER_SIZE and step % UPDATE_FREQ == 0:
         # Sample
-        batch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+        batch, _ = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
 
         # 1. Forward Passes (Online and Target)
         q_values = model(batch["obs"])

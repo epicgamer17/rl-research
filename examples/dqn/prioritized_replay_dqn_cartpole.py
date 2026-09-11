@@ -198,7 +198,7 @@ for step in range(MAX_STEPS):
         beta_tensor = torch.tensor(beta, dtype=torch.float32, device=device)
 
         # Sample with PER
-        batch, tree_indices, is_weights = sample_per(
+        batch, coords, is_weights = sample_per(
             buffer_state, BATCH_SIZE, beta=beta_tensor
         )
 
@@ -231,7 +231,7 @@ for step in range(MAX_STEPS):
 
         # Update PER Priorities
         buffer_state = update_priorities(
-            buffer_state, tree_indices, info_dict["priorities"], alpha=ALPHA
+            buffer_state, coords, info_dict["priorities"], alpha=ALPHA
         )
 
         if step % 100 == 0:

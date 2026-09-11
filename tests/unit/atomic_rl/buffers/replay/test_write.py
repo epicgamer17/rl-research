@@ -7,6 +7,7 @@ from tensordict import TensorDict
 from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     compute_is_weights,
+    coords_to_tree_indices,
     init_buffer,
     init_per_buffer,
     reservoir_write_strategy_,
@@ -69,16 +70,85 @@ def test_reservoir_write_strategy():
     assert torch.all(indices < 5)
 
 
+def test_reservoir_write_strategy_2d():
+    random.seed(42)
+    capacity = 3
+    seq_len = 4
+    shapes = {"data": (1,), "valid": ()}
+
+    state = init_buffer((capacity, seq_len), shapes)
+
+    # Initially valid_lengths should be all 0s
+    assert torch.equal(state.valid_lengths, torch.zeros(capacity, dtype=torch.long))
+
+    # Write 2 sequences with lengths 2 and 3
+    valid_mask = torch.tensor(
+        [
+            [True, True, False, False],
+            [True, True, True, False],
+        ]
+    )
+    batch = TensorDict(
+        {
+            "data": torch.zeros(2, seq_len, 1),
+            "valid": valid_mask,
+        },
+        batch_size=[2, seq_len],
+    )
+    state, indices = reservoir_write_strategy_(state, batch, valid_mask=valid_mask)
+
+    assert state.steps_seen == 2
+    assert indices.tolist() == [0, 1]
+    assert state.valid_lengths[0].item() == 2
+    assert state.valid_lengths[1].item() == 3
+    assert state.valid_lengths[2].item() == 0
+    assert state.size == 5
+
+
+def test_explicit_valid_mask():
+    capacity = 3
+    seq_len = 4
+    shapes = {"data": (1,)}
+
+    state = init_buffer((capacity, seq_len), shapes)
+
+    # Batch with NO "valid" key
+    batch = TensorDict({"data": torch.zeros(2, seq_len, 1)}, batch_size=[2, seq_len])
+    valid_mask = torch.tensor(
+        [
+            [True, True, False, False],
+            [True, True, True, True],
+        ]
+    )
+    # Pass valid_mask explicitly
+    state, indices = circular_write_strategy_(state, batch, valid_mask=valid_mask)
+
+    assert state.valid_lengths[0].item() == 2
+    assert state.valid_lengths[1].item() == 4
+    assert state.valid_lengths[2].item() == 0
+    assert state.size == 6
+
+
 def test_per_tree_logic():
     capacity = 4
     state = init_per_buffer(capacity, {"data": (1,)})
     # tree_capacity = 4, tree_nodes = 7
     # leaf indices: 3, 4, 5, 6
 
-    # Update priorities manually
-    tree_indices = torch.tensor([3, 4, 5, 6], dtype=torch.long)
+    # Test coords_to_tree_indices for 1D
+    coords = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+    expected_tree_indices = torch.tensor([3, 4, 5, 6], dtype=torch.long)
+    assert torch.equal(coords_to_tree_indices(state, coords), expected_tree_indices)
+
+    # Test coords_to_tree_indices for 2D
+    state_2d = init_per_buffer((2, 2), {"data": (1,)})
+    coords_2d = (torch.tensor([0, 1]), torch.tensor([1, 0]))
+    # linear: 0*2+1=1, 1*2+0=2 -> tree: 1 + 4 - 1 = 4, 2 + 4 - 1 = 5
+    assert torch.equal(coords_to_tree_indices(state_2d, coords_2d), torch.tensor([4, 5], dtype=torch.long))
+
+    # Update priorities via coords
     priorities = torch.tensor([1.0, 2.0, 3.0, 4.0])
-    state = update_priorities(state, tree_indices, priorities, alpha=1.0)
+    state = update_priorities(state, coords, priorities, alpha=1.0)
 
     # Sum tree should be:
     # root: 10
@@ -118,6 +188,26 @@ def test_with_per_tracking():
     state = wrapped_write(state, batch_prio)
     # pointer was 1, so written to index 1, tree index 1 + 4 - 1 = 4
     assert state.sum_tree[4] == 5.0
+
+    # 3. 2D Sequence write with valid_mask
+    state_2d = init_per_buffer((2, 3), {"data": (1,)})
+    wrapped_write_2d = with_per_tracking(circular_write_strategy_)
+    # 1 sequence with 2 valid steps and 1 padding step
+    batch_2d = TensorDict({"data": torch.zeros(1, 3, 1)}, batch_size=[1, 3])
+    valid_mask_2d = torch.tensor([[True, True, False]])
+    state_2d = wrapped_write_2d(state_2d, batch_2d, valid_mask=valid_mask_2d)
+
+    # tree capacity is next power of 2 for 2*3=6, which is 8
+    # leaf indices start at 8 - 1 = 7:
+    # seq 0, step 0 -> leaf 7 (valid: max_priority = 1.0)
+    # seq 0, step 1 -> leaf 8 (valid: max_priority = 1.0)
+    # seq 0, step 2 -> leaf 9 (padding: priority = 0.0)
+    assert state_2d.sum_tree[7] == 1.0
+    assert state_2d.sum_tree[8] == 1.0
+    assert state_2d.sum_tree[9] == 0.0
+    assert state_2d.sum_tree[0] == 2.0
+    # min_tree should track the minimum NON-ZERO priority
+    assert state_2d.min_tree[0] == 1.0
 
 
 def test_compute_is_weights():

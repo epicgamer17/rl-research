@@ -403,7 +403,7 @@ def train_alphazero_tictactoe():
         if buffer_state.size < MIN_BUFFER_SIZE:
             continue
 
-        minibatch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+        minibatch, _ = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
 
         states = minibatch["state"].to(device)
         target_policies = minibatch["target_policy"].to(device)

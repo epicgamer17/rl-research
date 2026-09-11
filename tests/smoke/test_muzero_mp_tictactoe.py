@@ -76,7 +76,7 @@ def test_muzero_batched_mcts():
     curr_players = torch.tensor([0, 1], dtype=torch.long)
     legal_masks = torch.ones((batch_size, 9), dtype=torch.bool)
 
-    probs = run_batched_mcts(
+    probs, root_values = run_batched_mcts(
         model=net,
         recurrent_fn=recurrent_fn,
         root_embed=root_embed,
@@ -88,5 +88,6 @@ def test_muzero_batched_mcts():
     )
 
     assert probs.shape == (batch_size, 9)
+    assert root_values.shape == (batch_size,)
     assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))
 

@@ -55,26 +55,64 @@ def compute_welford_stats(
     return new_mean, new_sq_diff, new_var, new_count
 
 
-def standardize_tensor(tensor: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+def standardize_tensor(
+    tensor: torch.Tensor,
+    dim: Optional[Union[int, Tuple[int, ...]]] = None,
+    eps: float = 1e-8,
+) -> torch.Tensor:
     """
     Mean-centers and scales a tensor by its standard deviation.
     Used when the baseline does not perfectly center the current batch (e.g., PPO Critic).
+
+    Args:
+        tensor: Input tensor of arbitrary shape.
+        dim: Dimension or dimensions along which to standardize. If None, standardizes globally.
+        eps: Epsilon to prevent division by zero.
+
+    Returns:
+        Standardized tensor of identical shape.
     """
     if tensor.numel() <= 1:
         return torch.zeros_like(tensor)
 
-    return (tensor - tensor.mean()) / (tensor.std() + eps)
+    if dim is None:
+        return (tensor - tensor.mean()) / (tensor.std() + eps)
+
+    mean = tensor.mean(dim=dim, keepdim=True)
+    if tensor.numel() <= mean.numel():
+        return torch.zeros_like(tensor)
+
+    return (tensor - mean) / (tensor.std(dim=dim, keepdim=True) + eps)
 
 
-def scale_tensor_by_std(tensor: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+def scale_tensor_by_std(
+    tensor: torch.Tensor,
+    dim: Optional[Union[int, Tuple[int, ...]]] = None,
+    eps: float = 1e-8,
+) -> torch.Tensor:
     """
     Scales a tensor by its standard deviation WITHOUT mean-centering.
     Used when the data is already centered (e.g., EMA Advantages).
+
+    Args:
+        tensor: Input tensor of arbitrary shape.
+        dim: Dimension or dimensions along which to scale. If None, scales globally.
+        eps: Epsilon to prevent division by zero.
+
+    Returns:
+        Scaled tensor of identical shape.
     """
     if tensor.numel() <= 1:
         return torch.zeros_like(tensor)
 
-    return tensor / (tensor.std() + eps)
+    if dim is None:
+        return tensor / (tensor.std() + eps)
+
+    reduced_shape = tensor.sum(dim=dim, keepdim=True)
+    if tensor.numel() <= reduced_shape.numel():
+        return torch.zeros_like(tensor)
+
+    return tensor / (tensor.std(dim=dim, keepdim=True) + eps)
 
 
 def min_max_normalize(

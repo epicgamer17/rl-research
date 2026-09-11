@@ -68,7 +68,7 @@ from atomic_rl.action_selection import (
     argmax_selector,
     sample_distribution,
 )
-from atomic_rl.buffers import SharedReplayBuffer
+from atomic_rl.buffers import SharedReplayBuffer, slice_unrolls
 from atomic_rl.envs import get_agent_index, get_terminal_rewards_vec
 from atomic_rl.envs.wrappers import (
     FrameStackWrapper,
@@ -96,7 +96,7 @@ import wandb
 TOTAL_TRAINING_STEPS = 20000
 NUM_ACTORS = 2
 ENVS_PER_ACTOR = 3
-MIN_BUFFER_SIZE = 64
+MIN_BUFFER_SIZE = 64  # Minimum number of valid transitions before learner starts
 EVAL_INTERVAL_STEPS = 250
 PARAM_SYNC_INTERVAL = 100
 NUM_MCTS_SIMULATIONS = 25
@@ -109,7 +109,7 @@ NUM_CHANNELS = 2 * FRAME_STACK + (1 if INCLUDE_PLAYER_PLANE else 0)  # 7 channel
 
 # MCTS PUCT Search Constants
 C_PUCT = 1.25
-DIRICHLET_ALPHA = 2.0
+DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25
 
 # Temperature Schedule Constants
@@ -119,7 +119,8 @@ TEMPERATURE_EXPLOITATION = 0.0
 
 # Optimization & Network Parameters
 BATCH_SIZE = 48
-REPLAY_BUFFER_CAPACITY = 10000
+MAX_GAME_STEPS = 9  # TicTacToe cannot exceed 9 moves
+BUFFER_NUM_GAMES = 2000  # 2000 games capacity
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
 VALUE_LOSS_WEIGHT = 1.0
@@ -353,7 +354,7 @@ def run_batched_mcts(
     num_simulations: int = NUM_MCTS_SIMULATIONS,
     temperature: float = 1.0,
     explore_dirichlet: bool = True,
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Runs batched MuZero MCTS search over learned representation states."""
     with torch.no_grad():
         s0, root_logits, root_scalar_value = model.initial_inference(root_embed)
@@ -369,7 +370,7 @@ def run_batched_mcts(
         max_value=torch.tensor(1.0),
     )
 
-    action_probs, _ = mcts_search(
+    action_probs, tree = mcts_search(
         root_embeddings=s0,
         root_logits=root_logits,
         root_value=root_vector_value,
@@ -385,7 +386,14 @@ def run_batched_mcts(
         pb_c_init=C_PUCT,
         temperature=temperature,
     )
-    return action_probs
+    # Return MCTS root search value from perspective of current player (root.value() in MuZero paper)
+    root_search_values = (
+        tree["node_values"][:, 0]
+        .gather(1, curr_players.unsqueeze(-1))
+        .squeeze(-1)
+        .detach()
+    )
+    return action_probs, root_search_values
 
 
 # ============================================================================
@@ -444,71 +452,38 @@ def actor_worker(
                 )
                 ep_len = len(ep_states)
 
-                # Process episode steps into unrolled K+1 sequence blocks
-                for t in range(ep_len):
-                    unroll_obs = ep_states[t]
-                    unroll_actions = []
-                    unroll_policies = []
-                    unroll_values = []
-                    unroll_rewards = []
+                # Pack completed game into fixed-length sequence [MAX_GAME_STEPS, ...]
+                seq_obs = torch.zeros(
+                    (MAX_GAME_STEPS, NUM_CHANNELS, 3, 3), dtype=torch.float32
+                )
+                seq_actions = torch.zeros((MAX_GAME_STEPS,), dtype=torch.long)
+                seq_policies = torch.zeros((MAX_GAME_STEPS, 9), dtype=torch.float32)
+                seq_values = torch.zeros((MAX_GAME_STEPS, 1), dtype=torch.float32)
+                seq_rewards = torch.zeros((MAX_GAME_STEPS, 1), dtype=torch.float32)
+                seq_valid = torch.zeros((MAX_GAME_STEPS,), dtype=torch.float32)
 
-                    for k in range(unroll_steps + 1):
-                        step_idx = t + k
-                        if step_idx < ep_len:
-                            player_k = ep_players[step_idx]
-                            val_k = rewards_vec[player_k].item()
-                            unroll_policies.append(ep_policies[step_idx])
-                            unroll_values.append(
-                                torch.tensor([val_k], dtype=torch.float32)
-                            )
-                        elif step_idx == ep_len:
-                            # Terminal state s_N reached after move ep_actions[ep_len - 1].
-                            # In alternating games, the next player at s_N is the opponent.
-                            # The terminal value target from that player's perspective is their outcome (-1 for loss, 0 for draw).
-                            next_player = 1 - ep_players[ep_len - 1]
-                            val_terminal = rewards_vec[next_player].item()
-                            unroll_policies.append(
-                                torch.full((9,), 1.0 / 9.0, dtype=torch.float32)
-                            )
-                            unroll_values.append(
-                                torch.tensor([val_terminal], dtype=torch.float32)
-                            )
-                        else:
-                            # NOTE: We do not perform post-terminal loss masking, as we understand it to be
-                            # the case that the value and reward networks must be trained to predict 0.0 and 0.0
-                            # for absorbing post-terminal states.
-                            unroll_policies.append(
-                                torch.full((9,), 1.0 / 9.0, dtype=torch.float32)
-                            )
-                            unroll_values.append(
-                                torch.tensor([0.0], dtype=torch.float32)
-                            )
+                seq_obs[:ep_len] = torch.stack(ep_states)
+                seq_actions[:ep_len] = torch.tensor(ep_actions, dtype=torch.long)
+                seq_policies[:ep_len] = torch.stack(ep_policies)
+                seq_values[:ep_len] = torch.tensor(
+                    [rewards_vec[p].item() for p in ep_players], dtype=torch.float32
+                ).unsqueeze(-1)
+                seq_rewards[:ep_len] = 0.0
+                seq_valid[:ep_len] = 1.0
 
-                        if k > 0:
-                            prev_act_idx = t + k - 1
-                            # TODO: a bit messy maybe? this is so terminal actions are not overridden.
-                            if prev_act_idx < ep_len:
-                                unroll_actions.append(ep_actions[prev_act_idx])
-                            else:
-                                unroll_actions.append(0)
-                            unroll_rewards.append(
-                                torch.tensor([0.0], dtype=torch.float32)
-                            )
-
-                    completed_tds.append(
-                        TensorDict(
-                            {
-                                "state": unroll_obs,
-                                "actions": torch.tensor(
-                                    unroll_actions, dtype=torch.long
-                                ),
-                                "target_policies": torch.stack(unroll_policies),
-                                "target_values": torch.stack(unroll_values),
-                                "target_rewards": torch.stack(unroll_rewards),
-                            },
-                            batch_size=[],
-                        )
+                completed_tds.append(
+                    TensorDict(
+                        {
+                            "state": seq_obs,
+                            "actions": seq_actions,
+                            "target_policies": seq_policies,
+                            "target_values": seq_values,
+                            "target_rewards": seq_rewards,
+                            "valid": seq_valid,
+                        },
+                        batch_size=[MAX_GAME_STEPS],
                     )
+                )
 
                 trajectories[b_idx] = []
                 move_counts[b_idx] = 0
@@ -525,7 +500,7 @@ def actor_worker(
                 torch.from_numpy(obs["action_mask"]).to(device=device, dtype=torch.bool)
             )
 
-        action_probs = run_batched_mcts(
+        action_probs, root_values = run_batched_mcts(
             local_model,
             recurrent_fn,
             root_embed,
@@ -567,14 +542,16 @@ def actor_worker(
 
         if len(completed_tds) > 0:
             batch_td = torch.stack(completed_tds).to(device)
-            buffer.add_samples(batch_td)
+            buffer.add_transitions(batch_td, valid_mask=batch_td["valid"])
 
 
 def evaluator_worker(
     model_creator: Callable[[], nn.Module],
     shared_model: nn.Module,
     eval_queue: mp.Queue,
+    training_step: torch.Tensor,
     num_eval_games: int = NUM_EVAL_GAMES,
+    eval_interval_steps: int = EVAL_INTERVAL_STEPS,
     device_str: str = "cpu",
 ):
     """Background process evaluating model performance asynchronously."""
@@ -588,7 +565,7 @@ def evaluator_worker(
         legal_masks = action_mask_t.unsqueeze(0)
         players_t = torch.tensor([curr_player_idx], device=device, dtype=torch.long)
 
-        action_probs = run_batched_mcts(
+        action_probs, _ = run_batched_mcts(
             local_model,
             recurrent_fn,
             root_embed,
@@ -601,7 +578,15 @@ def evaluator_worker(
         action_idx_tensor, _ = argmax_selector(action_probs)
         return action_idx_tensor.squeeze().item()
 
+    next_eval_step = 0
+
     while True:
+        curr_step = int(training_step[0].item())
+        if curr_step < next_eval_step:
+            time.sleep(0.5)
+            continue
+
+        next_eval_step = curr_step + eval_interval_steps
         local_model.load_state_dict(shared_model.state_dict())
         eval_metrics = evaluate_pettingzoo_vs_random(
             env_fn=make_env,
@@ -609,8 +594,8 @@ def evaluator_worker(
             num_games=num_eval_games,
             device=device,
         )
+        eval_metrics["eval/step"] = curr_step
         eval_queue.put(eval_metrics)
-        time.sleep(5)
 
 
 def learner_worker(
@@ -618,6 +603,7 @@ def learner_worker(
     shared_model: nn.Module,
     buffer: SharedReplayBuffer,
     eval_queue: mp.Queue,
+    training_step: torch.Tensor,
     batch_size: int = BATCH_SIZE,
     learning_rate: float = LEARNING_RATE,
     weight_decay: float = WEIGHT_DECAY,
@@ -662,18 +648,41 @@ def learner_worker(
     latest_eval_metrics = {}
 
     while step_count < max_steps:
-        minibatch = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
-        if minibatch is None:
+        sample_res = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
+        if sample_res is None:
             time.sleep(0.01)
             continue
+        _, coords = sample_res
 
-        states = minibatch["state"].to(device)
-        actions = minibatch["actions"].to(device)
-        target_policies = minibatch["target_policies"].to(device)
-        target_values = minibatch["target_values"].to(device)
-        target_rewards = minibatch["target_rewards"].to(device)
+        # Vectorized dynamic unroll slice directly from stored sequence buffer
+        with buffer.lock:
+            unroll_data, valid_mask = slice_unrolls(
+                buffer.buffer_state.data,
+                coords,
+                unroll_steps=unroll_steps,
+                valid_lengths=buffer.buffer_state.valid_lengths,
+            )
+            seq_lens = buffer.buffer_state.valid_lengths[coords[0]].to(device)
+            terminal_idx = (seq_lens - 1).clamp(min=0)
+            term_vals = (
+                buffer.buffer_state.data["target_values"][coords[0], terminal_idx]
+                .squeeze(-1)
+                .to(device)
+            )
 
-        # 1. Initial Step k=0 Prediction
+        start_steps = coords[1].to(device)
+
+        # A step is valid only if within tensor boundary AND was part of the actual episode
+        ep_valid = unroll_data["valid"].bool() & valid_mask
+        policy_masks = ep_valid.float().to(device)
+
+        states = unroll_data["state"][:, 0].to(device)
+        actions = unroll_data["actions"].to(device)
+        target_policies = unroll_data["target_policies"].to(device)
+        target_values = unroll_data["target_values"].to(device)
+        target_rewards = unroll_data["target_rewards"].to(device)
+
+        # 1. Initial Step k=0 Prediction (guaranteed valid in-game state via prefix-sum sampling)
         s0, p0, v0 = local_model.initial_inference(states)
 
         raw_p_loss_0, _ = compute_cross_entropy_loss(p0, target_policies[:, 0])
@@ -681,7 +690,6 @@ def learner_worker(
 
         loss_p0 = raw_p_loss_0.mean()
         loss_v0 = raw_v_loss_0.mean()
-        # Initial step k=0 uses full weight (1.0), with value loss scaled by value_loss_weight
         total_loss = loss_p0 + value_loss_weight * loss_v0
 
         curr_s = s0
@@ -698,12 +706,28 @@ def learner_worker(
             curr_s = next_s
 
             raw_p_loss, _ = compute_cross_entropy_loss(p_k, target_policies[:, k])
-            raw_v_loss, _ = compute_mse_loss(v_k.view(-1), target_values[:, k].view(-1))
+            mask_k = policy_masks[:, k]
+            l_p = (raw_p_loss * mask_k).sum() / torch.clamp(mask_k.sum(), min=1.0)
+
+            # Absorbing post-terminal states (pure value formulation):
+            # NOTE: Under the pure value formulation (where transition rewards are 0.0 everywhere), the leaf value alone determines the entire trajectory return during MCTS tree backprop. Setting post-terminal values to 0.0 would dilute winning lines toward 0.0 (a draw) when MCTS simulations explore past terminal states. Therefore, absorbing states must preserve the terminal value from the perspective of the acting player at that step. Since players strictly alternate turns in TicTacToe:
+            # - At even steps relative to the terminal state (tau = 0, 2, 4...), it is the winning/losing player's turn -> value target = terminal_value
+            # - At odd steps relative to the terminal state (tau = 1, 3...), it is the opponent's turn -> value target = -terminal_value
+            step_k = start_steps + k
+            tau = step_k - (seq_lens - 1)
+            is_post_terminal = step_k >= seq_lens
+            alternating_sign = torch.where(tau % 2 == 0, 1.0, -1.0)
+            target_v_k = torch.where(
+                is_post_terminal,
+                alternating_sign * term_vals,
+                target_values[:, k].view(-1),
+            )
+
+            raw_v_loss, _ = compute_mse_loss(v_k.view(-1), target_v_k)
             raw_r_loss, _ = compute_mse_loss(
                 r_k.view(-1), target_rewards[:, k - 1].view(-1)
             )
 
-            l_p = raw_p_loss.mean()
             l_v = raw_v_loss.mean()
             l_r = raw_r_loss.mean()
 
@@ -721,6 +745,7 @@ def learner_worker(
 
         shared_model.load_state_dict(local_model.state_dict())
         step_count += 1
+        training_step[0] = step_count
 
         while not eval_queue.empty():
             try:
@@ -773,21 +798,28 @@ def main():
     shared_model = model_creator_fn().to(device)
     shared_model.share_memory()
 
+    training_step = torch.zeros(1, dtype=torch.long).share_memory_()
+
     buffer_shapes = {
         "state": (NUM_CHANNELS, 3, 3),
-        "actions": (UNROLL_STEPS,),
-        "target_policies": (UNROLL_STEPS + 1, 9),
-        "target_values": (UNROLL_STEPS + 1, 1),
-        "target_rewards": (UNROLL_STEPS, 1),
+        "actions": (),
+        "target_policies": (9,),
+        "target_values": (1,),
+        "target_rewards": (1,),
+        "valid": (),
     }
-    buffer = SharedReplayBuffer(REPLAY_BUFFER_CAPACITY, buffer_shapes, device=device)
+    buffer = SharedReplayBuffer(
+        (BUFFER_NUM_GAMES, MAX_GAME_STEPS),
+        buffer_shapes,
+        device=device,
+    )
     eval_queue = mp.Queue()
 
     processes = []
 
     learner_p = mp.Process(
         target=learner_worker,
-        args=(model_creator_fn, shared_model, buffer, eval_queue),
+        args=(model_creator_fn, shared_model, buffer, eval_queue, training_step),
         kwargs={"device_str": device_str},
     )
     learner_p.start()
@@ -804,7 +836,7 @@ def main():
 
     eval_p = mp.Process(
         target=evaluator_worker,
-        args=(model_creator_fn, shared_model, eval_queue),
+        args=(model_creator_fn, shared_model, eval_queue, training_step),
         kwargs={"device_str": device_str},
     )
     eval_p.daemon = True

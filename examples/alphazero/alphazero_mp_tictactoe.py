@@ -364,7 +364,7 @@ def actor_worker(
 
         if len(completed_tds) > 0:
             batch_td = torch.cat(completed_tds, dim=0).to(device)
-            buffer.add_samples(batch_td)
+            buffer.add_transitions(batch_td)
 
 
 def evaluator_worker(
@@ -455,10 +455,11 @@ def learner_worker(
     latest_eval_metrics = {}
 
     while step_count < max_steps:
-        minibatch = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
-        if minibatch is None:
+        sample_res = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
+        if sample_res is None:
             time.sleep(0.01)
             continue
+        minibatch, _ = sample_res
 
         states = minibatch["state"].to(device)
         target_policies = minibatch["target_policy"].to(device)

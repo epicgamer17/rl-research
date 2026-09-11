@@ -125,17 +125,17 @@ class ReplayBufferActor:
 
     def sample_batch(
         self, batch_size: int, beta: float, min_size: int = 0
-    ) -> Tuple[Any, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[Any, Any, torch.Tensor]:
         if self.buffer_state.size < min_size:
             return None, None, None
         beta_tensor = torch.tensor(beta, dtype=torch.float32)
         return sample_per(self.buffer_state, batch_size, beta_tensor)
 
     def update_priorities(
-        self, tree_indices: torch.Tensor, td_errors: torch.Tensor, alpha: float
+        self, coords: Union[torch.Tensor, Tuple[torch.Tensor, ...]], td_errors: torch.Tensor, alpha: float
     ):
         self.buffer_state = update_priorities(
-            self.buffer_state, tree_indices, td_errors, alpha
+            self.buffer_state, coords, td_errors, alpha
         )
 
     def get_info(self) -> Dict[str, Any]:
@@ -361,9 +361,9 @@ class LearnerActor:
             )
             return None
 
-        batch, indices, is_weights = result
+        batch, coords, is_weights = result
         batch = batch.to(self.device)
-        indices = indices.to(self.device)
+        coords = coords.to(self.device)
         is_weights = is_weights.to(self.device)
 
         # 1. Forward Passes (Online and Target)
@@ -407,7 +407,7 @@ class LearnerActor:
 
         # Update Priorities
         td_errors = info["priorities"].detach().cpu()
-        self.buffer.update_priorities.remote(indices.cpu(), td_errors, ALPHA)
+        self.buffer.update_priorities.remote(coords.cpu(), td_errors, ALPHA)
 
         self.step_count += 1
         if self.step_count % TARGET_NET_UPDATE_FREQ == 0:

@@ -238,8 +238,9 @@ def train():
         ready_chunks = accumulator(transition.unsqueeze(0))
 
         if ready_chunks.batch_size[0] > 0:
-            # Write full sequences to buffer
-            buffer_state, _ = circular_write_strategy_(buffer_state, ready_chunks)
+            buffer_state, _ = circular_write_strategy_(
+                buffer_state, ready_chunks, valid_mask=ready_chunks["valid"]
+            )
 
         # Update Recurrent State
         obs = next_obs
@@ -263,7 +264,7 @@ def train():
 
         # 4. Training Phase
         if step > MIN_BUFFER_SIZE and step % UPDATE_FREQ == 0:
-            batch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+            batch, _ = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
 
             # Sequence Q-learning update
             # We use the stored hidden states from the START of the sequence

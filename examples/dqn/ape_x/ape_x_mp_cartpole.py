@@ -21,15 +21,7 @@ from functools import partial
 from typing import Tuple, Dict, Any, Callable, List
 
 from atomic_rl.buffers import SharedPERBuffer
-from atomic_rl.buffers.replay import (
-    init_per_buffer,
-    sample_per,
-    update_priorities,
-    with_per_tracking,
-    circular_write_strategy_,
-    make_n_step_accumulator,
-    PERBufferState,
-)
+from atomic_rl.buffers.replay import make_n_step_accumulator
 from atomic_rl.losses import compute_huber_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
@@ -245,9 +237,9 @@ def learner_worker(
             time.sleep(0.1)
             continue
 
-        batch, indices, is_weights = result
+        batch, coords, is_weights = result
         batch = batch.to(device)
-        indices = indices.to(device)
+        coords = coords.to(device)
         is_weights = is_weights.to(device)
 
         # 1. Forward Passes (Online and Target)
@@ -294,7 +286,7 @@ def learner_worker(
 
         # Update priorities
         td_errors = info["priorities"].detach().cpu()
-        buffer.update_priorities(indices.cpu(), td_errors, ALPHA)
+        buffer.update_priorities(coords.cpu(), td_errors, ALPHA)
 
         step_count += 1
         if step_count % TARGET_NET_UPDATE_FREQ == 0:

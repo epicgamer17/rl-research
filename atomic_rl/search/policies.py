@@ -31,6 +31,7 @@ def get_mcts_visit_policy(
 
     if temperature == 0.0:
         # TODO: right now for 2 equally visited actions this will output 0.5, 0.5. Is this what we want? Or do we want to use F.one_hot and get a 1, 0? or 0, 1? Should we add a random tie-breaking method?
+        # TODO: maybe add a dim arg instead of hardcoding the dim
         is_max = (
             visit_counts == torch.max(visit_counts, dim=-1, keepdim=True).values
         ).float()

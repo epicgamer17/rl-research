@@ -52,10 +52,10 @@ from atomic_rl.action_selection import (
     compute_expected_value,
     sample_distribution,
 )
-from atomic_rl.buffers import SharedReplayBuffer
+from atomic_rl.buffers import SharedReplayBuffer, slice_unrolls
 from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.schedules import get_stepwise_schedule
-from atomic_rl.search import fpu_parent_value, mcts_search, qtransform_by_min_max
+from atomic_rl.search import mcts_search, qtransform_by_min_max
 from atomic_rl.transforms import (
     compute_contractive_transform,
     compute_inverse_contractive_transform,
@@ -66,23 +66,23 @@ from atomic_rl.utils import min_max_normalize, scale_gradient
 # ---------------------------------------------------------------------------
 # Hyperparameters & Constants
 # ---------------------------------------------------------------------------
-TOTAL_TRAINING_STEPS = 10000
+TOTAL_TRAINING_STEPS = 20000
 NUM_ACTORS = 2
 ENVS_PER_ACTOR = 4
-MIN_BUFFER_SIZE = 128
-EVAL_INTERVAL_STEPS = 200
+MIN_BUFFER_SIZE = 500  # Minimum number of valid transitions before training starts
+EVAL_INTERVAL_STEPS = 500
 PARAM_SYNC_INTERVAL = 50
 NUM_MCTS_SIMULATIONS = 25
 UNROLL_STEPS = 5
 TD_STEPS = 5
-GAMMA = 0.99
+GAMMA = 0.99  # MuZero Appendix C standard discount; ensures G_500 vs G_300 has ~2.1 atom delta
 EPSILON_TRANSFORM = 0.001
 
-# Discrete Support Bounds (returns in CartPole with gamma=0.99 are bounded in [0, 100])
-# Contractive transform scales 100 to h(100) ≈ 9.15, so support [-20, 20] (41 atoms) is ample.
-SUPPORT_MIN = -20
-SUPPORT_MAX = 20
-NUM_ATOMS = SUPPORT_MAX - SUPPORT_MIN + 1  # 41 atoms
+# Discrete Support Bounds (max discounted return at gamma=0.997 is ~259.1 -> h(259.1) ≈ 15.39)
+# Support [-25, 25] (51 atoms) provides fine-grained, non-saturating resolution up to 500 steps.
+SUPPORT_MIN = -25
+SUPPORT_MAX = 25
+NUM_ATOMS = SUPPORT_MAX - SUPPORT_MIN + 1  # 51 atoms
 
 # Environment & Network Shapes
 OBS_DIM = 4
@@ -91,7 +91,7 @@ LATENT_DIM = 64
 
 # MCTS PUCT Search Constants
 C_PUCT = 1.25
-DIRICHLET_ALPHA = 0.3  # Standard for small discrete action spaces
+DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25
 
 # Temperature Schedule Constants (MuZero Atari Appendix B "Action Selection")
@@ -100,14 +100,15 @@ DIRICHLET_EPSILON = 0.25
 # temperature of 0.25. This ensures that the action selection becomes greedier
 # as training progresses.
 TEMP_THRESHOLDS = [
-    int(TOTAL_TRAINING_STEPS * 0.5),   # 50% of training (5,000 steps)
+    int(TOTAL_TRAINING_STEPS * 0.50),  # 50% of training (5,000 steps)
     int(TOTAL_TRAINING_STEPS * 0.75),  # 75% of training (7,500 steps)
 ]
 TEMP_VALUES = [1.0, 0.5, 0.25]
 
 # Optimization & Network Parameters
 BATCH_SIZE = 64
-REPLAY_BUFFER_CAPACITY = 20000
+MAX_EPISODE_STEPS = 500
+BUFFER_NUM_EPISODES = 200  # 200 episodes * 500 steps = 100,000 steps capacity
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
 VALUE_LOSS_WEIGHT = 0.25  # MuZero Table S1 standard
@@ -324,11 +325,9 @@ def run_batched_mcts(
     root_vector_value = root_scalar_value.view(-1, 1)
     dirichlet_eps = DIRICHLET_EPSILON if explore_dirichlet else 0.0
 
-    # Single-player dynamic min-max normalization with parent FPU
-    qtransform = functools.partial(
-        qtransform_by_min_max,
-        fpu_fn=fpu_parent_value,
-    )
+    # Single-player dynamic min-max normalization matching MuZero paper & mctx
+    # (unvisited actions mapped to min_value, normalizing value_score to 0.0)
+    qtransform = qtransform_by_min_max
 
     action_probs, tree = mcts_search(
         root_embeddings=s0,
@@ -346,7 +345,9 @@ def run_batched_mcts(
         pb_c_init=C_PUCT,
         temperature=temperature,
     )
-    return action_probs, root_scalar_value
+    # Return MCTS root search value (root.value() in MuZero paper), not raw prior network value
+    root_search_value = tree["node_values"][:, 0, 0].detach()
+    return action_probs, root_search_value
 
 
 # ============================================================================
@@ -404,12 +405,13 @@ def actor_worker(
             values=TEMP_VALUES,
         )
 
+        # Generate soft visit policy targets (tau=1.0) matching MuZero pseudocode
         action_probs, root_values = run_batched_mcts(
             local_model,
             recurrent_fn,
             root_embed,
             num_simulations=num_simulations,
-            temperature=temp,
+            temperature=1.0,
             explore_dirichlet=True,
         )
 
@@ -417,9 +419,21 @@ def actor_worker(
             target_policy = action_probs[b_idx]
             root_val = root_values[b_idx].item()
 
-            dist = torch.distributions.Categorical(probs=target_policy)
-            action_idx_t, _ = sample_distribution(dist, explore=True)
-            action = action_idx_t.item()
+            if temp == 0.0:
+                action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
+                action = action_idx_tensor.squeeze().item()
+            elif temp == 1.0:
+                dist = torch.distributions.Categorical(probs=target_policy)
+                action_idx_t, _ = sample_distribution(dist, explore=True)
+                action = action_idx_t.item()
+            else:
+                sampling_policy = torch.pow(target_policy, 1.0 / temp)
+                sampling_policy = sampling_policy / sampling_policy.sum(
+                    dim=-1, keepdim=True
+                )
+                dist = torch.distributions.Categorical(probs=sampling_policy)
+                action_idx_t, _ = sample_distribution(dist, explore=True)
+                action = action_idx_t.item()
 
             next_o, reward, terminated, truncated, _ = envs[b_idx].step(action)
             done = terminated or truncated
@@ -452,75 +466,48 @@ def actor_worker(
                             discount *= gamma
                         else:
                             break
-                    # Add bootstrapped root value at t + n if within episode
+                    # Add bootstrapped root value at t + n
+                    # NOTE: We do not handle truncation separately from termination here; like the official
+                    # MuZero paper pseudocode (where bootstrap_index >= len(root_values) yields value = 0),
+                    # episodes that end at the horizon limit are treated as terminal without extra bootstrapping.
                     if t + td_steps < ep_len:
                         return_t += discount * ep_root_vals[t + td_steps]
                     ep_z_values.append(return_t)
 
-                # Slices episode steps into K+1 unroll blocks for training
-                for t in range(ep_len):
-                    unroll_obs = ep_obs[t]
-                    unroll_actions = []
-                    unroll_policies = []
-                    unroll_values = []
-                    unroll_rewards = []
+                # Pack episode into fixed-length sequence [MAX_EPISODE_STEPS, ...]
+                seq_obs = torch.zeros((MAX_EPISODE_STEPS, OBS_DIM), dtype=torch.float32)
+                seq_actions = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.long)
+                seq_policies = torch.zeros(
+                    (MAX_EPISODE_STEPS, NUM_ACTIONS), dtype=torch.float32
+                )
+                seq_values = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_rewards = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_valid = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
 
-                    for k in range(unroll_steps + 1):
-                        step_idx = t + k
-                        if step_idx < ep_len:
-                            unroll_policies.append(ep_policies[step_idx])
-                            unroll_values.append(
-                                torch.tensor(
-                                    [ep_z_values[step_idx]], dtype=torch.float32
-                                )
-                            )
-                        else:
-                            # NOTE: We do not perform post-terminal loss masking, as we understand it to be
-                            # the case that the value and reward networks must be trained to predict 0.0 and 0.0
-                            # for absorbing post-terminal states.
-                            unroll_policies.append(
-                                torch.full(
-                                    (NUM_ACTIONS,),
-                                    1.0 / NUM_ACTIONS,
-                                    dtype=torch.float32,
-                                )
-                            )
-                            unroll_values.append(
-                                torch.tensor([0.0], dtype=torch.float32)
-                            )
+                seq_obs[:ep_len] = torch.stack(ep_obs)
+                seq_actions[:ep_len] = torch.tensor(ep_actions, dtype=torch.long)
+                seq_policies[:ep_len] = torch.stack(ep_policies)
+                seq_values[:ep_len] = torch.tensor(
+                    ep_z_values, dtype=torch.float32
+                ).unsqueeze(-1)
+                seq_rewards[:ep_len] = torch.tensor(
+                    ep_rewards, dtype=torch.float32
+                ).unsqueeze(-1)
+                seq_valid[:ep_len] = 1.0
 
-                        if k > 0:
-                            prev_act_idx = t + k - 1
-                            # TODO: a bit messy maybe? this is so terminal actions are not overridden.
-                            if prev_act_idx < ep_len:
-                                # Real episode transition: record action taken and resulting reward
-                                unroll_actions.append(ep_actions[prev_act_idx])
-                                unroll_rewards.append(
-                                    torch.tensor(
-                                        [ep_rewards[prev_act_idx]], dtype=torch.float32
-                                    )
-                                )
-                            else:
-                                # Absorbing post-terminal transition: dummy action 0 and zero reward
-                                unroll_actions.append(0)
-                                unroll_rewards.append(
-                                    torch.tensor([0.0], dtype=torch.float32)
-                                )
-
-                    completed_tds.append(
-                        TensorDict(
-                            {
-                                "state": unroll_obs,
-                                "actions": torch.tensor(
-                                    unroll_actions, dtype=torch.long
-                                ),
-                                "target_policies": torch.stack(unroll_policies),
-                                "target_values": torch.stack(unroll_values),
-                                "target_rewards": torch.stack(unroll_rewards),
-                            },
-                            batch_size=[],
-                        )
+                completed_tds.append(
+                    TensorDict(
+                        {
+                            "state": seq_obs,
+                            "actions": seq_actions,
+                            "target_policies": seq_policies,
+                            "target_values": seq_values,
+                            "target_rewards": seq_rewards,
+                            "valid": seq_valid,
+                        },
+                        batch_size=[MAX_EPISODE_STEPS],
                     )
+                )
 
                 trajectories[b_idx] = []
                 next_o, _ = envs[b_idx].reset()
@@ -529,65 +516,94 @@ def actor_worker(
 
         if len(completed_tds) > 0:
             batch_td = torch.stack(completed_tds).to(device)
-            buffer.add_samples(batch_td)
+            buffer.add_transitions(batch_td, valid_mask=batch_td["valid"])
+
+
+def evaluate_model(
+    model: nn.Module,
+    num_eval_episodes: int = NUM_EVAL_EPISODES,
+    device: torch.device = torch.device("cpu"),
+    seed: int = SEED,
+) -> dict:
+    """Evaluates model performance greedily (temperature=0.0) across parallel CartPole-v1 environments."""
+    model.eval()
+    envs = [make_env() for _ in range(num_eval_episodes)]
+    recurrent_fn = create_recurrent_fn(model)
+
+    obs_list = [env.reset(seed=seed + i * 100)[0] for i, env in enumerate(envs)]
+    episode_returns = [0.0] * num_eval_episodes
+    episode_lengths = [0] * num_eval_episodes
+    dones = [False] * num_eval_episodes
+
+    while not all(dones):
+        active_indices = [i for i, d in enumerate(dones) if not d]
+        active_obs = np.array([obs_list[i] for i in active_indices], dtype=np.float32)
+        root_embed = torch.from_numpy(active_obs).to(device)
+
+        action_probs, _ = run_batched_mcts(
+            model,
+            recurrent_fn,
+            root_embed,
+            num_simulations=NUM_MCTS_SIMULATIONS,
+            temperature=0.0,
+            explore_dirichlet=False,
+        )
+        action_idx_tensor, _ = argmax_selector(action_probs)
+        actions = action_idx_tensor.squeeze(-1).cpu().numpy()
+
+        for idx, act in zip(active_indices, actions):
+            obs, reward, terminated, truncated, _ = envs[idx].step(int(act))
+            episode_returns[idx] += reward
+            episode_lengths[idx] += 1
+            if terminated or truncated:
+                dones[idx] = True
+            else:
+                obs_list[idx] = obs
+
+    for env in envs:
+        env.close()
+
+    return {
+        "eval/mean_episode_return": sum(episode_returns) / len(episode_returns),
+        "eval/min_episode_return": min(episode_returns),
+        "eval/max_episode_return": max(episode_returns),
+        "eval/mean_episode_length": sum(episode_lengths) / len(episode_lengths),
+        "eval/min_episode_length": min(episode_lengths),
+        "eval/max_episode_length": max(episode_lengths),
+    }
 
 
 def evaluator_worker(
     model_creator: Callable[[], nn.Module],
     shared_model: nn.Module,
     eval_queue: mp.Queue,
+    training_step: torch.Tensor,
     num_eval_episodes: int = NUM_EVAL_EPISODES,
+    eval_interval_steps: int = EVAL_INTERVAL_STEPS,
     device_str: str = "cpu",
 ):
     """Background process evaluating model performance asynchronously on CartPole-v1."""
     device = torch.device(device_str)
     local_model = model_creator().to(device)
-    local_model.eval()
-
-    env = make_env()
+    next_eval_step = 0
 
     while True:
+        curr_step = int(training_step[0].item())
+        if curr_step < next_eval_step:
+            time.sleep(0.5)
+            continue
+
+        next_eval_step = curr_step + eval_interval_steps
         local_model.load_state_dict(shared_model.state_dict())
-        recurrent_fn = create_recurrent_fn(local_model)
 
-        episode_returns = []
-        episode_lengths = []
-
-        for _ in range(num_eval_episodes):
-            obs, _ = env.reset()
-            ep_return = 0.0
-            ep_len = 0
-            done = False
-
-            while not done:
-                root_embed = torch.from_numpy(np.array([obs], dtype=np.float32)).to(
-                    device
-                )
-                action_probs, _ = run_batched_mcts(
-                    local_model,
-                    recurrent_fn,
-                    root_embed,
-                    num_simulations=NUM_MCTS_SIMULATIONS,
-                    temperature=0.0,
-                    explore_dirichlet=False,
-                )
-                action_idx_tensor, _ = argmax_selector(action_probs)
-                action = action_idx_tensor.squeeze().item()
-
-                obs, reward, terminated, truncated, _ = env.step(action)
-                ep_return += reward
-                ep_len += 1
-                done = terminated or truncated
-
-            episode_returns.append(ep_return)
-            episode_lengths.append(ep_len)
-
-        eval_metrics = {
-            "eval/mean_episode_return": sum(episode_returns) / len(episode_returns),
-            "eval/mean_episode_length": sum(episode_lengths) / len(episode_lengths),
-        }
+        eval_metrics = evaluate_model(
+            local_model,
+            num_eval_episodes=num_eval_episodes,
+            device=device,
+            seed=SEED,
+        )
+        eval_metrics["eval/step"] = curr_step
         eval_queue.put(eval_metrics)
-        time.sleep(5)
 
 
 def learner_worker(
@@ -602,6 +618,7 @@ def learner_worker(
     value_loss_weight: float = VALUE_LOSS_WEIGHT,
     unroll_steps: int = UNROLL_STEPS,
     max_steps: int = TOTAL_TRAINING_STEPS,
+    num_eval_episodes: int = NUM_EVAL_EPISODES,
     device_str: str = "cpu",
 ):
     """Learner process training model weights on sampled minibatches using two-hot cross-entropy."""
@@ -629,6 +646,8 @@ def learner_worker(
             "gamma": GAMMA,
             "c_puct": C_PUCT,
             "batch_size": batch_size,
+            "buffer_num_episodes": BUFFER_NUM_EPISODES,
+            "max_episode_steps": MAX_EPISODE_STEPS,
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "value_loss_weight": value_loss_weight,
@@ -641,30 +660,46 @@ def learner_worker(
     latest_eval_metrics = {}
 
     while step_count < max_steps:
-        minibatch = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
-        if minibatch is None:
+        sample_res = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
+        if sample_res is None:
             time.sleep(0.01)
             continue
 
-        states = minibatch["state"].to(device)
-        actions = minibatch["actions"].to(device)
-        target_policies = minibatch["target_policies"].to(device)
-        target_values = minibatch["target_values"].to(device)
-        target_rewards = minibatch["target_rewards"].to(device)
+        _, coords = sample_res
+
+        # Vectorized dynamic unroll slice directly from stored sequence buffer
+        with buffer.lock:
+            unroll_data, valid_mask = slice_unrolls(
+                buffer.buffer_state.data,
+                coords,
+                unroll_steps=unroll_steps,
+                valid_lengths=buffer.buffer_state.valid_lengths,
+            )
+
+        # A step is valid only if within tensor boundary AND was part of the actual episode
+        ep_valid = unroll_data["valid"].bool() & valid_mask
+        policy_masks = ep_valid.float().to(device)
+
+        states = unroll_data["state"][:, 0].to(device)
+        actions = unroll_data["actions"].to(device)
+        target_policies = unroll_data["target_policies"].to(device)
+        target_values = unroll_data["target_values"].to(device)
+        target_rewards = unroll_data["target_rewards"].to(device)
 
         # 1. Initial Step k=0 Prediction
         s0, p0, _, v0_logits = local_model.initial_inference(states)
 
         raw_p_loss_0, _ = compute_cross_entropy_loss(p0, target_policies[:, 0])
+        mask_0 = policy_masks[:, 0]
+        loss_p0 = (raw_p_loss_0 * mask_0).sum() / torch.clamp(mask_0.sum(), min=1.0)
 
         # Value target: contractive scaling + two-hot projection
         z0 = target_values[:, 0].squeeze(-1)
         z0_scaled = compute_contractive_transform(z0, epsilon=EPSILON_TRANSFORM)
         z0_two_hot = compute_two_hot_distribution(z0_scaled, SUPPORT_MIN, SUPPORT_MAX)
         raw_v_loss_0, _ = compute_cross_entropy_loss(v0_logits, z0_two_hot)
-
-        loss_p0 = raw_p_loss_0.mean()
         loss_v0 = raw_v_loss_0.mean()
+        # Initial step k=0 uses full weight 1.0 (paper: predictions = [(1.0, value, reward, policy_logits)]), not 1/K
         total_loss = loss_p0 + value_loss_weight * loss_v0
 
         curr_s = s0
@@ -683,6 +718,8 @@ def learner_worker(
             curr_s = next_s
 
             raw_p_loss, _ = compute_cross_entropy_loss(p_k, target_policies[:, k])
+            mask_k = policy_masks[:, k]
+            l_p = (raw_p_loss * mask_k).sum() / torch.clamp(mask_k.sum(), min=1.0)
 
             # Value target at step k
             zk = target_values[:, k].squeeze(-1)
@@ -700,7 +737,6 @@ def learner_worker(
             )
             raw_r_loss, _ = compute_cross_entropy_loss(r_k_logits, uk_two_hot)
 
-            l_p = raw_p_loss.mean()
             l_v = raw_v_loss.mean()
             l_r = raw_r_loss.mean()
 
@@ -720,9 +756,11 @@ def learner_worker(
         step_count += 1
         training_step[0] = step_count
 
+        new_eval_metrics = None
         while not eval_queue.empty():
             try:
-                latest_eval_metrics = eval_queue.get_nowait()
+                new_eval_metrics = eval_queue.get_nowait()
+                latest_eval_metrics = new_eval_metrics
             except Exception:
                 break
 
@@ -736,17 +774,53 @@ def learner_worker(
             ),
             "buffer/size": buffer.size,
         }
-        log_dict.update(latest_eval_metrics)
+        if new_eval_metrics is not None:
+            log_dict.update(new_eval_metrics)
 
         if step_count % 100 == 0:
+            eval_info = ""
+            if "eval/mean_episode_return" in latest_eval_metrics:
+                mean_r = latest_eval_metrics["eval/mean_episode_return"]
+                min_r = latest_eval_metrics.get("eval/min_episode_return", mean_r)
+                max_r = latest_eval_metrics.get("eval/max_episode_return", mean_r)
+                mean_l = latest_eval_metrics["eval/mean_episode_length"]
+                min_l = latest_eval_metrics.get("eval/min_episode_length", mean_l)
+                max_l = latest_eval_metrics.get("eval/max_episode_length", mean_l)
+                eval_info = (
+                    f" | Eval Return: {mean_r:.1f} [min: {min_r:.0f}, max: {max_r:.0f}] | "
+                    f"Eval Len: {mean_l:.1f} [min: {min_l:.0f}, max: {max_l:.0f}]"
+                )
             print(
                 f"[Learner Step {step_count}/{max_steps}] Loss: {total_loss.item():.4f} | "
                 f"Policy: {log_dict['loss/policy']:.4f} | Value: {log_dict['loss/value']:.4f} | "
-                f"Reward: {log_dict['loss/reward']:.4f} | Buffer: {buffer.size}",
+                f"Reward: {log_dict['loss/reward']:.4f} | Buffer: {buffer.size}{eval_info}",
                 flush=True,
             )
 
         wandb.log(log_dict)
+
+    print(
+        f"\n[Learner Step {max_steps}] Running final evaluation on step {max_steps} model...",
+        flush=True,
+    )
+    final_metrics = evaluate_model(
+        local_model,
+        num_eval_episodes=num_eval_episodes,
+        device=device,
+        seed=SEED,
+    )
+    final_metrics["eval/step"] = max_steps
+    wandb.log(final_metrics)
+
+    mean_r = final_metrics["eval/mean_episode_return"]
+    min_r = final_metrics["eval/min_episode_return"]
+    max_r = final_metrics["eval/max_episode_return"]
+    mean_l = final_metrics["eval/mean_episode_length"]
+    print(
+        f"[Final Evaluation at Step {max_steps}] Mean Return: {mean_r:.1f} [min: {min_r:.0f}, max: {max_r:.0f}] | "
+        f"Mean Len: {mean_l:.1f}",
+        flush=True,
+    )
 
     wandb.finish()
 
@@ -764,7 +838,7 @@ def model_creator_fn() -> CartPoleMuZeroNet:
     )
 
 
-def main():
+def main(max_steps: int = TOTAL_TRAINING_STEPS):
     try:
         mp.set_start_method("spawn", force=True)
     except RuntimeError:
@@ -780,12 +854,17 @@ def main():
 
     buffer_shapes = {
         "state": (OBS_DIM,),
-        "actions": (UNROLL_STEPS,),
-        "target_policies": (UNROLL_STEPS + 1, NUM_ACTIONS),
-        "target_values": (UNROLL_STEPS + 1, 1),
-        "target_rewards": (UNROLL_STEPS, 1),
+        "actions": (),
+        "target_policies": (NUM_ACTIONS,),
+        "target_values": (1,),
+        "target_rewards": (1,),
+        "valid": (),
     }
-    buffer = SharedReplayBuffer(REPLAY_BUFFER_CAPACITY, buffer_shapes, device=device)
+    buffer = SharedReplayBuffer(
+        (BUFFER_NUM_EPISODES, MAX_EPISODE_STEPS),
+        buffer_shapes,
+        device=device,
+    )
     eval_queue = mp.Queue()
 
     processes = []
@@ -793,7 +872,7 @@ def main():
     learner_p = mp.Process(
         target=learner_worker,
         args=(model_creator_fn, shared_model, buffer, eval_queue, training_step),
-        kwargs={"device_str": device_str},
+        kwargs={"device_str": device_str, "max_steps": max_steps},
     )
     learner_p.start()
     processes.append(learner_p)
@@ -809,7 +888,7 @@ def main():
 
     eval_p = mp.Process(
         target=evaluator_worker,
-        args=(model_creator_fn, shared_model, eval_queue),
+        args=(model_creator_fn, shared_model, eval_queue, training_step),
         kwargs={"device_str": device_str},
     )
     eval_p.daemon = True

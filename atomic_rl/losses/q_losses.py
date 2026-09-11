@@ -58,8 +58,9 @@ def compute_cross_entropy_loss(
     assert (
         predictions.shape == targets.shape
     ), f"Shape mismatch: {predictions.shape} vs {targets.shape}"
-    log_probs = F.log_softmax(predictions, dim=-1)
     # Cross-entropy: - sum(p_target * log(p_online))
+    # TODO: maybe add a dim arg instead of hardcoding the dim
+    log_probs = F.log_softmax(predictions, dim=-1)
     raw_losses = -(targets * log_probs).sum(dim=-1)
 
     info = {

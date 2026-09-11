@@ -29,6 +29,7 @@ def compute_expected_value(
         predictions.shape[-1] == support.shape[-1]
     ), f"Atoms dimension mismatch in compute_expected_value: predictions {predictions.shape} vs support {support.shape}"
 
+    # TODO: maybe add a dim arg instead of hardcoding the dim
     probs = F.softmax(predictions, dim=-1)
 
     # Broadcast support safely to match probs
@@ -67,6 +68,7 @@ def argmax_selector(
     vals_with_noise = predictions + noise
 
     # Force [*Batch, 1] output for consistency
+    # TODO: maybe add a dim arg instead of hardcoding the dim
     action = torch.argmax(vals_with_noise, dim=-1, keepdim=True)
     return action, {}
 
@@ -217,6 +219,7 @@ def compute_masked_entropy(
         p_log_p,
         logits.new_zeros(()),
     )
+    # TODO: maybe add a dim arg instead of hardcoding the dim
     return -p_log_p.sum(dim=-1)
 
 
