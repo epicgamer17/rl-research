@@ -1,12 +1,18 @@
 import pytest
 import torch
 import torch.nn as nn
+import numpy as np
 
 from atomic_rl.metrics import (
     compute_dead_units_proportion,
     compute_average_weight_magnitude,
     compute_average_gradient_magnitude,
     compute_stable_rank,
+    compute_expected_value,
+    compute_iqm,
+    create_wandb_plasticity_metrics,
+    create_wandb_explained_variance,
+    create_wandb_episode_metrics,
 )
 
 pytestmark = pytest.mark.unit
@@ -110,3 +116,63 @@ def test_stable_rank_orthogonal():
     # This yields well-distributed singular values across its dimensions.
     rank = compute_stable_rank(activations)
     assert rank > 1.0
+
+
+# ==========================================
+# Tests for compute_expected_value
+# ==========================================
+
+
+def test_compute_expected_value():
+    probs = torch.tensor([[0.2, 0.5, 0.3], [0.1, 0.1, 0.8]])
+    support = torch.tensor([1.0, 2.0, 3.0])
+
+    # Batch 0: 0.2*1 + 0.5*2 + 0.3*3 = 0.2 + 1.0 + 0.9 = 2.1
+    # Batch 1: 0.1*1 + 0.1*2 + 0.8*3 = 0.1 + 0.2 + 2.4 = 2.7
+    expected = compute_expected_value(probs, support, probs=True)
+    torch.testing.assert_close(expected, torch.tensor([2.1, 2.7]))
+
+    with pytest.raises(AssertionError, match="Atoms dimension mismatch"):
+        compute_expected_value(probs, torch.tensor([1.0, 2.0]))
+
+
+# ==========================================
+# Tests for compute_iqm
+# ==========================================
+
+
+def test_compute_iqm():
+    # Array with clear outliers: [1, 2, 3, 4, 5, 6, 7, 8, 100]
+    # IQM should discard bottom 25% and top 25%
+    scores = np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0])
+    iqm = compute_iqm(scores)
+    # 25th percentile is 30.0, 75th percentile is 70.0
+    # Trimmed: [30, 40, 50, 60, 70] -> Mean = 50.0
+    assert iqm == pytest.approx(50.0)
+
+    # Tensor compatibility
+    iqm_torch = compute_iqm(torch.tensor(scores))
+    assert iqm_torch == pytest.approx(50.0)
+
+
+# ==========================================
+# Tests for W&B metric helpers
+# ==========================================
+
+
+def test_wandb_metric_helpers():
+    p_dict = create_wandb_plasticity_metrics(10, dead_units_proportion=0.25, stable_rank=3.5)
+    assert p_dict["step"] == 10
+    assert p_dict["plasticity/dead_units_proportion"] == 0.25
+    assert p_dict["plasticity/stable_rank"] == 3.5
+
+    ev_dict = create_wandb_explained_variance(20, 0.88)
+    assert ev_dict["step"] == 20
+    assert ev_dict["metrics/explained_variance"] == 0.88
+
+    ep_dict = create_wandb_episode_metrics(100, episode_return=250.5, episode_length=500, success_rate=1.0)
+    assert ep_dict["step"] == 100
+    assert ep_dict["charts/episodic_return"] == 250.5
+    assert ep_dict["charts/episodic_length"] == 500
+    assert ep_dict["charts/success_rate"] == 1.0
+

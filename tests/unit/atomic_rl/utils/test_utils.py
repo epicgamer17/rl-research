@@ -5,6 +5,7 @@ from atomic_rl.utils import (
     ema_update,
     ema_update_,
     to_numpy_action,
+    set_seed,
 )
 from atomic_rl.utils.normalization import (
     compute_welford_stats,
@@ -378,3 +379,22 @@ def test_min_max_normalize_dimensions_and_scaling():
     # 8. Native PyTorch error on invalid dim type
     with pytest.raises(TypeError):
         min_max_normalize(t2, dim="last")
+
+
+def test_set_seed():
+    """Verify that setting the seed produces identical random sequences."""
+    import random
+    seed = 123
+    set_seed(seed)
+    r1 = random.random()
+    np1 = np.random.rand()
+    t1 = torch.rand(1).item()
+
+    set_seed(seed)
+    r2 = random.random()
+    np2 = np.random.rand()
+    t2 = torch.rand(1).item()
+
+    assert r1 == r2
+    assert np1 == np2
+    assert t1 == t2

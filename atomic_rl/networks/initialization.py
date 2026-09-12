@@ -8,30 +8,6 @@ import torch.nn as nn
 from tensordict import TensorDict
 
 
-# TODO: this is not really related to networks, more just a utility. this should be moved.
-def set_seed(seed: int) -> None:
-    """
-    Sets random seeds for reproducibility across random, numpy, and torch.
-
-    Args:
-        seed: The integer seed to use.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        # Ensure deterministic behavior for some ops if needed,
-        # though this can slow down performance.
-        # torch.backends.cudnn.deterministic = True
-        # torch.backends.cudnn.benchmark = False
-
-    if torch.backends.mps.is_available():
-        torch.mps.manual_seed(seed)
-
-
 # TODO: unify our custom initializers. some operate on layers others on modules. Probably should for the most part be modules. However some initializations only apply to certain layers (output layers). could we do this with a higher order function?
 def make_gnt_init(
     init_fn: Callable[[torch.Tensor], None],

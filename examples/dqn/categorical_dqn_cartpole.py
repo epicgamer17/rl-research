@@ -47,7 +47,7 @@ from atomic_rl.action_selection import (
 )
 from atomic_rl.schedules import get_linear_schedule
 from atomic_rl.networks.update_target_net import hard_update_target_network_
-from atomic_rl.metrics import log_distributional_metrics
+from atomic_rl.metrics.distributional import log_distributional_metrics
 
 from atomic_rl.td import compute_categorical_q_td_target
 

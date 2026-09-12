@@ -30,7 +30,8 @@ import torch.nn.functional as F
 import wandb
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.networks.initialization import set_seed, lecun_uniform_, make_sparse_init
+from atomic_rl.networks.initialization import lecun_uniform_, make_sparse_init
+from atomic_rl.utils import set_seed
 from atomic_rl.optimization import AdaptiveObGD
 from atomic_rl.td import compute_v_td_target, compute_accumulating_traces
 
@@ -40,7 +41,7 @@ from atomic_rl.utils import (
 from atomic_rl.normalization import (
     compute_welford_stats,
 )
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.envs.wrappers.normalization import (
     WelfordNormalizeObservation,
     WelfordNormalizeReward,

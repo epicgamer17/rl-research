@@ -1,6 +1,7 @@
 import pytest
 import torch
-from atomic_rl.returns import compute_vtrace_weights, compute_vtrace_returns
+from atomic_rl.losses import compute_vtrace_weights
+from atomic_rl.returns import compute_vtrace_returns
 
 pytestmark = pytest.mark.unit
 

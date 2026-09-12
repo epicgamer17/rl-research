@@ -83,6 +83,14 @@ Never blindly zero-out values using a generic done mask. If an episode is Trunca
 
 Relative imports (from .utils import ...) internally is the production best practice. PyTorch does exactly this — torch/nn/modules/linear.py uses from .module import Module, from ..parameter import Parameter. 
 
+*atomic_rl/metrics/*
+This package contains pure evaluation metrics and their respective visualizations, organized by semantic domain (e.g., plasticity, explained_variance, distributional, traces, saliency).
+- Dual Visualization Ecosystem:
+  1. Paper-Quality Visualizations (Matplotlib): Styled for direct inclusion in scientific papers (clean typography, high DPI, proper axis labels, clear palettes, grayscale readability).
+  2. Live Experiment Tracking (Weights & Biases / wandb): Formatted as lightweight dictionary payloads, Tables, or Images suitable for real-time monitoring during training runs.
+- Metrics & Visualization Symmetry:
+  As a rule of thumb, all metrics should have a respective visualization (and conversely, visualizations should be accompanied by clear underlying metric calculations unless the visualization is computed from raw values available during training). Related computation and visualization functions should live together in the corresponding domain file (e.g., `atomic_rl/metrics/plasticity.py` contains both `compute_dead_units_proportion` and `plot_plasticity_correlates`).
+
 *examples/*
 This layer contains examples of how to use the functions in the functional layer.
 These examples are meant to be illustrative and should be used as a reference for how to use the functions in the functional layer.

@@ -1,6 +1,6 @@
 from ...utils import _allocate_tensordict
 from .state import BufferState, PERBufferState
-from .write import compute_is_weights
+from ...losses.weighting import compute_is_weights
 from .slicing import slice_unrolls
 import torch
 from tensordict import TensorDict

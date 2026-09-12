@@ -10,40 +10,6 @@ import torch.nn.functional as F
 #   implemented there — consult it when aligning behavior with the released code.
 
 
-def compute_expected_value(
-    predictions: torch.Tensor, support: torch.Tensor
-) -> torch.Tensor:
-    """
-    Calculate expected values from a categorical distribution over a support.
-
-    Works for both Q-value prediction [*Batch, A, N] and state-value prediction [*Batch, N].
-
-    Args:
-        predictions: Logits output from the model [*Batch, A, N] or [*Batch, N].
-        support: The support for the distribution [N], [*Batch, N], or [*Batch, A, N].
-
-    Returns:
-        The expected values of shape [*Batch, A] or [*Batch].
-    """
-    assert (
-        predictions.shape[-1] == support.shape[-1]
-    ), f"Atoms dimension mismatch in compute_expected_value: predictions {predictions.shape} vs support {support.shape}"
-
-    # TODO: maybe add a dim arg instead of hardcoding the dim
-    probs = F.softmax(predictions, dim=-1)
-
-    # Broadcast support safely to match probs
-    if support.ndim == 1:
-        support = support.expand_as(probs)
-    else:
-        assert (
-            support.shape == probs.shape
-        ), f"If support is not 1D, it must match predictions shape exactly. Got {support.shape} vs {probs.shape}"
-
-    # Dot product over the atoms dimension
-    return (probs * support).sum(dim=-1)
-
-
 def argmax_selector(
     predictions: torch.Tensor,
 ) -> Tuple[torch.Tensor, dict]:
@@ -186,10 +152,18 @@ def with_epsilon_greedy(selector_fn: Callable) -> Callable:
 # TODO: possibly remove. The reason we still have it (and removed other functions that just apply a mask like with_sequence_mask) is because this has MUCH more semantic meaning, and its not a simple multiplication but a replacing of values. I think theres merits to remove it, and theres also merits to generalize it into a generic mask function for any masking operation and using that everywhere (instead of multiplying). figure that out as the library evolves. likey (to be determined though) best to be consistent with how we apply maskng (ie not provided by the library as its generally simple and can be handled by the user) though a generic function may actually be nice...
 def apply_action_mask(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """
-    Explicitly replaces logits of invalid actions with a large negative number (-1e8).
-    This forces the probability of these actions to approach 0 after softmax.
+        Explicitly replaces logits of invalid actions with a large negative number (-1e8).
+        This forces the probability of these actions to approach 0 after softmax.
 
-    Supports single discrete, MultiDiscrete, sequence [B, T, A], and multi-agent logits [B, N, A].
+        Supports single discrete, MultiDiscrete, sequence [B, T, A], and multi-agent logits [B, N, A].
+
+    NOTE: (Architectural Rationale for keeping apply_action_mask):
+        Unlike trivial wrappers like with_sequence_mask (which was a simple elementwise multiplication
+        'loss * mask' that obscured idiomatic PyTorch), action masking performs delicate, numerically
+        sensitive distribution surgery prior to softmax. Setting invalid logits to a large negative constant
+        (-1e8 or torch.finfo.min) prevents underflow, avoids log(0) NaNs during log_prob evaluation, and
+        guarantees zero probability for illegal actions while preserving valid gradient propagation.
+        Encapsulating this prevents subtle numerical stability bugs that arise when users implement ad-hoc masking.
     """
     assert (
         logits.shape == mask.shape

@@ -141,3 +141,41 @@ def compute_two_hot_distribution(
     distribution.scatter_add_(dim=-1, index=ceil_idx, src=p_high.unsqueeze(-1))
 
     return distribution
+
+
+def compute_expected_value(
+    predictions: torch.Tensor, support: torch.Tensor, probs: bool = False
+) -> torch.Tensor:
+    """
+    Calculate expected values from a categorical distribution over a support.
+
+    Works for both Q-value prediction [*Batch, A, N] and state-value prediction [*Batch, N].
+
+    Args:
+        predictions: Unnormalized logits (if probs=False) or normalized probabilities
+            (if probs=True) of shape [*Batch, A, N] or [*Batch, N].
+        support: The support for the distribution [N], [*Batch, N], or [*Batch, A, N].
+        probs: If True, predictions are treated as normalized probabilities. If False
+            (default), softmax is applied over the last dimension.
+
+    Returns:
+        The expected values of shape [*Batch, A] or [*Batch].
+    """
+    assert (
+        predictions.shape[-1] == support.shape[-1]
+    ), f"Atoms dimension mismatch in compute_expected_value: predictions {predictions.shape} vs support {support.shape}"
+
+    # TODO: maybe add a dim arg instead of hardcoding the dim
+    p = predictions if probs else torch.softmax(predictions, dim=-1)
+
+    # Broadcast support safely to match probs
+    if support.ndim == 1:
+        support = support.expand_as(p)
+    else:
+        assert (
+            support.shape == p.shape
+        ), f"If support is not 1D, it must match predictions shape exactly. Got {support.shape} vs {p.shape}"
+
+    # Dot product over the atoms dimension
+    return (p * support).sum(dim=-1)
+

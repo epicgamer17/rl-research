@@ -70,7 +70,13 @@ def get_rollout_next_values(
     return next_values
 
 
-# TODO: do we need this? should this be removed? made more generic for the new system where the capacity can be a tuple?
+# NOTE (Architectural Rationale for keeping flatten_rollout_buffer):
+# In on-policy algorithms (PPO, A2C), rollout collection inherently preserves environment
+# and temporal topology with shape [NumEnvs, StepsPerEnv, ...] for GAE calculation, truncation patching,
+# and recurrent trajectory tracking. During optimization, training transitions are treated as an i.i.d.
+# pool of transitions [NumEnvs * StepsPerEnv, ...].
+# flatten_rollout_buffer explicitly marks this semantic phase boundary in algorithm scripts, returning
+# a zero-copy view while strictly establishing the 1D batch shape contract required by yield_shuffled_minibatches.
 def flatten_rollout_buffer(buffer: RolloutBufferState) -> TensorDict:
     """Flattens [B, T] into [B*T]. (Note: Returns a view of the buffer data)"""
     return buffer.data.flatten(0, 1)

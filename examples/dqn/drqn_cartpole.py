@@ -8,7 +8,8 @@ Key Ideas:
 
 # TODO: results seem slightly noisier/worse than normal DQN. in some ways like my PPO+lstm results. should add a comparison on the flickering env of DQN and DRQN.
 
-from atomic_rl.networks.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import random
 from typing import Tuple, Optional
 

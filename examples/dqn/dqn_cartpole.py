@@ -14,7 +14,8 @@ NOTE: DQN is fundamentally on off-policy algorithm and in theory works well with
 
 """
 
-from atomic_rl.networks.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

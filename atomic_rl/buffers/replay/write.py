@@ -212,40 +212,6 @@ def with_per_tracking(
     return per_add
 
 
-def compute_is_weights(
-    leaf_priorities: torch.Tensor,
-    min_prob: Union[float, torch.Tensor],
-    total_priority: Union[float, torch.Tensor],
-    beta: torch.Tensor,
-) -> torch.Tensor:
-    r"""
-    Computes Importance Sampling (IS) weights for Prioritized Experience Replay (PER).
-
-    IS weights correct for the bias introduced by non-uniform sampling in PER.
-    Mathematically: $w_i = ( (1/N) * (1/P_i) )^\beta / \max_j w_j$, where $P_i$ is the
-    sampling probability of transition $i$. This simplifies to:
-    $w_i = ( P_i / \min_j P_j )^{-\beta}$.
-
-    Args:
-        leaf_priorities (torch.Tensor): The priority values of the sampled transitions.
-        min_prob (Union[float, torch.Tensor]): The minimum sampling probability to normalize by.
-            Passing the batch minimum probability (`leaf_priorities.min() / total_priority`)
-            computes batch normalization (scaling batch max weight to 1.0).
-            Passing the global buffer minimum probability (`min_tree[0] / total_priority`)
-            computes global buffer normalization.
-        total_priority (Union[float, torch.Tensor]): The sum of all priorities in the tree.
-        beta (torch.Tensor): The correction coefficient (usually scheduled from 0.4 to 1.0).
-
-    Returns:
-        torch.Tensor: The normalized IS weights for the batch.
-    """
-    probs = leaf_priorities / total_priority
-    # IS weight: (P_i / min_P)^-beta
-    # This simplifies the (1/N * 1/P_i)^beta / max_w normalization
-    is_weights = torch.pow(probs / min_prob, -beta)
-    return is_weights
-
-
 @torch.inference_mode()
 def _update_tree(
     sum_tree: torch.Tensor,

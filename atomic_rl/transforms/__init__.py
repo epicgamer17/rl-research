@@ -7,6 +7,7 @@ from .value_transform import (
     compute_contractive_transform,
     compute_inverse_contractive_transform,
     compute_two_hot_distribution,
+    compute_expected_value,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "compute_contractive_transform",
     "compute_inverse_contractive_transform",
     "compute_two_hot_distribution",
+    "compute_expected_value",
 ]

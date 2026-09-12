@@ -3,53 +3,10 @@ import torch
 import torch.nn.functional as F
 import math
 from atomic_rl.action_selection import (
-    compute_expected_value,
     argmax_selector,
     sample_distribution,
     with_epsilon_greedy,
 )
-
-pytestmark = pytest.mark.unit
-
-
-def test_expected_value():
-    """
-    Test the compute_expected_value function.
-    Analytical Oracle:
-    predictions = [[0, 100]] (logits) -> probs = [0, 1]
-    support = [[-1, 1]]
-    expected_value = 0*-1 + 1*1 = 1
-    """
-    # Batch size 1, 2 actions, 2 support atoms
-    predictions = torch.tensor([[[0.0, 100.0], [100.0, 0.0]]])  # [1, 2, 2]
-    support = torch.tensor([[[-1.0, 1.0], [-1.0, 1.0]]])  # [1, 2, 2]
-
-    # Expected: First action should have value ~1.0, second action ~-1.0
-    values = compute_expected_value(predictions, support)
-
-    assert values.shape == (1, 2), f"Expected shape (1, 2), got {values.shape}"
-    torch.testing.assert_close(values, torch.tensor([[1.0, -1.0]]))
-
-    # Test with 1D support
-    support_1d = torch.tensor([-1.0, 1.0])
-    values_1d = compute_expected_value(predictions, support_1d)
-    torch.testing.assert_close(values_1d, torch.tensor([[1.0, -1.0]]))
-
-
-def test_expected_value_2d_input():
-    """Test the compute_expected_value function with 2D state-value predictions [B, N]."""
-    # Batch size 2, 3 atoms
-    predictions = torch.tensor(
-        [
-            [0.0, 100.0, 0.0],  # Softmax concentrates heavily on index 1
-            [100.0, 0.0, 0.0],  # Softmax concentrates heavily on index 0
-        ]
-    )
-    support = torch.tensor([-1.0, 0.0, 1.0])  # 1D Support
-
-    values = compute_expected_value(predictions, support)
-    assert values.shape == (2,)
-    torch.testing.assert_close(values, torch.tensor([0.0, -1.0]), atol=1e-4, rtol=1e-4)
 
 
 def test_argmax_selector():
@@ -204,18 +161,6 @@ def test_with_epsilon_greedy_mask_assertions():
         epsilon_selector(predictions, epsilon=0.5, num_actions=3, mask=dead_mask)
 
 
-def test_action_selection_assertions():
-    """Test that action selection functions raise assertions on invalid input shapes."""
-    # compute_expected_value atoms dimension mismatch
-    with pytest.raises(
-        AssertionError, match="Atoms dimension mismatch in compute_expected_value"
-    ):
-        compute_expected_value(torch.randn(2, 3), torch.randn(2, 4))
-    with pytest.raises(
-        AssertionError,
-        match="If support is not 1D, it must match predictions shape exactly.",
-    ):
-        compute_expected_value(torch.randn(1, 2, 3), torch.randn(2, 3))
 
 
 def test_sample_distribution_not_implemented():

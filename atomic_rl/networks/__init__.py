@@ -21,7 +21,6 @@ from .architectures import (
     TransformerEncoder,
 )
 from .initialization import (
-    set_seed,
     make_gnt_init,
     layer_init_,
     lecun_uniform_,
@@ -49,7 +48,6 @@ __all__ = [
     "MultiHeadSelfAttention",
     "TransformerBlock",
     "TransformerEncoder",
-    "set_seed",
     "make_gnt_init",
     "layer_init_",
     "lecun_uniform_",

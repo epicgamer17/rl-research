@@ -14,10 +14,15 @@ from .policy_losses import (
     compute_policy_gradient_loss,
     compute_entropy_loss,
     compute_clipped_surrogate_loss,
-    probability_ratio,
 )
 from .value_losses import (
     compute_clipped_mse_loss,
+)
+from .weighting import (
+    compute_is_weights,
+    compute_vtrace_weights,
+    compute_ope_weights,
+    probability_ratio,
 )
 
 __all__ = [
@@ -28,6 +33,9 @@ __all__ = [
     "compute_entropy_loss",
     "compute_clipped_surrogate_loss",
     "compute_clipped_mse_loss",
+    "compute_is_weights",
+    "compute_vtrace_weights",
+    "compute_ope_weights",
     "probability_ratio",
 ]
 

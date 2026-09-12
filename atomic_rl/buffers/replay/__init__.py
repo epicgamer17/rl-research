@@ -3,11 +3,11 @@
 from .state import BufferState, PERBufferState, init_buffer, init_per_buffer
 from .write import (
     circular_write_strategy_,
-    compute_is_weights,
     reservoir_write_strategy_,
     update_priorities,
     with_per_tracking,
 )
+from ...losses.weighting import compute_is_weights
 from .sampling import (
     sample_per,
     uniform_sample,

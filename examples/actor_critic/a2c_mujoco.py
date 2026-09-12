@@ -26,7 +26,7 @@ from atomic_rl.action_selection import sample_distribution
 from atomic_rl.returns import compute_n_step_returns
 from atomic_rl.losses import compute_policy_gradient_loss, compute_mse_loss, compute_entropy_loss
 from torch.optim.lr_scheduler import LinearLR
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
     write_rollout_step_,

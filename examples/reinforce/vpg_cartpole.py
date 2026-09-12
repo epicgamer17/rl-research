@@ -26,7 +26,7 @@ from atomic_rl.utils import (
 from atomic_rl.normalization import (
     standardize_tensor,
 )
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 
 # Constants
 LEARNING_RATE = 1e-3

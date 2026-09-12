@@ -40,13 +40,13 @@ from atomic_rl.action_selection import (
     gather_q_values,
 )
 from atomic_rl.networks.initialization import (
-    set_seed,
     lecun_uniform_,
     make_sparse_init,
 )
 from atomic_rl.optimization import AdaptiveObGD
 from atomic_rl.td import compute_q_td_target, compute_accumulating_traces
 from atomic_rl.utils import (
+    set_seed,
     to_numpy_action,
 )
 from atomic_rl.normalization import (

@@ -3,7 +3,6 @@ from atomic_rl.networks.initialization import (
     make_gnt_init,
     layer_init_,
     sparse_init_weight_,
-    set_seed,
     make_sparse_init,
 )
 from atomic_rl.utils import _allocate_tensordict
@@ -77,30 +76,6 @@ def test_make_gnt_init():
     assert torch.all(conv_weight == 1.0)
 
 
-# ==========================================
-# Tests for set_seed
-# ==========================================
-
-
-def test_set_seed_reproducibility():
-    """Verify that setting the seed forces identical random generation sequences."""
-    seed = 42
-
-    # Run 1
-    set_seed(seed)
-    py_rand_1 = random.random()
-    np_rand_1 = np.random.rand()
-    torch_rand_1 = torch.rand(1).item()
-
-    # Run 2
-    set_seed(seed)
-    py_rand_2 = random.random()
-    np_rand_2 = np.random.rand()
-    torch_rand_2 = torch.rand(1).item()
-
-    assert py_rand_1 == py_rand_2
-    assert np_rand_1 == np_rand_2
-    assert torch_rand_1 == torch_rand_2
 
 
 # ==========================================

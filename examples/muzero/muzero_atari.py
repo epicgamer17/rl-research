@@ -49,7 +49,6 @@ import wandb
 
 from atomic_rl.action_selection import (
     argmax_selector,
-    compute_expected_value,
     sample_distribution,
 )
 from atomic_rl.buffers import SharedReplayBuffer, slice_unrolls
@@ -58,6 +57,7 @@ from atomic_rl.schedules import get_stepwise_schedule
 from atomic_rl.search import mcts_search, qtransform_by_min_max
 from atomic_rl.transforms import (
     compute_contractive_transform,
+    compute_expected_value,
     compute_inverse_contractive_transform,
     compute_two_hot_distribution,
 )

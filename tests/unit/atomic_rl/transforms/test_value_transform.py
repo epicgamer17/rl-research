@@ -6,6 +6,8 @@ import torch
 from atomic_rl.transforms.value_transform import (
     compute_contractive_transform,
     compute_inverse_contractive_transform,
+    compute_two_hot_distribution,
+    compute_expected_value,
 )
 
 
@@ -145,3 +147,37 @@ def test_two_hot_distribution_multidimensional():
     expected_vals = (dist * support).sum(dim=-1)
     clamped_scalar = torch.clamp(scalar, -50.0, 50.0)
     assert torch.allclose(expected_vals, clamped_scalar, atol=1e-5)
+
+
+def test_expected_value_logits():
+    """Test compute_expected_value from unnormalized logits."""
+    predictions = torch.tensor([[[0.0, 100.0], [100.0, 0.0]]])  # [1, 2, 2]
+    support = torch.tensor([[[-1.0, 1.0], [-1.0, 1.0]]])
+
+    values = compute_expected_value(predictions, support)
+    assert values.shape == (1, 2)
+    torch.testing.assert_close(values, torch.tensor([[1.0, -1.0]]))
+
+    # 1D support broadcast
+    support_1d = torch.tensor([-1.0, 1.0])
+    values_1d = compute_expected_value(predictions, support_1d)
+    torch.testing.assert_close(values_1d, torch.tensor([[1.0, -1.0]]))
+
+
+def test_expected_value_probs():
+    """Test compute_expected_value directly with normalized probabilities (probs=True)."""
+    probs = torch.tensor([[0.2, 0.8], [0.5, 0.5]])
+    support = torch.tensor([-1.0, 1.0])
+
+    # [0.2*-1 + 0.8*1, 0.5*-1 + 0.5*1] = [0.6, 0.0]
+    values = compute_expected_value(probs, support, probs=True)
+    torch.testing.assert_close(values, torch.tensor([0.6, 0.0]))
+
+
+def test_expected_value_assertions():
+    """Verify shape assertions in compute_expected_value."""
+    with pytest.raises(AssertionError, match="Atoms dimension mismatch"):
+        compute_expected_value(torch.randn(2, 3), torch.randn(2, 4))
+    with pytest.raises(AssertionError, match="If support is not 1D"):
+        compute_expected_value(torch.randn(1, 2, 3), torch.randn(2, 3))
+

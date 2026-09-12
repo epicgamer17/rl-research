@@ -12,6 +12,8 @@ from .normalization import (
     standardize_tensor,
 )
 
+from .seeding import set_seed
+
 __all__ = [
     "_allocate_tensordict",
     "ema_update",
@@ -22,5 +24,6 @@ __all__ = [
     "min_max_normalize",
     "scale_tensor_by_std",
     "standardize_tensor",
+    "set_seed",
 ]
 

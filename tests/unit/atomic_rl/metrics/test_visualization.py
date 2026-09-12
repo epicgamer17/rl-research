@@ -13,6 +13,11 @@ from atomic_rl.metrics import (
     plot_plasticity_correlates,
     compute_explained_variance,
     log_distributional_metrics,
+    plot_categorical_distribution,
+    plot_value_prediction_scatter,
+    plot_episode_returns,
+    plot_loss_curves,
+    plot_eval_vs_train,
 )
 
 pytestmark = pytest.mark.unit
@@ -141,3 +146,66 @@ def test_plot_plasticity_correlates(tmp_path):
     plot_plasticity_correlates(metrics_dict=metrics_dict, save_path=str(save_file))
 
     assert os.path.exists(save_file)
+
+
+def test_plot_categorical_distribution(tmp_path):
+    support = np.linspace(-10, 10, 21)
+    probs = np.ones(21) / 21
+    save_file = tmp_path / "categorical_dist.png"
+
+    fig = plot_categorical_distribution(support, probs, expected_q=0.0, save_path=str(save_file))
+    assert isinstance(fig, plt.Figure)
+    assert os.path.exists(save_file)
+    plt.close(fig)
+
+
+def test_plot_value_prediction_scatter(tmp_path):
+    y_true = torch.randn(50)
+    y_pred = y_true + torch.randn(50) * 0.1
+    save_file = tmp_path / "value_scatter.png"
+
+    fig = plot_value_prediction_scatter(y_true, y_pred, save_path=str(save_file))
+    assert isinstance(fig, plt.Figure)
+    assert os.path.exists(save_file)
+    plt.close(fig)
+
+
+def test_plot_episode_returns(tmp_path):
+    returns_by_system = {
+        "PPO": np.random.randn(3, 50).cumsum(axis=1),
+        "DQN": np.random.randn(3, 50).cumsum(axis=1),
+    }
+    save_file = tmp_path / "returns_ci.png"
+
+    fig = plot_episode_returns(returns_by_system, smooth_window=5, save_path=str(save_file))
+    assert isinstance(fig, plt.Figure)
+    assert os.path.exists(save_file)
+    plt.close(fig)
+
+
+def test_plot_loss_curves(tmp_path):
+    loss_history = {
+        "Policy Loss": np.random.rand(30),
+        "Value Loss": np.random.rand(30),
+        "Entropy": np.random.rand(30),
+    }
+    save_file = tmp_path / "loss_curves.png"
+
+    fig = plot_loss_curves(loss_history, save_path=str(save_file))
+    assert isinstance(fig, plt.Figure)
+    assert os.path.exists(save_file)
+    plt.close(fig)
+
+
+def test_plot_eval_vs_train(tmp_path):
+    train_steps = np.arange(100)
+    train_returns = np.random.randn(100).cumsum()
+    eval_steps = np.arange(0, 100, 10)
+    eval_returns = np.random.randn(10).cumsum()
+    save_file = tmp_path / "eval_vs_train.png"
+
+    fig = plot_eval_vs_train(train_steps, train_returns, eval_steps, eval_returns, save_path=str(save_file))
+    assert isinstance(fig, plt.Figure)
+    assert os.path.exists(save_file)
+    plt.close(fig)
+

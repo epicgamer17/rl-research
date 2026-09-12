@@ -33,7 +33,8 @@ import wandb
 from pathlib import Path
 
 from tqdm import tqdm
-from atomic_rl.networks.initialization import set_seed, lecun_uniform_, make_sparse_init
+from atomic_rl.networks.initialization import lecun_uniform_, make_sparse_init
+from atomic_rl.utils import set_seed
 from atomic_rl.optimization import AdaptiveObGD
 from atomic_rl.td import compute_v_td_target, compute_accumulating_traces
 

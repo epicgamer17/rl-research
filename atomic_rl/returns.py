@@ -297,43 +297,6 @@ def compute_td_lambda_returns(
     return advantages + values.detach()
 
 
-def compute_vtrace_weights(
-    target_log_probs: torch.Tensor,
-    behavior_log_probs: torch.Tensor,
-    rho_clip: Optional[float] = 1.0,
-    c_clip: Optional[float] = 1.0,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Computes clipped V-trace importance sampling weights (rho_bar, c_bar).
-
-    Reference:
-        Espeholt et al., "IMPALA: Scalable Distributed Deep-RL with
-        Importance Weighted Actor-Learner Architectures" (2018), Section 4.1.
-
-    Formula:
-        rho_t = exp(target_log_probs - behavior_log_probs)
-        rho_bar_t = min(rho_clip, rho_t)   # Truncated IS weight for TD error / PG advantage
-        c_bar_t   = min(c_clip, rho_t)     # Truncated IS weight for trace continuation product
-
-    Args:
-        target_log_probs: Log probabilities under current target policy [*Batch, Time, *Channels].
-        behavior_log_probs: Log probabilities under rollout behavior policy [*Batch, Time, *Channels].
-        rho_clip: Upper clip bound for rho_bar. Defaults to 1.0 (pass None for unclipped).
-        c_clip: Upper clip bound for c_bar. Defaults to 1.0 (pass None for unclipped).
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (rho_bar, c_bar) matching input shape.
-    """
-    assert (
-        target_log_probs.shape == behavior_log_probs.shape
-    ), f"Exact shape mismatch in compute_vtrace_weights! target: {target_log_probs.shape} vs behavior: {behavior_log_probs.shape}"
-
-    # NOTE: Skeleton stub pending full IMPALA integration.
-    # Potential internal reuse: atomic_rl.losses.probability_ratio(behavior_log_probs, target_log_probs)
-    # can be reused internally to compute the importance sampling ratio rho_t.
-    raise NotImplementedError("compute_vtrace_weights kernel implementation is pending.")
-
-
 def compute_vtrace_returns(
     rewards: torch.Tensor,
     terminated: torch.Tensor,
@@ -382,5 +345,6 @@ def compute_vtrace_returns(
     ), "Exact shape mismatch in compute_vtrace_returns! All tensors must match shape."
 
     # NOTE: Skeleton implementation. Recursive backward pass accumulator will be implemented here.
-    raise NotImplementedError("compute_vtrace_returns kernel implementation is pending.")
-
+    raise NotImplementedError(
+        "compute_vtrace_returns kernel implementation is pending."
+    )

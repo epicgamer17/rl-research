@@ -20,7 +20,8 @@ Key Implementation Details:
 
 # TODO: not working, i know it worked before, i think when i was using pufferlib, but strangely pufferlib stopped cartpole from working well.
 # TODO: attempt a cleanup if possible
-from atomic_rl.networks.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -35,12 +36,12 @@ from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
     compute_clipped_surrogate_loss,
     compute_entropy_loss,
-    probability_ratio,
     compute_clipped_mse_loss,
     compute_mse_loss,
 )
+from atomic_rl.losses.weighting import probability_ratio
 from torch.optim.lr_scheduler import LinearLR
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
     write_rollout_step_,
@@ -319,7 +320,7 @@ for iteration in range(MAX_ITERATIONS):
             new_log_probs = dist.log_prob(mb["actions"])
 
             # 1. Policy Loss (Clipped Surrogate)
-            ratio = probability_ratio(
+            ratio =(
                 old_log_probs=mb["logprobs"],
                 new_log_probs=new_log_probs,
             )

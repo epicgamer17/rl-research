@@ -11,12 +11,12 @@ from atomic_rl.plasticity import (
     init_cbp_state,
     apply_continual_backprop_,
 )
-from atomic_rl.metrics import (
+from atomic_rl.metrics.plasticity import (
     compute_dead_units_proportion,
     compute_average_weight_magnitude,
     compute_average_gradient_magnitude,
 )
-from atomic_rl.metrics import (
+from atomic_rl.metrics.plasticity import (
     plot_plasticity_correlates,
     plot_continual_learning_performance,
 )
