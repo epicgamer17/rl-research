@@ -29,7 +29,7 @@ def test_shared_replay_buffer_add_and_sample():
 def test_shared_per_buffer_add_and_sample():
     capacity = 100
     shapes = {"obs": (4,), "action": (1,)}
-    buffer = SharedPERBuffer(capacity, shapes)
+    buffer = SharedPERBuffer(capacity, shapes, epsilon=1e-4)
 
     transitions = TensorDict(
         {"obs": torch.randn(5, 4), "action": torch.zeros(5, 1)}, batch_size=[5]
@@ -77,7 +77,7 @@ def test_shared_per_buffer_timestep_level():
     # 10 sequences, each length 8
     capacity = (10, 8)
     shapes = {"obs": (4,), "action": (1,)}
-    buffer = SharedPERBuffer(capacity, shapes)
+    buffer = SharedPERBuffer(capacity, shapes, epsilon=1e-4)
 
     sample = TensorDict(
         {"obs": torch.randn(3, 8, 4), "action": torch.zeros(3, 8, 1)},
@@ -125,7 +125,7 @@ def test_shared_replay_buffer_sample_unrolls():
 def test_shared_per_buffer_sample_unrolls():
     capacity = (10, 20)
     shapes = {"obs": (4,), "action": (1,)}
-    buffer = SharedPERBuffer(capacity, shapes)
+    buffer = SharedPERBuffer(capacity, shapes, epsilon=1e-4)
 
     sample = TensorDict(
         {"obs": torch.randn(2, 20, 4), "action": torch.ones(2, 20, 1)},

@@ -8,6 +8,8 @@ import random
 from collections import deque
 from dataclasses import dataclass
 
+# TODO: Should valid_mask be in the exlicit signature? or should we add some kind of higher level wrapper for it? I know its an optional arg, but it kind of assumes we are storing padded data (more implicit less explicit). We could instead for example have "make_padded_write" or something like that (maybe thats actually cleaner??) or is it cleaner to say all write should allow for padded data? really not sure. how "native" do we want it to be? can you make padded writes generic? i'm actually not sure if you can (for example with PER it has to be handled specially), so likely current approach is fine, but should be documented with why.
+
 
 def circular_write_strategy_(
     buffer_state: BufferState,
@@ -131,8 +133,16 @@ def reservoir_write_strategy_(
     return buffer_state, indices_tensor
 
 
-def with_per_tracking(write_strategy_fn: Callable) -> Callable:
-    """Higher-order function composing a base writing strategy with PER logic."""
+def with_per_tracking(
+    write_strategy_fn: Callable,
+    epsilon: float,
+) -> Callable:
+    """Higher-order function composing a base writing strategy with PER logic.
+
+    Args:
+        write_strategy_fn (Callable): The base write strategy (e.g. circular_write_strategy_).
+        epsilon (float): Minimum priority floor for valid transitions.
+    """
 
     def per_add(
         buffer_state: PERBufferState,
@@ -162,20 +172,23 @@ def with_per_tracking(write_strategy_fn: Callable) -> Callable:
 
             tree_indices = _coords_to_tree_indices(new_state, coords)
 
+            # TODO: we accept the valid mask as an explicit arg instead of a batch key/item, should we do the same with priorities? Reason for: its more explicit, reason against, it might make it harder to use for example stacks of wrappers (i dont think thats actually true), but at least making OOP orchestrators for the functions will be harder, as signatures will differ so composition might be harder, but pure functional orchestration just as easy (easier as signatures are more obvious and clear).
             # Check for explicit priorities in the batch
             if "priority" in batch.keys():
                 priorities = batch["priority"].reshape(-1)
+                priorities = torch.clamp(priorities, min=epsilon)
             else:
-                # Use max priority for all new additions
+                # Use max priority for all new additions, bounded by epsilon
+                init_prio = torch.clamp(new_state.max_priority, min=epsilon)
                 priorities = torch.full(
                     (tree_indices.shape[0],),
-                    new_state.max_priority,
+                    init_prio,
                     dtype=torch.float32,
                     device=written_indices.device,
                 )
 
             if valid_mask is not None:
-                mask_flat = valid_mask.reshape(-1).to(device=priorities.device)
+                mask_flat = valid_mask.reshape(-1).to(device=priorities.device).bool()
                 priorities = torch.where(
                     mask_flat,
                     priorities,
@@ -215,14 +228,17 @@ def compute_is_weights(
 
     Args:
         leaf_priorities (torch.Tensor): The priority values of the sampled transitions.
-        min_prob (Union[float, torch.Tensor]): The minimum sampling probability in the tree.
+        min_prob (Union[float, torch.Tensor]): The minimum sampling probability to normalize by.
+            Passing the batch minimum probability (`leaf_priorities.min() / total_priority`)
+            computes batch normalization (scaling batch max weight to 1.0).
+            Passing the global buffer minimum probability (`min_tree[0] / total_priority`)
+            computes global buffer normalization.
         total_priority (Union[float, torch.Tensor]): The sum of all priorities in the tree.
         beta (torch.Tensor): The correction coefficient (usually scheduled from 0.4 to 1.0).
 
     Returns:
         torch.Tensor: The normalized IS weights for the batch.
     """
-    # Sampling probability: P_i = priority_i / sum(priorities)
     probs = leaf_priorities / total_priority
     # IS weight: (P_i / min_P)^-beta
     # This simplifies the (1/N * 1/P_i)^beta / max_w normalization
@@ -294,7 +310,8 @@ def update_priorities(
     buffer_state: PERBufferState,
     coords: Union[torch.Tensor, Tuple[torch.Tensor, ...]],
     td_errors: torch.Tensor,
-    alpha: float = 0.6,
+    alpha: float,
+    epsilon: float,
 ) -> PERBufferState:
     """Update the PER sum/min trees with TD errors using sample coordinates.
 
@@ -303,9 +320,10 @@ def update_priorities(
         coords (Union[torch.Tensor, Tuple[torch.Tensor, ...]]): Coordinates of sampled transitions.
         td_errors (torch.Tensor): TD errors for priority calculation.
         alpha (float): PER exponent alpha.
+        epsilon (float): Minimum priority floor for valid transitions.
     """
     tree_indices = _coords_to_tree_indices(buffer_state, coords)
-    priorities = torch.pow(torch.abs(td_errors) + 1e-6, alpha)
+    priorities = torch.pow(torch.clamp(torch.abs(td_errors), min=epsilon), alpha)
 
     new_sum_tree, new_min_tree = _update_tree(
         buffer_state.sum_tree, buffer_state.min_tree, tree_indices, priorities

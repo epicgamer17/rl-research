@@ -124,6 +124,7 @@ class SharedPERBuffer:
         self,
         capacity: Union[int, Sequence[int]],
         shapes: dict,
+        epsilon: float,
         device: torch.device = torch.device("cpu"),
     ):
         self.buffer_state = init_per_buffer(capacity, shapes, device=device)
@@ -136,7 +137,8 @@ class SharedPERBuffer:
         self._pointer = mp.Value("i", 0)
         self._size = mp.Value("i", 0)
         self._max_priority = mp.Value("d", 1.0)
-        self.per_add = with_per_tracking(circular_write_strategy_)
+        self.epsilon = epsilon
+        self.per_add = with_per_tracking(circular_write_strategy_, epsilon=epsilon)
         self.unroll_sampler = with_unroll_slicing(sample_per)
 
     def __getstate__(self):
@@ -149,7 +151,7 @@ class SharedPERBuffer:
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self.per_add = with_per_tracking(circular_write_strategy_)
+        self.per_add = with_per_tracking(circular_write_strategy_, epsilon=self.epsilon)
         self.unroll_sampler = with_unroll_slicing(sample_per)
 
     def add_transitions(
@@ -179,8 +181,9 @@ class SharedPERBuffer:
     def sample_batch(
         self,
         batch_size: int,
-        beta: float = 0.4,
+        beta: float,
         min_size: int = 0,
+        normalization: str = "batch",
     ) -> Tuple[
         Optional[TensorDict],
         Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]],
@@ -190,14 +193,20 @@ class SharedPERBuffer:
             if self._size.value < min_size:
                 return None, None, None
             beta_tensor = torch.tensor(beta, dtype=torch.float32)
-            return sample_per(self.buffer_state, batch_size, beta_tensor)
+            return sample_per(
+                self.buffer_state,
+                batch_size,
+                beta_tensor,
+                normalization=normalization,
+            )
 
     def sample_unrolls(
         self,
         batch_size: int,
         unroll_steps: int,
-        beta: float = 0.4,
+        beta: float,
         min_size: int = 0,
+        normalization: str = "batch",
     ) -> Tuple[
         Optional[TensorDict],
         Optional[torch.Tensor],
@@ -213,6 +222,7 @@ class SharedPERBuffer:
                 batch_size=batch_size,
                 beta=beta_tensor,
                 unroll_steps=unroll_steps,
+                normalization=normalization,
             )
 
     @property
@@ -231,5 +241,6 @@ class SharedPERBuffer:
     ):
         with self.lock:
             self.buffer_state = update_priorities(
-                self.buffer_state, coords, td_errors, alpha
+                self.buffer_state, coords, td_errors, alpha=alpha, epsilon=self.epsilon
             )
+            self._max_priority.value = float(self.buffer_state.max_priority.item())

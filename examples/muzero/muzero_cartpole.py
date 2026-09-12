@@ -27,9 +27,10 @@ Goal & Domain:
 Multiprocessing Architecture:
     - Actor Workers: Self-play across parallel CartPole environments using batched single-player
       MuZero MCTS. Completed episodes are converted into n-step returns and sliced into K+1
-      unroll blocks stored in SharedReplayBuffer.
-    - Learner Worker: Samples minibatches from SharedReplayBuffer, unrolls K steps, computes
-      cross-entropy losses on policy, value, and reward heads, updates parameters, and syncs weights.
+      unroll blocks stored in SharedPERBuffer with individual observation priorities.
+    - Learner Worker: Samples minibatches from SharedPERBuffer according to PER (alpha=1, beta=1),
+      unrolls K steps, computes weighted cross-entropy losses on policy, value, and reward heads,
+      updates priorities with |v0 - z0|, and syncs weights.
     - Evaluator Worker: Periodically evaluates greedy MCTS play (temperature=0.0) on CartPole-v1,
       logging metrics to W&B asynchronously.
 """
@@ -52,7 +53,7 @@ from atomic_rl.action_selection import (
     compute_expected_value,
     sample_distribution,
 )
-from atomic_rl.buffers import SharedReplayBuffer, slice_unrolls
+from atomic_rl.buffers import SharedPERBuffer, slice_unrolls
 from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.schedules import get_stepwise_schedule
 from atomic_rl.search import mcts_search, qtransform_by_min_max
@@ -77,6 +78,11 @@ UNROLL_STEPS = 5
 TD_STEPS = 5
 GAMMA = 0.99  # MuZero Appendix C standard discount; ensures G_500 vs G_300 has ~2.1 atom delta
 EPSILON_TRANSFORM = 0.001
+
+# Prioritized Experience Replay (MuZero Appendix G: alpha = beta = 1)
+PER_ALPHA = 1.0
+PER_BETA = 1.0
+PER_EPSILON = 1e-4
 
 # Discrete Support Bounds (max discounted return at gamma=0.997 is ~259.1 -> h(259.1) ≈ 15.39)
 # Support [-25, 25] (51 atoms) provides fine-grained, non-saturating resolution up to 500 steps.
@@ -358,7 +364,7 @@ def actor_worker(
     actor_id: int,
     model_creator: Callable[[], nn.Module],
     shared_model: nn.Module,
-    buffer: SharedReplayBuffer,
+    buffer: SharedPERBuffer,
     training_step: torch.Tensor,
     envs_per_actor: int = ENVS_PER_ACTOR,
     num_simulations: int = NUM_MCTS_SIMULATIONS,
@@ -476,6 +482,11 @@ def actor_worker(
                         return_t += discount * ep_root_vals[t + td_steps]
                     ep_z_values.append(return_t)
 
+                # MuZero Appendix G: Initial priority p_i = |nu_i - z_i|
+                ep_root_tensor = torch.tensor(ep_root_vals, dtype=torch.float32)
+                ep_z_tensor = torch.tensor(ep_z_values, dtype=torch.float32)
+                ep_priorities = torch.abs(ep_root_tensor - ep_z_tensor)
+
                 # Pack episode into fixed-length sequence [MAX_EPISODE_STEPS, ...]
                 seq_obs = torch.zeros((MAX_EPISODE_STEPS, OBS_DIM), dtype=torch.float32)
                 seq_actions = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.long)
@@ -485,17 +496,17 @@ def actor_worker(
                 seq_values = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
                 seq_rewards = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
                 seq_valid = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
+                seq_priorities = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
 
                 seq_obs[:ep_len] = torch.stack(ep_obs)
                 seq_actions[:ep_len] = torch.tensor(ep_actions, dtype=torch.long)
                 seq_policies[:ep_len] = torch.stack(ep_policies)
-                seq_values[:ep_len] = torch.tensor(
-                    ep_z_values, dtype=torch.float32
-                ).unsqueeze(-1)
+                seq_values[:ep_len] = ep_z_tensor.unsqueeze(-1)
                 seq_rewards[:ep_len] = torch.tensor(
                     ep_rewards, dtype=torch.float32
                 ).unsqueeze(-1)
                 seq_valid[:ep_len] = 1.0
+                seq_priorities[:ep_len] = ep_priorities
 
                 completed_tds.append(
                     TensorDict(
@@ -506,6 +517,7 @@ def actor_worker(
                             "target_values": seq_values,
                             "target_rewards": seq_rewards,
                             "valid": seq_valid,
+                            "priority": seq_priorities,
                         },
                         batch_size=[MAX_EPISODE_STEPS],
                     )
@@ -518,7 +530,7 @@ def actor_worker(
 
         if len(completed_tds) > 0:
             batch_td = torch.stack(completed_tds).to(device)
-            buffer.add_transitions(batch_td, valid_mask=batch_td["valid"])
+            buffer.add_transitions(batch_td, valid_mask=batch_td["valid"].bool())
 
 
 def evaluate_model(
@@ -612,7 +624,7 @@ def evaluator_worker(
 def learner_worker(
     model_creator: Callable[[], nn.Module],
     shared_model: nn.Module,
-    buffer: SharedReplayBuffer,
+    buffer: SharedPERBuffer,
     eval_queue: mp.Queue,
     training_step: torch.Tensor,
     batch_size: int = BATCH_SIZE,
@@ -657,21 +669,25 @@ def learner_worker(
             "value_loss_weight": value_loss_weight,
             "support_min": SUPPORT_MIN,
             "support_max": SUPPORT_MAX,
+            "per_alpha": PER_ALPHA,
+            "per_beta": PER_BETA,
         },
     )
 
     step_count = 0
     latest_eval_metrics = {}
+    support = torch.arange(SUPPORT_MIN, SUPPORT_MAX + 1, device=device, dtype=torch.float32)
 
     while step_count < max_steps:
         sample_res = buffer.sample_unrolls(
-            rng_key, batch_size, unroll_steps, min_size=MIN_BUFFER_SIZE
+            batch_size, unroll_steps, beta=PER_BETA, min_size=MIN_BUFFER_SIZE
         )
-        if sample_res is None:
+        if sample_res is None or sample_res[0] is None:
             time.sleep(0.01)
             continue
 
-        unroll_data, valid_mask, coords = sample_res
+        unroll_data, valid_mask, coords, is_weights = sample_res
+        is_weights = is_weights.to(device)
 
         # A step is valid only if within tensor boundary AND was part of the actual episode
         ep_valid = unroll_data["valid"].bool() & valid_mask
@@ -688,20 +704,20 @@ def learner_worker(
 
         raw_p_loss_0, _ = compute_cross_entropy_loss(p0, target_policies[:, 0])
         mask_0 = policy_masks[:, 0]
-        loss_p0 = (raw_p_loss_0 * mask_0).sum() / torch.clamp(mask_0.sum(), min=1.0)
+        loss_p0 = raw_p_loss_0 * mask_0
 
         # Value target: contractive scaling + two-hot projection
         z0 = target_values[:, 0].squeeze(-1)
         z0_scaled = compute_contractive_transform(z0, epsilon=EPSILON_TRANSFORM)
         z0_two_hot = compute_two_hot_distribution(z0_scaled, SUPPORT_MIN, SUPPORT_MAX)
         raw_v_loss_0, _ = compute_cross_entropy_loss(v0_logits, z0_two_hot)
-        loss_v0 = raw_v_loss_0.mean()
+        loss_v0 = raw_v_loss_0
         # Initial step k=0 uses full weight 1.0 (paper: predictions = [(1.0, value, reward, policy_logits)]), not 1/K
-        total_loss = loss_p0 + value_loss_weight * loss_v0
+        batch_loss = loss_p0 + value_loss_weight * loss_v0
 
         curr_s = s0
-        step_p_losses = [loss_p0.item()]
-        step_v_losses = [loss_v0.item()]
+        step_p_losses = [(loss_p0.sum() / torch.clamp(mask_0.sum(), min=1.0)).item()]
+        step_v_losses = [loss_v0.mean().item()]
         step_r_losses = []
 
         # 2. Unroll Steps k=1..K Dynamics & Prediction
@@ -716,7 +732,7 @@ def learner_worker(
 
             raw_p_loss, _ = compute_cross_entropy_loss(p_k, target_policies[:, k])
             mask_k = policy_masks[:, k]
-            l_p = (raw_p_loss * mask_k).sum() / torch.clamp(mask_k.sum(), min=1.0)
+            l_p = raw_p_loss * mask_k
 
             # Value target at step k
             zk = target_values[:, k].squeeze(-1)
@@ -734,20 +750,29 @@ def learner_worker(
             )
             raw_r_loss, _ = compute_cross_entropy_loss(r_k_logits, uk_two_hot)
 
-            l_v = raw_v_loss.mean()
-            l_r = raw_r_loss.mean()
+            step_p_losses.append((l_p.sum() / torch.clamp(mask_k.sum(), min=1.0)).item())
+            step_v_losses.append(raw_v_loss.mean().item())
+            step_r_losses.append(raw_r_loss.mean().item())
 
-            step_p_losses.append(l_p.item())
-            step_v_losses.append(l_v.item())
-            step_r_losses.append(l_r.item())
+            step_loss = l_p + value_loss_weight * raw_v_loss + raw_r_loss
+            batch_loss = batch_loss + (step_loss / float(unroll_steps))
 
-            step_loss = l_p + value_loss_weight * l_v + l_r
-            total_loss = total_loss + (step_loss / float(unroll_steps))
+        # Weight the total loss by the PER importance sampling weights (MuZero Appendix G)
+        total_loss = (batch_loss * is_weights).mean()
 
         optimizer.zero_grad()
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), max_norm=1.0)
         optimizer.step()
+
+        # 3. Priority Update in PER Buffer (MuZero Appendix G: p_i = |nu_i - z_i|)
+        with torch.no_grad():
+            v0_pred_scaled = compute_expected_value(v0_logits, support)
+            v0_pred = compute_inverse_contractive_transform(
+                v0_pred_scaled, epsilon=EPSILON_TRANSFORM
+            )
+            new_priorities = torch.abs(v0_pred - z0).detach().cpu()
+            buffer.update_priorities(coords, new_priorities, alpha=PER_ALPHA)
 
         shared_model.load_state_dict(local_model.state_dict())
         step_count += 1
@@ -787,10 +812,20 @@ def learner_worker(
                     f" | Eval Return: {mean_r:.1f} [min: {min_r:.0f}, max: {max_r:.0f}] | "
                     f"Eval Len: {mean_l:.1f} [min: {min_l:.0f}, max: {max_l:.0f}]"
                 )
+
+            r_loss_str = (
+                f" | Reward: {log_dict['loss/reward']:.4f}"
+                if step_r_losses
+                else ""
+            )
             print(
-                f"[Learner Step {step_count}/{max_steps}] Loss: {total_loss.item():.4f} | "
-                f"Policy: {log_dict['loss/policy']:.4f} | Value: {log_dict['loss/value']:.4f} | "
-                f"Reward: {log_dict['loss/reward']:.4f} | Buffer: {buffer.size}{eval_info}",
+                f"[Learner Step {step_count}/{max_steps}] "
+                f"Loss: {log_dict['loss/total']:.4f} | "
+                f"Policy: {log_dict['loss/policy']:.4f} | "
+                f"Value: {log_dict['loss/value']:.4f}"
+                f"{r_loss_str} | "
+                f"Buffer: {log_dict['buffer/size']}"
+                f"{eval_info}",
                 flush=True,
             )
 
@@ -856,11 +891,13 @@ def main(max_steps: int = TOTAL_TRAINING_STEPS):
         "target_values": (1,),
         "target_rewards": (1,),
         "valid": (),
+        "priority": (),
     }
-    buffer = SharedReplayBuffer(
+    buffer = SharedPERBuffer(
         (BUFFER_NUM_EPISODES, MAX_EPISODE_STEPS),
         buffer_shapes,
         device=device,
+        epsilon=PER_EPSILON,
     )
     eval_queue = mp.Queue()
 

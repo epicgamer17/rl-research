@@ -42,7 +42,7 @@ def test_sample_per():
     # Set priorities using coords [0, 1, 2, 3] such that the last one is very likely
     coords = torch.tensor([0, 1, 2, 3], dtype=torch.long)
     priorities = torch.tensor([0.1, 0.1, 0.1, 10.0])
-    state = update_priorities(state, coords, priorities, alpha=1.0)
+    state = update_priorities(state, coords, priorities, alpha=1.0, epsilon=1e-4)
 
     beta = torch.tensor(0.4)
     batch, sampled_coords, is_weights = sample_per(state, batch_size=100, beta=beta)
@@ -104,7 +104,7 @@ def test_sample_per_timestep_level():
     step_c = torch.tensor([0, 1, 2, 0, 1, 2], dtype=torch.long)
     coords = (seq_c, step_c)
     priorities = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 100.0])
-    state = update_priorities(state, coords, priorities, alpha=1.0)
+    state = update_priorities(state, coords, priorities, alpha=1.0, epsilon=1e-4)
 
     beta = torch.tensor(0.5)
     batch, (seq_indices, step_indices), is_weights = sample_per(
@@ -217,7 +217,7 @@ def test_with_unroll_slicing_per():
 
     # Set non-zero priorities on written sequences
     coords = (torch.tensor([0, 1]), torch.tensor([0, 0]))
-    state = update_priorities(state, coords, torch.tensor([1.0, 2.0]), alpha=0.6)
+    state = update_priorities(state, coords, torch.tensor([1.0, 2.0]), alpha=0.6, epsilon=1e-4)
 
     beta = torch.tensor(0.4)
     # Test via higher-order wrapper directly

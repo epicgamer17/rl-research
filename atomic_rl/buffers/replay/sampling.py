@@ -79,6 +79,7 @@ def sample_per(
     buffer_state: PERBufferState,
     batch_size: int,
     beta: torch.Tensor,
+    normalization: str = "batch",
 ) -> Tuple[
     TensorDict,
     Union[torch.Tensor, Tuple[torch.Tensor, ...]],
@@ -86,11 +87,15 @@ def sample_per(
 ]:
     """Prioritized Experience Replay sampling supporting 1D and multi-dimensional sample_dims.
 
+    # TODO/NOTE: We choose to add a flag ('batch' vs 'global') for normalization here, but in the future
+    # if there's too much branching we should split the function into separate global and batch functions. Its possible this is occuring because we are coupling the PER sampling with the IS weighting. Maybe the IS weighting should occur outside of sample_per removing this flag.
+
     Args:
         buffer_state (PERBufferState): The PER buffer state.
         batch_size (int): The size of the batch to sample.
         beta (torch.Tensor): The beta parameter for PER.
             Using a tensor for beta avoids torch.compile recompilation.
+        normalization (str): Normalization scheme for IS weights: "batch" (default) or "global".
 
     Returns:
         Tuple[TensorDict, Union[torch.Tensor, Tuple[torch.Tensor, ...]], torch.Tensor]:
@@ -114,9 +119,13 @@ def sample_per(
         right_children = indices * 2 + 2
 
         left_priorities = buffer_state.sum_tree[left_children]
+        right_priorities = buffer_state.sum_tree[right_children]
 
-        # If target > left_priority, go right and subtract left_priority
-        go_right = targets > left_priorities
+        # Branch right if target > left_priority or if left child has 0 priority,
+        # but only if right child has priority > 0 to prevent descending into empty subtrees.
+        go_right = ((targets > left_priorities) | (left_priorities <= 0)) & (
+            right_priorities > 0
+        )
 
         targets = torch.where(go_right, targets - left_priorities, targets)
         indices = torch.where(go_right, right_children, left_children)
@@ -126,7 +135,15 @@ def sample_per(
 
     # Importance Sampling (IS) Weights
     leaf_priorities = buffer_state.sum_tree[indices]
-    min_prob = buffer_state.min_tree[0] / total_priority
+
+    if normalization == "batch":
+        min_prob = torch.min(leaf_priorities) / total_priority
+    elif normalization == "global":
+        min_prob = buffer_state.min_tree[0] / total_priority
+    else:
+        raise ValueError(
+            f"Unsupported normalization: '{normalization}'. Expected 'batch' or 'global'."
+        )
 
     is_weights = compute_is_weights(leaf_priorities, min_prob, total_priority, beta)
 
@@ -181,4 +198,3 @@ def with_unroll_slicing(sample_fn: Callable) -> Callable:
         return (unrolls, valid_mask, coords, *extra_outputs)
 
     return unroll_sampler
-

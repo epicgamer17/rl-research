@@ -61,6 +61,7 @@ SEED = 42
 ALPHA = 0.6
 BETA_START = 0.4
 BETA_FRAMES = 100000
+PER_EPSILON = 1e-4
 
 # Distributional (C51) Constants
 V_MIN = 0.0
@@ -166,7 +167,7 @@ buffer_state = init_per_buffer(
     },
     device=device,
 )
-per_add_transition = with_per_tracking(circular_write_strategy_)
+per_add_transition = with_per_tracking(circular_write_strategy_, epsilon=PER_EPSILON)
 
 # Initialize N-Step Accumulator
 accumulate_n_step, reset_accumulator = make_n_step_accumulator(
@@ -251,7 +252,7 @@ for step in range(MAX_STEPS):
 
         # 2. Sample with Prioritization
         batch, coords, is_weights = sample_per(
-            buffer_state, BATCH_SIZE, beta=beta_tensor
+            buffer_state, BATCH_SIZE, beta=beta_tensor, normalization="global"
         )
 
         # Resample noise for training step
@@ -297,7 +298,11 @@ for step in range(MAX_STEPS):
 
         # Update PER Priorities
         buffer_state = update_priorities(
-            buffer_state, coords, info_dict["priorities"], alpha=ALPHA
+            buffer_state,
+            coords,
+            info_dict["priorities"],
+            alpha=ALPHA,
+            epsilon=PER_EPSILON,
         )
 
         if step % 100 == 0:

@@ -71,6 +71,7 @@ SEED = 42
 ALPHA = 0.6
 BETA_START = 0.4
 BETA_FRAMES = 100000
+PER_EPSILON = 1e-4
 
 # Seeding for reproducibility
 random.seed(SEED)
@@ -97,6 +98,7 @@ env = gym.make("CartPole-v1")
 env = gym.wrappers.RecordEpisodeStatistics(env)
 obs_shape = env.observation_space.shape
 num_actions = env.action_space.n
+
 device = torch.device("cpu")
 
 model = DQN(obs_shape, num_actions).to(device)
@@ -119,7 +121,7 @@ buffer_state = init_per_buffer(
     device=device,
 )
 # Compose circular write with PER tracking
-per_add_transition = with_per_tracking(circular_write_strategy_)
+per_add_transition = with_per_tracking(circular_write_strategy_, epsilon=PER_EPSILON)
 
 obs, info = env.reset(seed=SEED)
 rng_key = torch.Generator(device=device)
@@ -199,7 +201,7 @@ for step in range(MAX_STEPS):
 
         # Sample with PER
         batch, coords, is_weights = sample_per(
-            buffer_state, BATCH_SIZE, beta=beta_tensor
+            buffer_state, BATCH_SIZE, beta=beta_tensor, normalization="global"
         )
 
         # 1. Forward Passes (Online and Target)
@@ -231,7 +233,11 @@ for step in range(MAX_STEPS):
 
         # Update PER Priorities
         buffer_state = update_priorities(
-            buffer_state, coords, info_dict["priorities"], alpha=ALPHA
+            buffer_state,
+            coords,
+            info_dict["priorities"],
+            alpha=ALPHA,
+            epsilon=PER_EPSILON,
         )
 
         if step % 100 == 0:

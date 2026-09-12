@@ -53,6 +53,7 @@ ACTOR_BATCH_SIZE = 500
 
 ALPHA = 0.6
 BETA = 0.4
+PER_EPSILON = 1e-4
 N_STEP = 3
 MAX_GRAD_NORM = 10.0
 
@@ -232,7 +233,9 @@ def learner_worker(
     step_count = 0
     while step_count < MAX_LEARNER_STEPS:
         # Sample
-        result = buffer.sample_batch(BATCH_SIZE, BETA, MIN_BUFFER_SIZE)
+        result = buffer.sample_batch(
+            BATCH_SIZE, BETA, MIN_BUFFER_SIZE, normalization="global"
+        )
         if result[0] is None:
             time.sleep(0.1)
             continue
@@ -341,7 +344,7 @@ def main():
         "gamma": (),
         "priority": (),
     }
-    buffer = SharedPERBuffer(BUFFER_CAPACITY, buffer_shapes)
+    buffer = SharedPERBuffer(BUFFER_CAPACITY, buffer_shapes, epsilon=PER_EPSILON)
 
     processes = []
 

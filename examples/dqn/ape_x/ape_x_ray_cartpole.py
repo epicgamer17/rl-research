@@ -88,6 +88,7 @@ ACTOR_BATCH_SIZE = 500
 
 ALPHA = 0.6
 BETA = 0.4
+PER_EPSILON = 1e-4
 PREFETCH_COUNT = 3
 N_STEP = 3
 MAX_GRAD_NORM = 10.0
@@ -115,27 +116,37 @@ class DuelingDQN(nn.Module):
 
 @ray.remote
 class ReplayBufferActor:
-    def __init__(self, capacity: int, shapes: Dict[str, Any]):
+    def __init__(self, capacity: int, shapes: Dict[str, Any], epsilon: float):
         self.buffer_state = init_per_buffer(capacity, shapes)
+        self.epsilon = epsilon
         # Tracking logic initialized once locally
-        self.per_add = with_per_tracking(circular_write_strategy_)
+        self.per_add = with_per_tracking(circular_write_strategy_, epsilon=epsilon)
 
     def add_transitions(self, transitions: TensorDict):
         self.buffer_state = self.per_add(self.buffer_state, transitions)
 
     def sample_batch(
-        self, batch_size: int, beta: float, min_size: int = 0
+        self,
+        batch_size: int,
+        beta: float,
+        min_size: int = 0,
+        normalization: str = "global",
     ) -> Tuple[Any, Any, torch.Tensor]:
         if self.buffer_state.size < min_size:
             return None, None, None
         beta_tensor = torch.tensor(beta, dtype=torch.float32)
-        return sample_per(self.buffer_state, batch_size, beta_tensor)
+        return sample_per(
+            self.buffer_state,
+            batch_size,
+            beta_tensor,
+            normalization=normalization,
+        )
 
     def update_priorities(
         self, coords: Union[torch.Tensor, Tuple[torch.Tensor, ...]], td_errors: torch.Tensor, alpha: float
     ):
         self.buffer_state = update_priorities(
-            self.buffer_state, coords, td_errors, alpha
+            self.buffer_state, coords, td_errors, alpha=alpha, epsilon=self.epsilon
         )
 
     def get_info(self) -> Dict[str, Any]:
@@ -346,7 +357,9 @@ class LearnerActor:
         # 1. Prime the queue if needed
         while len(self.prefetch_queue) < PREFETCH_COUNT:
             self.prefetch_queue.append(
-                self.buffer.sample_batch.remote(BATCH_SIZE, BETA, MIN_BUFFER_SIZE)
+                self.buffer.sample_batch.remote(
+                    BATCH_SIZE, BETA, MIN_BUFFER_SIZE, normalization="global"
+                )
             )
 
         # 2. Wait for at least one batch to be ready
@@ -357,7 +370,9 @@ class LearnerActor:
         if result[0] is None:
             # Maintain queue depth and return None
             self.prefetch_queue.append(
-                self.buffer.sample_batch.remote(BATCH_SIZE, BETA, MIN_BUFFER_SIZE)
+                self.buffer.sample_batch.remote(
+                    BATCH_SIZE, BETA, MIN_BUFFER_SIZE, normalization="global"
+                )
             )
             return None
 
@@ -448,7 +463,9 @@ def main():
         "gamma": (),
         "priority": (),
     }
-    buffer = ReplayBufferActor.remote(BUFFER_CAPACITY, buffer_shapes)
+    buffer = ReplayBufferActor.remote(
+        BUFFER_CAPACITY, buffer_shapes, epsilon=PER_EPSILON
+    )
 
     # 4. Initialize Learner with Functional Logic
     learner = LearnerActor.remote(

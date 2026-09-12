@@ -148,7 +148,7 @@ def test_per_tree_logic():
 
     # Update priorities via coords
     priorities = torch.tensor([1.0, 2.0, 3.0, 4.0])
-    state = update_priorities(state, coords, priorities, alpha=1.0)
+    state = update_priorities(state, coords, priorities, alpha=1.0, epsilon=1e-4)
 
     # Sum tree should be:
     # root: 10
@@ -168,7 +168,7 @@ def test_per_tree_logic():
 def test_with_per_tracking():
     capacity = 4
     state = init_per_buffer(capacity, {"data": (1,)})
-    wrapped_write = with_per_tracking(circular_write_strategy_)
+    wrapped_write = with_per_tracking(circular_write_strategy_, epsilon=1e-4)
 
     # 1. Automatic max priority
     batch = TensorDict({"data": torch.tensor([[10.0]])}, batch_size=[1])
@@ -191,7 +191,7 @@ def test_with_per_tracking():
 
     # 3. 2D Sequence write with valid_mask
     state_2d = init_per_buffer((2, 3), {"data": (1,)})
-    wrapped_write_2d = with_per_tracking(circular_write_strategy_)
+    wrapped_write_2d = with_per_tracking(circular_write_strategy_, epsilon=1e-4)
     # 1 sequence with 2 valid steps and 1 padding step
     batch_2d = TensorDict({"data": torch.zeros(1, 3, 1)}, batch_size=[1, 3])
     valid_mask_2d = torch.tensor([[True, True, False]])
@@ -211,17 +211,57 @@ def test_with_per_tracking():
 
 
 def test_compute_is_weights():
-    """Test Importance Sampling weight computation."""
+    """Test Importance Sampling weight computation with global and batch min_prob."""
     leaf_priorities = torch.tensor([1.0, 2.0, 4.0])
     total_priority = 10.0
-    min_prob = 0.05
     beta = torch.tensor(0.5)
 
-    is_weights = compute_is_weights(leaf_priorities, min_prob, total_priority, beta)
+    # 1. Global normalization: passing min_prob from the global buffer
+    min_prob_global = 0.05
+    is_weights_global = compute_is_weights(
+        leaf_priorities, min_prob_global, total_priority, beta
+    )
 
     # probs = [0.1, 0.2, 0.4]
     # is = [ (0.1/0.05)^-0.5, (0.2/0.05)^-0.5, (0.4/0.05)^-0.5 ]
     # is = [ 2^-0.5, 4^-0.5, 8^-0.5 ]
     # is = [ 0.7071, 0.5, 0.3535 ]
-    expected_is = torch.tensor([0.70710678118, 0.5, 0.35355339059])
-    torch.testing.assert_close(is_weights, expected_is)
+    expected_is_global = torch.tensor([0.70710678118, 0.5, 0.35355339059])
+    torch.testing.assert_close(is_weights_global, expected_is_global)
+
+    # 2. Batch normalization: passing batch min_prob
+    min_prob_batch = leaf_priorities.min() / total_priority  # 0.1
+    is_weights_batch = compute_is_weights(
+        leaf_priorities, min_prob_batch, total_priority, beta
+    )
+    # min in batch is 1.0 -> (1/1)^-0.5 = 1.0, (2/1)^-0.5 = 0.7071, (4/1)^-0.5 = 0.5
+    expected_is_batch = torch.tensor([1.0, 0.70710678118, 0.5])
+    torch.testing.assert_close(is_weights_batch, expected_is_batch)
+    assert math.isclose(is_weights_batch.max().item(), 1.0, rel_tol=1e-5)
+
+
+def test_per_epsilon_minimum_priority():
+    """Verify that with_per_tracking and update_priorities enforce the epsilon minimum priority floor."""
+    capacity = 4
+    shapes = {"data": (1,)}
+    eps = 1e-3
+
+    # 1. Test write strategy with explicit zero/tiny priority clamped to epsilon
+    state = init_per_buffer(capacity, shapes)
+    wrapped_write = with_per_tracking(circular_write_strategy_, epsilon=eps)
+    batch = TensorDict(
+        {"data": torch.tensor([[1.0], [2.0]]), "priority": torch.tensor([0.0, 1e-7])},
+        batch_size=[2],
+    )
+    state = wrapped_write(state, batch)
+    # Both items should be clamped to eps
+    assert state.min_tree[0].item() == pytest.approx(eps, rel=1e-5)
+    # Sum of two leaves with eps priority
+    assert state.sum_tree[0].item() == pytest.approx(2 * eps, rel=1e-5)
+
+    # 2. Test update_priorities with zero TD errors clamped to epsilon
+    coords = torch.tensor([0, 1])
+    td_errors = torch.tensor([0.0, 0.0])
+    state = update_priorities(state, coords, td_errors, alpha=1.0, epsilon=eps)
+    assert state.min_tree[0].item() == pytest.approx(eps, rel=1e-5)
+    assert state.sum_tree[0].item() == pytest.approx(2 * eps, rel=1e-5)
