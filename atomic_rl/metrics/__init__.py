@@ -12,3 +12,5 @@ from .visualization import (
     plot_learning_rate_traces,
     plot_plasticity_correlates,
 )
+
+# TODO: instead of metrics and visualizations, we should have a file for each type of metric. each file contains the metric/way of calculating the metric, and then the way or ways of visualizing the metric or data.

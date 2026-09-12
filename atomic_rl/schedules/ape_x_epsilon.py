@@ -1,6 +1,7 @@
 import math
 
 
+# TODO: where does this belong? is it reusable enough to merit its own function or should we inline this? I actually think its probably somewhat reusable in general when using multiple actors in similar ways, so we keep it, but maybe try to generalize it beyond epsilon greedy epsilon in some way?
 def get_ape_x_epsilon(
     actor_id: int, num_actors: int, base_eps: float = 0.4, alpha: float = 7.0
 ) -> float:

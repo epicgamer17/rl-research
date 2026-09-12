@@ -15,14 +15,14 @@ def compute_mse_loss(
     predictions: torch.Tensor, targets: torch.Tensor
 ) -> Tuple[torch.Tensor, dict]:
     """
-    Standard MSE Loss. Also returns priorities for PER.
+    Standard MSE Loss.
 
     Args:
         predictions (torch.Tensor): Predicted Q-values.
         targets (torch.Tensor): Target Q-values.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: A tuple containing the raw losses and the info dictionary.
+        Tuple[torch.Tensor, dict]: A tuple containing the raw losses and the info dictionary.
 
     Expects flat tensors [B].
     """
@@ -30,11 +30,8 @@ def compute_mse_loss(
         predictions.shape == targets.shape
     ), f"Shape mismatch: {predictions.shape} vs {targets.shape}"
     raw_losses = F.mse_loss(predictions, targets, reduction="none")
-    # Priorities are usually the absolute TD error
-    priorities = torch.abs(predictions - targets).detach()
 
     info = {
-        "priorities": priorities,
         "loss/mse": raw_losses.mean().detach(),
     }
     return raw_losses, info
@@ -44,14 +41,14 @@ def compute_cross_entropy_loss(
     predictions: torch.Tensor, targets: torch.Tensor
 ) -> Tuple[torch.Tensor, dict]:
     """
-    Categorical Cross-Entropy Loss. Also returns priorities for PER.
+    Categorical Cross-Entropy Loss.
 
     Args:
         predictions (torch.Tensor): Predicted Q-values.
         targets (torch.Tensor): Target Q-values.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: A tuple containing the raw losses and the info dictionary.
+        Tuple[torch.Tensor, dict]: A tuple containing the raw losses and the info dictionary.
 
     Expects [B, Atoms] or [B, Actions].
     """
@@ -64,7 +61,6 @@ def compute_cross_entropy_loss(
     raw_losses = -(targets * log_probs).sum(dim=-1)
 
     info = {
-        "priorities": raw_losses.detach(),
         "loss/cross_entropy": raw_losses.mean().detach(),
         # Functional tensor for plotting distributions
         "predictions": predictions.detach(),
@@ -76,8 +72,9 @@ def compute_huber_loss(
     predictions: torch.Tensor, targets: torch.Tensor, delta: float = 1.0
 ) -> Tuple[torch.Tensor, dict]:
     """
-    Huber Loss (Smooth L1 Loss). Also returns priorities for PER.
-        Args:
+    Huber Loss (Smooth L1 Loss).
+
+    Args:
         predictions (torch.Tensor): Predicted Q-values.
         targets (torch.Tensor): Target Q-values.
         delta (float, optional): The threshold at which to change between L1 and L2 loss. Defaults to 1.0.
@@ -91,10 +88,8 @@ def compute_huber_loss(
         predictions.shape == targets.shape
     ), f"Shape mismatch: {predictions.shape} vs {targets.shape}"
     raw_losses = F.huber_loss(predictions, targets, reduction="none", delta=delta)
-    priorities = torch.abs(predictions - targets).detach()
 
     info = {
-        "priorities": priorities,
         "loss/huber": raw_losses.mean().detach(),
     }
     return raw_losses, info

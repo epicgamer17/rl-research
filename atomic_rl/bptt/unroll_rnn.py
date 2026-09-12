@@ -9,6 +9,7 @@ import torch.nn as nn
 from typing import Any, Optional, Tuple
 
 
+# TODO: instead of one unroll_rnn this should probably have a few classes for different types of rnns? and should this also be placed with our slicing and unrolling for muzero? is it related or unrelated? something in my gut says they are related.
 def unroll_rnn(
     cell: nn.Module,
     inputs: torch.Tensor,

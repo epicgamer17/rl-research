@@ -19,7 +19,6 @@ from atomic_rl.action_selection import (
     apply_action_mask,
     compute_masked_entropy,
 )
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
     compute_clipped_surrogate_loss,
@@ -39,7 +38,6 @@ from atomic_rl.buffers.rollout import (
 )
 from atomic_rl.utils import (
     ema_update,
-    to_tensor,
     to_numpy_action,
 )
 from atomic_rl.normalization import (
@@ -181,12 +179,12 @@ for iteration in range(MAX_ITERATIONS):
     # 1. Data Collection Phase
     with torch.inference_mode():
         for step in range(STEPS_PER_ENV):
-            obs_tensor = to_tensor(obs, device=device)
+            obs_tensor = torch.as_tensor(obs, device=device)
             logits, value = model(obs_tensor)
 
             # Get the action mask from MicroRTS environments
             try:
-                action_mask = to_tensor(envs.call("get_action_mask"), device=device)
+                action_mask = torch.as_tensor(envs.call("get_action_mask"), device=device)
             except Exception:
                 # Mock mask for demonstration if get_action_mask fails
                 action_mask = torch.ones(
@@ -227,9 +225,9 @@ for iteration in range(MAX_ITERATIONS):
                     "observations": obs_tensor,
                     "actions": action,  # [Batch, len(nvec)]
                     "logprobs": info_dict["log_prob"].detach(),  # [Batch]
-                    "rewards": to_tensor(reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": torch.as_tensor(reward, device=device),
+                    "terminated": torch.as_tensor(terminated, device=device),
+                    "truncated": torch.as_tensor(truncated, device=device),
                     "values": value.detach(),
                     "logits": logits.detach(),
                     "action_masks": action_mask.detach(),
@@ -270,7 +268,7 @@ for iteration in range(MAX_ITERATIONS):
             obs = next_obs
 
         # Compute last values for the re-evaluation pass
-        last_obs_tensor = to_tensor(obs, device=device)
+        last_obs_tensor = torch.as_tensor(obs, device=device)
         _, last_values = model(last_obs_tensor)
 
         next_values = get_rollout_next_values(
@@ -361,10 +359,11 @@ for iteration in range(MAX_ITERATIONS):
                 - ENTROPY_COEFF * total_entropy.mean()
             )
 
-            # Apply gradients via functional optimizer
-            optimizer = apply_gradients_(
-                optimizer, loss, model=model, clip_grad_norm=MAX_GRAD_NORM
-            )
+            # Apply gradients
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
+            optimizer.step()
 
             # Metrics tracking
             with torch.no_grad():

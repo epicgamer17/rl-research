@@ -123,3 +123,28 @@ def compute_clipped_surrogate_loss(
     }
 
     return loss, info
+
+
+def probability_ratio(
+    old_log_probs: torch.Tensor,
+    new_log_probs: torch.Tensor,
+) -> torch.Tensor:
+    r"""
+    Calculate the probability ratio between a new and an old log probability.
+    Used in algorithms like PPO, TRPO, and V-trace.
+    NOTE: The probability ratio $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$ is mathematically an importance sampling weight.
+
+    Args:
+        old_log_probs (torch.Tensor): Tensor of old log probabilities.
+        new_log_probs (torch.Tensor): Tensor of new log probabilities.
+
+    Returns:
+        torch.Tensor: The probability ratio.
+
+    Expects flat tensors [B * T] or [B].
+    """
+    assert (
+        old_log_probs.shape == new_log_probs.shape
+    ), f"Shape mismatch: {old_log_probs.shape} vs {new_log_probs.shape}"
+    return torch.exp(new_log_probs - old_log_probs.detach())
+

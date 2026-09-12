@@ -36,11 +36,10 @@ import wandb
 
 from atomic_rl.action_selection import sample_distribution
 from atomic_rl.networks.initialization import set_seed, lecun_uniform_, make_sparse_init
-from atomic_rl.optimizer import AdaptiveObGD
+from atomic_rl.optimization import AdaptiveObGD
 from atomic_rl.td import compute_v_td_target, compute_accumulating_traces
 
 from atomic_rl.utils import (
-    to_tensor,
     to_numpy_action,
 )
 from atomic_rl.normalization import (
@@ -181,7 +180,7 @@ global_step = 0
 # ---------------------------------------------------------------------------
 for step in range(MAX_STEPS):
     global_step += 1
-    obs_t = to_tensor(obs, device=device).unsqueeze(0)
+    obs_t = torch.as_tensor(obs, device=device).unsqueeze(0)
 
     # ---- 1. Action Selection Phase ----------------------------------------
     with torch.inference_mode():
@@ -199,8 +198,8 @@ for step in range(MAX_STEPS):
     next_obs, reward, terminated, truncated, info = env.step(action_np)
     done = terminated or truncated
 
-    next_obs_t = to_tensor(next_obs, device=device).unsqueeze(0)
-    reward_t = to_tensor(reward, device=device)
+    next_obs_t = torch.as_tensor(next_obs, device=device).unsqueeze(0)
+    reward_t = torch.as_tensor(reward, device=device)
 
     # ---- 3. Unified Evaluator Pass ----------------------------------------
     v_current = critic(obs_t).view(-1)

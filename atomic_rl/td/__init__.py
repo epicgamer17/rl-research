@@ -23,6 +23,7 @@ from . import targets
 from . import traces
 from . import updates
 
+from .td_error import compute_td_error
 from .targets import (
     compute_v_td_target,
     compute_q_td_target,
@@ -44,6 +45,7 @@ __all__ = [
     "targets",
     "traces",
     "updates",
+    "compute_td_error",
     "compute_v_td_target",
     "compute_q_td_target",
     "compute_categorical_q_td_target",

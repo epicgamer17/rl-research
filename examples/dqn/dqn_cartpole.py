@@ -40,12 +40,8 @@ from atomic_rl.action_selection import (
     with_epsilon_greedy,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.networks.update_target_net import hard_update_target_network_
-from atomic_rl.utils import (
-    to_tensor,
-    to_numpy_action,
-)
+from atomic_rl.utils import to_numpy_action
 
 # Constants
 BATCH_SIZE = 128
@@ -130,7 +126,7 @@ for step in range(MAX_STEPS):
 
     # 2. Act (Pure function)
     with torch.inference_mode():
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
 
         predictions = model(obs_tensor)
         action, info = action_selector(
@@ -150,12 +146,12 @@ for step in range(MAX_STEPS):
     # 3. Add to Buffer
     # TODO: URGENT. Creating a new tensor every step in the hotloop. should do in a more efficient way, maybe some thing like the rollout buffer in PPO (possible reuse?) ie store in a rollout buffer before sending to main replay buffer. Idea being its pre allocated basically. Must consider the N-Step case.
     transition = {
-        "obs": to_tensor(obs),
+        "obs": torch.as_tensor(obs),
         "action": action.squeeze(0).detach().to(torch.long),
-        "reward": to_tensor(reward),
-        "terminated": to_tensor(terminated),
-        "truncated": to_tensor(truncated),
-        "next_obs": to_tensor(next_obs),
+        "reward": torch.as_tensor(reward),
+        "terminated": torch.as_tensor(terminated),
+        "truncated": torch.as_tensor(truncated),
+        "next_obs": torch.as_tensor(next_obs),
         "gamma": torch.tensor(GAMMA, dtype=torch.float32),
     }
     buffer_state, _ = circular_write_strategy_(
@@ -207,7 +203,9 @@ for step in range(MAX_STEPS):
         loss = loss.mean()
 
         # Apply Updates
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
         if step % 100 == 0:
             # Augment info with orchestration-level metrics

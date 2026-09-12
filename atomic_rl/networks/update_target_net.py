@@ -40,5 +40,7 @@ def hard_update_target_network_(model: nn.Module, target_model: nn.Module) -> No
     Args:
         model (nn.Module): The model to update the target network from.
         target_model (nn.Module): The target network to update.
+
+    This function is created in contrast to soft_update_target_network_.
     """
     target_model.load_state_dict(model.state_dict())

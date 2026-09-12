@@ -39,6 +39,7 @@ USAGE EXAMPLE:
 
 import torch
 import warnings
+from typing import Tuple, Optional
 
 
 # TODO: eventually will have to figure out how to get these working with MuZero (alternating players and all). it works fine for single agent or if we treat the opponent as part of the environment (ie not an agent), but for things like muzero where the agent learns as both players and value depends on the agents perspective this needs to be updated. (ie for chess, players alternate so if p1 won at the end of the game they get a reward 1, but the mc returns for all the states is not 1, it is 1, -1, -1, 1, -1, ...). There may be several solutions, for one i know mctx does there tree search without worrying about player turn, is there a way to do that? maybe some kind of higher order function to make it player turn aware? or another function to flip the sign of the returns depending on the player the user uses before passing to these or something?
@@ -294,3 +295,92 @@ def compute_td_lambda_returns(
         time_dim=time_dim,
     )
     return advantages + values.detach()
+
+
+def compute_vtrace_weights(
+    target_log_probs: torch.Tensor,
+    behavior_log_probs: torch.Tensor,
+    rho_clip: Optional[float] = 1.0,
+    c_clip: Optional[float] = 1.0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Computes clipped V-trace importance sampling weights (rho_bar, c_bar).
+
+    Reference:
+        Espeholt et al., "IMPALA: Scalable Distributed Deep-RL with
+        Importance Weighted Actor-Learner Architectures" (2018), Section 4.1.
+
+    Formula:
+        rho_t = exp(target_log_probs - behavior_log_probs)
+        rho_bar_t = min(rho_clip, rho_t)   # Truncated IS weight for TD error / PG advantage
+        c_bar_t   = min(c_clip, rho_t)     # Truncated IS weight for trace continuation product
+
+    Args:
+        target_log_probs: Log probabilities under current target policy [*Batch, Time, *Channels].
+        behavior_log_probs: Log probabilities under rollout behavior policy [*Batch, Time, *Channels].
+        rho_clip: Upper clip bound for rho_bar. Defaults to 1.0 (pass None for unclipped).
+        c_clip: Upper clip bound for c_bar. Defaults to 1.0 (pass None for unclipped).
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: (rho_bar, c_bar) matching input shape.
+    """
+    assert (
+        target_log_probs.shape == behavior_log_probs.shape
+    ), f"Exact shape mismatch in compute_vtrace_weights! target: {target_log_probs.shape} vs behavior: {behavior_log_probs.shape}"
+
+    # NOTE: Skeleton stub pending full IMPALA integration.
+    # Potential internal reuse: atomic_rl.losses.probability_ratio(behavior_log_probs, target_log_probs)
+    # can be reused internally to compute the importance sampling ratio rho_t.
+    raise NotImplementedError("compute_vtrace_weights kernel implementation is pending.")
+
+
+def compute_vtrace_returns(
+    rewards: torch.Tensor,
+    terminated: torch.Tensor,
+    truncated: torch.Tensor,
+    values: torch.Tensor,
+    next_values: torch.Tensor,
+    rho_bar: torch.Tensor,
+    c_bar: torch.Tensor,
+    gamma: float,
+    time_dim: int = 1,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Computes V-trace target values v_s and advantage estimates for off-policy actor-critic.
+
+    Reference:
+        Espeholt et al., "IMPALA: Scalable Distributed Deep-RL with
+        Importance Weighted Actor-Learner Architectures" (2018), Section 4.1.
+
+    Formula:
+        delta_t V = rho_bar_t * (r_t + gamma * (1 - terminated_t) * V(s_{t+1}) - V(s_t))
+        v_s = V(s_s) + sum_{t=s}^{s+n-1} gamma^{t-s} * (prod_{i=s}^{t-1} c_bar_i) * delta_t V
+        advantages = rho_bar_s * (r_s + gamma * (1 - terminated_s) * v_{s+1} - V(s_s))
+
+    Args:
+        rewards: Rewards tensor [*Batch, Time, *Channels].
+        terminated: Termination flags [*Batch, Time, *Channels].
+        truncated: Truncation flags [*Batch, Time, *Channels].
+        values: State value estimates V(s) [*Batch, Time, *Channels].
+        next_values: Bootstrap value estimates V(s') [*Batch, Time, *Channels].
+        rho_bar: Clipped importance weights for TD errors [*Batch, Time, *Channels].
+        c_bar: Clipped importance weights for trace continuation [*Batch, Time, *Channels].
+        gamma: Discount factor.
+        time_dim: Time step dimension (default: 1).
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: (vs, advantages) matching input shapes.
+    """
+    assert (
+        rewards.shape
+        == terminated.shape
+        == truncated.shape
+        == values.shape
+        == next_values.shape
+        == rho_bar.shape
+        == c_bar.shape
+    ), "Exact shape mismatch in compute_vtrace_returns! All tensors must match shape."
+
+    # NOTE: Skeleton implementation. Recursive backward pass accumulator will be implemented here.
+    raise NotImplementedError("compute_vtrace_returns kernel implementation is pending.")
+

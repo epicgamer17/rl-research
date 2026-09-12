@@ -19,11 +19,9 @@ import random
 import wandb
 
 from atomic_rl.action_selection import gaussian_sampling_selector
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
 from atomic_rl.losses import compute_policy_gradient_loss, compute_mse_loss
 from atomic_rl.utils import (
-    to_tensor,
     to_numpy_action,
 )
 from atomic_rl.normalization import (
@@ -126,7 +124,7 @@ for episode in range(MAX_EPISODES):
     truncateds = []
 
     while not (terminated or truncated):
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
         mu, std = actor(obs_tensor)
         value = critic(obs_tensor)
 
@@ -187,7 +185,9 @@ for episode in range(MAX_EPISODES):
     loss = pg_loss + CRITIC_COEFF * critic_loss
 
     # Apply Updates
-    optimizer = apply_gradients_(optimizer, loss)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
 
     if episode % 100 == 0:
         explained_var = compute_explained_variance(

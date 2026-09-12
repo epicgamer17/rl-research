@@ -21,6 +21,7 @@ def _allocate_tensordict(
 
 
 # TODO: do we need the inplace and not inplace operations?
+# TODO/NOTE: should we remove and just use torch.lerp? For me personally, ema update is a much more semantically meaningful than lerp.
 def ema_update(
     old_ema: torch.Tensor, new_value: torch.Tensor, alpha: float
 ) -> torch.Tensor:
@@ -31,7 +32,7 @@ def ema_update(
     assert (
         old_ema.shape == new_value.shape
     ), f"EMA shape mismatch: {old_ema.shape} vs {new_value.shape}"
-
+    # TODO: can also use torch.lerp here
     return (1.0 - alpha) * old_ema + alpha * new_value
 
 
@@ -51,23 +52,6 @@ def ema_update_(
     return old_ema.lerp_(new_value, alpha)
 
 
-def to_tensor(
-    numpy_array: Union[np.ndarray, int, float, bool],
-    device: torch.device = torch.device("cpu"),
-    dtype: Optional[torch.dtype] = torch.float32,
-) -> torch.Tensor:
-    """
-    Converts a numpy array (or primitive) to a PyTorch tensor on the specified device.
-
-    Args:
-        numpy_array: The numpy array or primitive to convert.
-        device: The target device.
-        dtype: The target data type. Defaults to float32.
-
-    Returns:
-        A PyTorch tensor.
-    """
-    return torch.as_tensor(numpy_array, dtype=dtype, device=device)
 
 
 # TODO: does this handle pendulum?

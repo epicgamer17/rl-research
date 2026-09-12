@@ -26,7 +26,7 @@ from atomic_rl.action_selection import (
     gather_q_values,
     with_epsilon_greedy,
 )
-from atomic_rl.losses import compute_mse_loss, with_sequence_mask
+from atomic_rl.losses import compute_mse_loss
 from atomic_rl.networks.update_target_net import hard_update_target_network_
 from atomic_rl.buffers.replay import (
     circular_write_strategy_,
@@ -36,7 +36,6 @@ from atomic_rl.buffers.replay import (
 )
 from atomic_rl.schedules import get_linear_schedule
 from atomic_rl.td import compute_q_td_target
-from atomic_rl.utils import to_tensor
 
 # Constants
 BATCH_SIZE = 32
@@ -198,7 +197,7 @@ def train():
         # 1. Act
         with torch.inference_mode():
             # (Batch=1, Time=1, ObsDim)
-            obs_tensor = to_tensor(obs[None, None, ...], device=device)
+            obs_tensor = torch.as_tensor(obs[None, None, ...], device=device)
             q_values, next_hidden_state = model(obs_tensor, hidden_state)
 
             action, select_info = action_selector(
@@ -220,7 +219,7 @@ def train():
         # TODO: should i make allocating a tensor/transition into a helper? it seems like we do it very often and its a bit of a pain. also could allow for that preallocation trick to not make a new tensor dict every step.
         transition = TensorDict(
             {
-                "observations": to_tensor(obs, device=device),
+                "observations": torch.as_tensor(obs, device=device),
                 "actions": action.squeeze(0),
                 "rewards": torch.tensor(reward, dtype=torch.float32, device=device),
                 "terminated": torch.tensor(
@@ -308,10 +307,10 @@ def train():
                 valid_mask[:, :BURN_IN_STEPS] = False
             flat_mask = valid_mask.flatten()
 
-            # Use sequence-aware loss
-            loss_fn = with_sequence_mask(compute_mse_loss, flat_mask)
-            loss, info_dict = loss_fn(q_pred_flat, td_targets_flat)
-            loss = loss.mean()
+            # Compute loss masked over valid transitions
+            raw_loss, info_dict = compute_mse_loss(q_pred_flat, td_targets_flat)
+            valid_count = flat_mask.sum().clamp(min=1.0)
+            loss = (raw_loss * flat_mask).sum() / valid_count
 
             # Optimize
             optimizer.zero_grad(set_to_none=True)

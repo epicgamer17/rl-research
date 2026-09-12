@@ -4,7 +4,6 @@ from .utils import (
     ema_update_,
     scale_gradient,
     to_numpy_action,
-    to_tensor,
 )
 from .normalization import (
     compute_welford_stats,
@@ -19,7 +18,6 @@ __all__ = [
     "ema_update_",
     "scale_gradient",
     "to_numpy_action",
-    "to_tensor",
     "compute_welford_stats",
     "min_max_normalize",
     "scale_tensor_by_std",

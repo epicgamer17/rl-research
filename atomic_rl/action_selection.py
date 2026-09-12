@@ -183,6 +183,7 @@ def with_epsilon_greedy(selector_fn: Callable) -> Callable:
     return epsilon_greedy_selector
 
 
+# TODO: possibly remove. The reason we still have it (and removed other functions that just apply a mask like with_sequence_mask) is because this has MUCH more semantic meaning, and its not a simple multiplication but a replacing of values. I think theres merits to remove it, and theres also merits to generalize it into a generic mask function for any masking operation and using that everywhere (instead of multiplying). figure that out as the library evolves. likey (to be determined though) best to be consistent with how we apply maskng (ie not provided by the library as its generally simple and can be handled by the user) though a generic function may actually be nice...
 def apply_action_mask(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """
     Explicitly replaces logits of invalid actions with a large negative number (-1e8).

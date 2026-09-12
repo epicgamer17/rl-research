@@ -30,20 +30,16 @@ from atomic_rl.buffers.replay import (
     make_n_step_accumulator,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.losses import with_per_weights, compute_cross_entropy_loss
+from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.td import compute_categorical_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
     expected_value,
     gather_q_values,
 )
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.networks.update_target_net import hard_update_target_network_
 from atomic_rl.metrics import log_distributional_metrics
-from atomic_rl.utils import (
-    to_tensor,
-    to_numpy_action,
-)
+from atomic_rl.utils import to_numpy_action
 from atomic_rl.networks.architectures.noisy_linear import NoisyLinear
 
 # --- Constants ---
@@ -197,7 +193,7 @@ for step in range(MAX_STEPS):
 
     # 1. Act (Noisy Nets handle exploration, no epsilon needed)
     with torch.inference_mode():
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
 
         # Resample noise for the actor
         model.reset_noise()
@@ -216,12 +212,12 @@ for step in range(MAX_STEPS):
     # TODO: URGENT. Creating a new tensor every step in the hotloop. should do in a more efficient way, maybe some thing like the rollout buffer in PPO (possible reuse?) ie store in a rollout buffer before sending to main replay buffer. Idea being its pre allocated basically. Must consider the N-Step case.
     # The accumulator now returns a list of 0, 1, or N transitions.
     n_step_transitions = accumulate_n_step(
-        to_tensor(obs).unsqueeze(0),
+        torch.as_tensor(obs).unsqueeze(0),
         action,
-        to_tensor([reward]),
-        to_tensor(next_obs).unsqueeze(0),
-        to_tensor([terminated]),
-        to_tensor([truncated]),
+        torch.as_tensor([reward]),
+        torch.as_tensor(next_obs).unsqueeze(0),
+        torch.as_tensor([terminated]),
+        torch.as_tensor([truncated]),
     )
 
     # If the accumulator yielded any transitions, write them as a single batch
@@ -290,28 +286,31 @@ for step in range(MAX_STEPS):
         pred_sa_logits = gather_q_values(logits, batch["action"])
 
         # 5. Loss Calculation (PER weighted Cross Entropy)
-        per_loss_fn = with_per_weights(compute_cross_entropy_loss, is_weights)
-        loss, info_dict = per_loss_fn(pred_sa_logits, td_target)
+        raw_losses, info_dict = compute_cross_entropy_loss(pred_sa_logits, td_target)
+        loss = (raw_losses * is_weights).mean()
 
         # Apply Gradients
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
-        # Update PER Priorities
+        # Update PER Priorities (using sample-wise cross-entropy error)
+        priorities = raw_losses.detach()
         buffer_state = update_priorities(
             buffer_state,
             coords,
-            info_dict["priorities"],
+            priorities,
             alpha=ALPHA,
             epsilon=PER_EPSILON,
         )
 
         if step % 100 == 0:
             # We log the info_dict directly. W&B handles scalars and histograms of tensors.
-            # We exclude 'predictions' and 'priorities' from the direct log to handle them specially.
+            # We exclude 'predictions' from the direct log to handle them specially.
             log_dict = {
                 k: v
                 for k, v in info_dict.items()
-                if k not in ["predictions", "priorities"]
+                if k != "predictions"
             }
             log_dict.update({"beta": beta})
 

@@ -12,7 +12,6 @@ import random
 import wandb
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
     compute_clipped_surrogate_loss,
@@ -32,7 +31,6 @@ from atomic_rl.buffers.rollout import (
 )
 from atomic_rl.utils import (
     ema_update,
-    to_tensor,
     to_numpy_action,
 )
 from atomic_rl.normalization import (
@@ -177,7 +175,7 @@ for iteration in range(MAX_ITERATIONS):
     with torch.inference_mode():
         for step in range(STEPS_PER_ENV):
             # Atari observations are [C, H, W] after wrappers
-            obs_tensor = to_tensor(obs, device=device)
+            obs_tensor = torch.as_tensor(obs, device=device)
             logits, value = model(obs_tensor)
 
             dist = torch.distributions.Categorical(logits=logits)
@@ -198,9 +196,9 @@ for iteration in range(MAX_ITERATIONS):
                     "observations": obs_tensor,
                     "actions": action,
                     "logprobs": info_dict["log_prob"].detach(),
-                    "rewards": to_tensor(clipped_reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": torch.as_tensor(clipped_reward, device=device),
+                    "terminated": torch.as_tensor(terminated, device=device),
+                    "truncated": torch.as_tensor(truncated, device=device),
                     "values": value.detach(),
                     "logits": logits.detach(),
                 },
@@ -219,8 +217,8 @@ for iteration in range(MAX_ITERATIONS):
                     record_truncations_(
                         buffer=buffer,
                         step=step,
-                        truncated_envs=to_tensor(env_indices[trunc_mask], device),
-                        final_observations=to_tensor(final_obs[trunc_mask], device),
+                        truncated_envs=torch.as_tensor(env_indices[trunc_mask], device=device),
+                        final_observations=torch.as_tensor(final_obs[trunc_mask], device=device),
                     )
 
             if "final_info" in info:
@@ -318,9 +316,10 @@ for iteration in range(MAX_ITERATIONS):
             loss = pg_loss + CRITIC_COEFF * critic_loss + ENTROPY_COEFF * ent_loss
 
             # Backprop
-            optimizer = apply_gradients_(
-                optimizer, loss, model=model, clip_grad_norm=MAX_GRAD_NORM
-            )
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
+            optimizer.step()
 
             # Metrics tracking
             with torch.no_grad():

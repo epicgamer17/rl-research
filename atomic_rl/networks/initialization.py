@@ -8,6 +8,7 @@ import torch.nn as nn
 from tensordict import TensorDict
 
 
+# TODO: this is not really related to networks, more just a utility. this should be moved.
 def set_seed(seed: int) -> None:
     """
     Sets random seeds for reproducibility across random, numpy, and torch.

@@ -4,7 +4,6 @@ import numpy as np
 from atomic_rl.utils import (
     ema_update,
     ema_update_,
-    to_tensor,
     to_numpy_action,
 )
 from atomic_rl.utils.normalization import (
@@ -213,22 +212,8 @@ def test_add_dirichlet_noise():
 
 
 # ==========================================
-# Tests for to_tensor and to_numpy_action
+# Tests for to_numpy_action
 # ==========================================
-
-
-def test_to_tensor():
-    """Verify conversion of python primitives and numpy structures to PyTorch tensors."""
-    # Primitive int conversion
-    t1 = to_tensor(5, dtype=torch.long)
-    assert t1.dtype == torch.long
-    assert t1.item() == 5
-
-    # Numpy array conversion
-    arr = np.array([1.0, 2.0], dtype=np.float64)
-    t2 = to_tensor(arr, dtype=torch.float32)
-    assert t2.dtype == torch.float32
-    torch.testing.assert_close(t2, torch.tensor([1.0, 2.0]))
 
 
 def test_to_numpy_action_discrete_flattening():

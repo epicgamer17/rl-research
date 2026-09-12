@@ -5,13 +5,11 @@ from atomic_rl.losses import (
     compute_mse_loss,
     compute_huber_loss,
     compute_cross_entropy_loss,
-    with_per_weights,
     compute_policy_gradient_loss,
     compute_entropy_loss,
     probability_ratio,
     compute_clipped_surrogate_loss,
     compute_clipped_mse_loss,
-    with_sequence_mask,
 )
 import math
 
@@ -26,7 +24,7 @@ def test_mse_loss():
 
     expected_losses = torch.tensor([0.25, 0.0, 0.25])
     torch.testing.assert_close(raw_losses, expected_losses)
-    torch.testing.assert_close(info["priorities"], torch.tensor([0.5, 0.0, 0.5]))
+    assert "priorities" not in info
     assert math.isclose(info["loss/mse"], 0.5 / 3.0, rel_tol=1e-5)
 
 
@@ -39,7 +37,7 @@ def test_huber_loss():
 
     expected_losses = torch.tensor([0.005, 3.5])
     torch.testing.assert_close(raw_losses, expected_losses)
-    torch.testing.assert_close(info["priorities"], torch.tensor([0.1, 4.0]))
+    assert "priorities" not in info
 
 
 def test_cross_entropy_loss():
@@ -49,24 +47,10 @@ def test_cross_entropy_loss():
     raw_losses, info = compute_cross_entropy_loss(predictions, targets)
 
     assert raw_losses.item() < 0.01
-    assert "priorities" in info
+    assert "priorities" not in info
     assert "predictions" in info
 
 
-def test_with_per_weights():
-    def base_loss(p, t):
-        return (p - t) ** 2, {"base": 1.0}
-
-    is_weights = torch.tensor([0.5, 2.0])
-    weighted_loss_fn = with_per_weights(base_loss, is_weights)
-
-    predictions = torch.tensor([1.0, 2.0])
-    targets = torch.tensor([2.0, 3.0])
-
-    loss, info = weighted_loss_fn(predictions, targets)
-
-    assert loss.item() == 1.25
-    assert info["loss/weighted"] == 1.25
 
 
 def test_policy_gradient_loss():
@@ -212,77 +196,4 @@ def test_losses_assertions():
         compute_entropy_loss(dist)
 
 
-# ==========================================
-# Tests for with_sequence_mask (New Code Coverage)
-# ==========================================
 
-
-def test_with_sequence_mask_standard():
-    """Verify that the loss is correctly zeroed out for masked transitions and the mean is un-diluted."""
-
-    def dummy_base_loss(p, t):
-        return torch.abs(p - t), {"base_metric": torch.tensor(0.0)}
-
-    # Pass flat 1D sequence tensors [B * T] as the function expects
-    predictions = torch.tensor([1.0, 2.0, 3.0, 4.0])
-    targets = torch.tensor([2.0, 4.0, 6.0, 8.0])
-    mask = torch.tensor([1, 0, 1, 1])  # 3 valid steps, 1 masked step
-
-    masked_loss_fn = with_sequence_mask(dummy_base_loss, mask)
-    masked_losses, info = masked_loss_fn(predictions, targets)
-
-    # Raw errors are: [1.0, 2.0, 3.0, 4.0]
-    # Masked errors should be: [1.0, 0.0, 3.0, 4.0]
-    expected_losses = torch.tensor([1.0, 0.0, 3.0, 4.0])
-    torch.testing.assert_close(masked_losses, expected_losses)
-
-    # Valid count is 3. Sum of valid losses = 1.0 + 3.0 + 4.0 = 8.0
-    # Expected masked mean = 8.0 / 3.0 = 2.66666...
-    expected_mean = 8.0 / 3.0
-    torch.testing.assert_close(info["loss/masked_mean"], torch.tensor(expected_mean))
-
-
-def test_with_sequence_mask_all_masked():
-    """Verify that if every transition is masked out, clamp(min=1.0) prevents a division-by-zero NaN."""
-
-    def dummy_base_loss(p, t):
-        return torch.abs(p - t), {}
-
-    predictions = torch.tensor([1.0, 2.0])
-    targets = torch.tensor([2.0, 4.0])
-    mask = torch.tensor([0, 0])  # All elements masked out
-
-    masked_loss_fn = with_sequence_mask(dummy_base_loss, mask)
-    masked_losses, info = masked_loss_fn(predictions, targets)
-
-    # All outputs should be perfectly zeroed out
-    torch.testing.assert_close(masked_losses, torch.tensor([0.0, 0.0]))
-
-    # Sum is 0.0, Valid count is clamped to 1.0 -> mean must be 0.0, NOT NaN
-    torch.testing.assert_close(info["loss/masked_mean"], torch.tensor(0.0))
-
-
-def test_with_sequence_mask_shape_assertions():
-    """Verify that with_sequence_mask raises an AssertionError on unflattened or mismatched shapes."""
-
-    def dummy_base_loss(p, t):
-        return torch.abs(p - t), {}
-
-    # Mask has 4 elements total
-    mask = torch.tensor([1, 0, 1, 1])
-
-    # Case 1: Passing unflattened 2D tensors [2, 2] instead of [4]
-    predictions_2d = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-    targets_2d = torch.tensor([[2.0, 4.0], [6.0, 8.0]])
-
-    masked_loss_fn = with_sequence_mask(dummy_base_loss, mask)
-
-    with pytest.raises(AssertionError, match="Ensure inputs are flattened"):
-        masked_loss_fn(predictions_2d, targets_2d)
-
-    # Case 2: Passing a flat tensor but with the entirely wrong element count (e.g., 3 instead of 4)
-    predictions_short = torch.tensor([1.0, 2.0, 3.0])
-    targets_short = torch.tensor([2.0, 4.0, 6.0])
-
-    with pytest.raises(AssertionError, match="must match mask total elements"):
-        masked_loss_fn(predictions_short, targets_short)

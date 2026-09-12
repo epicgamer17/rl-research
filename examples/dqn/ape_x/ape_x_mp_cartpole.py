@@ -23,13 +23,12 @@ from typing import Tuple, Dict, Any, Callable, List
 from atomic_rl.buffers import SharedPERBuffer
 from atomic_rl.buffers.replay import make_n_step_accumulator
 from atomic_rl.losses import compute_huber_loss
-from atomic_rl.td import compute_q_td_target
+from atomic_rl.td import compute_q_td_target, compute_td_error
 from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
 )
 from atomic_rl.schedules import get_ape_x_epsilon
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # --- Constants ---
@@ -189,8 +188,8 @@ def actor_worker(
                     collated["gamma"],
                 )
                 pred_sa = gather_q_values(q_values, collated["action"])
-                _, info_dict = loss_fn(pred_sa, td_target)
-            collated["priority"] = info_dict["priorities"]
+                td_errors = compute_td_error(pred_sa, td_target)
+            collated["priority"] = torch.abs(td_errors).detach()
             buffer.add_transitions(collated)
             local_batch = []
 
@@ -277,19 +276,18 @@ def learner_worker(
                 "td_targets/mean": td_target.mean().detach(),
             }
         )
-        optimizer = apply_gradients_(
-            optimizer,
-            weighted_loss,
-            model=local_model,
-            clip_grad_norm=MAX_GRAD_NORM,
-        )
+        optimizer.zero_grad(set_to_none=True)
+        weighted_loss.backward()
+        torch.nn.utils.clip_grad_norm_(local_model.parameters(), max_norm=MAX_GRAD_NORM)
+        optimizer.step()
 
         # Update shared model
         shared_model.load_state_dict(local_model.state_dict())
 
         # Update priorities
-        td_errors = info["priorities"].detach().cpu()
-        buffer.update_priorities(coords.cpu(), td_errors, ALPHA)
+        td_errors = compute_td_error(pred_sa, td_target)
+        priorities = torch.abs(td_errors).detach().cpu()
+        buffer.update_priorities(coords.cpu(), priorities, ALPHA)
 
         step_count += 1
         if step_count % TARGET_NET_UPDATE_FREQ == 0:

@@ -129,9 +129,10 @@ for step in range(MAX_STEPS):
     if step % UPDATE_FREQ == 0:
         batch, rng_key = sample_buffer(buffer_state, rng_key, BATCH_SIZE)
         
-        # Calculate Loss & Gradients via Pure Math
-        loss, grads = calculate_loss(params, batch)
-        params, optimizer_state = apply_gradients_(params, optimizer_state, grads)
+        # Standard PyTorch Optimization
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
         
         # Monolithic layout makes logging and tracking effortless
         wandb.log({"loss": loss, "step": step})

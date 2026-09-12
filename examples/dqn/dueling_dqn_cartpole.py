@@ -40,7 +40,6 @@ from atomic_rl.action_selection import (
     with_epsilon_greedy,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # Constants
@@ -217,7 +216,9 @@ for step in range(MAX_STEPS):
         loss = loss.mean()
 
         # Apply Updates
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
         if step % 100 == 0:
             # W&B handles scalars and histograms of tensors (like priorities) automatically.

@@ -10,6 +10,8 @@ from .fpu import (
     fpu_mixed_value,
     fpu_min_value,
 )
+from ..utils.normalization import min_max_normalize
+
 
 
 def get_qvalues(
@@ -227,19 +229,11 @@ def qtransform_completed_by_mix_value(
     )
 
     if rescale_values:
-        completed_qvalues = _rescale_qvalues(completed_qvalues, epsilon)
+        completed_qvalues = min_max_normalize(completed_qvalues, dim=-1, eps=epsilon)
 
     maxvisit = visit_counts.amax(dim=-1, keepdim=True).to(completed_qvalues.dtype)
     visit_scale = maxvisit_init + maxvisit
     return visit_scale * value_scale * completed_qvalues
-
-
-def _rescale_qvalues(qvalues: torch.Tensor, epsilon: float) -> torch.Tensor:
-    """Rescales completed Q-values to [0, 1] per batch item."""
-    min_value = qvalues.amin(dim=-1, keepdim=True)
-    max_value = qvalues.amax(dim=-1, keepdim=True)
-    denom = torch.clamp(max_value - min_value, min=epsilon)
-    return (qvalues - min_value) / denom
 
 
 def _compute_mixed_value(

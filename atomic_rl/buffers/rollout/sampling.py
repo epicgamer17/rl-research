@@ -20,7 +20,9 @@ def get_rollout_next_values(
     if "truncated" in buffer.data.keys():
         truncated_mask = buffer.data["truncated"].bool()
         if truncated_mask.ndim > 2:
-            truncated_mask = truncated_mask.any(dim=tuple(range(2, truncated_mask.ndim)))
+            truncated_mask = truncated_mask.any(
+                dim=tuple(range(2, truncated_mask.ndim))
+            )
         truncated_steps = truncated_mask.nonzero(as_tuple=False)
         if truncated_steps.numel() > 0:
             expected_records = {
@@ -43,12 +45,12 @@ def get_rollout_next_values(
     # Explicitly add the time dimension (dim=1) since last_values represents a single timestep
     last_values = last_values.unsqueeze(1)
 
-    assert last_values.ndim == values.ndim, (
-        f"Shape mismatch: last_values.ndim ({last_values.ndim}) != values.ndim ({values.ndim}). Ensure last_values matches the feature dimensions of values."
-    )
-    assert last_values.shape[2:] == values.shape[2:], (
-        f"Feature dimensions mismatch: last_values {last_values.shape[2:]} vs values {values.shape[2:]}"
-    )
+    assert (
+        last_values.ndim == values.ndim
+    ), f"Shape mismatch: last_values.ndim ({last_values.ndim}) != values.ndim ({values.ndim}). Ensure last_values matches the feature dimensions of values."
+    assert (
+        last_values.shape[2:] == values.shape[2:]
+    ), f"Feature dimensions mismatch: last_values {last_values.shape[2:]} vs values {values.shape[2:]}"
 
     # next_values[b, t] should be values[b, t+1] for t < T-1, and last_values[b] for t = T-1
     next_values = torch.cat([values[:, 1:], last_values], dim=1)
@@ -58,9 +60,9 @@ def get_rollout_next_values(
         with torch.inference_mode():
             # get_value_fn must return a tensor shaped [N, *FeatureDims]
             v_patch = get_value_fn(obs_batch)
-            assert v_patch.shape[1:] == values.shape[2:], (
-                f"v_patch feature shape {v_patch.shape[1:]} does not match values feature shape {values.shape[2:]}"
-            )
+            assert (
+                v_patch.shape[1:] == values.shape[2:]
+            ), f"v_patch feature shape {v_patch.shape[1:]} does not match values feature shape {values.shape[2:]}"
 
         for i, (step, env_idx, _) in enumerate(buffer.truncation_records):
             next_values[env_idx, step] = v_patch[i]
@@ -68,6 +70,7 @@ def get_rollout_next_values(
     return next_values
 
 
+# TODO: do we need this? should this be removed? made more generic for the new system where the capacity can be a tuple?
 def flatten_rollout_buffer(buffer: RolloutBufferState) -> TensorDict:
     """Flattens [B, T] into [B*T]. (Note: Returns a view of the buffer data)"""
     return buffer.data.flatten(0, 1)
@@ -81,9 +84,9 @@ def yield_shuffled_minibatches(
     Yields shuffled minibatches from a flattened TensorDict.
     Used in PPO, SAC, Behaviour Cloning, and Offline RL (Efficient Zero, MuZero Unplugged, etc).
     """
-    assert len(batch.batch_size) == 1, (
-        f"Expected 1D batched data, got {batch.batch_size}. Call flatten() first."
-    )
+    assert (
+        len(batch.batch_size) == 1
+    ), f"Expected 1D batched data, got {batch.batch_size}. Call flatten() first."
 
     total_size = batch.batch_size[0]
     indices = torch.randperm(total_size, generator=rng_key, device=batch.device)
@@ -94,7 +97,9 @@ def yield_shuffled_minibatches(
         yield batch[mb_indices]
 
 
-# TODO: is it possible to merge the two yield mini batch functions? is that a good idea?
+# NOTE: Potential fix under consideration: unify yield_shuffled_minibatches and yield_sequential_minibatches
+# into a unified generator (e.g. yield_minibatches with a sequential/shuffle flag). Deferred for now pending final decision.
+# TODO: should this be done via our new capacity shape system? ie stuff is stored as sequences? or how exactly does sequential minibatches work? I feel like that would kind of make sense to store it as sequences (like we do for muzero) and then only one shuffle_minibatches (that shuffles on a given or hardcoded dim) and returns the shuffled minibatches? or would this idea not work?
 def yield_sequential_minibatches(
     buffer_data: TensorDict,
     num_envs: int,
@@ -119,19 +124,17 @@ def yield_sequential_minibatches(
         mb_flat: Flattened TensorDict of shape [steps * envs_per_batch, ...]
         (mb_initial_h, mb_initial_c): Initial LSTM states for the selected environments.
     """
-    assert num_envs % num_minibatches == 0, (
-        f"num_envs ({num_envs}) must be divisible by num_minibatches ({num_minibatches}) for LSTM PPO"
-    )
-    assert len(buffer_data.batch_size) == 2, (
-        f"Expected [envs, steps] data, got {buffer_data.batch_size}."
-    )
+    assert (
+        num_envs % num_minibatches == 0
+    ), f"num_envs ({num_envs}) must be divisible by num_minibatches ({num_minibatches}) for LSTM PPO"
+    assert (
+        len(buffer_data.batch_size) == 2
+    ), f"Expected [envs, steps] data, got {buffer_data.batch_size}."
 
     envs_per_batch = num_envs // num_minibatches
 
     # Shuffle environment indices, NOT time indices
-    env_indices = torch.randperm(
-        num_envs, generator=rng_key, device=buffer_data.device
-    )
+    env_indices = torch.randperm(num_envs, generator=rng_key, device=buffer_data.device)
 
     for start in range(0, num_envs, envs_per_batch):
         end = start + envs_per_batch

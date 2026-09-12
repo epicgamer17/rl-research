@@ -6,6 +6,7 @@ from typing import Tuple, Callable, List, Optional, Union, Sequence
 from dataclasses import dataclass, field
 
 
+# TODO: maybe remove/make this like PERBufferState instead of its own base class, it extends a standard buffer state (or make a new base state).
 @dataclass
 class RolloutBufferState:
     """
@@ -59,4 +60,3 @@ def init_rollout_buffer(
         data=data,
         truncation_records=[],
     )
-

@@ -17,12 +17,10 @@ import random
 import wandb
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
 from atomic_rl.losses import compute_policy_gradient_loss
 from atomic_rl.utils import (
     ema_update_,
-    to_tensor,
     to_numpy_action,
 )
 from atomic_rl.normalization import (
@@ -99,7 +97,7 @@ for episode in range(MAX_EPISODES):
     truncateds = []
 
     while not (terminated or truncated):
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
         mu, std = actor(obs_tensor)
 
         # Sample action using Gaussian selector
@@ -161,7 +159,9 @@ for episode in range(MAX_EPISODES):
     loss = loss.mean()
 
     # Apply Updates
-    optimizer = apply_gradients_(optimizer, loss)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
 
     if episode % 100 == 0:
         log_dict = info_dict.copy()

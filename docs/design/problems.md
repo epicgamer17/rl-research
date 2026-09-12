@@ -102,10 +102,10 @@ for step in range(MAX_STEPS):
         batch, rng_key = sample_buffer(buffer_state, rng_key, BATCH_SIZE)
         
         # Calculate Loss & Gradients (Pure math from your Functional Core)
-        loss, grads = calculate_loss(params, batch)
-        
-        # Apply Updates (Pure function)
-        params, optimizer_state = apply_gradients_(params, optimizer_state, grads)
+        # Standard PyTorch optimization
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
         
         # Because we are in a monolith, logging is effortless:
         wandb.log({"loss": loss, "step": step})

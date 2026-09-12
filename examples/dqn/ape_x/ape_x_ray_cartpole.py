@@ -58,13 +58,12 @@ from atomic_rl.buffers.replay import (
     make_n_step_accumulator,
 )
 from atomic_rl.losses import compute_mse_loss, compute_huber_loss
-from atomic_rl.td import compute_q_td_target
+from atomic_rl.td import compute_q_td_target, compute_td_error
 from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
 )
 from atomic_rl.schedules import get_ape_x_epsilon
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # --- Constants ---
@@ -302,9 +301,9 @@ class ActorActor:
                         collated["gamma"],
                     )
                     pred_sa = gather_q_values(q_values, collated["action"])
-                    _, info_dict = self.loss_fn(pred_sa, td_target)
+                    td_errors = compute_td_error(pred_sa, td_target)
 
-                collated["priority"] = info_dict["priorities"]
+                collated["priority"] = torch.abs(td_errors).detach()
 
                 # Push the prioritized batch to the buffer
                 self.buffer.add_transitions.remote(collated)
@@ -413,16 +412,15 @@ class LearnerActor:
                 "td_targets/mean": td_target.mean().detach(),
             }
         )
-        self.optimizer = apply_gradients_(
-            self.optimizer,
-            weighted_loss,
-            model=self.model,
-            clip_grad_norm=MAX_GRAD_NORM,
-        )
+        self.optimizer.zero_grad(set_to_none=True)
+        weighted_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=MAX_GRAD_NORM)
+        self.optimizer.step()
 
         # Update Priorities
-        td_errors = info["priorities"].detach().cpu()
-        self.buffer.update_priorities.remote(coords.cpu(), td_errors, ALPHA)
+        td_errors = compute_td_error(pred_sa, td_target)
+        priorities = torch.abs(td_errors).detach().cpu()
+        self.buffer.update_priorities.remote(coords.cpu(), priorities, ALPHA)
 
         self.step_count += 1
         if self.step_count % TARGET_NET_UPDATE_FREQ == 0:
