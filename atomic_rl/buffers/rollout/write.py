@@ -1,20 +1,12 @@
-from ...utils import _allocate_tensordict
 from .state import RolloutBufferState
 import torch
 from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional, Union
-from dataclasses import dataclass, field
-import numpy as np
 
 
-# TODO: should store.py be renamed to write.py (and the function names too) to be more consistent with our replay buffer organization?
-
-
-def store_rollout_step_(
+def write_rollout_step_(
     buffer: RolloutBufferState, step: int, transition: TensorDict
 ) -> None:
-    """Stores a transition batch into the rollout buffer."""
-    # FIX: Write across all batches [:, step] instead of [step]
+    """Writes a transition batch into the rollout buffer along the time dimension."""
     buffer.data[:, step] = transition
 
 

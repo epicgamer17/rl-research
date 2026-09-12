@@ -1,10 +1,11 @@
 from ...utils import _allocate_tensordict
 from .state import BufferState, PERBufferState
 from .write import compute_is_weights
+from .slicing import slice_unrolls
 import torch
 from tensordict import TensorDict
 import math
-from typing import Tuple, Callable, List, Optional, Union
+from typing import Tuple, Callable, List, Optional, Union, Any
 import random
 from collections import deque
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from dataclasses import dataclass
 # - Option A (Chosen): Maintain 1D sequence lengths valid_lengths: Tensor[num_seqs]. Using torch.cumsum + torch.searchsorted maps a 1D uniform integer u in [0, total_steps) directly into (seq_idx, step_idx) in O(B log N) time (< 10 microseconds).
 #   Every valid transition has exact 1/total_steps probability, zero padded dead space is sampled,
 #   and no large 2D index tables are allocated.
+
+
 def uniform_sample(
     buffer_state: BufferState,
     rng_key: torch.Generator,
@@ -140,3 +143,42 @@ def sample_per(
     batch = buffer_state.data[coords]
 
     return batch, coords, is_weights
+
+
+def with_unroll_slicing(sample_fn: Callable) -> Callable:
+    """Higher-order function that wraps a base sampling function with dynamic unroll slicing.
+
+    Creates an `unroll_sampler` that invokes `sample_fn` to sample coordinates and any auxiliary
+    outputs (such as PER importance sampling weights), then applies `slice_unrolls` to extract
+    K-step unroll trajectories [B, unroll_steps + 1] from `buffer_state.data`.
+
+    Args:
+        sample_fn (Callable): Base sampling function (e.g. `uniform_sample` or `sample_per`).
+            Must take `buffer_state` as its first argument and return a tuple where the second
+            element is `coords`, and any subsequent elements are preserved.
+
+    Returns:
+        Callable: An `unroll_sampler` function returning `(unrolls, valid_mask, coords, *extra_outputs)`.
+    """
+
+    def unroll_sampler(
+        buffer_state: BufferState,
+        *args: Any,
+        unroll_steps: int,
+        **kwargs: Any,
+    ) -> Tuple[Any, ...]:
+        """Samples dynamic unrolls using `sample_fn` coordinates and `slice_unrolls`."""
+        sample_results = sample_fn(buffer_state, *args, **kwargs)
+        _, coords, *extra_outputs = sample_results
+
+        unrolls, valid_mask = slice_unrolls(
+            buffer_state.data,
+            coords,
+            unroll_steps=unroll_steps,
+            valid_lengths=buffer_state.valid_lengths,
+        )
+
+        return (unrolls, valid_mask, coords, *extra_outputs)
+
+    return unroll_sampler
+

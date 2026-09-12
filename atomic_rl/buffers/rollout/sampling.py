@@ -75,7 +75,7 @@ def flatten_rollout_buffer(buffer: RolloutBufferState) -> TensorDict:
 
 # TODO: this is both an offline (replay buffer) and online (rollout buffer) sampling method, can we make it more general? can we unify the files? what is happening in one that really isnt happening in the other file?
 def yield_shuffled_minibatches(
-    batch: TensorDict, minibatch_size: int, generator: torch.Generator = None
+    batch: TensorDict, minibatch_size: int, rng_key: Optional[torch.Generator] = None
 ):
     """
     Yields shuffled minibatches from a flattened TensorDict.
@@ -86,7 +86,7 @@ def yield_shuffled_minibatches(
     )
 
     total_size = batch.batch_size[0]
-    indices = torch.randperm(total_size, generator=generator, device=batch.device)
+    indices = torch.randperm(total_size, generator=rng_key, device=batch.device)
 
     for start_idx in range(0, total_size, minibatch_size):
         end_idx = min(start_idx + minibatch_size, total_size)
@@ -100,7 +100,7 @@ def yield_sequential_minibatches(
     num_envs: int,
     num_minibatches: int,
     initial_lstm_states: Tuple[torch.Tensor, torch.Tensor],
-    generator: torch.Generator = None,
+    rng_key: Optional[torch.Generator] = None,
 ):
     """
     Yields mini-batches preserving the sequential order of time steps.
@@ -113,7 +113,7 @@ def yield_sequential_minibatches(
         num_minibatches: How many mini-batches to split the environments into
         initial_lstm_states: Tuple of (hidden, cell) states from the start of the rollout.
             Expected shape: [layers, envs, hidden_dim]
-        generator: Optional torch generator for reproducibility.
+        rng_key: Optional torch generator for reproducibility.
 
     Yields:
         mb_flat: Flattened TensorDict of shape [steps * envs_per_batch, ...]
@@ -130,7 +130,7 @@ def yield_sequential_minibatches(
 
     # Shuffle environment indices, NOT time indices
     env_indices = torch.randperm(
-        num_envs, generator=generator, device=buffer_data.device
+        num_envs, generator=rng_key, device=buffer_data.device
     )
 
     for start in range(0, num_envs, envs_per_batch):

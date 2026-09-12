@@ -97,7 +97,7 @@ TOTAL_TRAINING_STEPS = 20000
 NUM_ACTORS = 2
 ENVS_PER_ACTOR = 3
 MIN_BUFFER_SIZE = 64  # Minimum number of valid transitions before learner starts
-EVAL_INTERVAL_STEPS = 250
+EVAL_INTERVAL_STEPS = 1000
 PARAM_SYNC_INTERVAL = 100
 NUM_MCTS_SIMULATIONS = 25
 UNROLL_STEPS = 5
@@ -128,6 +128,7 @@ NUM_FILTERS = 24
 NUM_RES_BLOCKS = 3
 
 NUM_EVAL_GAMES = 100
+NUM_TRAIN_EVAL_GAMES = 100
 SEED = 42
 
 
@@ -410,6 +411,7 @@ def actor_worker(
     device_str: str = "cpu",
 ):
     """Worker process generating self-play trajectories via batched MuZero MCTS."""
+    torch.set_num_threads(1)
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.eval()
@@ -550,11 +552,12 @@ def evaluator_worker(
     shared_model: nn.Module,
     eval_queue: mp.Queue,
     training_step: torch.Tensor,
-    num_eval_games: int = NUM_EVAL_GAMES,
+    num_eval_games: int = NUM_TRAIN_EVAL_GAMES,
     eval_interval_steps: int = EVAL_INTERVAL_STEPS,
     device_str: str = "cpu",
 ):
     """Background process evaluating model performance asynchronously."""
+    torch.set_num_threads(1)
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.eval()
@@ -583,7 +586,7 @@ def evaluator_worker(
     while True:
         curr_step = int(training_step[0].item())
         if curr_step < next_eval_step:
-            time.sleep(0.5)
+            time.sleep(1.0)
             continue
 
         next_eval_step = curr_step + eval_interval_steps
@@ -613,6 +616,7 @@ def learner_worker(
     device_str: str = "cpu",
 ):
     """Learner process training model weights on sampled minibatches."""
+    torch.set_num_threads(1)
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.train()
@@ -648,27 +652,21 @@ def learner_worker(
     latest_eval_metrics = {}
 
     while step_count < max_steps:
-        sample_res = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
+        sample_res = buffer.sample_unrolls(
+            rng_key, batch_size, unroll_steps, min_size=MIN_BUFFER_SIZE
+        )
         if sample_res is None:
             time.sleep(0.01)
             continue
-        _, coords = sample_res
+        unroll_data, valid_mask, coords = sample_res
 
-        # Vectorized dynamic unroll slice directly from stored sequence buffer
-        with buffer.lock:
-            unroll_data, valid_mask = slice_unrolls(
-                buffer.buffer_state.data,
-                coords,
-                unroll_steps=unroll_steps,
-                valid_lengths=buffer.buffer_state.valid_lengths,
-            )
-            seq_lens = buffer.buffer_state.valid_lengths[coords[0]].to(device)
-            terminal_idx = (seq_lens - 1).clamp(min=0)
-            term_vals = (
-                buffer.buffer_state.data["target_values"][coords[0], terminal_idx]
-                .squeeze(-1)
-                .to(device)
-            )
+        seq_lens = buffer.buffer_state.valid_lengths[coords[0]].to(device)
+        terminal_idx = (seq_lens - 1).clamp(min=0)
+        term_vals = (
+            buffer.buffer_state.data["target_values"][coords[0], terminal_idx]
+            .squeeze(-1)
+            .to(device)
+        )
 
         start_steps = coords[1].to(device)
 

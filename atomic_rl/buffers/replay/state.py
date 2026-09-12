@@ -1,9 +1,8 @@
+import math
 from ...utils import _allocate_tensordict
 import torch
 from tensordict import TensorDict
 from typing import Tuple, Callable, List, Optional, Union, Sequence
-import random
-from collections import deque
 from dataclasses import dataclass
 
 
@@ -15,20 +14,26 @@ class BufferState:
     Attributes:
         data (TensorDict): The stored transitions or sequences.
         pointer (int): Current write position along dimension 0.
-        capacity (int): Maximum number of items along dimension 0.
-        steps_seen (int): Total number of transitions/sequences processed by this buffer.
-            Useful for Reservoir Sampling logic.
-        storage_shape (Tuple[int, ...]): Full shape of the stored buffer [capacity, ...].
         valid_lengths (torch.Tensor): Tensor tracking active length along the trailing dimension.
             Shape is storage_shape[:-1]: () for 1D, (capacity,) for 2D, (capacity, agents) for 3D.
+        steps_seen (int): Total number of transitions/sequences processed by this buffer.
+            Useful for Reservoir Sampling logic.
     """
 
     data: TensorDict
     pointer: int
-    capacity: int
     valid_lengths: torch.Tensor
     steps_seen: int = 0
-    storage_shape: Tuple[int, ...] = ()
+
+    @property
+    def capacity(self) -> int:
+        """Maximum number of slots along dimension 0."""
+        return self.data.shape[0]
+
+    @property
+    def storage_shape(self) -> Tuple[int, ...]:
+        """Full shape of the stored buffer [capacity, ...]."""
+        return tuple(self.data.batch_size)
 
     @property
     def size(self) -> int:
@@ -41,15 +46,13 @@ class BufferState:
 def init_buffer(
     capacity: Union[int, Sequence[int]],
     shapes: dict,
-    device: Optional[torch.device] = None,
+    device: Optional[Union[str, torch.device]] = None,
 ) -> BufferState:
     """Initializes a standard buffer with 1D or multi-dimensional batch capacity."""
     if isinstance(capacity, int):
         batch_size = [capacity]
-        cap_0 = capacity
     else:
         batch_size = list(capacity)
-        cap_0 = batch_size[0]
 
     data = _allocate_tensordict(shapes, batch_size, device)
     valid_shape = tuple(batch_size[:-1])
@@ -57,10 +60,8 @@ def init_buffer(
     return BufferState(
         data=data,
         pointer=0,
-        capacity=cap_0,
-        steps_seen=0,
-        storage_shape=tuple(batch_size),
         valid_lengths=valid_lengths,
+        steps_seen=0,
     )
 
 
@@ -72,27 +73,22 @@ class PERBufferState(BufferState):
 
     sum_tree: torch.Tensor
     min_tree: torch.Tensor
-    max_priority: float
+    max_priority: torch.Tensor
     tree_capacity: int
 
 
 def init_per_buffer(
     capacity: Union[int, Sequence[int]],
     shapes: dict,
-    device: Optional[torch.device] = None,
+    device: Optional[Union[str, torch.device]] = None,
 ) -> PERBufferState:
     """Initializes a PER buffer where priorities are tracked for every element in storage_shape."""
     if isinstance(capacity, int):
         batch_size = [capacity]
-        cap_0 = capacity
     else:
         batch_size = list(capacity)
-        cap_0 = batch_size[0]
 
-    num_elements = 1
-    for dim in batch_size:
-        num_elements *= dim
-
+    num_elements = math.prod(batch_size)
     tree_capacity = 1 << (num_elements - 1).bit_length() if num_elements > 0 else 1
     empty_data = _allocate_tensordict(shapes, batch_size, device)
     valid_shape = tuple(batch_size[:-1])
@@ -104,10 +100,9 @@ def init_per_buffer(
         min_tree=torch.full((2 * tree_capacity - 1,), float("inf"), device=device),
         max_priority=torch.tensor(1.0, device=device),
         pointer=0,
-        capacity=cap_0,
         tree_capacity=tree_capacity,
         steps_seen=0,
-        storage_shape=tuple(batch_size),
         valid_lengths=valid_lengths,
     )
+
 

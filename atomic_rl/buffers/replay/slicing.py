@@ -50,15 +50,16 @@ def slice_unrolls(
 
     # Clamp target steps to valid range for gathering without indexing crashes
     clamped_steps = torch.clamp(target_steps, 0, seq_len - 1)
-    seq_data = data[leading_coords] if len(leading_coords) > 0 else data
 
-    # Vectorized advanced indexing across [B, K + 1]
-    batch_idx = (
-        torch.arange(batch_size, device=device)
-        .unsqueeze(1)
-        .expand(-1, unroll_steps + 1)
-    )
-    unrolls = seq_data[batch_idx, clamped_steps]
+    # Vectorized direct advanced indexing across [B, K + 1] in one shot
+    # Eliminates allocating intermediate full-episode tensors for all sequences
+    if len(leading_coords) > 0:
+        expanded_leading = tuple(
+            c.unsqueeze(1).expand(-1, unroll_steps + 1) for c in leading_coords
+        )
+        unrolls = data[(*expanded_leading, clamped_steps)]
+    else:
+        unrolls = data[clamped_steps]
 
     # Zero out invalid/absorbing steps
     for key, tensor in unrolls.items():

@@ -160,7 +160,7 @@ def with_per_tracking(write_strategy_fn: Callable) -> Callable:
                 )
                 coords = (r, s)
 
-            tree_indices = coords_to_tree_indices(new_state, coords)
+            tree_indices = _coords_to_tree_indices(new_state, coords)
 
             # Check for explicit priorities in the batch
             if "priority" in batch.keys():
@@ -265,8 +265,7 @@ def _update_tree(
     return sum_tree, min_tree
 
 
-# TODO: private?
-def coords_to_tree_indices(
+def _coords_to_tree_indices(
     buffer_state: PERBufferState,
     coords: Union[torch.Tensor, Tuple[torch.Tensor, ...]],
 ) -> torch.Tensor:
@@ -305,7 +304,7 @@ def update_priorities(
         td_errors (torch.Tensor): TD errors for priority calculation.
         alpha (float): PER exponent alpha.
     """
-    tree_indices = coords_to_tree_indices(buffer_state, coords)
+    tree_indices = _coords_to_tree_indices(buffer_state, coords)
     priorities = torch.pow(torch.abs(td_errors) + 1e-6, alpha)
 
     new_sum_tree, new_min_tree = _update_tree(
@@ -320,9 +319,7 @@ def update_priorities(
         min_tree=new_min_tree,
         max_priority=new_max_priority,
         pointer=buffer_state.pointer,
-        capacity=buffer_state.capacity,
         tree_capacity=buffer_state.tree_capacity,
         steps_seen=buffer_state.steps_seen,
-        storage_shape=buffer_state.storage_shape,
         valid_lengths=buffer_state.valid_lengths,
     )

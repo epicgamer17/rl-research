@@ -6,7 +6,7 @@ from atomic_rl.buffers.rollout import (
     flatten_rollout_buffer,
     get_rollout_next_values,
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     yield_sequential_minibatches,
     yield_shuffled_minibatches,
 )
@@ -19,7 +19,7 @@ def test_get_rollout_next_values():
     steps = 3
     num_envs = 2
     shapes = {"values": ()}
-    buffer = init_rollout_buffer(steps, num_envs, shapes)
+    buffer = init_rollout_buffer((num_envs, steps), shapes)
 
     # Fill values: [B, T]
     # env 0: [1.0, 2.0, 3.0]
@@ -57,7 +57,7 @@ def test_get_rollout_next_values_requires_final_obs_for_truncation():
     steps = 3
     num_envs = 2
     shapes = {"values": (), "truncated": ()}
-    buffer = init_rollout_buffer(steps, num_envs, shapes)
+    buffer = init_rollout_buffer((num_envs, steps), shapes)
     buffer.data["values"] = torch.tensor([[1.0, 2.0, 3.0], [1.1, 2.1, 3.1]])
     buffer.data["truncated"] = torch.zeros(num_envs, steps)
     buffer.data["truncated"][1, 2] = 1.0
@@ -78,7 +78,7 @@ def test_flatten_rollout_buffer():
     steps = 3
     num_envs = 2
     shapes = {"obs": (4,), "action": ()}
-    buffer = init_rollout_buffer(steps, num_envs, shapes)
+    buffer = init_rollout_buffer((num_envs, steps), shapes)
 
     for i in range(steps):
         transition = TensorDict(
@@ -88,7 +88,7 @@ def test_flatten_rollout_buffer():
             },
             batch_size=[num_envs],
         )
-        store_rollout_step_(buffer, i, transition)
+        write_rollout_step_(buffer, i, transition)
 
     flat_data = flatten_rollout_buffer(buffer)
 
@@ -118,7 +118,7 @@ def test_yield_shuffled_minibatches():
     generator = torch.Generator().manual_seed(42)
 
     batches = list(
-        yield_shuffled_minibatches(data, minibatch_size, generator=generator)
+        yield_shuffled_minibatches(data, minibatch_size, rng_key=generator)
     )
 
     # Check number of batches: ceil(10 / 3) = 4
@@ -168,7 +168,7 @@ def test_yield_sequential_minibatches():
 
     batches = list(
         yield_sequential_minibatches(
-            data, num_envs, num_minibatches, initial_states, generator=generator
+            data, num_envs, num_minibatches, initial_states, rng_key=generator
         )
     )
 

@@ -40,7 +40,7 @@ from torch.optim.lr_scheduler import LinearLR
 from atomic_rl.metrics import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
@@ -132,8 +132,7 @@ shapes = {
     "logits": (num_actions,),
 }
 buffer = init_rollout_buffer(
-    steps_per_env=STEPS_PER_ENV,
-    num_envs=NUM_ENVS,
+    capacity=(NUM_ENVS, STEPS_PER_ENV),
     shapes=shapes,
     device=device,
 )
@@ -177,7 +176,7 @@ for iteration in range(MAX_ITERATIONS):
                 },
                 batch_size=[NUM_ENVS],
             )
-            store_rollout_step_(buffer=buffer, step=step, transition=transition)
+            write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:

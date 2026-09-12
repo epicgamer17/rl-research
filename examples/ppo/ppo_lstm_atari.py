@@ -27,7 +27,7 @@ from atomic_rl.metrics import compute_explained_variance
 from atomic_rl.bptt.unroll_rnn import unroll_rnn
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     record_truncations_,
     get_rollout_next_values,
     yield_shuffled_minibatches,
@@ -195,8 +195,7 @@ shapes = {
     "dones": (),
 }
 buffer = init_rollout_buffer(
-    steps_per_env=STEPS_PER_ENV,
-    num_envs=NUM_ENVS,
+    capacity=(NUM_ENVS, STEPS_PER_ENV),
     shapes=shapes,
     device=device,
 )
@@ -273,7 +272,7 @@ for iteration in range(MAX_ITERATIONS):
                 },
                 batch_size=[NUM_ENVS],
             )
-            store_rollout_step_(buffer=buffer, step=step, transition=transition)
+            write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
@@ -368,7 +367,7 @@ for iteration in range(MAX_ITERATIONS):
             num_envs=NUM_ENVS,
             num_minibatches=4,
             initial_lstm_states=initial_lstm_state,
-            generator=rng_key,
+            rng_key=rng_key,
         ):
             # Re-evaluate model on minibatch
             new_logits, new_values, _ = model(

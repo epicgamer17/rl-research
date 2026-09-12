@@ -7,10 +7,15 @@ import torch.multiprocessing as mp
 
 from .state import init_buffer, init_per_buffer
 from .write import circular_write_strategy_, update_priorities, with_per_tracking
-from .sampling import sample_per, uniform_sample
+from .sampling import (
+    sample_per,
+    uniform_sample,
+    with_unroll_slicing,
+)
 
 
 # TODO: Clean this up. Should we add other Buffer classes? Can we make these more configurable. ie allowing another sampling function instead of inlining them and hardcoding them, wherever possible. Its an orchestration wrapper.
+# TODO: getting God Classes/Combinatorial explosion with the addision of support for sequences and unrolling. Clean this up or something. How can we get one clean orchestration class, that uses composition/the functional cores.
 class SharedReplayBuffer:
     """
     Thread- and process-safe uniform replay buffer using torch.multiprocessing.
@@ -35,23 +40,34 @@ class SharedReplayBuffer:
         self.lock = mp.Lock()
         self._pointer = mp.Value("i", 0)
         self._size = mp.Value("i", 0)
+        self.unroll_sampler = with_unroll_slicing(uniform_sample)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if "unroll_sampler" in state:
+            del state["unroll_sampler"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.unroll_sampler = with_unroll_slicing(uniform_sample)
 
     def add_transitions(
         self,
-        samples_td: TensorDict,
+        transitions: TensorDict,
         valid_mask: Optional[torch.Tensor] = None,
     ):
         """Adds transitions or sequences to the shared buffer.
 
         Args:
-            samples_td (TensorDict): Transitions or sequences to write.
+            transitions (TensorDict): Transitions or sequences to write.
             valid_mask (Optional[torch.Tensor]): Optional boolean mask where True = real step,
                 False = padding. If None, full length is assumed.
         """
         with self.lock:
             self.buffer_state.pointer = self._pointer.value
             self.buffer_state, _ = circular_write_strategy_(
-                self.buffer_state, samples_td, valid_mask=valid_mask
+                self.buffer_state, transitions, valid_mask=valid_mask
             )
             self._pointer.value = self.buffer_state.pointer
             self._size.value = self.buffer_state.size
@@ -71,9 +87,32 @@ class SharedReplayBuffer:
                 batch_size,
             )
 
+    def sample_unrolls(
+        self,
+        rng_key: torch.Generator,
+        batch_size: int,
+        unroll_steps: int,
+        min_size: int = 0,
+    ) -> Optional[
+        Tuple[TensorDict, torch.Tensor, Union[torch.Tensor, Tuple[torch.Tensor, ...]]]
+    ]:
+        with self.lock:
+            if self._size.value < min_size:
+                return None
+            return self.unroll_sampler(
+                self.buffer_state,
+                rng_key,
+                batch_size=batch_size,
+                unroll_steps=unroll_steps,
+            )
+
     @property
     def size(self) -> int:
         return self._size.value
+
+    @property
+    def capacity(self) -> int:
+        return self.buffer_state.capacity
 
 
 class SharedPERBuffer:
@@ -98,16 +137,20 @@ class SharedPERBuffer:
         self._size = mp.Value("i", 0)
         self._max_priority = mp.Value("d", 1.0)
         self.per_add = with_per_tracking(circular_write_strategy_)
+        self.unroll_sampler = with_unroll_slicing(sample_per)
 
     def __getstate__(self):
         state = self.__dict__.copy()
         if "per_add" in state:
             del state["per_add"]
+        if "unroll_sampler" in state:
+            del state["unroll_sampler"]
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
         self.per_add = with_per_tracking(circular_write_strategy_)
+        self.unroll_sampler = with_unroll_slicing(sample_per)
 
     def add_transitions(
         self,
@@ -119,28 +162,25 @@ class SharedPERBuffer:
         Args:
             transitions (TensorDict): Transitions or sequences to write.
             valid_mask (Optional[torch.Tensor]): Optional boolean mask where True = real step,
-                False = padding. If None and 'valid' not in transitions, full length is assumed.
+                False = padding. If None, full length is assumed.
         """
         with self.lock:
             self.buffer_state.pointer = self._pointer.value
             self.buffer_state.max_priority = torch.tensor(
-                self._max_priority.value, dtype=torch.float32
+                self._max_priority.value, device=self.buffer_state.data.device
             )
-
             self.buffer_state = self.per_add(
                 self.buffer_state, transitions, valid_mask=valid_mask
             )
-
             self._pointer.value = self.buffer_state.pointer
             self._size.value = self.buffer_state.size
-            max_p = self.buffer_state.max_priority
-            self._max_priority.value = float(
-                max_p.item() if isinstance(max_p, torch.Tensor) else max_p
-            )
-
+            self._max_priority.value = float(self.buffer_state.max_priority.item())
 
     def sample_batch(
-        self, batch_size: int, beta: float, min_size: int = 0
+        self,
+        batch_size: int,
+        beta: float = 0.4,
+        min_size: int = 0,
     ) -> Tuple[
         Optional[TensorDict],
         Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]],
@@ -152,9 +192,36 @@ class SharedPERBuffer:
             beta_tensor = torch.tensor(beta, dtype=torch.float32)
             return sample_per(self.buffer_state, batch_size, beta_tensor)
 
+    def sample_unrolls(
+        self,
+        batch_size: int,
+        unroll_steps: int,
+        beta: float = 0.4,
+        min_size: int = 0,
+    ) -> Tuple[
+        Optional[TensorDict],
+        Optional[torch.Tensor],
+        Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]],
+        Optional[torch.Tensor],
+    ]:
+        with self.lock:
+            if self._size.value < min_size:
+                return None, None, None, None
+            beta_tensor = torch.tensor(beta, dtype=torch.float32)
+            return self.unroll_sampler(
+                self.buffer_state,
+                batch_size=batch_size,
+                beta=beta_tensor,
+                unroll_steps=unroll_steps,
+            )
+
     @property
     def size(self) -> int:
         return self._size.value
+
+    @property
+    def capacity(self) -> int:
+        return self.buffer_state.capacity
 
     def update_priorities(
         self,

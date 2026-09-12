@@ -70,7 +70,7 @@ TOTAL_TRAINING_STEPS = 50000
 NUM_ACTORS = 2
 ENVS_PER_ACTOR = 4
 MIN_BUFFER_SIZE = 500  # Minimum number of valid transitions before training starts
-EVAL_INTERVAL_STEPS = 500
+EVAL_INTERVAL_STEPS = 1000
 PARAM_SYNC_INTERVAL = 50
 NUM_MCTS_SIMULATIONS = 25
 UNROLL_STEPS = 5
@@ -114,6 +114,7 @@ WEIGHT_DECAY = 1e-4
 VALUE_LOSS_WEIGHT = 0.25  # MuZero Table S1 standard
 
 NUM_EVAL_EPISODES = 10
+NUM_TRAIN_EVAL_EPISODES = 5
 SEED = 42
 
 
@@ -367,6 +368,7 @@ def actor_worker(
     device_str: str = "cpu",
 ):
     """Worker process generating self-play trajectories via batched MuZero MCTS."""
+    torch.set_num_threads(1)
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.eval()
@@ -512,11 +514,12 @@ def evaluator_worker(
     shared_model: nn.Module,
     eval_queue: mp.Queue,
     training_step: torch.Tensor,
-    num_eval_episodes: int = NUM_EVAL_EPISODES,
+    num_eval_episodes: int = NUM_TRAIN_EVAL_EPISODES,
     eval_interval_steps: int = EVAL_INTERVAL_STEPS,
     device_str: str = "cpu",
 ):
     """Background process evaluating model performance asynchronously on CartPole-v1."""
+    torch.set_num_threads(1)
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.eval()
@@ -528,7 +531,7 @@ def evaluator_worker(
     while True:
         curr_step = int(training_step[0].item())
         if curr_step < next_eval_step:
-            time.sleep(0.5)
+            time.sleep(1.0)
             continue
 
         next_eval_step = curr_step + eval_interval_steps
@@ -594,6 +597,7 @@ def learner_worker(
     device_str: str = "cpu",
 ):
     """Learner process training model weights on sampled minibatches using two-hot cross-entropy."""
+    torch.set_num_threads(1)
     device = torch.device(device_str)
     local_model = model_creator().to(device)
     local_model.train()
@@ -630,21 +634,14 @@ def learner_worker(
     latest_eval_metrics = {}
 
     while step_count < max_steps:
-        sample_res = buffer.sample_batch(rng_key, batch_size, min_size=MIN_BUFFER_SIZE)
+        sample_res = buffer.sample_unrolls(
+            rng_key, batch_size, unroll_steps, min_size=MIN_BUFFER_SIZE
+        )
         if sample_res is None:
             time.sleep(0.01)
             continue
 
-        _, coords = sample_res
-
-        # Vectorized dynamic unroll slice directly from stored sequence buffer
-        with buffer.lock:
-            unroll_data, valid_mask = slice_unrolls(
-                buffer.buffer_state.data,
-                coords,
-                unroll_steps=unroll_steps,
-                valid_lengths=buffer.buffer_state.valid_lengths,
-            )
+        unroll_data, valid_mask, coords = sample_res
 
         # A step is valid only if within tensor boundary AND was part of the actual episode
         ep_valid = unroll_data["valid"].bool() & valid_mask

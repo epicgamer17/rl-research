@@ -31,7 +31,7 @@ from torch.optim.lr_scheduler import LinearLR
 from atomic_rl.metrics import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
@@ -153,8 +153,7 @@ shapes = {
     "action_masks": (sum(nvec),),  # Store the flat mask
 }
 buffer = init_rollout_buffer(
-    steps_per_env=STEPS_PER_ENV,
-    num_envs=NUM_ENVS,
+    capacity=(NUM_ENVS, STEPS_PER_ENV),
     shapes=shapes,
     device=device,
 )
@@ -237,7 +236,7 @@ for iteration in range(MAX_ITERATIONS):
                 },
                 batch_size=[NUM_ENVS],
             )
-            store_rollout_step_(buffer=buffer, step=step, transition=transition)
+            write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
@@ -306,7 +305,7 @@ for iteration in range(MAX_ITERATIONS):
     for epoch in range(UPDATE_EPOCHS):
         epoch_kls = []
         for mb in yield_shuffled_minibatches(
-            flat_data, MINIBATCH_SIZE, generator=rng_key
+            flat_data, MINIBATCH_SIZE, rng_key=rng_key
         ):
             new_logits, new_values = model(mb["observations"])
 

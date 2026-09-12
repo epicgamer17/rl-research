@@ -7,7 +7,6 @@ from .replay import (
     SharedReplayBuffer,
     circular_write_strategy_,
     compute_is_weights,
-    coords_to_tree_indices,
     init_buffer,
     init_per_buffer,
     make_n_step_accumulator,
@@ -18,6 +17,7 @@ from .replay import (
     uniform_sample,
     update_priorities,
     with_per_tracking,
+    with_unroll_slicing,
 )
 from .rollout import (
     RolloutBufferState,
@@ -25,7 +25,7 @@ from .rollout import (
     get_rollout_next_values,
     init_rollout_buffer,
     record_truncations_,
-    store_rollout_step_,
+    write_rollout_step_,
     yield_sequential_minibatches,
     yield_shuffled_minibatches,
 )
@@ -37,7 +37,6 @@ __all__ = [
     "SharedReplayBuffer",
     "circular_write_strategy_",
     "compute_is_weights",
-    "coords_to_tree_indices",
     "init_buffer",
     "init_per_buffer",
     "make_n_step_accumulator",
@@ -48,12 +47,13 @@ __all__ = [
     "uniform_sample",
     "update_priorities",
     "with_per_tracking",
+    "with_unroll_slicing",
     "RolloutBufferState",
     "flatten_rollout_buffer",
     "get_rollout_next_values",
     "init_rollout_buffer",
     "record_truncations_",
-    "store_rollout_step_",
+    "write_rollout_step_",
     "yield_sequential_minibatches",
     "yield_shuffled_minibatches",
 ]

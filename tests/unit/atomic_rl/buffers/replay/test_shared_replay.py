@@ -98,3 +98,48 @@ def test_shared_per_buffer_timestep_level():
     # Test multi-dimensional update_priorities using coords tuple directly
     buffer.update_priorities((seq_idx, step_idx), torch.ones(4), alpha=0.6)
 
+
+def test_shared_replay_buffer_sample_unrolls():
+    capacity = (10, 20)
+    shapes = {"obs": (4,), "action": (1,)}
+    buffer = SharedReplayBuffer(capacity, shapes)
+
+    sample = TensorDict(
+        {"obs": torch.randn(2, 20, 4), "action": torch.ones(2, 20, 1)},
+        batch_size=[2, 20],
+    )
+    buffer.add_transitions(sample)
+
+    generator = torch.Generator().manual_seed(42)
+    unrolls, mask, coords = buffer.sample_unrolls(
+        generator, batch_size=4, unroll_steps=5, min_size=1
+    )
+    assert unrolls is not None
+    assert unrolls.batch_size == torch.Size([4, 6])
+    assert mask.shape == (4, 6)
+    assert isinstance(coords, tuple)
+    assert coords[0].shape == (4,)
+    assert coords[1].shape == (4,)
+
+
+def test_shared_per_buffer_sample_unrolls():
+    capacity = (10, 20)
+    shapes = {"obs": (4,), "action": (1,)}
+    buffer = SharedPERBuffer(capacity, shapes)
+
+    sample = TensorDict(
+        {"obs": torch.randn(2, 20, 4), "action": torch.ones(2, 20, 1)},
+        batch_size=[2, 20],
+    )
+    buffer.add_transitions(sample)
+
+    unrolls, mask, coords, weights = buffer.sample_unrolls(
+        batch_size=4, unroll_steps=5, beta=0.4, min_size=1
+    )
+    assert unrolls is not None
+    assert unrolls.batch_size == torch.Size([4, 6])
+    assert mask.shape == (4, 6)
+    assert weights.shape == (4,)
+    assert isinstance(coords, tuple)
+
+

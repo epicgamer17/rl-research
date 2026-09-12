@@ -8,6 +8,7 @@ from atomic_rl.buffers.replay import (
     sample_per,
     uniform_sample,
     update_priorities,
+    with_unroll_slicing,
 )
 
 pytestmark = pytest.mark.unit
@@ -187,4 +188,45 @@ def test_prefix_sum_sampling_variable_lengths():
     # Binomial test tolerance: min count > 100, max count < 320
     assert counts.min() > 100, f"Under-sampled element: min count {counts.min()}"
     assert counts.max() < 320, f"Over-sampled element: max count {counts.max()}"
+
+
+def test_with_unroll_slicing_uniform():
+    capacity = (4, 10)
+    state = init_buffer(capacity, {"val": (1,)})
+    state.valid_lengths[:2] = 8
+    state.data["val"][0] = torch.arange(10, dtype=torch.float32).reshape(-1, 1)
+    state.data["val"][1] = (torch.arange(10, dtype=torch.float32) + 20).reshape(-1, 1)
+
+    gen = torch.Generator().manual_seed(42)
+
+    # Test via higher-order wrapper directly
+    unroll_sampler = with_unroll_slicing(uniform_sample)
+    unrolls, mask, coords = unroll_sampler(state, gen, batch_size=4, unroll_steps=3)
+    assert unrolls.batch_size == torch.Size([4, 4])
+    assert mask.shape == (4, 4)
+    assert coords[0].shape == (4,)
+    assert coords[1].shape == (4,)
+
+
+def test_with_unroll_slicing_per():
+    capacity = (4, 10)
+    state = init_per_buffer(capacity, {"val": (1,)})
+    state.steps_seen = 2
+    state.valid_lengths[:2] = 8
+    state.data["val"][:] = 1.0
+
+    # Set non-zero priorities on written sequences
+    coords = (torch.tensor([0, 1]), torch.tensor([0, 0]))
+    state = update_priorities(state, coords, torch.tensor([1.0, 2.0]), alpha=0.6)
+
+    beta = torch.tensor(0.4)
+    # Test via higher-order wrapper directly
+    unroll_sampler = with_unroll_slicing(sample_per)
+    unrolls, mask, coords, weights = unroll_sampler(
+        state, batch_size=4, beta=beta, unroll_steps=3
+    )
+    assert unrolls.batch_size == torch.Size([4, 4])
+    assert mask.shape == (4, 4)
+    assert weights.shape == (4,)
+
 

@@ -24,7 +24,7 @@ from atomic_rl.metrics import compute_explained_variance
 from atomic_rl.bptt.unroll_rnn import unroll_rnn
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
@@ -266,8 +266,7 @@ def train_ppo(use_lstm: bool = False):
         shapes["dones"] = ()
 
     buffer = init_rollout_buffer(
-        steps_per_env=STEPS_PER_ENV,
-        num_envs=NUM_ENVS,
+        capacity=(NUM_ENVS, STEPS_PER_ENV),
         shapes=shapes,
         device=device,
     )
@@ -363,7 +362,7 @@ def train_ppo(use_lstm: bool = False):
 
                 # TODO: URGENT. Creating a new tensor every step in the hotloop. should do in a more efficient way, maybe some thing like the rollout buffer in PPO (possible reuse?) ie store in a rollout buffer before sending to main replay buffer. Idea being its pre allocated basically. Must consider the N-Step case.
                 transition = TensorDict(transition_data, batch_size=[NUM_ENVS])
-                store_rollout_step_(buffer=buffer, step=step, transition=transition)
+                write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
                 if "final_observation" in info:
                     env_indices, final_obs = extract_vector_env_final_obs(info)
@@ -474,7 +473,7 @@ def train_ppo(use_lstm: bool = False):
                     num_envs=NUM_ENVS,
                     num_minibatches=4,
                     initial_lstm_states=initial_lstm_state,
-                    generator=rng_key,
+                    rng_key=rng_key,
                 )
             else:
                 flat_data = flatten_rollout_buffer(buffer)
@@ -483,7 +482,7 @@ def train_ppo(use_lstm: bool = False):
                 minibatch_generator = (
                     (mb, None)
                     for mb in yield_shuffled_minibatches(
-                        flat_data, MINIBATCH_SIZE, generator=rng_key
+                        flat_data, MINIBATCH_SIZE, rng_key=rng_key
                     )
                 )
 

@@ -7,13 +7,13 @@ from tensordict import TensorDict
 from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     compute_is_weights,
-    coords_to_tree_indices,
     init_buffer,
     init_per_buffer,
     reservoir_write_strategy_,
     update_priorities,
     with_per_tracking,
 )
+from atomic_rl.buffers.replay.write import _coords_to_tree_indices
 
 pytestmark = pytest.mark.unit
 
@@ -135,16 +135,16 @@ def test_per_tree_logic():
     # tree_capacity = 4, tree_nodes = 7
     # leaf indices: 3, 4, 5, 6
 
-    # Test coords_to_tree_indices for 1D
+    # Test _coords_to_tree_indices for 1D
     coords = torch.tensor([0, 1, 2, 3], dtype=torch.long)
     expected_tree_indices = torch.tensor([3, 4, 5, 6], dtype=torch.long)
-    assert torch.equal(coords_to_tree_indices(state, coords), expected_tree_indices)
+    assert torch.equal(_coords_to_tree_indices(state, coords), expected_tree_indices)
 
-    # Test coords_to_tree_indices for 2D
+    # Test _coords_to_tree_indices for 2D
     state_2d = init_per_buffer((2, 2), {"data": (1,)})
     coords_2d = (torch.tensor([0, 1]), torch.tensor([1, 0]))
     # linear: 0*2+1=1, 1*2+0=2 -> tree: 1 + 4 - 1 = 4, 2 + 4 - 1 = 5
-    assert torch.equal(coords_to_tree_indices(state_2d, coords_2d), torch.tensor([4, 5], dtype=torch.long))
+    assert torch.equal(_coords_to_tree_indices(state_2d, coords_2d), torch.tensor([4, 5], dtype=torch.long))
 
     # Update priorities via coords
     priorities = torch.tensor([1.0, 2.0, 3.0, 4.0])
