@@ -306,7 +306,7 @@ for iteration in range(MAX_ITERATIONS):
             new_log_probs = dist.log_prob(mb["actions"])
 
             # 1. Policy Loss (Clipped Surrogate)
-            ratio =(
+            ratio = probability_ratio(
                 old_log_probs=mb["logprobs"],
                 new_log_probs=new_log_probs,
             )

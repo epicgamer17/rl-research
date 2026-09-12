@@ -496,7 +496,7 @@ def train_ppo(use_lstm: bool = False):
                 # dist has batch shape [B]. mb["actions"] is [B, 1]. Squeeze for log_prob, unsqueeze output.
                 new_log_probs = dist.log_prob(mb["actions"].squeeze(-1)).unsqueeze(-1)
 
-                ratio =(
+                ratio = probability_ratio(
                     old_log_probs=mb["logprobs"], new_log_probs=new_log_probs
                 )
                 mb_advantages = standardize_tensor(mb["advantages"])

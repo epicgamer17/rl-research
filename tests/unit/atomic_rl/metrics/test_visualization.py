@@ -158,6 +158,15 @@ def test_plot_categorical_distribution(tmp_path):
     assert os.path.exists(save_file)
     plt.close(fig)
 
+    # Test auto-calculation of expected value from torch.Tensor
+    support_t = torch.linspace(0, 10, 11)
+    probs_t = torch.zeros(11)
+    probs_t[5] = 1.0  # value 5.0
+    fig2 = plot_categorical_distribution(support_t, probs_t, expected_q=None)
+    assert isinstance(fig2, plt.Figure)
+    plt.close(fig2)
+
+
 
 def test_plot_value_prediction_scatter(tmp_path):
     y_true = torch.randn(50)

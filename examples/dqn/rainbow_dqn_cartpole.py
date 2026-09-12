@@ -34,9 +34,9 @@ from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.td import compute_categorical_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
-    expected_value,
     gather_q_values,
 )
+from atomic_rl.transforms import compute_expected_value
 from atomic_rl.networks.update_target_net import hard_update_target_network_
 from atomic_rl.metrics.distributional import log_distributional_metrics
 from atomic_rl.utils import to_numpy_action
@@ -199,7 +199,7 @@ for step in range(MAX_STEPS):
         model.reset_noise()
 
         predictions = model(obs_tensor)
-        expected_qs = expected_value(predictions, support=SUPPORT.to(device))
+        expected_qs = compute_expected_value(predictions, support=SUPPORT.to(device))
         action, _ = argmax_selector(expected_qs)
         action_np = to_numpy_action(action)
 
@@ -264,7 +264,7 @@ for step in range(MAX_STEPS):
             next_logits_target = target_model(batch["next_obs"])
 
             # 2. Next Action Selection (Composed inline natively)
-            next_expected_qs = expected_value(
+            next_expected_qs = compute_expected_value(
                 next_logits_online, support=SUPPORT.to(device)
             )
             next_actions, _ = argmax_selector(next_expected_qs)

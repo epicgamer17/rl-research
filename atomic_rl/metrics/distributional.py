@@ -6,7 +6,7 @@ quantile (QR-DQN, IQN) value representations.
 """
 
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -27,9 +27,10 @@ from ..transforms.value_transform import compute_expected_value
 
 
 def plot_categorical_distribution(
-    support: np.ndarray,
-    probs: np.ndarray,
+    support: Union[np.ndarray, torch.Tensor],
+    probs: Union[np.ndarray, torch.Tensor],
     expected_q: Optional[float] = None,
+    show_expected: bool = True,
     title: str = "Value Distribution",
     xlabel: str = "Return Support (z)",
     ylabel: str = "Probability Mass",
@@ -39,9 +40,11 @@ def plot_categorical_distribution(
     Plots a publication-quality categorical probability mass distribution over support atoms.
 
     Args:
-        support: 1D array of atom support values [Atoms].
-        probs: 1D array of probabilities matching support [Atoms].
-        expected_q: Optional scalar expected Q-value to display as a vertical dashed line.
+        support: 1D array or Tensor of atom support values [Atoms].
+        probs: 1D array or Tensor of probabilities matching support [Atoms].
+        expected_q: Optional scalar expected Q-value. If None and show_expected is True,
+            it is automatically calculated via compute_expected_value.
+        show_expected: Whether to draw a vertical dashed line at the expected value.
         title: Chart title.
         xlabel: Label for horizontal axis.
         ylabel: Label for vertical axis.
@@ -50,12 +53,15 @@ def plot_categorical_distribution(
     Returns:
         plt.Figure: The generated matplotlib figure.
     """
+    support_np = support.detach().cpu().numpy() if isinstance(support, torch.Tensor) else np.asarray(support)
+    probs_np = probs.detach().cpu().numpy() if isinstance(probs, torch.Tensor) else np.asarray(probs)
+
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    bar_width = (support[-1] - support[0]) / (len(support) * 1.2)
+    bar_width = (support_np[-1] - support_np[0]) / (len(support_np) * 1.2)
     ax.bar(
-        support,
-        probs,
+        support_np,
+        probs_np,
         width=bar_width,
         color="dodgerblue",
         edgecolor="black",
@@ -64,7 +70,12 @@ def plot_categorical_distribution(
         label="Probability Mass",
     )
 
-    if expected_q is not None:
+    if show_expected:
+        if expected_q is None:
+            support_t = torch.as_tensor(support, dtype=torch.float32)
+            probs_t = torch.as_tensor(probs, dtype=torch.float32)
+            expected_q = float(compute_expected_value(probs_t, support_t, probs=True).item())
+
         ax.axvline(
             expected_q,
             color="crimson",

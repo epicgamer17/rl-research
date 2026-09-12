@@ -337,7 +337,7 @@ for iteration in range(MAX_ITERATIONS):
             total_entropy = torch.stack(entropy_list, dim=-1).sum(dim=-1)
 
             # 2. Policy Loss (Clipped Surrogate)
-            ratio =(
+            ratio = probability_ratio(
                 old_log_probs=mb["logprobs"], new_log_probs=new_log_probs
             )
             mb_advantages = standardize_tensor(mb["advantages"])

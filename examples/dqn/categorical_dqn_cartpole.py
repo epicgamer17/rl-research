@@ -41,10 +41,10 @@ from atomic_rl.buffers.replay import (
 from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.action_selection import (
     argmax_selector,
-    expected_value,
     gather_q_values,
     with_epsilon_greedy,
 )
+from atomic_rl.transforms import compute_expected_value
 from atomic_rl.schedules import get_linear_schedule
 from atomic_rl.networks.update_target_net import hard_update_target_network_
 from atomic_rl.metrics.distributional import log_distributional_metrics
@@ -149,7 +149,7 @@ for step in range(MAX_STEPS):
         obs_tensor = torch.as_tensor(obs[None, ...], dtype=torch.float32, device=device)
 
         predictions = model(obs_tensor)
-        expected_qs = expected_value(predictions, support=SUPPORT.to(device))
+        expected_qs = compute_expected_value(predictions, support=SUPPORT.to(device))
         action, info = action_selector(
             predictions=expected_qs,
             epsilon=current_epsilon,
@@ -205,7 +205,7 @@ for step in range(MAX_STEPS):
 
             # 2. Next Action Selection (Composed inline natively)
             # C51 uses the expected value of the distribution for action selection
-            next_expected_qs = expected_value(next_logits, support=SUPPORT.to(device))
+            next_expected_qs = compute_expected_value(next_logits, support=SUPPORT.to(device))
             next_actions, _ = argmax_selector(next_expected_qs)
 
             # 3. Target Calculation (Pure Primitive)
