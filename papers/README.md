@@ -121,6 +121,9 @@ This directory maintains a mapping between the research papers in this folder an
 - ReBel
 - Player of Games
 - NEAT
+- Discovery of Useful Questions as Auxiliary Tasks
+- Metatrace Actor-Critic
+- Meta-Gradient Reinforcement Learning (Xu, van Hasselt, & Silver, NeurIPS 2018)
 
 ### Missing Features (TODO Find Papers):
 For Agent 57, we are missing:

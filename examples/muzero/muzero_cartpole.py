@@ -68,36 +68,37 @@ from atomic_rl.utils import min_max_normalize, scale_gradient
 # Hyperparameters & Constants
 # ---------------------------------------------------------------------------
 TOTAL_TRAINING_STEPS = 20000
-NUM_ACTORS = 2
-ENVS_PER_ACTOR = 4
+NUM_ACTORS = 4
+ENVS_PER_ACTOR = 1
 MIN_BUFFER_SIZE = 500  # Minimum number of valid transitions before training starts
 EVAL_INTERVAL_STEPS = 1000
-PARAM_SYNC_INTERVAL = 50
+PARAM_SYNC_INTERVAL = 25
 NUM_MCTS_SIMULATIONS = 25
 UNROLL_STEPS = 5
-TD_STEPS = 5
+TD_STEPS = 10
 GAMMA = 0.99  # MuZero Appendix C standard discount; ensures G_500 vs G_300 has ~2.1 atom delta
 EPSILON_TRANSFORM = 0.001
 
 # Prioritized Experience Replay (MuZero Appendix G: alpha = beta = 1)
-PER_ALPHA = 1.0
-PER_BETA = 1.0
+# NOTE: We found that cartpole results are slightly worse when using PER; For that reason by defualt PER is "disabled", but if you want to test with PER just tweak these numbers.
+PER_ALPHA = 0.0
+PER_BETA = 0.0
 PER_EPSILON = 1e-4
 
 # Discrete Support Bounds (max discounted return at gamma=0.997 is ~259.1 -> h(259.1) ≈ 15.39)
 # Support [-25, 25] (51 atoms) provides fine-grained, non-saturating resolution up to 500 steps.
-SUPPORT_MIN = -25
+SUPPORT_MIN = 0
 SUPPORT_MAX = 25
 NUM_ATOMS = SUPPORT_MAX - SUPPORT_MIN + 1  # 51 atoms
 
 # Environment & Network Shapes
 OBS_DIM = 4
 NUM_ACTIONS = 2
-LATENT_DIM = 64
+LATENT_DIM = 32
 
 # MCTS PUCT Search Constants
 C_PUCT = 1.25
-DIRICHLET_ALPHA = 0.3
+DIRICHLET_ALPHA = 1.0
 DIRICHLET_EPSILON = 0.25
 
 # Temperature Schedule Constants (MuZero Atari Appendix B "Action Selection")
@@ -106,18 +107,19 @@ DIRICHLET_EPSILON = 0.25
 # temperature of 0.25. This ensures that the action selection becomes greedier
 # as training progresses.
 TEMP_THRESHOLDS = [
-    int(TOTAL_TRAINING_STEPS * 0.50),  # 50% of training (5,000 steps)
+    int(TOTAL_TRAINING_STEPS * 0.5),  # 50% of training (5,000 steps)
     int(TOTAL_TRAINING_STEPS * 0.75),  # 75% of training (7,500 steps)
+    # int(TOTAL_TRAINING_STEPS * 0.75),  # 75% of training (7,500 steps)
 ]
 TEMP_VALUES = [1.0, 0.5, 0.25]
 
 # Optimization & Network Parameters
 BATCH_SIZE = 64
 MAX_EPISODE_STEPS = 500
-BUFFER_NUM_EPISODES = 200  # 200 episodes * 500 steps = 100,000 steps capacity
+BUFFER_NUM_EPISODES = 1000  # 200 episodes * 500 steps = 100,000 steps capacity
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-VALUE_LOSS_WEIGHT = 0.25  # MuZero Table S1 standard
+VALUE_LOSS_WEIGHT = 1.0  # MuZero Table S1 standard
 
 NUM_EVAL_EPISODES = 10
 NUM_TRAIN_EVAL_EPISODES = 5
@@ -676,7 +678,9 @@ def learner_worker(
 
     step_count = 0
     latest_eval_metrics = {}
-    support = torch.arange(SUPPORT_MIN, SUPPORT_MAX + 1, device=device, dtype=torch.float32)
+    support = torch.arange(
+        SUPPORT_MIN, SUPPORT_MAX + 1, device=device, dtype=torch.float32
+    )
 
     while step_count < max_steps:
         sample_res = buffer.sample_unrolls(
@@ -750,7 +754,9 @@ def learner_worker(
             )
             raw_r_loss, _ = compute_cross_entropy_loss(r_k_logits, uk_two_hot)
 
-            step_p_losses.append((l_p.sum() / torch.clamp(mask_k.sum(), min=1.0)).item())
+            step_p_losses.append(
+                (l_p.sum() / torch.clamp(mask_k.sum(), min=1.0)).item()
+            )
             step_v_losses.append(raw_v_loss.mean().item())
             step_r_losses.append(raw_r_loss.mean().item())
 
@@ -814,9 +820,7 @@ def learner_worker(
                 )
 
             r_loss_str = (
-                f" | Reward: {log_dict['loss/reward']:.4f}"
-                if step_r_losses
-                else ""
+                f" | Reward: {log_dict['loss/reward']:.4f}" if step_r_losses else ""
             )
             print(
                 f"[Learner Step {step_count}/{max_steps}] "
