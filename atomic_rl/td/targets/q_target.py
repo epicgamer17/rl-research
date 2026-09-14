@@ -29,6 +29,8 @@ def compute_q_td_target(
 
     Returns:
         torch.Tensor: Detached TD target [B, *Channels] or [B].
+
+        TODO/NOTE: we currently assume next_actions are only legal actions. Its possible it may be nicer to have this function accept an action selection fn and q values etc instead. (and handle the action masking as needed.)
     """
     assert (
         next_q_values.ndim >= 2

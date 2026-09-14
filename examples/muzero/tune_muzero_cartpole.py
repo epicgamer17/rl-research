@@ -39,11 +39,19 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
 
-from atomic_rl.action_selection import argmax_selector, sample_distribution
+from atomic_rl.action_selection import (
+    add_dirichlet_noise,
+    argmax_selector,
+    sample_distribution,
+)
 from atomic_rl.buffers import SharedPERBuffer
 from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.schedules import get_stepwise_schedule
-from atomic_rl.search import mcts_search
+from atomic_rl.search import (
+    get_mcts_visit_policy,
+    mcts_search,
+    puct_selection,
+)
 from atomic_rl.search.qtransforms import qtransform_by_min_max
 from atomic_rl.transforms import (
     compute_contractive_transform,
@@ -251,9 +259,21 @@ def run_batched_mcts(
 
     root_to_play = torch.zeros((batch_size,), device=device, dtype=torch.long)
     root_vector_value = root_scalar_value.view(-1, 1)
-    dirichlet_eps = dirichlet_epsilon if explore_dirichlet else 0.0
 
-    action_probs, tree = mcts_search(
+    if explore_dirichlet and dirichlet_epsilon > 0.0:
+        root_logits = add_dirichlet_noise(
+            root_logits,
+            epsilon=dirichlet_epsilon,
+            alpha=dirichlet_alpha,
+        )
+
+    selection_fn = functools.partial(
+        puct_selection,
+        pb_c_init=C_PUCT,
+        qtransform=qtransform_by_min_max,
+    )
+
+    tree = mcts_search(
         root_embeddings=s0,
         root_logits=root_logits,
         root_value=root_vector_value,
@@ -262,12 +282,11 @@ def run_batched_mcts(
         num_simulations=num_simulations,
         num_actions=NUM_ACTIONS,
         num_players=1,
+        selection_fn=selection_fn,
         legal_mask=None,
-        qtransform=qtransform_by_min_max,
-        dirichlet_epsilon=dirichlet_eps,
-        dirichlet_alpha=dirichlet_alpha,
-        pb_c_init=C_PUCT,
-        temperature=temperature,
+    )
+    action_probs = get_mcts_visit_policy(
+        tree["children_visits"][:, 0], temperature=temperature
     )
     root_search_value = tree["node_values"][:, 0, 0].detach()
     return action_probs, root_search_value

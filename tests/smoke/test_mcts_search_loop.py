@@ -1,6 +1,6 @@
 import pytest
 from tensordict import TensorDict
-from atomic_rl.search import mcts_search
+from atomic_rl.search import mcts_search, puct_selection
 import torch
 
 pytestmark = pytest.mark.smoke
@@ -48,8 +48,7 @@ def test_mcts_search_loop():
             next_to_play,
         )
 
-    # Explicitly deactivate dirichlet noise injection to avoid mock patching utils modules
-    action_probs, tree = mcts_search(
+    tree = mcts_search(
         root_embeddings=root_embeddings,
         root_logits=root_logits,
         root_value=root_value.unsqueeze(-1),
@@ -58,7 +57,7 @@ def test_mcts_search_loop():
         num_simulations=num_simulations,
         num_actions=num_actions,
         num_players=1,
-        dirichlet_epsilon=0.0,
+        selection_fn=puct_selection,
     )
 
     assert isinstance(tree, TensorDict)

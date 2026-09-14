@@ -25,10 +25,12 @@ asymmetry. They cover:
 import torch
 import pytest
 
+from atomic_rl.action_selection import add_dirichlet_noise
 from atomic_rl.search import (
     get_mcts_visit_policy,
     init_mcts_tree,
     mcts_search,
+    puct_selection,
     select_leaf,
 )
 from atomic_rl.search.qtransforms import get_qvalues
@@ -76,20 +78,14 @@ def _recurrent_fn(actions_taken, embeddings, to_play):
 
 
 # ============================================================================
-# 1. Search has no side-bias (the key P2 guarantee)
+# 3. Search-level symmetry
 # ============================================================================
+def test_search_p1_p2_empty_board_symmetry():
+    """From an empty board, P1 and P2 searches must produce identical visit counts.
 
-
-# ============================================================================
-# 2. Search has no side-bias (the key P2 guarantee)
-# ============================================================================
-def test_search_p2_root_identical_process_to_p1_root():
-    """Given identical rollouts, a P2-to-move root and a P1-to-move root must
-    produce a BIT-IDENTICAL search (same visits, same policy, same action).
-
-    The empty tic-tac-toe board is its own color-swap mirror, so a player-
-    agnostic search must return exactly the same tree statistics regardless of
-    which absolute player is to move (same seed => same RNG stream).
+    Even though P1 places +1 and P2 places -1, the canonical observations and the
+    symmetric edge dynamics make the tree topology and values identical under the
+    same recurrent_fn calls.
     """
     rec = _recurrent_fn
     seed = 1234
@@ -97,7 +93,7 @@ def test_search_p2_root_identical_process_to_p1_root():
     legal = torch.ones(1, NUM_ACTIONS, dtype=torch.bool)
 
     torch.manual_seed(seed)
-    probs_p1, tree_p1 = mcts_search(
+    tree_p1 = mcts_search(
         _embed(empty, 0),
         torch.zeros(1, NUM_ACTIONS),
         torch.zeros(1, 2),
@@ -106,12 +102,13 @@ def test_search_p2_root_identical_process_to_p1_root():
         num_simulations=100,
         num_actions=NUM_ACTIONS,
         num_players=2,
+        selection_fn=puct_selection,
         legal_mask=legal,
-        dirichlet_epsilon=0.0,
-        temperature=1.0,
     )
+    probs_p1 = get_mcts_visit_policy(tree_p1["children_visits"][:, 0], temperature=1.0)
+
     torch.manual_seed(seed)
-    probs_p2, tree_p2 = mcts_search(
+    tree_p2 = mcts_search(
         _embed(empty, 1),
         torch.zeros(1, NUM_ACTIONS),
         torch.zeros(1, 2),
@@ -120,10 +117,10 @@ def test_search_p2_root_identical_process_to_p1_root():
         num_simulations=100,
         num_actions=NUM_ACTIONS,
         num_players=2,
+        selection_fn=puct_selection,
         legal_mask=legal,
-        dirichlet_epsilon=0.0,
-        temperature=1.0,
     )
+    probs_p2 = get_mcts_visit_policy(tree_p2["children_visits"][:, 0], temperature=1.0)
 
     assert torch.equal(tree_p1["children_visits"][:, 0], tree_p2["children_visits"][:, 0])
     assert torch.equal(tree_p1["node_counts"], tree_p2["node_counts"])
@@ -141,7 +138,7 @@ def test_search_p2_finds_forced_win_mirrored_by_p1():
 
     def root_visits(board, player):
         legal = (torch.tensor(board).view(-1) == 0).unsqueeze(0)
-        _, tree = mcts_search(
+        tree = mcts_search(
             _embed(board, player),
             torch.zeros(1, NUM_ACTIONS),
             torch.zeros(1, 2),
@@ -150,9 +147,8 @@ def test_search_p2_finds_forced_win_mirrored_by_p1():
             num_simulations=64,
             num_actions=NUM_ACTIONS,
             num_players=2,
+            selection_fn=puct_selection,
             legal_mask=legal,
-            dirichlet_epsilon=0.0,
-            temperature=0.0,
         )
         return tree["children_visits"][0, 0]
 
@@ -177,7 +173,7 @@ def test_search_p2_blocks_forced_loss_mirrored_by_p1():
 
     def root_visits(board, player):
         legal = (torch.tensor(board).view(-1) == 0).unsqueeze(0)
-        _, tree = mcts_search(
+        tree = mcts_search(
             _embed(board, player),
             torch.zeros(1, NUM_ACTIONS),
             torch.zeros(1, 2),
@@ -186,9 +182,8 @@ def test_search_p2_blocks_forced_loss_mirrored_by_p1():
             num_simulations=sims,
             num_actions=NUM_ACTIONS,
             num_players=2,
+            selection_fn=puct_selection,
             legal_mask=legal,
-            dirichlet_epsilon=0.0,
-            temperature=0.0,
         )
         return tree["children_visits"][0, 0]
 
@@ -232,7 +227,7 @@ def test_qvalues_p2_root_sign_parity():
     assert q[0, 1].item() == pytest.approx(-1.0)  # P1's winning move from P2 perspective
 
     # Normalized scores put the P2-winning action first; PUCT must descend into it
-    _, _, _, trajectory = select_leaf(tree, pb_c_base=19652.0, pb_c_init=1.25)
+    _, _, _, trajectory = select_leaf(tree, puct_selection)
     root_actions = [t[1][0].item() for t in trajectory if t[0][0].item() == 0]
     assert root_actions and root_actions[0] == 0
 
@@ -253,20 +248,26 @@ def test_mcts_search_p2_seed_reproducibility():
 
     def run():
         torch.manual_seed(seed)
-        probs, tree = mcts_search(
+        root_logits = torch.zeros(1, NUM_ACTIONS)
+        root_logits_noisy = add_dirichlet_noise(
+            root_logits,
+            epsilon=0.25,
+            alpha=1.0,
+            mask=legal,
+        )
+        tree = mcts_search(
             _embed(board, 1),  # P2 to move
-            torch.zeros(1, NUM_ACTIONS),
+            root_logits_noisy,
             torch.zeros(1, 2),
             torch.tensor([1]),
             _recurrent_fn,
             num_simulations=60,
             num_actions=NUM_ACTIONS,
             num_players=2,
+            selection_fn=puct_selection,
             legal_mask=legal,
-            dirichlet_epsilon=0.25,
-            dirichlet_alpha=1.0,
-            temperature=1.0,
         )
+        probs = get_mcts_visit_policy(tree["children_visits"][:, 0], temperature=1.0)
         action = torch.multinomial(probs, num_samples=1).squeeze(-1)
         return action, probs, tree["children_visits"][:, 0].clone()
 

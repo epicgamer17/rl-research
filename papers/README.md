@@ -124,6 +124,7 @@ This directory maintains a mapping between the research papers in this folder an
 - Discovery of Useful Questions as Auxiliary Tasks
 - Metatrace Actor-Critic
 - Meta-Gradient Reinforcement Learning (Xu, van Hasselt, & Silver, NeurIPS 2018)
+- **Real-Time Recurrent Learning / RTUs** Also Real-Time Units (RTUs) (and related variants like Decoupled Neural Interfaces or SnAp-1) - basically BPTT but for stream RL.
 
 ### Missing Features (TODO Find Papers):
 For Agent 57, we are missing:

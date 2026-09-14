@@ -26,6 +26,7 @@ import time
 from typing import Callable, Dict, List, Tuple
 
 from atomic_rl.action_selection import (
+    add_dirichlet_noise,
     apply_action_mask,
     argmax_selector,
     sample_distribution,
@@ -44,7 +45,9 @@ from atomic_rl.networks.architectures import ResNetBackbone
 from atomic_rl.schedules import get_stepwise_schedule
 from atomic_rl.search import (
     fpu_zero,
+    get_mcts_visit_policy,
     mcts_search,
+    puct_selection,
     qtransform_by_min_max,
 )
 from pettingzoo.classic import tictactoe_v3
@@ -222,9 +225,28 @@ def run_batched_mcts(
 
     v_p0_root = torch.where(curr_players == 0, root_scalar_value, -root_scalar_value)
     root_vector_value = torch.stack([v_p0_root, -v_p0_root], dim=-1)
-    dirichlet_eps = DIRICHLET_EPSILON if explore_dirichlet else 0.0
 
-    action_probs, _ = mcts_search(
+    if explore_dirichlet and DIRICHLET_EPSILON > 0.0:
+        root_logits = add_dirichlet_noise(
+            root_logits,
+            epsilon=DIRICHLET_EPSILON,
+            alpha=DIRICHLET_ALPHA,
+            mask=legal_masks,
+        )
+
+    qtransform = functools.partial(
+        qtransform_by_min_max,
+        fpu_fn=fpu_zero,
+        min_value=torch.tensor(-1.0),
+        max_value=torch.tensor(1.0),
+    )
+    selection_fn = functools.partial(
+        puct_selection,
+        pb_c_init=C_PUCT,
+        qtransform=qtransform,
+    )
+
+    tree = mcts_search(
         root_embeddings=root_embed,
         root_logits=root_logits,
         root_value=root_vector_value,
@@ -233,17 +255,11 @@ def run_batched_mcts(
         num_simulations=num_simulations,
         num_actions=9,
         num_players=2,
+        selection_fn=selection_fn,
         legal_mask=legal_masks,
-        dirichlet_epsilon=dirichlet_eps,
-        dirichlet_alpha=DIRICHLET_ALPHA,
-        pb_c_init=C_PUCT,
-        temperature=temperature,
-        qtransform=functools.partial(
-            qtransform_by_min_max,
-            fpu_fn=fpu_zero,
-            min_value=torch.tensor(-1.0),
-            max_value=torch.tensor(1.0),
-        ),
+    )
+    action_probs = get_mcts_visit_policy(
+        tree["children_visits"][:, 0], temperature=temperature
     )
     return action_probs
 

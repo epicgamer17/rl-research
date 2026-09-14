@@ -3,7 +3,7 @@ from tensordict import TensorDict
 from typing import Optional
 
 
-# TODO: should we do something like our replay buffer. Like an init_mcts_tree and then init_stochastic, init_sampled_muzero, etc etc? Or leave it as is? Or a higher order functions that wrap or make initializations, like make_stochastic, or make_stochastic_init_mcts_tree or something like that? I think matching the replay buffer is maybe a little cleaner. I'm not sure if we should ALSO make the N-player logic a higher order wrapper or not (i lean not).
+# TODO: should we do something like our replay buffer. Like an init_mcts_tree and then init_stochastic, init_sampled_muzero, etc etc? Or leave it as is? Or a higher order functions that wrap or make initializations, like make_stochastic, or make_stochastic_init_mcts_tree or something like that? I think matching the replay buffer is maybe a little cleaner. I'm not sure if we should ALSO make the N-player logic a higher order wrapper or not (I lean not). For now keeping a single unified init_mcts_tree but I'm undecided.
 def init_mcts_tree(
     root_embeddings: torch.Tensor,
     root_logits: torch.Tensor,

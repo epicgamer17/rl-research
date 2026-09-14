@@ -14,6 +14,7 @@ from atomic_rl.search import (
     qtransform_by_parent_and_siblings,
     qtransform_completed_by_mix_value,
     puct_score,
+    puct_selection,
     backpropagate_,
     expand_node_,
     get_mcts_visit_policy,
@@ -282,7 +283,7 @@ def test_full_mcts_search_parity():
         return recurrent_output, next_embedding
 
     # Run atomic_rl search
-    action_probs, tree = mcts_search(
+    tree = mcts_search(
         root_embeddings=root_embeddings,
         root_logits=root_logits,
         root_value=root_value,
@@ -291,8 +292,7 @@ def test_full_mcts_search_parity():
         num_simulations=S,
         num_actions=A,
         num_players=1,
-        dirichlet_epsilon=0.0,
-        temperature=1.0,
+        selection_fn=puct_selection,
     )
 
     # Run mctx muzero_policy search
@@ -318,6 +318,7 @@ def test_full_mcts_search_parity():
     mctx_visits = np.array(mctx_tree.children_visits[:, 0])
     np.testing.assert_array_equal(torch_visits, mctx_visits)
 
+    action_probs = get_mcts_visit_policy(tree["children_visits"][:, 0], temperature=1.0)
     np.testing.assert_allclose(action_probs.numpy(), np.array(policy_output.action_weights), rtol=1e-5, atol=1e-5)
 
     torch_root_v = tree["node_values"][:, 0].squeeze(-1).numpy()

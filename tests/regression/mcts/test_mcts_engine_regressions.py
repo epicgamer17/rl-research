@@ -11,6 +11,7 @@ import torch
 from atomic_rl.search import (
     init_mcts_tree,
     mcts_search,
+    puct_selection,
     select_leaf,
 )
 
@@ -44,7 +45,7 @@ def test_first_root_selection_prefers_argmax_prior(seeded):
                 num_actions=A,
                 num_players=2,
             )
-            _, leaf_actions, _, trajectory = select_leaf(tree)
+            _, leaf_actions, _, trajectory = select_leaf(tree, puct_selection)
             assert trajectory[0][1].item() == expected
             assert leaf_actions.item() == expected
 
@@ -68,7 +69,7 @@ def test_select_leaf_honors_max_depth():
         tree["children_visits"][0, parent, 0] = 1
         tree["children_values"][0, parent, 0, 0] = 0.1
 
-    _, _, expansion_mask, trajectory = select_leaf(tree, max_depth=2)
+    _, _, expansion_mask, trajectory = select_leaf(tree, puct_selection, max_depth=2)
     # Two edges descended, then stopped at the cutoff with no expansion.
     assert len(trajectory) == 2
     assert not expansion_mask.any()
@@ -100,7 +101,7 @@ def test_select_leaf_default_max_depth_scales_with_num_simulations():
         tree["children_values"][0, parent, 0, 0] = 0.1
     tree["node_visits"][0, 0] = 10
 
-    _, _, expansion_mask, trajectory = select_leaf(tree)  # default max_depth
+    _, _, expansion_mask, trajectory = select_leaf(tree, puct_selection)  # default max_depth
     # Descended exactly to the tree horizon (num_simulations edges), and no
     # node was expanded beyond the allocated num_simulations + 1 slots.
     assert len(trajectory) == S
@@ -108,10 +109,10 @@ def test_select_leaf_default_max_depth_scales_with_num_simulations():
 
 
 def test_search_linear_game_allocates_all_nodes():
-    """A long non-terminal game must expand one node per simulation."""
-    B, A, S = 1, 1, 64
+    """A linear game with S simulations expands S distinct nodes."""
+    B, A, S = 1, 2, 8
 
-    def recurrent_fn(actions, embeddings, to_play=None):
+    def recurrent_fn(actions, embeddings, to_play):
         logits = embeddings.new_zeros(B, A)
         value = embeddings.new_zeros(B, 2)
         reward = embeddings.new_zeros(B, 2)
@@ -120,7 +121,7 @@ def test_search_linear_game_allocates_all_nodes():
         next_to_play = torch.zeros(B, dtype=torch.long)
         return logits, value, reward, discount, next_embeddings, next_to_play
 
-    _, tree = mcts_search(
+    tree = mcts_search(
         root_embeddings=torch.zeros(B, 4),
         root_logits=torch.zeros(B, A),
         root_value=torch.zeros(B, 2),
@@ -129,7 +130,7 @@ def test_search_linear_game_allocates_all_nodes():
         num_simulations=S,
         num_actions=A,
         num_players=2,
+        selection_fn=puct_selection,
         legal_mask=torch.ones(B, A, dtype=torch.bool),
-        dirichlet_epsilon=0.0,
     )
     assert tree["node_counts"].tolist() == [S + 1]

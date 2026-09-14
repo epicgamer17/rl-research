@@ -6,6 +6,7 @@ import torch
 from atomic_rl.search import (
     init_mcts_tree,
     puct_score,
+    puct_selection,
     qtransform_by_min_max,
     qtransform_identity,
     select_leaf,
@@ -250,7 +251,9 @@ def test_select_leaf_early_termination():
     # Environment 1 has no children expanded at all (remains -1 at root)
 
     leaf_parents, leaf_actions, expansion_mask, trajectory = select_leaf(
-        tree, pb_c_base=100.0, pb_c_init=1.0, max_depth=5
+        tree,
+        functools.partial(puct_selection, pb_c_base=100.0, pb_c_init=1.0),
+        max_depth=5,
     )
 
     # Env 0 should fall deep into slot 1. Env 1 should stop immediately at root (slot 0)
@@ -302,7 +305,9 @@ def test_select_leaf_deterministic_path():
 
     # Execute selection pass
     leaf_parents, leaf_actions, expansion_mask, trajectory = select_leaf(
-        tree, pb_c_base=19652, pb_c_init=1.25, max_depth=5
+        tree,
+        functools.partial(puct_selection, pb_c_base=19652, pb_c_init=1.25),
+        max_depth=5,
     )
 
     # 1. The search loop should break and target Node 2 as the expansion candidate

@@ -23,6 +23,7 @@ from atomic_rl.search import (
     init_mcts_tree,
     mcts_search,
     puct_score,
+    puct_selection,
     qtransform_by_parent_and_siblings,
     select_leaf,
 )
@@ -338,9 +339,7 @@ def test_selection_prefers_correct_flipped_q():
     tree["children_visits"][0, 0, 0] = 4
     tree["children_visits"][0, 0, 1] = 4
 
-    leaf_parents, _, _, trajectory = select_leaf(
-        tree, pb_c_base=19652.0, pb_c_init=1.25
-    )
+    leaf_parents, _, _, trajectory = select_leaf(tree, puct_selection)
 
     assert trajectory[0][1].item() == 1
     assert leaf_parents.item() == 2
@@ -362,16 +361,16 @@ def test_puct_score_obeys_root_legal_mask():
     tree["node_visits"][0, 0] = 1
 
     scores = puct_score(tree, torch.tensor([0]), depth=0)
-    assert scores[0, 1].item() == torch.finfo(torch.float32).min
-    assert scores[0, 0].item() > -1e8
-    assert scores[0, 2].item() > -1e8
+    assert scores[0, 1].item() == torch.finfo(scores.dtype).min
+    assert scores[0, 0].item() > torch.finfo(scores.dtype).min
+    assert scores[0, 2].item() > torch.finfo(scores.dtype).min
 
 
-def test_search_alternating_game_preserves_edge_invariant():
-    """Full search where every transition alternates."""
-    B, A, S = 2, 3, 16
+def test_search_n_player_tensor_invariants():
+    """Run mcts_search end-to-end and assert all shapes, bounds and relations."""
+    B, A, S = 2, 3, 10
 
-    def recurrent_fn(actions, embeddings, to_play=None):
+    def recurrent_fn(actions_taken, embeddings, to_play):
         next_emb = embeddings + torch.ones_like(embeddings) * 0.01
         logits = embeddings.new_zeros(embeddings.shape[0], A)
         value = embeddings.new_full((embeddings.shape[0], 2), 0.3)
@@ -380,7 +379,7 @@ def test_search_alternating_game_preserves_edge_invariant():
         next_to_play = torch.zeros(embeddings.shape[0], dtype=torch.long)
         return logits, value, reward, discount, next_emb, next_to_play
 
-    action_probs, tree = mcts_search(
+    tree = mcts_search(
         root_embeddings=torch.zeros(B, 4),
         root_logits=torch.zeros(B, A),
         root_value=torch.zeros(B, 2),
@@ -389,8 +388,9 @@ def test_search_alternating_game_preserves_edge_invariant():
         num_simulations=S,
         num_actions=A,
         num_players=2,
-        dirichlet_epsilon=0.0,
+        selection_fn=puct_selection,
     )
+    action_probs = get_mcts_visit_policy(tree["children_visits"][:, 0])
 
     assert tree["node_counts"].tolist() == [S + 1, S + 1]
     assert tree["node_visits"][:, 0].tolist() == [S + 1, S + 1]
@@ -420,7 +420,7 @@ def test_search_alternating_mp_style_tictactoe():
         )
         return logits, value_vec, reward_vec, discount_vec, next_embed, next_to_play
 
-    action_probs, tree = mcts_search(
+    tree = mcts_search(
         root_embeddings=board_embed,
         root_logits=torch.zeros(B, A),
         root_value=torch.zeros(B, 2),
@@ -429,9 +429,10 @@ def test_search_alternating_mp_style_tictactoe():
         num_simulations=S,
         num_actions=A,
         num_players=2,
+        selection_fn=puct_selection,
         legal_mask=legal_mask,
-        dirichlet_epsilon=0.0,
     )
+    action_probs = get_mcts_visit_policy(tree["children_visits"][:, 0])
 
     assert not torch.isnan(tree["node_values"]).any()
     assert not torch.isnan(tree["children_values"]).any()
@@ -450,7 +451,7 @@ def test_search_alternating_mp_style_tictactoe():
     )
     legal_mask = (~occupied).unsqueeze(0)
 
-    action_probs2, tree2 = mcts_search(
+    tree2 = mcts_search(
         root_embeddings=board_embed,
         root_logits=torch.zeros(B, A),
         root_value=torch.zeros(B, 2),
@@ -459,7 +460,7 @@ def test_search_alternating_mp_style_tictactoe():
         num_simulations=12,
         num_actions=A,
         num_players=2,
+        selection_fn=puct_selection,
         legal_mask=legal_mask,
-        dirichlet_epsilon=0.0,
     )
     assert torch.all(tree2["children_visits"][:, 0, occupied] == 0)

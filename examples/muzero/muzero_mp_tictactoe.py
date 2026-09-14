@@ -64,6 +64,7 @@ import time
 from typing import Callable, List, Tuple
 
 from atomic_rl.action_selection import (
+    add_dirichlet_noise,
     apply_action_mask,
     argmax_selector,
     sample_distribution,
@@ -79,7 +80,13 @@ from atomic_rl.evaluation import evaluate_pettingzoo_vs_random
 from atomic_rl.losses import compute_cross_entropy_loss, compute_mse_loss
 from atomic_rl.networks.architectures import ResNetBackbone
 from atomic_rl.schedules import get_stepwise_schedule
-from atomic_rl.search import fpu_zero, mcts_search, qtransform_by_min_max
+from atomic_rl.search import (
+    fpu_zero,
+    get_mcts_visit_policy,
+    mcts_search,
+    puct_selection,
+    qtransform_by_min_max,
+)
 from atomic_rl.transforms import build_action_encodings
 from atomic_rl.utils import min_max_normalize, scale_gradient
 from pettingzoo.classic import tictactoe_v3
@@ -362,7 +369,14 @@ def run_batched_mcts(
 
     v_p0_root = torch.where(curr_players == 0, root_scalar_value, -root_scalar_value)
     root_vector_value = torch.stack([v_p0_root, -v_p0_root], dim=-1)
-    dirichlet_eps = DIRICHLET_EPSILON if explore_dirichlet else 0.0
+
+    if explore_dirichlet and DIRICHLET_EPSILON > 0.0:
+        root_logits = add_dirichlet_noise(
+            root_logits,
+            epsilon=DIRICHLET_EPSILON,
+            alpha=DIRICHLET_ALPHA,
+            mask=legal_masks,
+        )
 
     qtransform = functools.partial(
         qtransform_by_min_max,
@@ -370,8 +384,13 @@ def run_batched_mcts(
         min_value=torch.tensor(-1.0),
         max_value=torch.tensor(1.0),
     )
+    selection_fn = functools.partial(
+        puct_selection,
+        pb_c_init=C_PUCT,
+        qtransform=qtransform,
+    )
 
-    action_probs, tree = mcts_search(
+    tree = mcts_search(
         root_embeddings=s0,
         root_logits=root_logits,
         root_value=root_vector_value,
@@ -380,12 +399,11 @@ def run_batched_mcts(
         num_simulations=num_simulations,
         num_actions=9,
         num_players=2,
+        selection_fn=selection_fn,
         legal_mask=legal_masks,
-        qtransform=qtransform,
-        dirichlet_epsilon=dirichlet_eps,
-        dirichlet_alpha=DIRICHLET_ALPHA,
-        pb_c_init=C_PUCT,
-        temperature=temperature,
+    )
+    action_probs = get_mcts_visit_policy(
+        tree["children_visits"][:, 0], temperature=temperature
     )
     # Return MCTS root search value from perspective of current player (root.value() in MuZero paper)
     root_search_values = (

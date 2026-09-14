@@ -18,6 +18,9 @@ from .policy_losses import (
 from .value_losses import (
     compute_clipped_mse_loss,
 )
+from .vq_losses import (
+    compute_commitment_loss,
+)
 from .weighting import (
     compute_is_weights,
     compute_vtrace_weights,
@@ -33,6 +36,7 @@ __all__ = [
     "compute_entropy_loss",
     "compute_clipped_surrogate_loss",
     "compute_clipped_mse_loss",
+    "compute_commitment_loss",
     "compute_is_weights",
     "compute_vtrace_weights",
     "compute_ope_weights",

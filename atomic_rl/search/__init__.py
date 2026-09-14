@@ -4,6 +4,8 @@
 
 # TODO:URGENT/MAJOR: Don't force cananonical values in MCTS
 
+# TODO: should this also be used for dreamer? if I do that, am I making this too generic (if that is possible). Conceptually i am torn. its nice to bridge the concepts, but at a high level they are different (one is about training in the model, the other is searching), but can be seen as similar if you consider learning between steps as a form of "search". The question i guess arises, how should other search types like AlphaBeta search, or A-star or CFR etc fit into this framework? Will I be "expanding" the single search to be more and more generic? or will i instead just create new folders and functions for each type? If i choose to create new functions, where is the line between a new function, and expanding capabilities of an existing one (for example i would say that adding nplayer and stochastic could be seen as extensions on MCTS). Its likely the case extentions and composition should be used to prevent a combinatorial explosion of classes. Is it possible to make a "generic" search system that covers search in general, and then specializes for each algorithm by composition of functions?
+
 from .backpropagation import backpropagate_
 from .expansion import expand_node_
 from .policies import get_mcts_visit_policy
@@ -25,7 +27,7 @@ from .qtransforms import (
 )
 from .search import mcts_search
 
-from .selection import puct_score, select_leaf
+from .selection import puct_score, puct_selection, select_leaf
 from .tree import init_mcts_tree
 
 """

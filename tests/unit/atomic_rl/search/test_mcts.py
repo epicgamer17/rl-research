@@ -1,7 +1,8 @@
 import pytest
 import torch
 
-from atomic_rl.search import mcts_search
+from atomic_rl.action_selection import add_dirichlet_noise
+from atomic_rl.search import mcts_search, puct_selection
 
 pytestmark = pytest.mark.unit
 
@@ -22,14 +23,13 @@ def test_mcts_search_root_legal_mask():
         is_terminal = torch.zeros(1, dtype=torch.bool)
         return next_embeds, rewards, next_to_play, is_terminal
 
-    root_legal_mask = torch.tensor(
-        [[True, False, True]]
-    )  # Action 1 is explicitly ILLEGAL
-
     root_logits, root_value = expansion_fn(root_embed)
+    root_legal_mask = torch.tensor([[True, False, True]])  # Action 1 is explicitly illegal
 
     def recurrent_fn(actions, embeds, to_play=None):
-        next_embeds, rewards, next_to_play, is_terminal = dummy_dynamics_fn(embeds, actions)
+        next_embeds, rewards, next_to_play, is_terminal = dummy_dynamics_fn(
+            embeds, actions
+        )
         logits, values = expansion_fn(next_embeds)
         values = torch.where(is_terminal, torch.zeros_like(values), values).unsqueeze(-1)
         rewards = rewards.unsqueeze(-1)
@@ -38,18 +38,24 @@ def test_mcts_search_root_legal_mask():
         )
         return logits, values, rewards, discount, next_embeds, next_to_play
 
-    action_probs, tree = mcts_search(
+    root_logits_noisy = add_dirichlet_noise(
+        root_logits,
+        epsilon=0.5,
+        alpha=0.3,
+        mask=root_legal_mask,
+    )
+
+    tree = mcts_search(
         root_embeddings=root_embed,
-        root_logits=root_logits,
+        root_logits=root_logits_noisy,
         root_value=root_value.unsqueeze(-1),
         root_to_play=torch.zeros(1, dtype=torch.long),
         recurrent_fn=recurrent_fn,
         num_simulations=20,
         num_actions=3,
         num_players=1,
+        selection_fn=puct_selection,
         legal_mask=root_legal_mask,
-        dirichlet_epsilon=0.5,
-        dirichlet_alpha=0.3,
     )
 
     # Action 1 (highest raw logit) must be masked to 0.0 prior at root and receive 0 visits
@@ -100,7 +106,7 @@ def test_mcts_search_dynamics_fn_legal_mask():
         )
         return masked_logits, values, rewards, discount, next_embeds, next_to_play
 
-    action_probs, tree = mcts_search(
+    tree = mcts_search(
         root_embeddings=root_embed,
         root_logits=root_logits,
         root_value=root_value,
@@ -109,8 +115,8 @@ def test_mcts_search_dynamics_fn_legal_mask():
         num_simulations=10,
         num_actions=3,
         num_players=1,
+        selection_fn=puct_selection,
         legal_mask=root_legal_mask,
-        dirichlet_epsilon=0.0,
     )
 
     # At child nodes, dynamics_fn mask prevents Action 1 from receiving visits at deeper levels

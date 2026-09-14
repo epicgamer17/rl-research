@@ -1,22 +1,16 @@
 import torch
 from tensordict import TensorDict
 from typing import Tuple, Callable, Optional
-from ..action_selection import add_dirichlet_noise
 from .backpropagation import backpropagate_
 from .expansion import expand_node_
 from .selection import select_leaf
 from .tree import init_mcts_tree
-from .qtransforms import qtransform_by_parent_and_siblings
-from .policies import get_mcts_visit_policy
 
 
 # TODO: remember we eventually want gumbel sequential halving and possibly other search methods too.
-# TODO: dont hard code dirichlet params, pass em in as optional arguments
 # TODO: avoid flags like is_zero_sum
 # TODO: make it easier to do stochastic muzero and stochastic alphazero.
-# TODO: should this just return the tree?
 # TODO: what about sampled muzero?
-# TODO: make this less hardcoded. I don't mind if search orchestration goes in the orchestration code, if it gives users more freedom.
 
 
 def mcts_search(
@@ -38,22 +32,25 @@ def mcts_search(
     num_simulations: int,
     num_actions: int,
     num_players: int,
+    selection_fn: Callable[[TensorDict, torch.Tensor, int], torch.Tensor],
     *,
+    # TODO: rename to root_legal_mask?
     legal_mask: Optional[torch.Tensor] = None,
-    qtransform: Callable = qtransform_by_parent_and_siblings,
-    dirichlet_epsilon: float = 0.0,
-    dirichlet_alpha: float = 0.3,
-    pb_c_base: float = 19652.0,
-    pb_c_init: float = 1.25,
-    temperature: float = 1.0,
     max_depth: Optional[int] = None,
-) -> Tuple[torch.Tensor, TensorDict]:
-    """Runs batched N-player MuZero MCTS search matching mctx semantics.
+) -> TensorDict:
+    """Runs batched N-player MuZero MCTS search simulations to construct the search tree.
+
+    Exploration noise (such as Dirichlet noise) should be added to root_logits
+    in the orchestration loop prior to calling mcts_search. Target visit policies
+    should be extracted from the returned tree via get_mcts_visit_policy.
 
     Returns:
-        Tuple[torch.Tensor, TensorDict]: (action_probs [B, A], tree TensorDict)
+        TensorDict: The completed MCTS tree state.
     """
     device = root_embeddings.device
+    assert callable(
+        selection_fn
+    ), f"selection_fn must be callable, got {selection_fn!r}"
     assert (
         isinstance(num_simulations, int)
         and not isinstance(num_simulations, bool)
@@ -65,15 +62,9 @@ def mcts_search(
     assert (
         isinstance(num_players, int) and num_players >= 1
     ), f"num_players must be an int >= 1, got {num_players!r}"
-    assert (
-        dirichlet_epsilon >= 0
-    ), f"dirichlet_epsilon must be >= 0, got {dirichlet_epsilon}"
-    assert dirichlet_alpha >= 0, f"dirichlet_alpha must be >= 0, got {dirichlet_alpha}"
-    assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
-    assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
-    assert temperature >= 0, f"temperature must be >= 0, got {temperature}"
     assert max_depth is None or (
-        isinstance(max_depth, int) and not isinstance(max_depth, bool)
+        isinstance(max_depth, int)
+        and not isinstance(max_depth, bool)
         and max_depth >= 1
     ), f"max_depth must be an int >= 1 or None, got {max_depth!r}"
 
@@ -102,20 +93,10 @@ def mcts_search(
 
     batch_range = torch.arange(batch_size, device=device)
 
-    # 1. Apply Dirichlet noise to root logits
-    curr_root_logits = root_logits.clone()
-    if dirichlet_epsilon > 0.0:
-        curr_root_logits = add_dirichlet_noise(
-            curr_root_logits,
-            dirichlet_epsilon,
-            dirichlet_alpha,
-            mask=legal_mask,
-        )
-
-    # 2. Initialize N-Player Tree State
+    # 1. Initialize N-Player Tree State
     tree = init_mcts_tree(
         root_embeddings=root_embeddings,
-        root_logits=curr_root_logits,
+        root_logits=root_logits,
         root_value=root_value,
         root_to_play=root_to_play,
         num_simulations=num_simulations,
@@ -129,9 +110,7 @@ def mcts_search(
         # A. Selection Phase
         leaf_parents, leaf_actions, expansion_mask, trajectory = select_leaf(
             tree,
-            pb_c_base=pb_c_base,
-            pb_c_init=pb_c_init,
-            qtransform=qtransform,
+            selection_fn=selection_fn,
             max_depth=max_depth,
         )
 
@@ -152,9 +131,7 @@ def mcts_search(
                 discount,
                 next_embeddings,
                 next_to_play,
-            ) = recurrent_fn(
-                leaf_actions[b_idx], parent_embeddings, parent_to_play
-            )
+            ) = recurrent_fn(leaf_actions[b_idx], parent_embeddings, parent_to_play)
 
             leaf_value[b_idx] = value
 
@@ -188,7 +165,7 @@ def mcts_search(
                 discounts=discount_full,
                 next_embeddings=next_embeddings_full,
                 players=players_full,
-                legal_mask=None,
+                legal_mask=None,  # TODO: should we pass in a legal_mask here if one is provided somehow? I think that would make things cleaner and less hacky (for alphazero at least), maybe instead of legal_mask it could be a more general mask to allow for internal node pruning (something similar to sampled muzero or something but for large discrete action spaces?)
                 masks=expansion_mask,
             )
 
@@ -199,9 +176,4 @@ def mcts_search(
             leaf_value=leaf_value,
         )
 
-    # 4. Extract Visit Policy Target
-    root_visits = tree["children_visits"][:, 0]  # [B, A]
-    action_probs = get_mcts_visit_policy(root_visits, temperature=temperature)
-
-    return action_probs, tree
-
+    return tree

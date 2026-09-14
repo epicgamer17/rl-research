@@ -76,16 +76,68 @@ def puct_score(
     return scores
 
 
+def puct_selection(
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,
+    depth: int,
+    *,
+    pb_c_init: float = 1.25,
+    pb_c_base: float = 19652.0,
+    qtransform: Callable = qtransform_by_parent_and_siblings,
+    **kwargs,
+) -> torch.Tensor:
+    """Selects actions using PUCT argmax matching mctx.muzero_action_selection.
+
+    Args:
+        tree: The MCTS tree TensorDict.
+        parent_nodes: Parent node indices [B].
+        depth: Current tree depth.
+        pb_c_init: PUCT exploration constant c1.
+        pb_c_base: PUCT exploration constant c2.
+        qtransform: Q-value transformation function.
+
+    Returns:
+        Selected action indices [B] from parent_nodes.
+    """
+    scores = puct_score(
+        tree,
+        parent_nodes,
+        depth,
+        pb_c_init=pb_c_init,
+        pb_c_base=pb_c_base,
+        qtransform=qtransform,
+        **kwargs,
+    )
+    return scores.argmax(dim=-1)
+
+
+# TODO: Stochastic MuZero Selection:
+# In Stochastic MuZero (ICLR 2022, Antonoglou et al.) and mctx, tree search features two alternating node types:
+# 1. Decision Nodes (is_chance=False): Choose an environment action a in {0, ..., A-1} via PUCT selection.
+# 2. Chance Nodes (is_chance=True): Choose a chance outcome/code c in {0, ..., C-1} from afterstates.
+#
+# Selection at chance nodes can be performed via:
+#   a) Quasi-sampling (argmax of prior / visit count):
+#      code = argmax(softmax(children_prior_logits) / (children_visits + 1), dim=-1)
+#   b) Categorical sampling:
+#      code = torch.multinomial(F.softmax(children_prior_logits, dim=-1), num_samples=1).squeeze(-1)
+#
+# Helper implementation pattern to build:
+# def make_stochastic_selection_fn(
+#     decision_selection_fn: Callable = puct_selection,
+#     chance_selection_fn: Optional[Callable] = None,
+#     num_actions: Optional[int] = None,
+# ) -> Callable[[TensorDict, torch.Tensor, int], torch.Tensor]:
+#     """Returns a higher-order selector branching on tree['is_chance']."""
+#     ...
 # TODO: work with Batched MCTS, batch_mcts.pdf
 # TODO: work with Vectorized MCTS
 # TODO: work iwth Batched + Vectorized MCTS
 # TODO: Stochastic MuZero
+# TODO: stochastic muzero will require a different selection strategy based on the node type. begs the question if it should take a selection fn instead of some sort... This would also be good, as even though stochastic muzero uses the quasi sampling, if we wanted to do real sampling (for possibly dreamer, or just standard MCTS) it would have to not use an argmax
 def select_leaf(
     tree: TensorDict,
-    pb_c_base: float = 19652.0,
-    pb_c_init: float = 1.25,
-    qtransform: Callable = qtransform_by_parent_and_siblings,
-    scoring_fn: Callable = puct_score,
+    selection_fn: Callable[[TensorDict, torch.Tensor, int], torch.Tensor],
     max_depth: Optional[int] = None,
 ) -> Tuple[
     torch.Tensor,
@@ -96,6 +148,10 @@ def select_leaf(
     """Selects leaf nodes to expand by descending the search tree.
 
     Args:
+        tree: The MCTS tree TensorDict.
+        selection_fn: A callable `(tree, parent_nodes, depth) -> action [B]`
+            specifying how edges are chosen at each node (e.g. `functools.partial(puct_selection, ...)`,
+            a stochastic chance-aware selector, or Gumbel sequential halving).
         max_depth: Maximum number of edges from the root to descend before
             giving up on finding an unvisited node. Defaults to the number of
             search simulations (the tree width), matching mctx.
@@ -111,6 +167,10 @@ def select_leaf(
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
 
+    assert callable(
+        selection_fn
+    ), f"selection_fn must be callable, got {selection_fn!r}"
+
     if max_depth is None:
         max_depth = tree["node_visits"].shape[-1] - 1
 
@@ -123,8 +183,6 @@ def select_leaf(
         and not isinstance(max_depth, bool)
         and max_depth >= 1
     ), f"max_depth must be an int >= 1, got {max_depth!r}"
-    assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
-    assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
 
     current_node = torch.zeros(batch_size, dtype=torch.long, device=device)
     active_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
@@ -143,17 +201,8 @@ def select_leaf(
         if not active_mask.any():
             break
 
-        # 2. Score actions for active parents
-        scores = scoring_fn(
-            tree,
-            current_node,
-            depth=depth,
-            pb_c_base=pb_c_base,
-            pb_c_init=pb_c_init,
-            qtransform=qtransform,
-        )  # [B, A]
-
-        action = scores.argmax(dim=-1)  # [B]
+        # 2. Select actions for active parents via selection_fn
+        action = selection_fn(tree, current_node, depth)  # [B]
 
         # 3. Record trajectory step for active items
         trajectory.append((current_node.clone(), action.clone(), active_mask.clone()))

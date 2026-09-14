@@ -47,6 +47,9 @@ from .saliency import (
     plot_dueling_saliency,
     create_wandb_saliency_image,
 )
+from .codebook import (
+    compute_codebook_entropy,
+)
 
 __all__ = [
     # Training & Evaluation Curves
@@ -80,4 +83,6 @@ __all__ = [
     "compute_dueling_saliency",
     "plot_dueling_saliency",
     "create_wandb_saliency_image",
+    # Codebook Diagnostics
+    "compute_codebook_entropy",
 ]

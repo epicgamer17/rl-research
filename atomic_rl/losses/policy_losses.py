@@ -9,6 +9,9 @@ import torch.distributions as D
 from typing import Tuple
 
 
+# TODO: should we enforce/support loss masking here to prevent propogation to illegal moves? (in all these functions?)
+
+
 def compute_policy_gradient_loss(
     advantages: torch.Tensor,
     log_probs: torch.Tensor,
