@@ -265,10 +265,11 @@ LR = 1e-3
 MAX_TURNS = 15
 MAX_EPISODE_STEPS = 80  # Maximum action steps in a game
 BUFFER_NUM_GAMES = 2000
-MIN_BUFFER_SIZE = 64
+MIN_BUFFER_SIZE = 100
 PARAM_SYNC_INTERVAL = 100
 TOTAL_TRAINING_STEPS = 10000
 NUM_ACTORS = 2
+ENVS_PER_ACTOR = 4
 
 # Temperature Schedule for Action Selection (matching MuZero / muzero_mp_tictactoe)
 # Steps 0..TEMP_THRESHOLD_MOVES use exploration temperature (1.0).
@@ -280,6 +281,7 @@ TEMPERATURE_EXPLOITATION = 0.0
 # Parallel Evaluation Constants
 NUM_EVAL_EPISODES = 20
 EVAL_INTERVAL_STEPS = 200
+NUM_FINAL_EVAL_EPISODES = 100
 
 
 # ===========================================================================
@@ -949,6 +951,7 @@ def actor_worker(
     shared_model: nn.Module,
     buffer: SharedReplayBuffer,
     training_step: torch.Tensor,
+    envs_per_actor: int = ENVS_PER_ACTOR,
     num_simulations: int = NUM_SIMULATIONS,
     unroll_steps: int = UNROLL_STEPS,
     td_steps: int = TD_STEPS,
@@ -958,11 +961,11 @@ def actor_worker(
 ):
     """
     Self-play actor worker:
-    1. Runs PassThePig games.
-    2. Runs Stochastic MCTS to generate search policy pi and value v.
-    3. Selects action, steps environment.
+    1. Runs parallel PassThePig games.
+    2. Runs batched Stochastic MCTS to generate search policy pi and value v.
+    3. Selects action, steps environments in lockstep.
     4. Computes n-step TD(lambda) bootstrapped targets via `compute_n_step_td_lambda_returns`.
-    5. Pushes game trajectories into SharedReplayBuffer.
+    5. Pushes completed game trajectories into SharedReplayBuffer.
     """
     torch.set_num_threads(1)
     device = torch.device(device_str)
@@ -971,10 +974,25 @@ def actor_worker(
     ).to(device)
     local_model.eval()
 
-    env = PassThePigEnv(target_score=50, max_turns=MAX_TURNS)
+    envs = [
+        PassThePigEnv(target_score=50, max_turns=MAX_TURNS)
+        for _ in range(envs_per_actor)
+    ]
     seed = 42 + actor_id * 1000
     torch.manual_seed(seed)
     np.random.seed(seed)
+
+    obs_list = []
+    info_list = []
+    for b_idx, env in enumerate(envs):
+        obs, info = env.reset(seed=int(actor_id * 10000 + b_idx * 1000 + 42))
+        obs_list.append(obs)
+        info_list.append(info)
+
+    # Trajectory entry: (obs, action, target_policy, root_val, reward)
+    trajectories: List[List[Tuple[torch.Tensor, int, torch.Tensor, float, float]]] = [
+        [] for _ in range(envs_per_actor)
+    ]
 
     loop_counter = 0
 
@@ -983,37 +1001,33 @@ def actor_worker(
         if loop_counter % PARAM_SYNC_INTERVAL == 0:
             local_model.load_state_dict(shared_model.state_dict())
 
-        trajectory_obs = []
-        trajectory_actions = []
-        trajectory_policies = []
-        trajectory_values = []
-        trajectory_rewards = []
-        trajectory_chances = []
+        completed_tds = []
+        root_obs = torch.from_numpy(np.array(obs_list, dtype=np.float32)).to(device)
+        legal_masks = torch.from_numpy(
+            np.array([info["action_mask"] for info in info_list], dtype=bool)
+        ).to(device)
 
-        obs, info = env.reset()
-        done = False
+        # Step 9 - Run batched stochastic_mcts_search
+        tree = stochastic_mcts_search(
+            model=local_model,
+            root_observations=root_obs,
+            num_simulations=num_simulations,
+            num_actions=NUM_ACTIONS,
+            codebook_size=CODEBOOK_SIZE,
+            legal_mask=legal_masks,
+            explore_dirichlet=True,
+        )
+        # Raw MCTS visit policy target for training (always temperature=1.0 / raw visits)
+        raw_target_policies = get_mcts_visit_policy(
+            tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=1.0
+        )
+        root_values = tree["node_values"][:, 0]
 
-        while not done:
-            obs_tensor = torch.from_numpy(obs).float().unsqueeze(0).to(device)
-            legal_mask = torch.from_numpy(info["action_mask"]).unsqueeze(0).to(device)
+        for b_idx in range(envs_per_actor):
+            target_policy = raw_target_policies[b_idx]
+            root_val = root_values[b_idx].item()
 
-            # Step 9 - Run stochastic_mcts_search
-            tree = stochastic_mcts_search(
-                model=local_model,
-                root_observations=obs_tensor,
-                num_simulations=num_simulations,
-                num_actions=NUM_ACTIONS,
-                codebook_size=CODEBOOK_SIZE,
-                legal_mask=legal_mask,
-                explore_dirichlet=True,
-            )
-            # Raw MCTS visit policy target for training (always temperature=1.0 / raw visits)
-            raw_target_policy = get_mcts_visit_policy(
-                tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=1.0
-            )[0]
-            root_val = tree["node_values"][0, 0].item()
-
-            step_idx = len(trajectory_obs)
+            step_idx = len(trajectories[b_idx])
             temp = get_stepwise_schedule(
                 step=step_idx,
                 thresholds=[TEMP_THRESHOLD_MOVES],
@@ -1021,92 +1035,116 @@ def actor_worker(
             )
 
             if temp == 0.0:
-                action_tensor, _ = argmax_selector(raw_target_policy.unsqueeze(0))
+                action_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
                 action = action_tensor.squeeze().item()
+            elif temp == 1.0:
+                dist = torch.distributions.Categorical(probs=target_policy)
+                action_tensor, _ = sample_distribution(dist, explore=True)
+                action = action_tensor.item()
             else:
-                action_policy = (
-                    raw_target_policy
-                    if temp == 1.0
-                    else get_mcts_visit_policy(
-                        tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=temp
-                    )[0]
+                sampling_policy = torch.pow(target_policy, 1.0 / temp)
+                sampling_policy = sampling_policy / sampling_policy.sum(
+                    dim=-1, keepdim=True
                 )
-                dist = torch.distributions.Categorical(probs=action_policy)
+                dist = torch.distributions.Categorical(probs=sampling_policy)
                 action_tensor, _ = sample_distribution(dist, explore=True)
                 action = action_tensor.item()
 
-            next_obs, reward, terminated, truncated, info = env.step(action)
+            next_obs, reward, terminated, truncated, next_info = envs[b_idx].step(
+                action
+            )
 
-            trajectory_obs.append(torch.from_numpy(obs).float())
-            trajectory_actions.append(action)
-            trajectory_policies.append(raw_target_policy.cpu())
-            trajectory_values.append(root_val)
-            trajectory_rewards.append(reward)
-            trajectory_chances.append(info.get("chance", 0))
+            trajectories[b_idx].append(
+                (
+                    torch.from_numpy(obs_list[b_idx]).float(),
+                    action,
+                    target_policy.cpu(),
+                    root_val,
+                    float(reward),
+                )
+            )
 
-            done = terminated or truncated or (len(trajectory_obs) >= MAX_EPISODE_STEPS)
-            obs = next_obs
+            done = (
+                terminated
+                or truncated
+                or (len(trajectories[b_idx]) >= MAX_EPISODE_STEPS)
+            )
 
-        ep_len = min(len(trajectory_obs), MAX_EPISODE_STEPS)
-        trajectory_obs = trajectory_obs[:ep_len]
-        trajectory_actions = trajectory_actions[:ep_len]
-        trajectory_policies = trajectory_policies[:ep_len]
-        trajectory_values = trajectory_values[:ep_len]
-        trajectory_rewards = trajectory_rewards[:ep_len]
+            if done:
+                ep_obs, ep_actions, ep_policies, ep_values, ep_rewards = zip(
+                    *trajectories[b_idx]
+                )
+                ep_len = min(len(ep_obs), MAX_EPISODE_STEPS)
+                ep_obs = ep_obs[:ep_len]
+                ep_actions = ep_actions[:ep_len]
+                ep_policies = ep_policies[:ep_len]
+                ep_values = ep_values[:ep_len]
+                ep_rewards = ep_rewards[:ep_len]
 
-        # Compute n-step TD(lambda) bootstrapped return targets z_t
-        rewards_t = torch.tensor(trajectory_rewards, dtype=torch.float32).unsqueeze(-1)
-        values_t = torch.tensor(trajectory_values, dtype=torch.float32).unsqueeze(-1)
-        next_values_t = torch.zeros_like(values_t)
-        if ep_len > 1:
-            next_values_t[:-1] = values_t[1:]
-        terminated_t = torch.zeros_like(rewards_t)
-        terminated_t[-1] = 1.0  # Terminal state at episode end
-        truncated_t = torch.zeros_like(rewards_t)
+                # Compute n-step TD(lambda) bootstrapped return targets z_t
+                rewards_t = torch.tensor(ep_rewards, dtype=torch.float32).unsqueeze(-1)
+                values_t = torch.tensor(ep_values, dtype=torch.float32).unsqueeze(-1)
+                next_values_t = torch.zeros_like(values_t)
+                if ep_len > 1:
+                    next_values_t[:-1] = values_t[1:]
+                terminated_t = torch.zeros_like(rewards_t)
+                terminated_t[-1] = 1.0  # Terminal state at episode end
+                truncated_t = torch.zeros_like(rewards_t)
 
-        z_values = compute_n_step_td_lambda_returns(
-            rewards=rewards_t.unsqueeze(0),
-            terminated=terminated_t.unsqueeze(0),
-            truncated=truncated_t.unsqueeze(0),
-            values=values_t.unsqueeze(0),
-            next_values=next_values_t.unsqueeze(0),
-            gamma=gamma,
-            td_lambda=td_lambda,
-            n=td_steps,
-            time_dim=1,
-        ).squeeze(0)
+                z_values = compute_n_step_td_lambda_returns(
+                    rewards=rewards_t.unsqueeze(0),
+                    terminated=terminated_t.unsqueeze(0),
+                    truncated=truncated_t.unsqueeze(0),
+                    values=values_t.unsqueeze(0),
+                    next_values=next_values_t.unsqueeze(0),
+                    gamma=gamma,
+                    td_lambda=td_lambda,
+                    n=td_steps,
+                    time_dim=1,
+                ).squeeze(0)
 
-        # Pack episode into fixed-length TensorDict for SharedReplayBuffer
-        seq_obs = torch.zeros((MAX_EPISODE_STEPS, OBS_DIM), dtype=torch.float32)
-        seq_actions = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.long)
-        seq_policies = torch.zeros(
-            (MAX_EPISODE_STEPS, NUM_ACTIONS), dtype=torch.float32
-        )
-        seq_values = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
-        seq_rewards = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
-        seq_valid = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
+                # Pack episode into fixed-length TensorDict for SharedReplayBuffer
+                seq_obs = torch.zeros((MAX_EPISODE_STEPS, OBS_DIM), dtype=torch.float32)
+                seq_actions = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.long)
+                seq_policies = torch.zeros(
+                    (MAX_EPISODE_STEPS, NUM_ACTIONS), dtype=torch.float32
+                )
+                seq_values = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_rewards = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_valid = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
 
-        seq_obs[:ep_len] = torch.stack(trajectory_obs)
-        seq_actions[:ep_len] = torch.tensor(trajectory_actions, dtype=torch.long)
-        seq_policies[:ep_len] = torch.stack(trajectory_policies)
-        seq_values[:ep_len] = z_values
-        seq_rewards[:ep_len] = rewards_t
-        seq_valid[:ep_len] = 1.0
+                seq_obs[:ep_len] = torch.stack(ep_obs)
+                seq_actions[:ep_len] = torch.tensor(ep_actions, dtype=torch.long)
+                seq_policies[:ep_len] = torch.stack(ep_policies)
+                seq_values[:ep_len] = z_values
+                seq_rewards[:ep_len] = rewards_t
+                seq_valid[:ep_len] = 1.0
 
-        game_td = TensorDict(
-            {
-                "state": seq_obs,
-                "actions": seq_actions,
-                "target_policies": seq_policies,
-                "target_values": seq_values,
-                "target_rewards": seq_rewards,
-                "valid": seq_valid,
-            },
-            batch_size=[MAX_EPISODE_STEPS],
-        )
-        buffer.add_transitions(
-            game_td.unsqueeze(0), valid_mask=seq_valid.unsqueeze(0).bool()
-        )
+                completed_tds.append(
+                    TensorDict(
+                        {
+                            "state": seq_obs,
+                            "actions": seq_actions,
+                            "target_policies": seq_policies,
+                            "target_values": seq_values,
+                            "target_rewards": seq_rewards,
+                            "valid": seq_valid,
+                        },
+                        batch_size=[MAX_EPISODE_STEPS],
+                    )
+                )
+
+                trajectories[b_idx] = []
+                next_obs, next_info = envs[b_idx].reset(
+                    seed=int(actor_id * 100000 + b_idx * 10000 + loop_counter)
+                )
+
+            obs_list[b_idx] = next_obs
+            info_list[b_idx] = next_info
+
+        if len(completed_tds) > 0:
+            batch_td = torch.stack(completed_tds)
+            buffer.add_transitions(batch_td, valid_mask=batch_td["valid"].bool())
 
 
 # Step 12 - Learner Worker
@@ -1158,8 +1196,12 @@ def learner_worker(
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
                     "beta_commitment": BETA_COMMITMENT,
+                    "num_actors": NUM_ACTORS,
+                    "envs_per_actor": ENVS_PER_ACTOR,
                 },
             )
+            wandb.define_metric("step")
+            wandb.define_metric("*", step_metric="step")
         except Exception as e:
             print(
                 f"[Learner] wandb.init note: {e}. Continuing with console logging only."
@@ -1184,9 +1226,14 @@ def learner_worker(
             )
             waiting_logged = False
 
-        sample_res = buffer.sample_unrolls(
-            rng_key, batch_size, unroll_steps, min_size=MIN_BUFFER_SIZE
-        )
+        try:
+            sample_res = buffer.sample_unrolls(
+                rng_key, batch_size, unroll_steps, min_size=MIN_BUFFER_SIZE
+            )
+        except ValueError:
+            time.sleep(0.05)
+            continue
+
         if sample_res is None:
             time.sleep(0.02)
             continue
@@ -1257,17 +1304,37 @@ def learner_worker(
             while not eval_queue.empty():
                 try:
                     eval_metrics = eval_queue.get_nowait()
-                    eval_step = eval_metrics.get("step", step_count)
+                    eval_step = eval_metrics.pop("step", step_count)
+                    eval_metrics["eval/eval_step"] = eval_step
                     print(
                         f"[Evaluation @ Step {eval_step}] Win Rate: {eval_metrics['eval/win_rate']:.2f} | "
                         f"Avg Turns: {eval_metrics['eval/avg_turns']:.1f}"
                     )
                     if use_wandb:
-                        wandb.log(eval_metrics, step=eval_step)
+                        # Log at current step_count so W&B steps are strictly monotonic
+                        wandb.log(eval_metrics, step=step_count)
                 except Exception:
                     break
 
+    # Final evaluation directly inside learner before closing wandb
+    shared_model.load_state_dict(local_model.state_dict())
+    print(
+        f"[Learner] Training finished ({max_steps} steps). Running final evaluation ({NUM_FINAL_EVAL_EPISODES} episodes)..."
+    )
+    final_eval_results = evaluate_model(
+        local_model, num_episodes=NUM_FINAL_EVAL_EPISODES, device_str=device_str
+    )
+    print(f"[Learner] Final Evaluation Results: {final_eval_results}")
     if use_wandb:
+        wandb.log(
+            {
+                "eval/win_rate": final_eval_results["eval/win_rate"],
+                "eval/avg_turns": final_eval_results["eval/avg_turns"],
+                "eval/final_win_rate": final_eval_results["eval/win_rate"],
+                "eval/final_avg_turns": final_eval_results["eval/avg_turns"],
+            },
+            step=max_steps,
+        )
         wandb.finish()
 
 
@@ -1293,7 +1360,7 @@ def evaluate_model(
         while not done:
             obs_tensor = torch.from_numpy(obs).float().unsqueeze(0).to(device)
             legal_mask = torch.from_numpy(info["action_mask"]).unsqueeze(0).to(device)
-            # Run Stochastic MCTS search greedily (temperature=0.0, no Dirichlet noise)
+            # Run Stochastic MCTS search deterministically (no Dirichlet noise)
             tree = stochastic_mcts_search(
                 model=model,
                 root_observations=obs_tensor,
@@ -1301,12 +1368,15 @@ def evaluate_model(
                 num_actions=NUM_ACTIONS,
                 codebook_size=CODEBOOK_SIZE,
                 legal_mask=legal_mask,
+                explore_dirichlet=False,
             )
-            eval_policy = get_mcts_visit_policy(
-                tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=0.0
-            )[0]
-            action_tensor, _ = argmax_selector(eval_policy.unsqueeze(0))
-            action = action_tensor.squeeze().item()
+            # Take the best action strictly by maximum MCTS visit count
+            root_visits = tree["children_visits"][0, 0, :NUM_ACTIONS].clone()
+            if legal_mask is not None:
+                root_visits = torch.where(
+                    legal_mask[0], root_visits, torch.full_like(root_visits, -1.0)
+                )
+            action = int(torch.argmax(root_visits).item())
 
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
@@ -1422,13 +1492,13 @@ def main():
         actor_p = mp.Process(
             target=actor_worker,
             args=(actor_id, shared_model, buffer, training_step),
-            kwargs={"device_str": device_str},
+            kwargs={"device_str": device_str, "envs_per_actor": ENVS_PER_ACTOR},
         )
         actor_p.start()
         processes.append(actor_p)
 
     print(
-        f"Launched Stochastic MuZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Parallel Evaluator)."
+        f"Launched Stochastic MuZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, {ENVS_PER_ACTOR} Envs/Actor, 1 Learner, 1 Parallel Evaluator)."
     )
     learner_p.join()
 
@@ -1437,9 +1507,7 @@ def main():
             p.terminate()
             p.join()
 
-    print("Training finished! Running final evaluation...")
-    eval_results = evaluate_model(shared_model, num_episodes=20, device_str=device_str)
-    print(f"Final Evaluation Results: {eval_results}")
+    print("All processes successfully terminated. Run complete.")
 
 
 if __name__ == "__main__":

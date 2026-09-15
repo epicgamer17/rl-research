@@ -58,6 +58,9 @@ Notes & Architecture:
     - In-tree Chance Selection: Quasi-sampling argmax_c [ sigma(c|as) / (N(as, c) + 1) ]
     - Backpropagation: Uses the exact same G_t = R_t + gamma * G_{t+1} recursion.
       Afterstate edges have R=0, gamma=1. Chance edges have R=r, gamma=gamma.
+
+NOTE/TODO: We struggle to find a computationally small game that can run on a single machine that does not lead to codebook collapse.
+NOTE: We also noticed that codebook collapse was sensisitive to several hyperparameters, including, buffer size, number of simulations, number of actors, among others. We thoerize it has to do with the ratio of learning steps to observations collected.
 ================================================================================
 """
 
@@ -81,7 +84,7 @@ from atomic_rl.action_selection import (
     add_dirichlet_noise,
     compute_dynamic_dirichlet_alpha,
 )
-from atomic_rl.buffers import SharedReplayBuffer, slice_unrolls
+from atomic_rl.buffers import SharedPERBuffer, slice_unrolls
 from atomic_rl.losses import (
     compute_cross_entropy_loss,
     compute_commitment_loss,
@@ -147,22 +150,29 @@ GAMMA = 0.99  # Standard discount for gridworld
 BETA_COMMITMENT = 0.25  # Commitment loss coefficient beta
 BATCH_SIZE = 64
 LR = 1e-3
-MAX_STEPS = 30
-MAX_EPISODE_STEPS = 35  # Maximum action steps in a game
-BUFFER_NUM_GAMES = 1500
-MIN_BUFFER_SIZE = 50
+MAX_EPISODE_STEPS = 30  # Maximum action steps in a game and buffer capacity
+BUFFER_NUM_GAMES = 5000
+MIN_BUFFER_SIZE = 100
 PARAM_SYNC_INTERVAL = 100
-TOTAL_TRAINING_STEPS = 15000
-NUM_ACTORS = 2
+TOTAL_TRAINING_STEPS = 100000
+NUM_ACTORS = 4
+ENVS_PER_ACTOR = 4
+
+# Prioritized Experience Replay (MuZero Appendix G: alpha = beta = 1)
+# NOTE: Set PER_ALPHA = PER_BETA = 0.0 to disable PER and revert to uniform sampling.
+PER_ALPHA = 1.0
+PER_BETA = 1.0
+PER_EPSILON = 1e-4
 
 # Temperature Schedule Constants (matching MuZero / AlphaZero standard)
-TEMP_THRESHOLD_MOVES = 30
+TEMP_THRESHOLD_MOVES = 6
 TEMPERATURE_EXPLORATION = 1.0
 TEMPERATURE_EXPLOITATION = 0.0
 
 # Parallel Evaluation Constants
-NUM_EVAL_EPISODES = 20
-EVAL_INTERVAL_STEPS = 200
+NUM_EVAL_EPISODES = 10
+EVAL_INTERVAL_STEPS = 500
+NUM_FINAL_EVAL_EPISODES = 100
 
 
 # ===========================================================================
@@ -647,12 +657,14 @@ def compute_stochastic_muzero_loss(
     model: StochasticMuZeroModel,
     batch: TensorDict,
     valid_mask: Optional[torch.Tensor] = None,
+    is_weights: Optional[torch.Tensor] = None,
     num_actions: int = NUM_ACTIONS,
     codebook_size: int = CODEBOOK_SIZE,
     beta: float = BETA_COMMITMENT,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """
     Computes the joint Stochastic MuZero loss across K recurrent unroll steps.
+    Supports Prioritized Experience Replay (PER) importance sampling weights.
 
     Loss components:
       1. Policy loss: cross-entropy between p_k and search policy pi_{t+k}
@@ -672,13 +684,14 @@ def compute_stochastic_muzero_loss(
                'target_rewards': [B, K+1, 1]
                'valid': [B, K+1]
         valid_mask: Optional boolean tensor [B, K+1] from buffer sample_unrolls
+        is_weights: Optional PER importance sampling weights [B]
         num_actions: |A|
         codebook_size: M
         beta: commitment loss weight
 
     Returns:
-        total_loss: scalar tensor
-        info: logging dictionary
+        total_loss: scalar tensor (weighted by is_weights if PER is enabled)
+        info: logging dictionary including root prediction v0 for priority updates
     """
     device = batch["state"].device
     unroll_steps = batch["state"].shape[1] - 1  # K steps
@@ -696,18 +709,18 @@ def compute_stochastic_muzero_loss(
     loss_p0 = (
         compute_cross_entropy_loss(p_0, batch["target_policies"][:, 0])[0]
         * mask_float[:, 0]
-    ).sum()
+    )
     loss_v0 = (
         compute_mse_loss(v_0.squeeze(-1), batch["target_values"][:, 0].squeeze(-1))[0]
         * mask_float[:, 0]
-    ).sum()
+    )
 
-    total_p_loss = loss_p0
-    total_v_loss = loss_v0
-    total_r_loss = torch.tensor(0.0, device=device)
-    total_q_loss = torch.tensor(0.0, device=device)
-    total_sigma_loss = torch.tensor(0.0, device=device)
-    total_commit_loss = torch.tensor(0.0, device=device)
+    sample_p_loss = loss_p0.clone()
+    sample_v_loss = loss_v0.clone()
+    sample_r_loss = torch.zeros_like(loss_p0)
+    sample_q_loss = torch.zeros_like(loss_p0)
+    sample_sigma_loss = torch.zeros_like(loss_p0)
+    sample_commit_loss = torch.zeros_like(loss_p0)
 
     # 2. Recurrent Steps k in 1..K
     s_prev = s_0
@@ -720,9 +733,7 @@ def compute_stochastic_muzero_loss(
         c_e, c_st, c_indices = model.chance_encoder(batch["state"][:, k])
         all_chance_indices.append(c_indices)
 
-        loss_commit_k = (
-            compute_commitment_loss(c_e, c_st, beta=beta)[0] * step_mask
-        ).sum()
+        loss_commit_k = compute_commitment_loss(c_e, c_st, beta=beta)[0] * step_mask
 
         # B. Afterstate transition
         actions_prev = batch["actions"][:, k - 1]
@@ -731,12 +742,12 @@ def compute_stochastic_muzero_loss(
 
         loss_sigma_k = (
             F.cross_entropy(sigma_prev, c_indices, reduction="none") * step_mask
-        ).sum()
+        )
 
         target_q = (
             batch["target_rewards"][:, k - 1] + GAMMA * batch["target_values"][:, k]
         ).squeeze(-1)
-        loss_q_k = (compute_mse_loss(q_prev.squeeze(-1), target_q)[0] * step_mask).sum()
+        loss_q_k = compute_mse_loss(q_prev.squeeze(-1), target_q)[0] * step_mask
 
         # C. Chance transition to next state
         s_k, r_k = model.chance_dynamics(as_prev, c_st)
@@ -746,47 +757,55 @@ def compute_stochastic_muzero_loss(
         loss_p_k = (
             compute_cross_entropy_loss(p_k, batch["target_policies"][:, k])[0]
             * step_mask
-        ).sum()
+        )
         loss_v_k = (
             compute_mse_loss(v_k.squeeze(-1), batch["target_values"][:, k].squeeze(-1))[
                 0
             ]
             * step_mask
-        ).sum()
+        )
         loss_r_k = (
             compute_mse_loss(
                 r_k.squeeze(-1), batch["target_rewards"][:, k - 1].squeeze(-1)
             )[0]
             * step_mask
-        ).sum()
+        )
 
-        # Accumulate
-        total_p_loss = total_p_loss + loss_p_k
-        total_v_loss = total_v_loss + loss_v_k
-        total_r_loss = total_r_loss + loss_r_k
-        total_q_loss = total_q_loss + loss_q_k
-        total_sigma_loss = total_sigma_loss + loss_sigma_k
-        total_commit_loss = total_commit_loss + loss_commit_k
+        # Accumulate per sample
+        sample_p_loss = sample_p_loss + loss_p_k
+        sample_v_loss = sample_v_loss + loss_v_k
+        sample_r_loss = sample_r_loss + loss_r_k
+        sample_q_loss = sample_q_loss + loss_q_k
+        sample_sigma_loss = sample_sigma_loss + loss_sigma_k
+        sample_commit_loss = sample_commit_loss + loss_commit_k
 
         s_prev = s_k
 
-    # Normalize by total valid steps
-    total_valid = mask_float.sum().clamp(min=1.0)
-    loss_p_mean = total_p_loss / total_valid
-    loss_v_mean = total_v_loss / total_valid
-    loss_r_mean = total_r_loss / total_valid
-    loss_q_mean = total_q_loss / total_valid
-    loss_sigma_mean = total_sigma_loss / total_valid
-    loss_commit_mean = total_commit_loss / total_valid
+    # Normalize by valid steps per sample
+    sample_valid = mask_float.sum(dim=-1).clamp(min=1.0)
+    sample_total_loss = (
+        sample_p_loss
+        + sample_v_loss
+        + sample_r_loss
+        + sample_q_loss
+        + sample_sigma_loss
+        + sample_commit_loss
+    ) / sample_valid
 
-    total_loss = (
-        loss_p_mean
-        + loss_v_mean
-        + loss_r_mean
-        + loss_q_mean
-        + loss_sigma_mean
-        + loss_commit_mean
-    )
+    # Weight total loss by PER importance sampling weights if provided
+    if is_weights is not None:
+        total_loss = (sample_total_loss * is_weights).mean()
+    else:
+        total_loss = sample_total_loss.mean()
+
+    # Diagnostic component averages across all valid steps
+    total_valid = mask_float.sum().clamp(min=1.0)
+    loss_p_mean = sample_p_loss.sum() / total_valid
+    loss_v_mean = sample_v_loss.sum() / total_valid
+    loss_r_mean = sample_r_loss.sum() / total_valid
+    loss_q_mean = sample_q_loss.sum() / total_valid
+    loss_sigma_mean = sample_sigma_loss.sum() / total_valid
+    loss_commit_mean = sample_commit_loss.sum() / total_valid
 
     # 3. Diagnostic Metrics
     if all_chance_indices:
@@ -812,6 +831,7 @@ def compute_stochastic_muzero_loss(
         "metrics/codebook_perplexity": codebook_perplexity.detach(),
         "metrics/codebook_active_codes": active_codes.detach(),
         "chance_indices": flat_indices.detach(),
+        "v0": v_0.detach(),
     }
     return total_loss, info
 
@@ -830,8 +850,9 @@ def compute_stochastic_muzero_loss(
 def actor_worker(
     actor_id: int,
     shared_model: nn.Module,
-    buffer: SharedReplayBuffer,
+    buffer: SharedPERBuffer,
     training_step: torch.Tensor,
+    envs_per_actor: int = ENVS_PER_ACTOR,
     num_simulations: int = NUM_SIMULATIONS,
     unroll_steps: int = UNROLL_STEPS,
     td_steps: int = TD_STEPS,
@@ -841,11 +862,11 @@ def actor_worker(
 ):
     """
     Self-play actor worker:
-    1. Runs PassThePig games.
-    2. Runs Stochastic MCTS to generate search policy pi and value v.
-    3. Selects action, steps environment.
+    1. Runs parallel SlipperyGridWorld environments.
+    2. Runs batched Stochastic MCTS to generate search policy pi and value v.
+    3. Selects action, steps environments in lockstep.
     4. Computes n-step TD(lambda) bootstrapped targets via `compute_n_step_td_lambda_returns`.
-    5. Pushes game trajectories into SharedReplayBuffer.
+    5. Pushes completed game trajectories into SharedReplayBuffer.
     """
     torch.set_num_threads(1)
     device = torch.device(device_str)
@@ -854,10 +875,25 @@ def actor_worker(
     ).to(device)
     local_model.eval()
 
-    env = SlipperyGridWorldEnv(slip_prob=0.30, max_steps=MAX_STEPS)
+    envs = [
+        SlipperyGridWorldEnv(slip_prob=0.30, max_steps=MAX_EPISODE_STEPS)
+        for _ in range(envs_per_actor)
+    ]
     seed = 42 + actor_id * 1000
     torch.manual_seed(seed)
     np.random.seed(seed)
+
+    obs_list = []
+    info_list = []
+    for b_idx, env in enumerate(envs):
+        obs, info = env.reset(seed=int(actor_id * 10000 + b_idx * 1000 + 42))
+        obs_list.append(obs)
+        info_list.append(info)
+
+    # Trajectory entry: (obs, action, target_policy, root_val, reward)
+    trajectories: List[List[Tuple[torch.Tensor, int, torch.Tensor, float, float]]] = [
+        [] for _ in range(envs_per_actor)
+    ]
 
     loop_counter = 0
 
@@ -866,37 +902,33 @@ def actor_worker(
         if loop_counter % PARAM_SYNC_INTERVAL == 0:
             local_model.load_state_dict(shared_model.state_dict())
 
-        trajectory_obs = []
-        trajectory_actions = []
-        trajectory_policies = []
-        trajectory_values = []
-        trajectory_rewards = []
-        trajectory_chances = []
+        completed_tds = []
+        root_obs = torch.from_numpy(np.array(obs_list, dtype=np.float32)).to(device)
+        legal_masks = torch.from_numpy(
+            np.array([info["action_mask"] for info in info_list], dtype=bool)
+        ).to(device)
 
-        obs, info = env.reset(seed=int(actor_id * 10000 + loop_counter))
-        done = False
+        # Step 9 - Run batched stochastic_mcts_search
+        tree = stochastic_mcts_search(
+            model=local_model,
+            root_observations=root_obs,
+            num_simulations=num_simulations,
+            num_actions=NUM_ACTIONS,
+            codebook_size=CODEBOOK_SIZE,
+            legal_mask=legal_masks,
+            explore_dirichlet=True,
+        )
+        # Raw MCTS visit policy target for training (always temperature=1.0 / raw visits)
+        raw_target_policies = get_mcts_visit_policy(
+            tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=1.0
+        )
+        root_values = tree["node_values"][:, 0]
 
-        while not done:
-            obs_tensor = torch.from_numpy(obs).float().unsqueeze(0).to(device)
-            legal_mask = torch.from_numpy(info["action_mask"]).unsqueeze(0).to(device)
+        for b_idx in range(envs_per_actor):
+            target_policy = raw_target_policies[b_idx]
+            root_val = root_values[b_idx].item()
 
-            # Step 9 - Run stochastic_mcts_search
-            tree = stochastic_mcts_search(
-                model=local_model,
-                root_observations=obs_tensor,
-                num_simulations=num_simulations,
-                num_actions=NUM_ACTIONS,
-                codebook_size=CODEBOOK_SIZE,
-                legal_mask=legal_mask,
-                explore_dirichlet=True,
-            )
-            # Raw MCTS visit policy target for training (always temperature=1.0 / raw visits)
-            raw_target_policy = get_mcts_visit_policy(
-                tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=1.0
-            )[0]
-            root_val = tree["node_values"][0, 0].item()
-
-            step_idx = len(trajectory_obs)
+            step_idx = len(trajectories[b_idx])
             temp = get_stepwise_schedule(
                 step=step_idx,
                 thresholds=[TEMP_THRESHOLD_MOVES],
@@ -904,114 +936,149 @@ def actor_worker(
             )
 
             if temp == 0.0:
-                action_tensor, _ = argmax_selector(raw_target_policy.unsqueeze(0))
+                action_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
                 action = action_tensor.squeeze().item()
+            elif temp == 1.0:
+                dist = torch.distributions.Categorical(probs=target_policy)
+                action_tensor, _ = sample_distribution(dist, explore=True)
+                action = action_tensor.item()
             else:
-                action_policy = (
-                    raw_target_policy
-                    if temp == 1.0
-                    else get_mcts_visit_policy(
-                        tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=temp
-                    )[0]
+                sampling_policy = torch.pow(target_policy, 1.0 / temp)
+                sampling_policy = sampling_policy / sampling_policy.sum(
+                    dim=-1, keepdim=True
                 )
-                dist = torch.distributions.Categorical(probs=action_policy)
+                dist = torch.distributions.Categorical(probs=sampling_policy)
                 action_tensor, _ = sample_distribution(dist, explore=True)
                 action = action_tensor.item()
 
-            next_obs, reward, terminated, truncated, info = env.step(action)
+            next_obs, reward, terminated, truncated, next_info = envs[b_idx].step(
+                action
+            )
 
-            trajectory_obs.append(torch.from_numpy(obs).float())
-            trajectory_actions.append(action)
-            trajectory_policies.append(raw_target_policy.cpu())
-            trajectory_values.append(root_val)
-            trajectory_rewards.append(reward)
-            trajectory_chances.append(info.get("chance", 0))
+            trajectories[b_idx].append(
+                (
+                    torch.from_numpy(obs_list[b_idx]).float(),
+                    action,
+                    target_policy.cpu(),
+                    root_val,
+                    float(reward),
+                )
+            )
 
-            done = terminated or truncated or (len(trajectory_obs) >= MAX_EPISODE_STEPS)
-            obs = next_obs
+            done = (
+                terminated
+                or truncated
+                or (len(trajectories[b_idx]) >= MAX_EPISODE_STEPS)
+            )
 
-        ep_len = min(len(trajectory_obs), MAX_EPISODE_STEPS)
-        trajectory_obs = trajectory_obs[:ep_len]
-        trajectory_actions = trajectory_actions[:ep_len]
-        trajectory_policies = trajectory_policies[:ep_len]
-        trajectory_values = trajectory_values[:ep_len]
-        trajectory_rewards = trajectory_rewards[:ep_len]
+            if done:
+                ep_obs, ep_actions, ep_policies, ep_values, ep_rewards = zip(
+                    *trajectories[b_idx]
+                )
+                ep_len = min(len(ep_obs), MAX_EPISODE_STEPS)
+                ep_obs = ep_obs[:ep_len]
+                ep_actions = ep_actions[:ep_len]
+                ep_policies = ep_policies[:ep_len]
+                ep_values = ep_values[:ep_len]
+                ep_rewards = ep_rewards[:ep_len]
 
-        # Compute n-step TD(lambda) bootstrapped return targets z_t
-        rewards_t = torch.tensor(trajectory_rewards, dtype=torch.float32).unsqueeze(-1)
-        values_t = torch.tensor(trajectory_values, dtype=torch.float32).unsqueeze(-1)
-        next_values_t = torch.zeros_like(values_t)
-        if ep_len > 1:
-            next_values_t[:-1] = values_t[1:]
-        terminated_t = torch.zeros_like(rewards_t)
-        terminated_t[-1] = 1.0  # Terminal state at episode end
-        truncated_t = torch.zeros_like(rewards_t)
+                # Compute n-step TD(lambda) bootstrapped return targets z_t
+                rewards_t = torch.tensor(ep_rewards, dtype=torch.float32).unsqueeze(-1)
+                values_t = torch.tensor(ep_values, dtype=torch.float32).unsqueeze(-1)
+                next_values_t = torch.zeros_like(values_t)
+                if ep_len > 1:
+                    next_values_t[:-1] = values_t[1:]
+                terminated_t = torch.zeros_like(rewards_t)
+                terminated_t[-1] = 1.0  # Terminal state at episode end
+                truncated_t = torch.zeros_like(rewards_t)
 
-        z_values = compute_n_step_td_lambda_returns(
-            rewards=rewards_t.unsqueeze(0),
-            terminated=terminated_t.unsqueeze(0),
-            truncated=truncated_t.unsqueeze(0),
-            values=values_t.unsqueeze(0),
-            next_values=next_values_t.unsqueeze(0),
-            gamma=gamma,
-            td_lambda=td_lambda,
-            n=td_steps,
-            time_dim=1,
-        ).squeeze(0)
+                z_values = compute_n_step_td_lambda_returns(
+                    rewards=rewards_t.unsqueeze(0),
+                    terminated=terminated_t.unsqueeze(0),
+                    truncated=truncated_t.unsqueeze(0),
+                    values=values_t.unsqueeze(0),
+                    next_values=next_values_t.unsqueeze(0),
+                    gamma=gamma,
+                    td_lambda=td_lambda,
+                    n=td_steps,
+                    time_dim=1,
+                ).squeeze(0)
 
-        # Pack episode into fixed-length TensorDict for SharedReplayBuffer
-        seq_obs = torch.zeros((MAX_EPISODE_STEPS, OBS_DIM), dtype=torch.float32)
-        seq_actions = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.long)
-        seq_policies = torch.zeros(
-            (MAX_EPISODE_STEPS, NUM_ACTIONS), dtype=torch.float32
-        )
-        seq_values = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
-        seq_rewards = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
-        seq_valid = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
+                # MuZero Appendix G: Initial priority p_i = |nu_i - z_i|
+                ep_root_tensor = torch.tensor(ep_values, dtype=torch.float32)
+                ep_z_tensor = z_values.squeeze(-1)
+                ep_priorities = torch.abs(ep_root_tensor - ep_z_tensor)
 
-        seq_obs[:ep_len] = torch.stack(trajectory_obs)
-        seq_actions[:ep_len] = torch.tensor(trajectory_actions, dtype=torch.long)
-        seq_policies[:ep_len] = torch.stack(trajectory_policies)
-        seq_values[:ep_len] = z_values
-        seq_rewards[:ep_len] = rewards_t
-        seq_valid[:ep_len] = 1.0
+                # Pack episode into fixed-length TensorDict for SharedPERBuffer
+                seq_obs = torch.zeros((MAX_EPISODE_STEPS, OBS_DIM), dtype=torch.float32)
+                seq_actions = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.long)
+                seq_policies = torch.zeros(
+                    (MAX_EPISODE_STEPS, NUM_ACTIONS), dtype=torch.float32
+                )
+                seq_values = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_rewards = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_valid = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
+                seq_priorities = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
 
-        game_td = TensorDict(
-            {
-                "state": seq_obs,
-                "actions": seq_actions,
-                "target_policies": seq_policies,
-                "target_values": seq_values,
-                "target_rewards": seq_rewards,
-                "valid": seq_valid,
-            },
-            batch_size=[MAX_EPISODE_STEPS],
-        )
-        buffer.add_transitions(
-            game_td.unsqueeze(0), valid_mask=seq_valid.unsqueeze(0).bool()
-        )
+                seq_obs[:ep_len] = torch.stack(ep_obs)
+                seq_actions[:ep_len] = torch.tensor(ep_actions, dtype=torch.long)
+                seq_policies[:ep_len] = torch.stack(ep_policies)
+                seq_values[:ep_len] = z_values
+                seq_rewards[:ep_len] = rewards_t
+                seq_valid[:ep_len] = 1.0
+                seq_priorities[:ep_len] = ep_priorities
+
+                completed_tds.append(
+                    TensorDict(
+                        {
+                            "state": seq_obs,
+                            "actions": seq_actions,
+                            "target_policies": seq_policies,
+                            "target_values": seq_values,
+                            "target_rewards": seq_rewards,
+                            "valid": seq_valid,
+                            "priority": seq_priorities,
+                        },
+                        batch_size=[MAX_EPISODE_STEPS],
+                    )
+                )
+
+                trajectories[b_idx] = []
+                next_obs, next_info = envs[b_idx].reset(
+                    seed=int(actor_id * 100000 + b_idx * 10000 + loop_counter)
+                )
+
+            obs_list[b_idx] = next_obs
+            info_list[b_idx] = next_info
+
+        if len(completed_tds) > 0:
+            batch_td = torch.stack(completed_tds)
+            buffer.add_transitions(batch_td, valid_mask=batch_td["valid"].bool())
 
 
 # Step 12 - Learner Worker
 def learner_worker(
     shared_model: nn.Module,
-    buffer: SharedReplayBuffer,
+    buffer: SharedPERBuffer,
     training_step: torch.Tensor,
     eval_queue: Optional[mp.Queue] = None,
     batch_size: int = BATCH_SIZE,
     learning_rate: float = LR,
     unroll_steps: int = UNROLL_STEPS,
     max_steps: int = TOTAL_TRAINING_STEPS,
+    per_alpha: float = PER_ALPHA,
+    per_beta: float = PER_BETA,
     device_str: str = "cpu",
     use_wandb: bool = True,
 ):
     """
     Learner training worker:
-    1. Samples minibatches of unroll slices from SharedReplayBuffer via sample_unrolls.
-    2. Calls compute_stochastic_muzero_loss.
+    1. Samples minibatches of unroll slices from SharedPERBuffer via sample_unrolls.
+    2. Calls compute_stochastic_muzero_loss with PER importance sampling weights.
     3. Backprops and steps optimizer.
-    4. Periodically broadcasts weights to shared_model.
-    5. Logs codebook collapse diagnostics and evaluation win rates to Weights & Biases.
+    4. Updates transition priorities in SharedPERBuffer (p_i = |nu_i - z_i|).
+    5. Periodically broadcasts weights to shared_model.
+    6. Logs codebook collapse diagnostics and evaluation win rates to Weights & Biases.
     """
     torch.set_num_threads(1)
     device = torch.device(device_str)
@@ -1022,8 +1089,6 @@ def learner_worker(
     local_model.load_state_dict(shared_model.state_dict())
 
     optimizer = torch.optim.Adam(local_model.parameters(), lr=learning_rate)
-    rng_key = torch.Generator(device=device)
-    rng_key.manual_seed(42)
 
     if use_wandb:
         try:
@@ -1042,8 +1107,15 @@ def learner_worker(
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
                     "beta_commitment": BETA_COMMITMENT,
+                    "num_actors": NUM_ACTORS,
+                    "envs_per_actor": ENVS_PER_ACTOR,
+                    "per_alpha": per_alpha,
+                    "per_beta": per_beta,
+                    "per_epsilon": PER_EPSILON,
                 },
             )
+            wandb.define_metric("step")
+            wandb.define_metric("*", step_metric="step")
         except Exception as e:
             print(
                 f"[Learner] wandb.init note: {e}. Continuing with console logging only."
@@ -1068,22 +1140,30 @@ def learner_worker(
             )
             waiting_logged = False
 
-        sample_res = buffer.sample_unrolls(
-            rng_key, batch_size, unroll_steps, min_size=MIN_BUFFER_SIZE
-        )
-        if sample_res is None:
+        try:
+            sample_res = buffer.sample_unrolls(
+                batch_size, unroll_steps, beta=per_beta, min_size=MIN_BUFFER_SIZE
+            )
+        except ValueError:
+            time.sleep(0.05)
+            continue
+
+        if sample_res is None or sample_res[0] is None:
             time.sleep(0.02)
             continue
 
-        unroll_batch, valid_mask, coords = sample_res
+        unroll_batch, valid_mask, coords, is_weights = sample_res
         unroll_batch = unroll_batch.to(device)
         valid_mask = valid_mask.to(device)
+        if is_weights is not None:
+            is_weights = is_weights.to(device)
 
         # Step 10 - Compute Stochastic MuZero Loss
         loss, loss_info = compute_stochastic_muzero_loss(
             model=local_model,
             batch=unroll_batch,
             valid_mask=valid_mask,
+            is_weights=is_weights,
             num_actions=NUM_ACTIONS,
             codebook_size=CODEBOOK_SIZE,
             beta=BETA_COMMITMENT,
@@ -1092,6 +1172,13 @@ def learner_worker(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), max_norm=5.0)
         optimizer.step()
+
+        # Step 10b - Priority Update in PER Buffer (MuZero Appendix G: p_i = |nu_i - z_i|)
+        with torch.no_grad():
+            z0 = unroll_batch["target_values"][:, 0].squeeze(-1)
+            v0_pred = loss_info["v0"].squeeze(-1)
+            new_priorities = torch.abs(v0_pred - z0).detach().cpu()
+            buffer.update_priorities(coords, new_priorities, alpha=per_alpha)
 
         step_count += 1
         training_step[0] = step_count
@@ -1141,28 +1228,48 @@ def learner_worker(
             while not eval_queue.empty():
                 try:
                     eval_metrics = eval_queue.get_nowait()
-                    eval_step = eval_metrics.get("step", step_count)
+                    eval_step = eval_metrics.pop("step", step_count)
+                    eval_metrics["eval/eval_step"] = eval_step
                     print(
                         f"[Evaluation @ Step {eval_step}] Win Rate: {eval_metrics['eval/win_rate']:.2f} | "
                         f"Avg Turns: {eval_metrics['eval/avg_turns']:.1f}"
                     )
                     if use_wandb:
-                        wandb.log(eval_metrics, step=eval_step)
+                        # Log at current step_count so W&B steps are strictly monotonic
+                        wandb.log(eval_metrics, step=step_count)
                 except Exception:
                     break
 
+    # Final evaluation directly inside learner before closing wandb
+    shared_model.load_state_dict(local_model.state_dict())
+    print(
+        f"[Learner] Training finished ({max_steps} steps). Running final evaluation ({NUM_FINAL_EVAL_EPISODES} episodes)..."
+    )
+    final_eval_results = evaluate_model(
+        local_model, num_episodes=NUM_FINAL_EVAL_EPISODES, device_str=device_str
+    )
+    print(f"[Learner] Final Evaluation Results: {final_eval_results}")
     if use_wandb:
+        wandb.log(
+            {
+                "eval/win_rate": final_eval_results["eval/win_rate"],
+                "eval/avg_turns": final_eval_results["eval/avg_turns"],
+                "eval/final_win_rate": final_eval_results["eval/win_rate"],
+                "eval/final_avg_turns": final_eval_results["eval/avg_turns"],
+            },
+            step=max_steps,
+        )
         wandb.finish()
 
 
 def evaluate_model(
     model: nn.Module,
     num_episodes: int = 50,
-    max_steps: int = MAX_STEPS,
+    max_steps: int = MAX_EPISODE_STEPS,
     device_str: str = "cpu",
 ) -> Dict[str, float]:
     """
-    Evaluates the model greedily on SlipperyGridWorld (temperature=0.0).
+    Evaluates the model deterministically on SlipperyGridWorld (taking best action).
     """
     device = torch.device(device_str)
     model.eval()
@@ -1177,7 +1284,7 @@ def evaluate_model(
         while not done:
             obs_tensor = torch.from_numpy(obs).float().unsqueeze(0).to(device)
             legal_mask = torch.from_numpy(info["action_mask"]).unsqueeze(0).to(device)
-            # Run Stochastic MCTS search greedily (temperature=0.0, no Dirichlet noise)
+            # Run Stochastic MCTS search deterministically (no Dirichlet noise)
             tree = stochastic_mcts_search(
                 model=model,
                 root_observations=obs_tensor,
@@ -1185,12 +1292,15 @@ def evaluate_model(
                 num_actions=NUM_ACTIONS,
                 codebook_size=CODEBOOK_SIZE,
                 legal_mask=legal_mask,
+                explore_dirichlet=False,
             )
-            eval_policy = get_mcts_visit_policy(
-                tree["children_visits"][:, 0, :NUM_ACTIONS], temperature=0.0
-            )[0]
-            action_tensor, _ = argmax_selector(eval_policy.unsqueeze(0))
-            action = action_tensor.squeeze().item()
+            # Take the best action strictly by maximum MCTS visit count
+            root_visits = tree["children_visits"][0, 0, :NUM_ACTIONS].clone()
+            if legal_mask is not None:
+                root_visits = torch.where(
+                    legal_mask[0], root_visits, torch.full_like(root_visits, -1.0)
+                )
+            action = int(torch.argmax(root_visits).item())
 
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
@@ -1269,10 +1379,12 @@ def main():
         "target_values": (1,),
         "target_rewards": (1,),
         "valid": (),
+        "priority": (),
     }
-    buffer = SharedReplayBuffer(
+    buffer = SharedPERBuffer(
         (BUFFER_NUM_GAMES, MAX_EPISODE_STEPS),
         buffer_shapes,
+        epsilon=PER_EPSILON,
         device=device,
     )
 
@@ -1284,7 +1396,11 @@ def main():
     learner_p = mp.Process(
         target=learner_worker,
         args=(shared_model, buffer, training_step, eval_queue),
-        kwargs={"device_str": device_str},
+        kwargs={
+            "device_str": device_str,
+            "per_alpha": PER_ALPHA,
+            "per_beta": PER_BETA,
+        },
     )
     learner_p.start()
     processes.append(learner_p)
@@ -1306,13 +1422,13 @@ def main():
         actor_p = mp.Process(
             target=actor_worker,
             args=(actor_id, shared_model, buffer, training_step),
-            kwargs={"device_str": device_str},
+            kwargs={"device_str": device_str, "envs_per_actor": ENVS_PER_ACTOR},
         )
         actor_p.start()
         processes.append(actor_p)
 
     print(
-        f"Launched Stochastic MuZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Parallel Evaluator)."
+        f"Launched Stochastic MuZero Multiprocessing Pipeline ({NUM_ACTORS} Actors, {ENVS_PER_ACTOR} Envs/Actor, 1 Learner, 1 Parallel Evaluator)."
     )
     learner_p.join()
 
@@ -1321,9 +1437,7 @@ def main():
             p.terminate()
             p.join()
 
-    print("Training finished! Running final evaluation...")
-    eval_results = evaluate_model(shared_model, num_episodes=20, device_str=device_str)
-    print(f"Final Evaluation Results: {eval_results}")
+    print("All processes successfully terminated. Run complete.")
 
 
 if __name__ == "__main__":
