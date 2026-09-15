@@ -1,509 +1,967 @@
-"""
-=============================================================================
-MuZero CartPole Implementation Notes & Technical Question Answers
-=============================================================================
+"""MuZero on Gymnasium CartPole-v1 (torch.multiprocessing Multiprocess Version)
 
-Required Capabilities (Schrittwieser et al., 2020):
-1. Precision planning tasks
-2. Visually complex games
-3. Single agent domains
-4. Non-zero rewards at intermediate steps
+================================================================================
 
-Features and Details:
-1. Model receives input and transforms it to a hidden state
-2. Dynamics iteratively updates hidden state
-3. Trained end-to-end
-4. Action is sampled from search policy (uses temperature)
-5. Targets are n-step returns for MDPs (discounted n-step for value)
-6. Dynamics function is deterministic
-7. No to-play prediction
-8. All parameters trained jointly
-9. Policy target is the search policy
-10. Value target is the discounted bootstrapped search value
-11. Reward loss uses the observed reward (no reward loss on root)
-12. Additional L2 loss
-13. Cross entropy loss for value and reward on continuous scalar domains (Atari/MDPs)
-14. Cross entropy always for policy loss
-15. Reanalyze model (reanalyze old trajectories by rerunning MCTS on them using latest network parameters)
-16. Metric of "thinking time" for search
-17. Evaluation of MCTS with different number of simulations after training
-18. MuZero search uses dynamics model instead of perfect simulator
-19. Action masking not required for single-agent discrete domains
-20. Edges store statistics for their children
-21. Selection via pUCT with min-max normalized Q
-22. Backup: generalized for immediate rewards and discounting, G_k = sum_{t=0}^{l-1-k} gamma^t * r_{k+1+t} + gamma^{l-k} * v_l
-23. Checkpoint of network used to play episodes with MCTS
-24. Replay buffer stores games/sequences
-25. Value and reward prediction in Atari/MDPs use invertible transform h(x) = sign(x)*(sqrt(|x|+1) - 1 + eps*x)
-26. Discrete 601-atom support set [-300, 300] for value and reward predictions
-27. Categorical softmax value/reward representations
-28. Unrolling for K steps aligned to buffer sequences
-29. Loss scaling: 1/K on each head
-30. Gradient scaling: 1/2 at start of dynamics function
-31. Hidden state scaling to [0, 1] range
+Paper Reference:
+    "Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model"
+    Schrittwieser et al., Nature 2020 (arXiv 2019: https://arxiv.org/abs/1911.08265)
 
-=============================================================================
-Answers to Technical Questions
-=============================================================================
-Q1: Unrolling & Sampling
-    A: We sample a random starting time index t from a trajectory in the replay buffer.
-       Representation h(o_1...o_t) encodes past observations into s^0. We then unroll
-       dynamics g(s^{k-1}, a_{t+k}) for K hypothetical steps (k=1...K) using real actions.
-Q2: Priors (Probs vs Logits)
-    A: Network outputs policy logits. Passing through softmax yields probabilities P(s, a)
-       for pUCT search. Cross-entropy loss takes raw logits directly.
-Q3: Terminal / Absorbing States & Rewards in Search
-    A: Terminal states loop back to themselves (absorbing states) predicting terminal outcome
-       for value and 0 reward. Tree backup accumulates path rewards r^k plus leaf value v^l.
-Q4: Q-Value Normalization
-    A: Edges normalize Q(s, a) using min-max Q across all edges in the search tree to [0, 1].
-Q5: Bounded Values in Board Games vs MDPs
-    A: For single-agent MDPs, values are unbounded; min-max Q normalization maps Q to [0, 1].
-Q6: Intermediate Sequences for Atari / MDPs
-    A: 200-step sequences sent to replay buffer every 200 env steps.
-Q7: Value & Reward Transformations
-    A: Support logits -> softmax -> expected value -> h_inv(x) for search. Target scalar -> h(z) -> two-hot distribution for cross-entropy loss.
-Q8: PER Priority Indexing
-    A: p_i = |v_i - z_i| indexed over all samples in replay buffer.
-Q9: Importance Sampling N
-    A: N is the total transitions in the replay buffer (standard PER).
-=============================================================================
+Goal & Domain:
+    This script demonstrates MuZero in the Single-Player / Atari regime (Section 2,
+    Appendix B, Appendix F, and Table S1 of the paper) applied to Gymnasium CartPole-v1.
+    Unlike board games (which use undiscounted terminal outcomes and MSE loss), single-player
+    domains with intermediate rewards feature:
+      1. Single Player Search: num_players=1, to_play=0, no opponent turn-flipping.
+      2. Exponential Discounting: gamma=0.99, intermediate transition rewards r=+1.0.
+      3. Categorical Support Softmax Heads: Both value and reward heads output discrete
+         probability distributions over an integer support [-20, 20] (41 atoms).
+      4. Contractive Invertible Scaling: Targets are compressed using
+             h(x) = sign(x) * (sqrt(|x| + 1) - 1) + eps * x
+         and decoded during inference using the analytical inverse h^{-1}(y).
+      5. Two-Hot Support Projection: Scaled targets are projected onto adjacent atoms
+         via `compute_two_hot_distribution` and trained using cross-entropy loss.
+      6. n-Step Bootstrapped Returns: Value targets are computed using n-step bootstrapping
+             z_t = sum_{tau=0}^{n-1} gamma^tau r_{t+1+tau} + gamma^n nu_{t+n}
+         where nu is the MCTS root search value.
+
+Multiprocessing Architecture:
+    - Actor Workers: Self-play across parallel CartPole environments using batched single-player
+      MuZero MCTS. Completed episodes are converted into n-step returns and sliced into K+1
+      unroll blocks stored in SharedPERBuffer with individual observation priorities.
+    - Learner Worker: Samples minibatches from SharedPERBuffer according to PER (alpha=1, beta=1),
+      unrolls K steps, computes weighted cross-entropy losses on policy, value, and reward heads,
+      updates priorities with |v0 - z0|, and syncs weights.
+    - Evaluator Worker: Periodically evaluates greedy MCTS play (temperature=0.0) on CartPole-v1,
+      logging metrics to W&B asynchronously.
 """
 
-import copy
-import math
+import functools
 import random
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import time
+from typing import Callable, List, Tuple
+
 import gymnasium as gym
-from typing import Tuple, List, Dict
+import numpy as np
 from tensordict import TensorDict
+import torch
+import torch.multiprocessing as mp
+import torch.nn as nn
 import wandb
 
-from atomic_rl.search import mcts_search, get_mcts_visit_policy
-from atomic_rl.losses import cross_entropy_loss, mse_loss
-from atomic_rl.action_selection import argmax_selector, sample_distribution
-from atomic_rl.buffers.replay import (
-    init_buffer,
-    circular_write_strategy_,
-    uniform_sample,
-    BufferState,
+from atomic_rl.action_selection import (
+    add_dirichlet_noise,
+    argmax_selector,
+    sample_distribution,
 )
+from atomic_rl.buffers import SharedPERBuffer, slice_unrolls
+from atomic_rl.losses import compute_cross_entropy_loss
+from atomic_rl.schedules import get_stepwise_schedule
+from atomic_rl.search import (
+    get_mcts_visit_policy,
+    mcts_search,
+    puct_selection,
+    qtransform_by_min_max,
+)
+from atomic_rl.transforms import (
+    compute_contractive_transform,
+    compute_expected_value,
+    compute_inverse_contractive_transform,
+    compute_two_hot_distribution,
+)
+from atomic_rl.utils import min_max_normalize, scale_gradient
 
 # ---------------------------------------------------------------------------
-# Hyperparameters & Constants (Matching MuZero Single-Agent MDP Conventions)
+# Hyperparameters & Constants
 # ---------------------------------------------------------------------------
-TOTAL_TRAINING_STEPS = 10000
-NUM_VECTOR_ENVS = 4
-MIN_BUFFER_SIZE = 64
-EVAL_INTERVAL = 100
-PARAM_SYNC_INTERVAL = 100
+TOTAL_TRAINING_STEPS = 20000
+NUM_ACTORS = 4
+ENVS_PER_ACTOR = 1
+MIN_BUFFER_SIZE = 500  # Minimum number of valid transitions before training starts
+EVAL_INTERVAL_STEPS = 1000
+PARAM_SYNC_INTERVAL = 25
 NUM_MCTS_SIMULATIONS = 25
+UNROLL_STEPS = 5
+TD_STEPS = 10
+GAMMA = 0.99  # MuZero Appendix C standard discount; ensures G_500 vs G_300 has ~2.1 atom delta
+EPSILON_TRANSFORM = 0.001
 
-UNROLL_STEPS_K = 5
-N_STEP_BOOTSTRAP = 10
-DISCOUNT_GAMMA = 0.997
-MIN_SUPPORT = -300
-MAX_SUPPORT = 300
-NUM_SUPPORT_ATOMS = MAX_SUPPORT - MIN_SUPPORT + 1  # 601 discrete atoms (Note 44)
+# Prioritized Experience Replay (MuZero Appendix G: alpha = beta = 1)
+# NOTE: We found that cartpole results are slightly worse when using PER; For that reason by defualt PER is "disabled", but if you want to test with PER just tweak these numbers.
+PER_ALPHA = 0.0
+PER_BETA = 0.0
+PER_EPSILON = 1e-4
 
-BATCH_SIZE = 48
-REPLAY_BUFFER_CAPACITY = 10000
+# Discrete Support Bounds (max discounted return at gamma=0.997 is ~259.1 -> h(259.1) ≈ 15.39)
+# Support [-25, 25] (51 atoms) provides fine-grained, non-saturating resolution up to 500 steps.
+SUPPORT_MIN = 0
+SUPPORT_MAX = 25
+NUM_ATOMS = SUPPORT_MAX - SUPPORT_MIN + 1  # 51 atoms
+
+# Environment & Network Shapes
+OBS_DIM = 4
+NUM_ACTIONS = 2
+LATENT_DIM = 32
+
+# MCTS PUCT Search Constants
+C_PUCT = 1.25
+DIRICHLET_ALPHA = 1.0
+DIRICHLET_EPSILON = 0.25
+
+# Temperature Schedule Constants (MuZero Atari Appendix B "Action Selection")
+# Specifically, for the first 500k training steps a temperature of 1 is used,
+# for the next 250k steps a temperature of 0.5 and for the remaining 250k a
+# temperature of 0.25. This ensures that the action selection becomes greedier
+# as training progresses.
+TEMP_THRESHOLDS = [
+    int(TOTAL_TRAINING_STEPS * 0.5),  # 50% of training (5,000 steps)
+    int(TOTAL_TRAINING_STEPS * 0.75),  # 75% of training (7,500 steps)
+    # int(TOTAL_TRAINING_STEPS * 0.75),  # 75% of training (7,500 steps)
+]
+TEMP_VALUES = [1.0, 0.5, 0.25]
+
+# Optimization & Network Parameters
+BATCH_SIZE = 64
+MAX_EPISODE_STEPS = 500
+BUFFER_NUM_EPISODES = 1000  # 200 episodes * 500 steps = 100,000 steps capacity
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-HIDDEN_DIM = 64
+VALUE_LOSS_WEIGHT = 1.0  # MuZero Table S1 standard
+
 NUM_EVAL_EPISODES = 10
+NUM_TRAIN_EVAL_EPISODES = 5
 SEED = 42
 
 
+def make_env():
+    """Constructs a Gymnasium CartPole-v1 environment."""
+    return gym.make("CartPole-v1")
+
+
 # ============================================================================
-# 1. Invertible Value/Reward Scaled Transformation & Discrete Support Helpers
+# 1. MuZero MLP Neural Network Architecture
 # ============================================================================
+class CartPoleMuZeroNet(nn.Module):
+    """MLP-based MuZero network for continuous vector state environments (CartPole).
 
+    Components:
+      - Representation Function h(o): maps observation o [B, 4] -> hidden state s [B, 64]
+      - Dynamics Function g(s, a): maps hidden state s [B, 64] + 1-hot action a [B, 2]
+        -> next hidden state s' [B, 64] and reward categorical logits r [B, 41]
+      - Prediction Function f(s): maps hidden state s [B, 64] -> policy logits p [B, 2]
+        and value categorical logits v [B, 41]
+    """
 
-def h_transform(x: torch.Tensor, eps: float = 0.001) -> torch.Tensor:
-    """
-    Invertible scale transformation h(x) = sign(x) * (sqrt(|x| + 1) - 1 + eps * x) (Appendix F).
-    """
-    return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1.0) - 1.0 + eps * x)
+    def __init__(
+        self,
+        obs_dim: int = OBS_DIM,
+        num_actions: int = NUM_ACTIONS,
+        latent_dim: int = LATENT_DIM,
+        support_min: int = SUPPORT_MIN,
+        support_max: int = SUPPORT_MAX,
+    ):
+        super().__init__()
+        self.obs_dim = obs_dim
+        self.num_actions = num_actions
+        self.latent_dim = latent_dim
+        self.support_min = support_min
+        self.support_max = support_max
+        self.num_atoms = support_max - support_min + 1
 
+        # Register discrete support buffer [-20, ..., 20]
+        support = torch.arange(support_min, support_max + 1, dtype=torch.float32)
+        self.register_buffer("support", support)
 
-def h_inverse(x: torch.Tensor, eps: float = 0.001) -> torch.Tensor:
-    """
-    Inverse scale transformation h^{-1}(x) (Appendix F).
-    """
-    return torch.sign(x) * (
-        torch.square(
-            (torch.sqrt(1.0 + 4.0 * eps * (torch.abs(x) + 1.0 + eps)) - 1.0) / (2.0 * eps)
+        # Pre-materialized 1-hot action encoding buffer [2, 2]
+        self.register_buffer(
+            "action_encodings", torch.eye(num_actions, dtype=torch.float32)
         )
-        - 1.0
+
+        # 1. Representation Network h(o) -> s0
+        self.representation_net = nn.Sequential(
+            nn.Linear(obs_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.ReLU(),
+            nn.Linear(latent_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.ReLU(),
+        )
+
+        # 2. Dynamics Network g(s, a) -> (s', r_logits)
+        self.dynamics_net = nn.Sequential(
+            nn.Linear(latent_dim + num_actions, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.ReLU(),
+            nn.Linear(latent_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.ReLU(),
+        )
+        self.reward_head = nn.Linear(latent_dim, self.num_atoms)
+
+        # 3. Prediction Network f(s) -> (policy_logits, value_logits)
+        self.prediction_backbone = nn.Sequential(
+            nn.Linear(latent_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.ReLU(),
+        )
+        self.policy_head = nn.Linear(latent_dim, num_actions)
+        self.value_head = nn.Linear(latent_dim, self.num_atoms)
+
+    def representation(self, obs: torch.Tensor) -> torch.Tensor:
+        """h(o) -> initial hidden state s0 [B, latent_dim] scaled to [0, 1]."""
+        raw_s = self.representation_net(obs)
+        return min_max_normalize(raw_s, dim=-1)
+
+    def dynamics(
+        self, hidden_state: torch.Tensor, actions: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """g(s, a) -> (next_hidden_state [B, latent_dim], reward_logits [B, num_atoms])."""
+        if actions.ndim > 1:
+            actions = actions.squeeze(-1)
+        action_one_hot = self.action_encodings[actions]
+
+        concat_input = torch.cat([hidden_state, action_one_hot], dim=-1)
+        raw_next_hidden = self.dynamics_net(concat_input)
+        next_hidden = min_max_normalize(raw_next_hidden, dim=-1)
+        reward_logits = self.reward_head(next_hidden)
+        return next_hidden, reward_logits
+
+    def prediction(
+        self, hidden_state: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """f(s) -> (policy_logits [B, num_actions], value_logits [B, num_atoms])."""
+        feats = self.prediction_backbone(hidden_state)
+        policy_logits = self.policy_head(feats)
+        value_logits = self.value_head(feats)
+        return policy_logits, value_logits
+
+    def decode_support_to_scalar(self, logits: torch.Tensor) -> torch.Tensor:
+        """Decodes categorical logits into unscaled continuous scalar returns via h^{-1}(E[support])."""
+        scaled_val = compute_expected_value(predictions=logits, support=self.support)
+        return compute_inverse_contractive_transform(
+            scaled_val, epsilon=EPSILON_TRANSFORM
+        )
+
+    def initial_inference(
+        self, obs: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """h(o) -> s0, followed by f(s0) -> (policy_logits, scalar_value, value_logits)."""
+        s0 = self.representation(obs)
+        policy_logits, value_logits = self.prediction(s0)
+        scalar_value = self.decode_support_to_scalar(value_logits)
+        return s0, policy_logits, scalar_value, value_logits
+
+    def recurrent_inference(
+        self, hidden_state: torch.Tensor, actions: torch.Tensor
+    ) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        """g(s, a) -> (s', r), followed by f(s') -> (policy_logits, scalar_value)."""
+        next_hidden, reward_logits = self.dynamics(hidden_state, actions)
+        scalar_reward = self.decode_support_to_scalar(reward_logits)
+        policy_logits, value_logits = self.prediction(next_hidden)
+        scalar_value = self.decode_support_to_scalar(value_logits)
+        return (
+            next_hidden,
+            scalar_reward,
+            policy_logits,
+            scalar_value,
+            reward_logits,
+            value_logits,
+        )
+
+
+# ============================================================================
+# 2. MCTS Search Wrappers & Helpers
+# ============================================================================
+def create_recurrent_fn(model: nn.Module) -> Callable:
+    """Creates a single-player recurrent_fn for MuZero MCTS simulation."""
+
+    def recurrent_fn(
+        actions_taken: torch.Tensor,
+        embeddings: torch.Tensor,
+        to_play: torch.Tensor,
+    ) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        with torch.no_grad():
+            (
+                next_hidden,
+                scalar_reward,
+                logits,
+                scalar_value,
+                _,
+                _,
+            ) = model.recurrent_inference(embeddings, actions_taken)
+
+        # Single player: player index is always 0
+        next_to_play = torch.zeros_like(to_play)
+        value_vec = scalar_value.view(-1, 1)
+        reward_vec = scalar_reward.view(-1, 1)
+        discount_vec = torch.full_like(reward_vec, GAMMA)
+
+        return (
+            logits,
+            value_vec,
+            reward_vec,
+            discount_vec,
+            next_hidden,
+            next_to_play,
+        )
+
+    return recurrent_fn
+
+
+def run_batched_mcts(
+    model: nn.Module,
+    recurrent_fn: Callable,
+    root_embed: torch.Tensor,
+    num_simulations: int = NUM_MCTS_SIMULATIONS,
+    temperature: float = 1.0,
+    explore_dirichlet: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Runs batched MuZero MCTS search over continuous representation states."""
+    batch_size = root_embed.shape[0]
+    device = root_embed.device
+
+    with torch.no_grad():
+        s0, root_logits, root_scalar_value, _ = model.initial_inference(root_embed)
+
+    root_to_play = torch.zeros((batch_size,), device=device, dtype=torch.long)
+    root_vector_value = root_scalar_value.view(-1, 1)
+
+    # In self-play exploration, inject Dirichlet noise into root logits; in eval (explore_dirichlet=False), leave clean
+    if explore_dirichlet and DIRICHLET_EPSILON > 0.0:
+        root_logits = add_dirichlet_noise(
+            root_logits,
+            epsilon=DIRICHLET_EPSILON,
+            alpha=DIRICHLET_ALPHA,
+        )
+
+    # Single-player dynamic min-max normalization matching MuZero paper & mctx
+    # (unvisited actions mapped to min_value, normalizing value_score to 0.0)
+    selection_fn = functools.partial(
+        puct_selection,
+        pb_c_init=C_PUCT,
+        qtransform=qtransform_by_min_max,
     )
 
-
-def scalar_to_two_hot(x: torch.Tensor, min_val: int = MIN_SUPPORT, max_val: int = MAX_SUPPORT) -> torch.Tensor:
-    """
-    Converts a scaled scalar target x into a 2-hot probability vector over discrete support bins [-300, 300].
-    """
-    # TODO: confirm that this behaviour for question 7 is correct
-    x_clamped = torch.clamp(x, min_val, max_val)
-    floor_idx = torch.floor(x_clamped).long()
-    ceil_idx = torch.ceil(x_clamped).long()
-    weight_ceil = x_clamped - floor_idx.float()
-    weight_floor = 1.0 - weight_ceil
-
-    num_atoms = max_val - min_val + 1
-    batch_size = x.size(0)
-    target = torch.zeros(batch_size, num_atoms, device=x.device)
-
-    floor_atom = floor_idx - min_val
-    ceil_atom = ceil_idx - min_val
-
-    target.scatter_add_(1, floor_atom.unsqueeze(1), weight_floor.unsqueeze(1))
-    target.scatter_add_(1, ceil_atom.unsqueeze(1), weight_ceil.unsqueeze(1))
-    return target
-
-
-def support_to_scalar(logits: torch.Tensor, min_val: int = MIN_SUPPORT, max_val: int = MAX_SUPPORT) -> torch.Tensor:
-    """
-    Computes expected value over categorical support logits, then applies inverse transform h^{-1}(x).
-    """
-    support = torch.linspace(min_val, max_val, max_val - min_val + 1, device=logits.device)
-    probs = F.softmax(logits, dim=-1)
-    scaled_val = (probs * support).sum(dim=-1, keepdim=True)
-    return h_inverse(scaled_val)
+    tree = mcts_search(
+        root_embeddings=s0,
+        root_logits=root_logits,
+        root_value=root_vector_value,
+        root_to_play=root_to_play,
+        recurrent_fn=recurrent_fn,
+        num_simulations=num_simulations,
+        num_actions=NUM_ACTIONS,
+        num_players=1,
+        selection_fn=selection_fn,
+        legal_mask=None,
+    )
+    action_probs = get_mcts_visit_policy(
+        tree["children_visits"][:, 0], temperature=temperature
+    )
+    # Return MCTS root search value (root.value() in MuZero paper), not raw prior network value
+    root_search_value = tree["node_values"][:, 0, 0].detach()
+    return action_probs, root_search_value
 
 
 # ============================================================================
-# 2. MuZero CartPole Neural Networks
+# 3. Multiprocessing Workers
 # ============================================================================
+def actor_worker(
+    actor_id: int,
+    model_creator: Callable[[], nn.Module],
+    shared_model: nn.Module,
+    buffer: SharedPERBuffer,
+    training_step: torch.Tensor,
+    envs_per_actor: int = ENVS_PER_ACTOR,
+    num_simulations: int = NUM_MCTS_SIMULATIONS,
+    unroll_steps: int = UNROLL_STEPS,
+    td_steps: int = TD_STEPS,
+    gamma: float = GAMMA,
+    device_str: str = "cpu",
+):
+    """Worker process generating self-play trajectories via batched MuZero MCTS."""
+    torch.set_num_threads(1)
+    device = torch.device(device_str)
+    local_model = model_creator().to(device)
+    local_model.eval()
+    local_model.load_state_dict(shared_model.state_dict())
 
+    torch.manual_seed(SEED + actor_id * 1000)
+    random.seed(SEED + actor_id * 1000)
 
-class RepresentationNet(nn.Module):
-    """
-    Representation Function h(o_1...o_t): Encodes continuous 4D CartPole observation into hidden state.
-    """
+    envs = [make_env() for _ in range(envs_per_actor)]
+    obs_list = []
+    for env in envs:
+        o, _ = env.reset(seed=SEED + actor_id * 1000)
+        obs_list.append(o)
 
-    def __init__(self, in_dim: int = 4, hidden_dim: int = HIDDEN_DIM):
-        super().__init__()
-        self.fc1 = nn.Linear(in_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+    # Trajectory entry: (obs [4], action int, target_policy [2], root_value float, reward float)
+    trajectories: List[List[Tuple[torch.Tensor, int, torch.Tensor, float, float]]] = [
+        [] for _ in range(envs_per_actor)
+    ]
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        return F.relu(self.fc2(F.relu(self.fc1(obs))))
+    recurrent_fn = create_recurrent_fn(local_model)
+    loop_counter = 0
 
+    while True:
+        loop_counter += 1
+        if loop_counter % PARAM_SYNC_INTERVAL == 0:
+            local_model.load_state_dict(shared_model.state_dict())
 
-class DynamicsNet(nn.Module):
-    """
-    Dynamics Function g(s^{k-1}, a^k): Computes immediate reward r^k logits and next hidden state s^k.
-    """
+        completed_tds = []
+        root_embed = torch.from_numpy(np.array(obs_list, dtype=np.float32)).to(device)
 
-    def __init__(self, hidden_dim: int = HIDDEN_DIM, num_actions: int = 2, num_support: int = NUM_SUPPORT_ATOMS):
-        super().__init__()
-        # Concatenate hidden state + one-hot action vector
-        self.fc1 = nn.Linear(hidden_dim + num_actions, hidden_dim)
-        self.fc_state = nn.Linear(hidden_dim, hidden_dim)
-        self.fc_reward = nn.Linear(hidden_dim, num_support)
-
-    def forward(self, s_prev: torch.Tensor, action_one_hot: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = torch.cat([s_prev, action_one_hot], dim=1)
-        h = F.relu(self.fc1(x))
-        sk = F.relu(self.fc_state(h))
-
-        # Scale hidden state to [0, 1] range to stabilize unrolling (Note 31)
-        # TODO: confirm that this behaviour for question 57 is correct
-        s_min = sk.min(dim=1, keepdim=True)[0]
-        s_max = sk.max(dim=1, keepdim=True)[0]
-        sk_scaled = (sk - s_min) / (s_max - s_min + 1e-8)
-
-        r_logits = self.fc_reward(h)
-        return r_logits, sk_scaled
-
-
-class PredictionNet(nn.Module):
-    """
-    Prediction Function f(s^k): Computes policy logits p^k and value logits v^k over 601 discrete atoms.
-    """
-
-    def __init__(self, hidden_dim: int = HIDDEN_DIM, num_actions: int = 2, num_support: int = NUM_SUPPORT_ATOMS):
-        super().__init__()
-        self.fc_policy = nn.Linear(hidden_dim, num_actions)
-        self.fc_value = nn.Linear(hidden_dim, num_support)
-
-    def forward(self, s: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        p_logits = self.fc_policy(s)
-        v_logits = self.fc_value(s)
-        return p_logits, v_logits
-
-
-class MuZeroCartPoleNet(nn.Module):
-    """
-    Full MuZero Composite Neural Network for CartPole MDP.
-    """
-
-    def __init__(self, in_dim: int = 4, hidden_dim: int = HIDDEN_DIM, num_actions: int = 2):
-        super().__init__()
-        self.representation_net = RepresentationNet(in_dim, hidden_dim)
-        self.dynamics_net = DynamicsNet(hidden_dim, num_actions, NUM_SUPPORT_ATOMS)
-        self.prediction_net = PredictionNet(hidden_dim, num_actions, NUM_SUPPORT_ATOMS)
-
-    def initial_inference(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        s0 = self.representation_net(obs)
-        p_logits, v_logits = self.prediction_net(s0)
-        return s0, p_logits, v_logits
-
-    def recurrent_inference(self, s_prev: torch.Tensor, action_one_hot: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        r_logits, sk = self.dynamics_net(s_prev, action_one_hot)
-        p_logits, v_logits = self.prediction_net(sk)
-        return r_logits, sk, p_logits, v_logits
-
-
-# ============================================================================
-# 3. MuZero Single-Agent Collector & n-Step Bootstrap
-# ============================================================================
-
-
-def run_cartpole_episode(
-    model: MuZeroCartPoleNet,
-    device: torch.device = torch.device("cpu"),
-) -> List[Dict[str, torch.Tensor]]:
-    """
-    Runs 1 CartPole episode using MuZero MCTS and computes n-step bootstrapped value targets.
-    """
-    env = gym.make("CartPole-v1")
-    obs, _ = env.reset(seed=random.randint(0, 10000))
-
-    trajectory = []
-    done = False
-
-    while not done:
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-        with torch.no_grad():
-            s0, init_logits, _ = model.initial_inference(obs_tensor)
-
-        p_probs = F.softmax(init_logits.squeeze(0), dim=-1)
-        dist = torch.distributions.Categorical(probs=p_probs)
-        action_idx_tensor, _ = sample_distribution(dist, explore=True)
-        action_idx = action_idx_tensor.item()
-
-        next_obs, reward, terminated, truncated, _ = env.step(action_idx)
-        done = terminated or truncated
-
-        trajectory.append(
-            {
-                "obs": obs_tensor.squeeze(0).cpu(),
-                "action": action_idx,
-                "reward": float(reward),
-                "policy": p_probs.cpu(),
-            }
+        # Atari training-step temperature schedule: 1.0 (0-50%) -> 0.5 (50-75%) -> 0.25 (75-100%)
+        curr_step = training_step[0].item()
+        temp = get_stepwise_schedule(
+            step=curr_step,
+            thresholds=TEMP_THRESHOLDS,
+            values=TEMP_VALUES,
         )
-        obs = next_obs
 
-    env.close()
+        # Generate soft visit policy targets (tau=1.0) matching MuZero pseudocode
+        action_probs, root_values = run_batched_mcts(
+            local_model,
+            recurrent_fn,
+            root_embed,
+            num_simulations=num_simulations,
+            temperature=1.0,
+            explore_dirichlet=True,
+        )
 
-    # Compute n-step bootstrapped value targets z_t = sum_{tau=0}^{n-1} gamma^tau * r_{t+1+tau} + gamma^n * v_{t+n}
-    # TODO: confirm that this behaviour for question 5 is correct
-    samples = []
-    T = len(trajectory)
-    for t in range(T):
-        target_v = 0.0
-        for tau in range(N_STEP_BOOTSTRAP):
-            if t + tau < T:
-                target_v += (DISCOUNT_GAMMA ** tau) * trajectory[t + tau]["reward"]
+        for b_idx in range(envs_per_actor):
+            target_policy = action_probs[b_idx]
+            root_val = root_values[b_idx].item()
+
+            if temp == 0.0:
+                action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
+                action = action_idx_tensor.squeeze().item()
+            elif temp == 1.0:
+                dist = torch.distributions.Categorical(probs=target_policy)
+                action_idx_t, _ = sample_distribution(dist, explore=True)
+                action = action_idx_t.item()
             else:
-                break
+                sampling_policy = torch.pow(target_policy, 1.0 / temp)
+                sampling_policy = sampling_policy / sampling_policy.sum(
+                    dim=-1, keepdim=True
+                )
+                dist = torch.distributions.Categorical(probs=sampling_policy)
+                action_idx_t, _ = sample_distribution(dist, explore=True)
+                action = action_idx_t.item()
 
-        action_one_hot = torch.zeros(2)
-        action_one_hot[trajectory[t]["action"]] = 1.0
-
-        samples.append(
-            {
-                "state": trajectory[t]["obs"],
-                "action": action_one_hot,
-                "reward": torch.tensor([trajectory[t]["reward"]], dtype=torch.float32),
-                "target_policy": trajectory[t]["policy"],
-                "target_value": torch.tensor([target_v], dtype=torch.float32),
-            }
-        )
-
-    return samples
-
-
-# ============================================================================
-# 4. Evaluation Harness
-# ============================================================================
-
-
-def evaluate_cartpole(
-    model: MuZeroCartPoleNet,
-    num_episodes: int = NUM_EVAL_EPISODES,
-    device: torch.device = torch.device("cpu"),
-) -> float:
-    """
-    Evaluates trained MuZero model on CartPole environment.
-    """
-    model.eval()
-    total_rewards = []
-
-    for _ in range(num_episodes):
-        env = gym.make("CartPole-v1")
-        obs, _ = env.reset()
-        ep_reward = 0.0
-        done = False
-
-        while not done:
-            obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-            with torch.no_grad():
-                _, logits, _ = model.initial_inference(obs_tensor)
-
-            action_idx_tensor, _ = argmax_selector(logits)
-            action_idx = action_idx_tensor.squeeze().item()
-
-            obs, reward, terminated, truncated, _ = env.step(action_idx)
+            next_o, reward, terminated, truncated, _ = envs[b_idx].step(action)
             done = terminated or truncated
-            ep_reward += reward
 
+            trajectories[b_idx].append(
+                (
+                    root_embed[b_idx].cpu(),
+                    action,
+                    target_policy.cpu(),
+                    root_val,
+                    float(reward),
+                )
+            )
+
+            if done:
+                ep_obs, ep_actions, ep_policies, ep_root_vals, ep_rewards = zip(
+                    *trajectories[b_idx]
+                )
+                ep_len = len(ep_obs)
+
+                # Compute n-step bootstrapped return targets z_t
+                ep_z_values = []
+                for t in range(ep_len):
+                    return_t = 0.0
+                    discount = 1.0
+                    for tau in range(td_steps):
+                        idx = t + tau
+                        if idx < ep_len:
+                            return_t += discount * ep_rewards[idx]
+                            discount *= gamma
+                        else:
+                            break
+                    # Add bootstrapped root value at t + n
+                    # NOTE: We do not handle truncation separately from termination here; like the official
+                    # MuZero paper pseudocode (where bootstrap_index >= len(root_values) yields value = 0),
+                    # episodes that end at the horizon limit are treated as terminal without extra bootstrapping.
+                    if t + td_steps < ep_len:
+                        return_t += discount * ep_root_vals[t + td_steps]
+                    ep_z_values.append(return_t)
+
+                # MuZero Appendix G: Initial priority p_i = |nu_i - z_i|
+                ep_root_tensor = torch.tensor(ep_root_vals, dtype=torch.float32)
+                ep_z_tensor = torch.tensor(ep_z_values, dtype=torch.float32)
+                ep_priorities = torch.abs(ep_root_tensor - ep_z_tensor)
+
+                # Pack episode into fixed-length sequence [MAX_EPISODE_STEPS, ...]
+                seq_obs = torch.zeros((MAX_EPISODE_STEPS, OBS_DIM), dtype=torch.float32)
+                seq_actions = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.long)
+                seq_policies = torch.zeros(
+                    (MAX_EPISODE_STEPS, NUM_ACTIONS), dtype=torch.float32
+                )
+                seq_values = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_rewards = torch.zeros((MAX_EPISODE_STEPS, 1), dtype=torch.float32)
+                seq_valid = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
+                seq_priorities = torch.zeros((MAX_EPISODE_STEPS,), dtype=torch.float32)
+
+                seq_obs[:ep_len] = torch.stack(ep_obs)
+                seq_actions[:ep_len] = torch.tensor(ep_actions, dtype=torch.long)
+                seq_policies[:ep_len] = torch.stack(ep_policies)
+                seq_values[:ep_len] = ep_z_tensor.unsqueeze(-1)
+                seq_rewards[:ep_len] = torch.tensor(
+                    ep_rewards, dtype=torch.float32
+                ).unsqueeze(-1)
+                seq_valid[:ep_len] = 1.0
+                seq_priorities[:ep_len] = ep_priorities
+
+                completed_tds.append(
+                    TensorDict(
+                        {
+                            "state": seq_obs,
+                            "actions": seq_actions,
+                            "target_policies": seq_policies,
+                            "target_values": seq_values,
+                            "target_rewards": seq_rewards,
+                            "valid": seq_valid,
+                            "priority": seq_priorities,
+                        },
+                        batch_size=[MAX_EPISODE_STEPS],
+                    )
+                )
+
+                trajectories[b_idx] = []
+                next_o, _ = envs[b_idx].reset()
+
+            obs_list[b_idx] = next_o
+
+        if len(completed_tds) > 0:
+            batch_td = torch.stack(completed_tds).to(device)
+            buffer.add_transitions(batch_td, valid_mask=batch_td["valid"].bool())
+
+
+def evaluate_model(
+    model: nn.Module,
+    num_eval_episodes: int = NUM_EVAL_EPISODES,
+    device: torch.device = torch.device("cpu"),
+    seed: int = SEED,
+) -> dict:
+    """Evaluates model performance greedily (temperature=0.0) across parallel CartPole-v1 environments."""
+    model.eval()
+    envs = [make_env() for _ in range(num_eval_episodes)]
+    recurrent_fn = create_recurrent_fn(model)
+
+    obs_list = [env.reset(seed=seed + i * 100)[0] for i, env in enumerate(envs)]
+    episode_returns = [0.0] * num_eval_episodes
+    episode_lengths = [0] * num_eval_episodes
+    dones = [False] * num_eval_episodes
+
+    while not all(dones):
+        active_indices = [i for i, d in enumerate(dones) if not d]
+        active_obs = np.array([obs_list[i] for i in active_indices], dtype=np.float32)
+        root_embed = torch.from_numpy(active_obs).to(device)
+
+        action_probs, _ = run_batched_mcts(
+            model,
+            recurrent_fn,
+            root_embed,
+            num_simulations=NUM_MCTS_SIMULATIONS,
+            temperature=0.0,
+            explore_dirichlet=False,
+        )
+        action_idx_tensor, _ = argmax_selector(action_probs)
+        actions = action_idx_tensor.squeeze(-1).cpu().numpy()
+
+        for idx, act in zip(active_indices, actions):
+            obs, reward, terminated, truncated, _ = envs[idx].step(int(act))
+            episode_returns[idx] += reward
+            episode_lengths[idx] += 1
+            if terminated or truncated:
+                dones[idx] = True
+            else:
+                obs_list[idx] = obs
+
+    for env in envs:
         env.close()
-        total_rewards.append(ep_reward)
 
-    model.train()
-    return float(sum(total_rewards) / len(total_rewards))
+    return {
+        "eval/mean_episode_return": sum(episode_returns) / len(episode_returns),
+        "eval/min_episode_return": min(episode_returns),
+        "eval/max_episode_return": max(episode_returns),
+        "eval/mean_episode_length": sum(episode_lengths) / len(episode_lengths),
+        "eval/min_episode_length": min(episode_lengths),
+        "eval/max_episode_length": max(episode_lengths),
+    }
 
 
-# ============================================================================
-# 5. Main MuZero CartPole Training Loop
-# ============================================================================
+def evaluator_worker(
+    model_creator: Callable[[], nn.Module],
+    shared_model: nn.Module,
+    eval_queue: mp.Queue,
+    training_step: torch.Tensor,
+    num_eval_episodes: int = NUM_TRAIN_EVAL_EPISODES,
+    eval_interval_steps: int = EVAL_INTERVAL_STEPS,
+    device_str: str = "cpu",
+):
+    """Background process evaluating model performance asynchronously on CartPole-v1."""
+    torch.set_num_threads(1)
+    device = torch.device(device_str)
+    local_model = model_creator().to(device)
+    next_eval_step = 0
+
+    while True:
+        curr_step = int(training_step[0].item())
+        if curr_step < next_eval_step:
+            time.sleep(1.0)
+            continue
+
+        next_eval_step = curr_step + eval_interval_steps
+        local_model.load_state_dict(shared_model.state_dict())
+
+        eval_metrics = evaluate_model(
+            local_model,
+            num_eval_episodes=num_eval_episodes,
+            device=device,
+            seed=SEED,
+        )
+        eval_metrics["eval/step"] = curr_step
+        eval_queue.put(eval_metrics)
 
 
-def train_muzero_cartpole():
-    """
-    Main MuZero CartPole training script.
-    """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    rng_key = torch.Generator(device=device)
-    rng_key.manual_seed(SEED)
-    random.seed(SEED)
-
-    learner_model = MuZeroCartPoleNet(in_dim=4, hidden_dim=HIDDEN_DIM, num_actions=2).to(device)
-    actor_model = copy.deepcopy(learner_model).to(device)
+def learner_worker(
+    model_creator: Callable[[], nn.Module],
+    shared_model: nn.Module,
+    buffer: SharedPERBuffer,
+    eval_queue: mp.Queue,
+    training_step: torch.Tensor,
+    batch_size: int = BATCH_SIZE,
+    learning_rate: float = LEARNING_RATE,
+    weight_decay: float = WEIGHT_DECAY,
+    value_loss_weight: float = VALUE_LOSS_WEIGHT,
+    unroll_steps: int = UNROLL_STEPS,
+    max_steps: int = TOTAL_TRAINING_STEPS,
+    num_eval_episodes: int = NUM_EVAL_EPISODES,
+    device_str: str = "cpu",
+):
+    """Learner process training model weights on sampled minibatches using two-hot cross-entropy."""
+    torch.set_num_threads(1)
+    device = torch.device(device_str)
+    local_model = model_creator().to(device)
+    local_model.train()
+    local_model.load_state_dict(shared_model.state_dict())
 
     optimizer = torch.optim.Adam(
-        learner_model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
+        local_model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
-
-    buffer_shapes = {
-        "state": (4,),
-        "action": (2,),
-        "reward": (1,),
-        "target_policy": (2,),
-        "target_value": (1,),
-    }
-    replay_buffer_state = init_buffer(REPLAY_BUFFER_CAPACITY, buffer_shapes, device=device)
+    rng_key = torch.Generator(device=device)
+    rng_key.manual_seed(SEED)
 
     wandb.init(
         project="muzero-cartpole",
-        name=f"muzero_cartpole_continuous_k{UNROLL_STEPS_K}_n{N_STEP_BOOTSTRAP}",
+        name=f"muzero_cartpole_sims{NUM_MCTS_SIMULATIONS}_td{TD_STEPS}_actors{NUM_ACTORS}",
         config={
-            "total_training_steps": TOTAL_TRAINING_STEPS,
-            "unroll_steps_k": UNROLL_STEPS_K,
-            "n_step_bootstrap": N_STEP_BOOTSTRAP,
-            "discount_gamma": DISCOUNT_GAMMA,
-            "min_buffer_size": MIN_BUFFER_SIZE,
-            "eval_interval": EVAL_INTERVAL,
-            "batch_size": BATCH_SIZE,
-            "learning_rate": LEARNING_RATE,
-            "seed": SEED,
+            "total_training_steps": max_steps,
+            "num_actors": NUM_ACTORS,
+            "envs_per_actor": ENVS_PER_ACTOR,
+            "num_mcts_simulations": NUM_MCTS_SIMULATIONS,
+            "unroll_steps": unroll_steps,
+            "td_steps": TD_STEPS,
+            "gamma": GAMMA,
+            "c_puct": C_PUCT,
+            "batch_size": batch_size,
+            "buffer_num_episodes": BUFFER_NUM_EPISODES,
+            "max_episode_steps": MAX_EPISODE_STEPS,
+            "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "value_loss_weight": value_loss_weight,
+            "support_min": SUPPORT_MIN,
+            "support_max": SUPPORT_MAX,
+            "per_alpha": PER_ALPHA,
+            "per_beta": PER_BETA,
         },
     )
-    wandb.define_metric("*", step_metric="global_step")
 
-    for step in range(1, TOTAL_TRAINING_STEPS + 1):
-        # 1. Continuous Data Collection
-        new_samples = []
-        for _ in range(NUM_VECTOR_ENVS):
-            ep_samples = run_cartpole_episode(actor_model, device=device)
-            new_samples.extend(ep_samples)
+    step_count = 0
+    latest_eval_metrics = {}
+    support = torch.arange(
+        SUPPORT_MIN, SUPPORT_MAX + 1, device=device, dtype=torch.float32
+    )
 
-        if len(new_samples) > 0:
-            batch_td = TensorDict(
-                {
-                    "state": torch.stack([s["state"] for s in new_samples]),
-                    "action": torch.stack([s["action"] for s in new_samples]),
-                    "reward": torch.stack([s["reward"] for s in new_samples]),
-                    "target_policy": torch.stack([s["target_policy"] for s in new_samples]),
-                    "target_value": torch.stack([s["target_value"] for s in new_samples]),
-                },
-                batch_size=[len(new_samples)],
-            ).to(device)
-            replay_buffer_state, _ = circular_write_strategy_(replay_buffer_state, batch_td)
-
-        if replay_buffer_state.size < MIN_BUFFER_SIZE:
+    while step_count < max_steps:
+        sample_res = buffer.sample_unrolls(
+            batch_size, unroll_steps, beta=PER_BETA, min_size=MIN_BUFFER_SIZE
+        )
+        if sample_res is None or sample_res[0] is None:
+            time.sleep(0.01)
             continue
 
-        # 2. Continuous K-Step Recurrent Unrolling & Optimization
-        # TODO: confirm that this behaviour for question 1 is correct (sampling starting state index and unrolling K steps)
-        minibatch = uniform_sample(replay_buffer_state, rng_key, BATCH_SIZE)
-        obs_batch = minibatch["state"]
-        actions = minibatch["action"]
-        target_policies = minibatch["target_policy"]
-        target_values = minibatch["target_value"]
-        rewards = minibatch["reward"]
+        unroll_data, valid_mask, coords, is_weights = sample_res
+        is_weights = is_weights.to(device)
 
-        # Step k = 0: Initial representation & prediction
-        sk, p_logits, v_logits = learner_model.initial_inference(obs_batch)
+        # A step is valid only if within tensor boundary AND was part of the actual episode
+        ep_valid = unroll_data["valid"].bool() & valid_mask
+        policy_masks = ep_valid.float().to(device)
 
-        raw_p_loss, _ = cross_entropy_loss(p_logits, target_policies)
-        
-        # Categorical cross-entropy over 601-atom discrete support bins for value and reward (Note 13, 27)
-        # TODO: confirm that this behaviour for question 7 is correct
-        v_target_two_hot = scalar_to_two_hot(h_transform(target_values.squeeze(-1)))
-        raw_v_loss, _ = cross_entropy_loss(v_logits, v_target_two_hot)
+        states = unroll_data["state"][:, 0].to(device)
+        actions = unroll_data["actions"].to(device)
+        target_policies = unroll_data["target_policies"].to(device)
+        target_values = unroll_data["target_values"].to(device)
+        target_rewards = unroll_data["target_rewards"].to(device)
 
-        # Loss scaling: 1/K on each unrolled head (Note 29)
-        # TODO: confirm that this behaviour for question 29 is correct
-        total_loss = (raw_p_loss.mean() + raw_v_loss.mean()) * (1.0 / UNROLL_STEPS_K)
+        # 1. Initial Step k=0 Prediction
+        s0, p0, _, v0_logits = local_model.initial_inference(states)
 
-        # Unroll K hypothetical steps recurrently
-        for k in range(1, UNROLL_STEPS_K + 1):
-            # Scale gradient by 1/2 at start of dynamics function (Note 30)
-            # TODO: confirm that this behaviour for question 30 is correct
-            sk.register_hook(lambda g: g * 0.5)
+        raw_p_loss_0, _ = compute_cross_entropy_loss(p0, target_policies[:, 0])
+        mask_0 = policy_masks[:, 0]
+        loss_p0 = raw_p_loss_0 * mask_0
 
-            r_logits_k, sk, p_logits_k, v_logits_k = learner_model.recurrent_inference(sk, actions)
+        # Value target: contractive scaling + two-hot projection
+        z0 = target_values[:, 0].squeeze(-1)
+        z0_scaled = compute_contractive_transform(z0, epsilon=EPSILON_TRANSFORM)
+        z0_two_hot = compute_two_hot_distribution(z0_scaled, SUPPORT_MIN, SUPPORT_MAX)
+        raw_v_loss_0, _ = compute_cross_entropy_loss(v0_logits, z0_two_hot)
+        loss_v0 = raw_v_loss_0
+        # Initial step k=0 uses full weight 1.0 (paper: predictions = [(1.0, value, reward, policy_logits)]), not 1/K
+        batch_loss = loss_p0 + value_loss_weight * loss_v0
 
-            raw_pk_loss, _ = cross_entropy_loss(p_logits_k, target_policies)
-            
-            vk_target_two_hot = scalar_to_two_hot(h_transform(target_values.squeeze(-1)))
-            raw_vk_loss, _ = cross_entropy_loss(v_logits_k, vk_target_two_hot)
+        curr_s = s0
+        step_p_losses = [(loss_p0.sum() / torch.clamp(mask_0.sum(), min=1.0)).item()]
+        step_v_losses = [loss_v0.mean().item()]
+        step_r_losses = []
 
-            rk_target_two_hot = scalar_to_two_hot(h_transform(rewards.squeeze(-1)))
-            raw_rk_loss, _ = cross_entropy_loss(r_logits_k, rk_target_two_hot)
+        # 2. Unroll Steps k=1..K Dynamics & Prediction
+        for k in range(1, unroll_steps + 1):
+            act_k = actions[:, k - 1]
+            curr_s = scale_gradient(curr_s, 0.5)
 
-            step_loss = (raw_pk_loss.mean() + raw_vk_loss.mean() + raw_rk_loss.mean()) * (1.0 / UNROLL_STEPS_K)
-            total_loss += step_loss
+            next_s, _, p_k, _, r_k_logits, v_k_logits = local_model.recurrent_inference(
+                curr_s, act_k
+            )
+            curr_s = next_s
+
+            raw_p_loss, _ = compute_cross_entropy_loss(p_k, target_policies[:, k])
+            mask_k = policy_masks[:, k]
+            l_p = raw_p_loss * mask_k
+
+            # Value target at step k
+            zk = target_values[:, k].squeeze(-1)
+            zk_scaled = compute_contractive_transform(zk, epsilon=EPSILON_TRANSFORM)
+            zk_two_hot = compute_two_hot_distribution(
+                zk_scaled, SUPPORT_MIN, SUPPORT_MAX
+            )
+            raw_v_loss, _ = compute_cross_entropy_loss(v_k_logits, zk_two_hot)
+
+            # Reward target at step k
+            uk = target_rewards[:, k - 1].squeeze(-1)
+            uk_scaled = compute_contractive_transform(uk, epsilon=EPSILON_TRANSFORM)
+            uk_two_hot = compute_two_hot_distribution(
+                uk_scaled, SUPPORT_MIN, SUPPORT_MAX
+            )
+            raw_r_loss, _ = compute_cross_entropy_loss(r_k_logits, uk_two_hot)
+
+            step_p_losses.append(
+                (l_p.sum() / torch.clamp(mask_k.sum(), min=1.0)).item()
+            )
+            step_v_losses.append(raw_v_loss.mean().item())
+            step_r_losses.append(raw_r_loss.mean().item())
+
+            step_loss = l_p + value_loss_weight * raw_v_loss + raw_r_loss
+            batch_loss = batch_loss + (step_loss / float(unroll_steps))
+
+        # Weight the total loss by the PER importance sampling weights (MuZero Appendix G)
+        total_loss = (batch_loss * is_weights).mean()
 
         optimizer.zero_grad()
         total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(local_model.parameters(), max_norm=1.0)
         optimizer.step()
 
-        if step % PARAM_SYNC_INTERVAL == 0:
-            actor_model.load_state_dict(learner_model.state_dict())
+        # 3. Priority Update in PER Buffer (MuZero Appendix G: p_i = |nu_i - z_i|)
+        with torch.no_grad():
+            v0_pred_scaled = compute_expected_value(v0_logits, support)
+            v0_pred = compute_inverse_contractive_transform(
+                v0_pred_scaled, epsilon=EPSILON_TRANSFORM
+            )
+            new_priorities = torch.abs(v0_pred - z0).detach().cpu()
+            buffer.update_priorities(coords, new_priorities, alpha=PER_ALPHA)
+
+        shared_model.load_state_dict(local_model.state_dict())
+        step_count += 1
+        training_step[0] = step_count
+
+        new_eval_metrics = None
+        while not eval_queue.empty():
+            try:
+                new_eval_metrics = eval_queue.get_nowait()
+                latest_eval_metrics = new_eval_metrics
+            except Exception:
+                break
 
         log_dict = {
-            "global_step": step,
+            "global_step": step_count,
             "loss/total": total_loss.item(),
-            "buffer/size": replay_buffer_state.size,
+            "loss/policy": sum(step_p_losses) / len(step_p_losses),
+            "loss/value": sum(step_v_losses) / len(step_v_losses),
+            "loss/reward": (
+                sum(step_r_losses) / len(step_r_losses) if step_r_losses else 0.0
+            ),
+            "buffer/size": buffer.size,
         }
+        if new_eval_metrics is not None:
+            log_dict.update(new_eval_metrics)
 
-        if step % EVAL_INTERVAL == 0 or step == TOTAL_TRAINING_STEPS:
-            mean_eval_reward = evaluate_cartpole(learner_model, num_episodes=NUM_EVAL_EPISODES, device=device)
-            log_dict["eval/mean_reward"] = mean_eval_reward
+        if step_count % 100 == 0:
+            eval_info = ""
+            if "eval/mean_episode_return" in latest_eval_metrics:
+                mean_r = latest_eval_metrics["eval/mean_episode_return"]
+                min_r = latest_eval_metrics.get("eval/min_episode_return", mean_r)
+                max_r = latest_eval_metrics.get("eval/max_episode_return", mean_r)
+                mean_l = latest_eval_metrics["eval/mean_episode_length"]
+                min_l = latest_eval_metrics.get("eval/min_episode_length", mean_l)
+                max_l = latest_eval_metrics.get("eval/max_episode_length", mean_l)
+                eval_info = (
+                    f" | Eval Return: {mean_r:.1f} [min: {min_r:.0f}, max: {max_r:.0f}] | "
+                    f"Eval Len: {mean_l:.1f} [min: {min_l:.0f}, max: {max_l:.0f}]"
+                )
+
+            r_loss_str = (
+                f" | Reward: {log_dict['loss/reward']:.4f}" if step_r_losses else ""
+            )
+            print(
+                f"[Learner Step {step_count}/{max_steps}] "
+                f"Loss: {log_dict['loss/total']:.4f} | "
+                f"Policy: {log_dict['loss/policy']:.4f} | "
+                f"Value: {log_dict['loss/value']:.4f}"
+                f"{r_loss_str} | "
+                f"Buffer: {log_dict['buffer/size']}"
+                f"{eval_info}",
+                flush=True,
+            )
 
         wandb.log(log_dict)
+
+    print(
+        f"\n[Learner Step {max_steps}] Running final evaluation on step {max_steps} model...",
+        flush=True,
+    )
+    final_metrics = evaluate_model(
+        local_model,
+        num_eval_episodes=num_eval_episodes,
+        device=device,
+        seed=SEED,
+    )
+    final_metrics["eval/step"] = max_steps
+    wandb.log(final_metrics)
+
+    mean_r = final_metrics["eval/mean_episode_return"]
+    min_r = final_metrics["eval/min_episode_return"]
+    max_r = final_metrics["eval/max_episode_return"]
+    mean_l = final_metrics["eval/mean_episode_length"]
+    print(
+        f"[Final Evaluation at Step {max_steps}] Mean Return: {mean_r:.1f} [min: {min_r:.0f}, max: {max_r:.0f}] | "
+        f"Mean Len: {mean_l:.1f}",
+        flush=True,
+    )
 
     wandb.finish()
 
 
+# ============================================================================
+# 4. Main Multiprocessing Pipeline Setup
+# ============================================================================
+def model_creator_fn() -> CartPoleMuZeroNet:
+    return CartPoleMuZeroNet(
+        obs_dim=OBS_DIM,
+        num_actions=NUM_ACTIONS,
+        latent_dim=LATENT_DIM,
+        support_min=SUPPORT_MIN,
+        support_max=SUPPORT_MAX,
+    )
+
+
+def main(max_steps: int = TOTAL_TRAINING_STEPS):
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
+
+    device_str = "cpu"
+    device = torch.device(device_str)
+
+    shared_model = model_creator_fn().to(device)
+    shared_model.share_memory()
+
+    training_step = torch.zeros(1, dtype=torch.long).share_memory_()
+
+    buffer_shapes = {
+        "state": (OBS_DIM,),
+        "actions": (),
+        "target_policies": (NUM_ACTIONS,),
+        "target_values": (1,),
+        "target_rewards": (1,),
+        "valid": (),
+        "priority": (),
+    }
+    buffer = SharedPERBuffer(
+        (BUFFER_NUM_EPISODES, MAX_EPISODE_STEPS),
+        buffer_shapes,
+        device=device,
+        epsilon=PER_EPSILON,
+    )
+    eval_queue = mp.Queue()
+
+    processes = []
+
+    learner_p = mp.Process(
+        target=learner_worker,
+        args=(model_creator_fn, shared_model, buffer, eval_queue, training_step),
+        kwargs={"device_str": device_str, "max_steps": max_steps},
+    )
+    learner_p.start()
+    processes.append(learner_p)
+
+    for actor_id in range(NUM_ACTORS):
+        actor_p = mp.Process(
+            target=actor_worker,
+            args=(actor_id, model_creator_fn, shared_model, buffer, training_step),
+            kwargs={"device_str": device_str},
+        )
+        actor_p.start()
+        processes.append(actor_p)
+
+    eval_p = mp.Process(
+        target=evaluator_worker,
+        args=(model_creator_fn, shared_model, eval_queue, training_step),
+        kwargs={"device_str": device_str},
+    )
+    eval_p.daemon = True
+    eval_p.start()
+    processes.append(eval_p)
+
+    print(
+        f"Launched MuZero CartPole Multiprocessing Pipeline ({NUM_ACTORS} Actors, 1 Learner, 1 Evaluator) | Support [{SUPPORT_MIN}, {SUPPORT_MAX}] ({NUM_ATOMS} Atoms).",
+        flush=True,
+    )
+    learner_p.join()
+
+    for p in processes:
+        if p.is_alive():
+            p.terminate()
+            p.join()
+
+    print("MuZero CartPole Training Completed Successfully.", flush=True)
+
+
 if __name__ == "__main__":
-    train_muzero_cartpole()
+    main()

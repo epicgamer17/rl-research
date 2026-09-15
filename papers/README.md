@@ -26,6 +26,7 @@ This directory maintains a mapping between the research papers in this folder an
 - **Developing a predictive approach to knowledge** (LONG)
 - **Horde**: [AlbertaPlan.pdf](AlbertaPlan.pdf) related.
 - **NFSP**: Implementation exists in `experiments/rainbow-nfsp/` but is not yet a standardized example.
+- **NFSP PER**
 - **Related Work From Stream RL Paper**: TODO: go through the related work section and add them to the list here. Then implement them. They discuss relevant IDBD methods, loss of plasticity methods, sparse representation methods, other stream RL related papers, etc. All useful to stream RL and the Alberta Plan.
 - **Tuning Free Step Size Adaptation**: introduces TIDBD
 - **JEPA** (Maybe)
@@ -110,6 +111,21 @@ This directory maintains a mapping between the research papers in this folder an
 
     - Section 16.1 to 16.8: Applications and Case-Studies
     - Section 17.1 to 17.6: Frontiers 
+- 2019: Off policy DRL without Exploration, Planing with Goal conditioned Policies (Goal conditioned RL topic), SOLAR (MBRL)
+- 2020: MORel, MOPO (both are MBRL), Dream to Control (+ world model based papers), Adversarial polices: attaking DRL, RD2: reward decomposition, some multi objectve RL paper such as, A distributional View on Multi objective policy opimization, CURL, Skew Fit
+- 2021: C-Learning, IQ-Learn, Offline RL with implicit Q learning, COMBO
+- 2022: Mirror decent Policy optimization, When should we Prefer Offline RL over Behaviour cloning, some safe RL paper: Saute RL, some transformer based RL paper such as MARL is a sequence modeling problem, Multi game decision transformers, Transform 2 Action
+- 2023: MoDem, Towards a better understanding of Representation Dynamics under TD-learning
+- DREAM
+- Deep CFR
+- ReBel
+- Player of Games
+- NEAT
+- Discovery of Useful Questions as Auxiliary Tasks
+- Metatrace Actor-Critic
+- Meta-Gradient Reinforcement Learning (Xu, van Hasselt, & Silver, NeurIPS 2018)
+- **Real-Time Recurrent Learning / RTUs** Also Real-Time Units (RTUs) (and related variants like Decoupled Neural Interfaces or SnAp-1) - basically BPTT but for stream RL.
+- https://arxiv.org/html/2411.04580v2 for Metrics for MuZero 
 
 ### Missing Features (TODO Find Papers):
 For Agent 57, we are missing:

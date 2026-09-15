@@ -3,53 +3,10 @@ import torch
 import torch.nn.functional as F
 import math
 from atomic_rl.action_selection import (
-    expected_value,
     argmax_selector,
     sample_distribution,
     with_epsilon_greedy,
 )
-
-pytestmark = pytest.mark.unit
-
-
-def test_expected_value():
-    """
-    Test the expected_value function.
-    Analytical Oracle:
-    predictions = [[0, 100]] (logits) -> probs = [0, 1]
-    support = [[-1, 1]]
-    expected_value = 0*-1 + 1*1 = 1
-    """
-    # Batch size 1, 2 actions, 2 support atoms
-    predictions = torch.tensor([[[0.0, 100.0], [100.0, 0.0]]])  # [1, 2, 2]
-    support = torch.tensor([[[-1.0, 1.0], [-1.0, 1.0]]])  # [1, 2, 2]
-
-    # Expected: First action should have value ~1.0, second action ~-1.0
-    values = expected_value(predictions, support)
-
-    assert values.shape == (1, 2), f"Expected shape (1, 2), got {values.shape}"
-    torch.testing.assert_close(values, torch.tensor([[1.0, -1.0]]))
-
-    # Test with 1D support
-    support_1d = torch.tensor([-1.0, 1.0])
-    values_1d = expected_value(predictions, support_1d)
-    torch.testing.assert_close(values_1d, torch.tensor([[1.0, -1.0]]))
-
-
-def test_expected_value_2d_input():
-    """Test the expected_value function with 2D state-value predictions [B, N]."""
-    # Batch size 2, 3 atoms
-    predictions = torch.tensor(
-        [
-            [0.0, 100.0, 0.0],  # Softmax concentrates heavily on index 1
-            [100.0, 0.0, 0.0],  # Softmax concentrates heavily on index 0
-        ]
-    )
-    support = torch.tensor([-1.0, 0.0, 1.0])  # 1D Support
-
-    values = expected_value(predictions, support)
-    assert values.shape == (2,)
-    torch.testing.assert_close(values, torch.tensor([0.0, -1.0]), atol=1e-4, rtol=1e-4)
 
 
 def test_argmax_selector():
@@ -204,18 +161,6 @@ def test_with_epsilon_greedy_mask_assertions():
         epsilon_selector(predictions, epsilon=0.5, num_actions=3, mask=dead_mask)
 
 
-def test_action_selection_assertions():
-    """Test that action selection functions raise assertions on invalid input shapes."""
-    # expected_value
-    with pytest.raises(
-        AssertionError, match="Expected 2D \[B, N\] or 3D \[B, A, N\] predictions"
-    ):
-        expected_value(torch.randn(2), torch.randn(2))
-    with pytest.raises(
-        AssertionError,
-        match="If support is not 1D, it must match predictions shape exactly.",
-    ):
-        expected_value(torch.randn(1, 2, 3), torch.randn(2, 3))
 
 
 def test_sample_distribution_not_implemented():
@@ -234,6 +179,16 @@ def test_apply_action_mask():
     mask = torch.tensor([[1, 0, 1]])
     masked = apply_action_mask(logits, mask)
     expected = torch.tensor([[1.0, -1e8, 3.0]])
+    torch.testing.assert_close(masked, expected)
+
+
+def test_apply_action_mask_zero_valid_actions():
+    from atomic_rl.action_selection import apply_action_mask
+
+    logits = torch.tensor([[1.0, 2.0, 3.0]])
+    mask = torch.tensor([[0, 0, 0]])
+    masked = apply_action_mask(logits, mask)
+    expected = torch.tensor([[-1e8, -1e8, -1e8]])
     torch.testing.assert_close(masked, expected)
 
 
@@ -290,13 +245,100 @@ def test_gather_q_values_3d():
     torch.testing.assert_close(out, expected)
 
 
+def test_gather_q_values_custom_dim():
+    from atomic_rl.action_selection import gather_q_values
+
+    # q_values: [B, T, A] -> [1, 2, 3] (Batch 1, Time 2, Actions 3)
+    q_values = torch.tensor([[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]]])
+    actions = torch.tensor([[2, 0]])  # [1, 2] -> Time 0: Action 2 (30.0), Time 1: Action 0 (40.0)
+
+    out = gather_q_values(q_values, actions, dim=2)
+    assert out.shape == (1, 2)
+    torch.testing.assert_close(out, torch.tensor([[30.0, 40.0]]))
+
+    # Also test dim=-1
+    out_neg_dim = gather_q_values(q_values, actions, dim=-1)
+    assert out_neg_dim.shape == (1, 2)
+    torch.testing.assert_close(out_neg_dim, torch.tensor([[30.0, 40.0]]))
+
+
 def test_gather_q_values_assertions():
     from atomic_rl.action_selection import gather_q_values
 
-    # Invalid q_values dimensions (4D)
-    with pytest.raises(AssertionError, match="Expected 2D or 3D q_values"):
-        gather_q_values(torch.randn(2, 2, 2, 2), torch.tensor([0, 0]))
+    # Invalid 1D q_values
+    with pytest.raises(AssertionError, match="Expected at least 2D q_values"):
+        gather_q_values(torch.randn(2), torch.tensor([0]))
 
-    # Invalid action dimensions (2D but wrong shape, or 3D)
-    with pytest.raises(AssertionError, match="Expected 1D actions"):
-        gather_q_values(torch.randn(2, 3), torch.tensor([[0, 1], [1, 0]]))
+
+# ==========================================
+# Tests for Dynamic / Adaptive Dirichlet Alpha
+# ==========================================
+
+
+def test_compute_dynamic_dirichlet_alpha_scalar():
+    from atomic_rl.action_selection import (
+        compute_dynamic_dirichlet_alpha,
+        compute_adaptive_dirichlet_alpha,
+    )
+
+    # Stochastic MuZero default: 1 / sqrt(N)
+    alpha_4 = compute_dynamic_dirichlet_alpha(num_actions=4)
+    assert isinstance(alpha_4, float)
+    assert alpha_4 == pytest.approx(1.0 / 2.0)
+
+    # Alias check
+    assert compute_adaptive_dirichlet_alpha is compute_dynamic_dirichlet_alpha
+
+    # AlphaZero rule-of-thumb: 10 / N
+    alpha_chess = compute_dynamic_dirichlet_alpha(num_actions=35, scale=10.0, power=1.0)
+    assert alpha_chess == pytest.approx(10.0 / 35.0)
+
+
+def test_compute_dynamic_dirichlet_alpha_from_mask():
+    from atomic_rl.action_selection import compute_dynamic_dirichlet_alpha
+
+    # Mask with shape [2, 4]: batch 0 has 4 valid, batch 1 has 1 valid
+    mask = torch.tensor([[1, 1, 1, 1], [1, 0, 0, 0]], dtype=torch.bool)
+    alphas = compute_dynamic_dirichlet_alpha(mask=mask, scale=1.0, power=0.5)
+
+    assert isinstance(alphas, torch.Tensor)
+    assert alphas.shape == (2,)
+    # batch 0: 1 / sqrt(4) = 0.5
+    # batch 1: 1 / sqrt(1) = 1.0
+    torch.testing.assert_close(alphas, torch.tensor([0.5, 1.0]))
+
+
+def test_compute_dynamic_dirichlet_alpha_assertions():
+    from atomic_rl.action_selection import compute_dynamic_dirichlet_alpha
+
+    with pytest.raises(AssertionError, match="Either num_actions or mask must be provided"):
+        compute_dynamic_dirichlet_alpha()
+
+    with pytest.raises(AssertionError, match="strictly positive"):
+        compute_dynamic_dirichlet_alpha(num_actions=0)
+
+    with pytest.raises(AssertionError, match="strictly positive"):
+        compute_dynamic_dirichlet_alpha(num_actions=torch.tensor([4, 0]))
+
+
+def test_add_dirichlet_noise_dynamic_batched():
+    from atomic_rl.action_selection import (
+        add_dirichlet_noise,
+        compute_dynamic_dirichlet_alpha,
+    )
+
+    # [B=2, Num_Actions=4]
+    logits = torch.zeros(2, 4)
+    mask = torch.tensor([[1, 1, 1, 1], [1, 1, 0, 0]], dtype=torch.bool)
+
+    alphas = compute_dynamic_dirichlet_alpha(mask=mask)
+    noisy_logits = add_dirichlet_noise(logits, epsilon=0.5, alpha=alphas, mask=mask)
+    noisy_probs = torch.softmax(noisy_logits, dim=-1)
+
+    assert noisy_probs.shape == (2, 4)
+    # Total probability per batch element sums to 1.0
+    torch.testing.assert_close(noisy_probs.sum(dim=-1), torch.ones(2))
+    # Batch 1 masked actions (2 and 3) must have exactly 0 probability
+    assert noisy_probs[1, 2].item() == 0.0
+    assert noisy_probs[1, 3].item() == 0.0
+

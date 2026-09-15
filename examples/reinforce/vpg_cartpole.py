@@ -5,7 +5,7 @@ Essentially REINFORCE + a value function for the baseline to compute advantages.
 NOTE: very similar to A2C/A3C
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,15 +18,15 @@ import wandb
 from functools import partial
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
-from atomic_rl.losses import policy_gradient_loss, mse_loss
+from atomic_rl.losses import compute_policy_gradient_loss, compute_mse_loss
 from atomic_rl.utils import (
-    standardize_tensor,
-    to_tensor,
     to_numpy_action,
 )
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.normalization import (
+    standardize_tensor,
+)
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 
 # Constants
 LEARNING_RATE = 1e-3
@@ -105,7 +105,7 @@ for episode in range(MAX_EPISODES):
     terminateds = []
     truncateds = []
     while not (terminated or truncated):
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
         logits = actor(obs_tensor)
         value = critic(obs_tensor)
         dist = torch.distributions.Categorical(logits=logits)
@@ -157,26 +157,28 @@ for episode in range(MAX_EPISODES):
     raw_advantages = returns - values.detach()
     advantages = standardize_tensor(raw_advantages)
 
-    pg_loss, info_dict = policy_gradient_loss(
+    pg_loss, info_dict = compute_policy_gradient_loss(
         advantages=advantages,
         log_probs=torch.stack(log_probs).flatten(),
     )
     pg_loss = pg_loss.mean()
 
     # NOTE: i use my mse_loss from losses.py, but we don't need priorities here since it's not off policy.
-    critic_loss, _ = mse_loss(values, returns)
+    critic_loss, _ = compute_mse_loss(values, returns)
     critic_loss = critic_loss.mean()
 
     loss = pg_loss + CRITIC_COEFF * critic_loss
 
     # Apply Updates
-    optimizer = apply_gradients_(optimizer, loss)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
 
     if episode % 100 == 0:
         # Calculate explained variance
         explained_var = compute_explained_variance(
-            returns.detach().cpu().numpy(), values.detach().cpu().numpy()
-        )
+            returns, values
+        ).item()
 
         # W&B handles scalars and histograms of tensors (like priorities) automatically.
         log_dict = info_dict.copy()

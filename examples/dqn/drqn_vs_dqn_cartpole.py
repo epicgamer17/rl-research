@@ -1,4 +1,4 @@
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,16 +17,15 @@ from atomic_rl.buffers.replay import (
     uniform_sample,
     make_padded_chunk_accumulator,
 )
-from atomic_rl.losses import mse_loss, with_sequence_mask
+from atomic_rl.losses import compute_mse_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
     with_epsilon_greedy,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.bptt.unroll_rnn import unroll_rnn
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 from atomic_rl.envs.wrappers import FlickeringObservation
 
 # TODO: make this be more like PPO + LSTM. First fix the TODOs in PPO + LSTM relating to LSTM stuff.

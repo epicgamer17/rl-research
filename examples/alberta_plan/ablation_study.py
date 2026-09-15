@@ -19,7 +19,7 @@ Resource Budgeting: Controlled by: k (SWR) or replacement_rate (CBP).
 """
 
 # TODO: should this use ema?
-from atomic_rl.initialization import make_gnt_init
+from atomic_rl.networks.initialization import make_gnt_init
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,8 +29,12 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from pathlib import Path
 
-from atomic_rl.td import true_online_td_update_, semi_gradient_td_update_
-from atomic_rl.traces import compute_true_online_traces
+from atomic_rl.td import (
+    true_online_td_update_,
+    semi_gradient_td_update_,
+    compute_true_online_traces,
+)
+
 from atomic_rl.optimizer.metaoptimization import (
     update_autostep_rates_,
     update_idbd_rates_,
@@ -279,7 +283,7 @@ def run_experiment(config: str):
             v_next_for_td = v_next_target
 
         # --- Backbone Update ---
-        loss = F.mse_loss(v_current_grad, (reward + gamma * v_next_target).detach())
+        loss = F.compute_mse_loss(v_current_grad, (reward + gamma * v_next_target).detach())
         opt.zero_grad()
         loss.backward()
 

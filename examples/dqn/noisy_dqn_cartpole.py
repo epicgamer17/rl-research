@@ -32,15 +32,14 @@ from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     uniform_sample,
 )
-from atomic_rl.losses import mse_loss
+from atomic_rl.losses import compute_mse_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
 )
-from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
-from atomic_rl.networks.noisy_linear import NoisyLinear
+from atomic_rl.networks.update_target_net import hard_update_target_network_
+from atomic_rl.networks.architectures.noisy_linear import NoisyLinear
 
 # Constants
 BATCH_SIZE = 128
@@ -175,7 +174,7 @@ for step in range(MAX_STEPS):
     # --- 3. The Update Loop ---
     if step > MIN_BUFFER_SIZE and step % UPDATE_FREQ == 0:
         # Sample
-        batch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+        batch, _ = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
 
         # Resample noise before calculating loss to prevent overfitting to a single noise vector during the batch loss calculation
         model.reset_noise()
@@ -202,11 +201,13 @@ for step in range(MAX_STEPS):
         pred_sa = gather_q_values(q_values, batch["action"])
 
         # 5. Loss Calculation (Pure Primitive)
-        loss, info_dict = mse_loss(pred_sa, td_target)
+        loss, info_dict = compute_mse_loss(pred_sa, td_target)
         loss = loss.mean()
 
         # Apply Updates
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
         if step % 100 == 0:
             # W&B handles scalars and histograms of tensors (like priorities) automatically.

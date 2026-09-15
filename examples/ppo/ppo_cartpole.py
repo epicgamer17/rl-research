@@ -25,7 +25,8 @@ TODO: More on pessemistic lower bound, what it means, why its useful, etc
 """
 
 # TODO: attempt a cleanup if possible
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,29 +39,30 @@ import wandb
 from functools import partial
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
-    clipped_surrogate_loss,
-    entropy_loss,
-    probability_ratio,
-    clipped_mse_loss,
-    mse_loss,
+    compute_clipped_surrogate_loss,
+    compute_entropy_loss,
+    compute_clipped_mse_loss,
+    compute_mse_loss,
 )
+from atomic_rl.losses.weighting import probability_ratio
 from torch.optim.lr_scheduler import LinearLR
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
+    flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
     yield_shuffled_minibatches,
 )
 from atomic_rl.utils import (
     ema_update,
-    standardize_tensor,
-    to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
 )
 from tensordict import TensorDict
 from atomic_rl.envs.wrappers import VecNormalizeObservation
@@ -151,20 +153,17 @@ shapes = {
     "observations": obs_shape,
     "actions": (1,),
     "logprobs": (1,),
-    "rewards": (),
-    "terminated": (),
-    "truncated": (),
+    "rewards": (1,),
+    "terminated": (1,),
+    "truncated": (1,),
     "values": (1,),
     "logits": (num_actions,),
 }
 buffer = init_rollout_buffer(
-    steps_per_env=STEPS_PER_ENV,
-    num_envs=NUM_ENVS,
+    capacity=(NUM_ENVS, STEPS_PER_ENV),
     shapes=shapes,
     device=device,
 )
-
-# Pre-allocate rollout buffers using the new functional system
 
 rng_key = torch.Generator(device=device)
 rng_key.manual_seed(SEED)
@@ -191,7 +190,7 @@ for iteration in range(MAX_ITERATIONS):
     # 1. Data Collection Phase
     with torch.inference_mode():
         for step in range(STEPS_PER_ENV):
-            obs_tensor = to_tensor(obs, device=device)
+            obs_tensor = torch.as_tensor(obs, device=device)
             logits, value = model(obs_tensor)
             dist = torch.distributions.Categorical(logits=logits)
             action, info_dict = sample_distribution(dist, explore=True)
@@ -208,19 +207,19 @@ for iteration in range(MAX_ITERATIONS):
                     "observations": obs_tensor,
                     "actions": action,
                     "logprobs": info_dict["log_prob"].detach(),
-                    "rewards": to_tensor(reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": torch.as_tensor(reward, device=device).unsqueeze(-1),
+                    "terminated": torch.as_tensor(terminated, device=device).unsqueeze(-1),
+                    "truncated": torch.as_tensor(truncated, device=device).unsqueeze(-1),
                     "values": value.detach(),
                     "logits": logits.detach(),
                 },
                 batch_size=[NUM_ENVS],
             )
-            store_rollout_step_(buffer=buffer, step=step, transition=transition)
+            write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
-                from atomic_rl.utils import extract_vector_env_final_obs
+                from atomic_rl.envs.utils import extract_vector_env_final_obs
 
                 env_indices, final_obs = extract_vector_env_final_obs(info)
                 # Filter to only record environments that were truncated
@@ -229,8 +228,8 @@ for iteration in range(MAX_ITERATIONS):
                     record_truncations_(
                         buffer=buffer,
                         step=step,
-                        truncated_envs=to_tensor(env_indices[trunc_mask], device),
-                        final_observations=to_tensor(final_obs[trunc_mask], device),
+                        truncated_envs=torch.as_tensor(env_indices[trunc_mask], device=device),
+                        final_observations=torch.as_tensor(final_obs[trunc_mask], device=device),
                     )
 
             if "final_info" in info:
@@ -248,7 +247,7 @@ for iteration in range(MAX_ITERATIONS):
             obs = next_obs
 
         # Compute last values for the re-evaluation pass
-        last_obs_tensor = to_tensor(obs, device=device)
+        last_obs_tensor = torch.as_tensor(obs, device=device)
         _, last_values = model(last_obs_tensor)
 
         # Calculate Next Values (handling truncations)
@@ -261,23 +260,21 @@ for iteration in range(MAX_ITERATIONS):
         rewards=buffer.data["rewards"],
         terminated=buffer.data["terminated"],
         truncated=buffer.data["truncated"],
-        values=buffer.data["values"].squeeze(-1),
-        next_values=next_values.squeeze(-1),
+        values=buffer.data["values"],
+        next_values=next_values,
         gamma=GAMMA,
         gae_lambda=GAE_LAMBDA,
     )
 
-    # Explicit mathematical derivation (Explicit over implicit, no redundant compute)
-    returns = advantages.unsqueeze(-1) + buffer.data["values"]
+    # Explicit mathematical derivation
+    returns = advantages + buffer.data["values"]
 
-    # Flatten buffer for loss calculations
+    # Store advantages and returns in rollout buffer before flattening
+    buffer.data["advantages"] = advantages
+    buffer.data["returns"] = returns
+
+    # Flatten buffer for loss calculations (flattens all fields including advantages & returns)
     flat_data = flatten_rollout_buffer(buffer)
-    flat_advantages = advantages.view(-1, 1)
-    flat_returns = returns.view(-1, 1)
-
-    # Add advantages and returns to flat_data for easier minibatch sampling
-    flat_data["advantages"] = flat_advantages
-    flat_data["returns"] = flat_returns
 
     # 3. The Update Loop (Multiple Epochs & Minibatches)
     epoch_losses = []
@@ -287,7 +284,7 @@ for iteration in range(MAX_ITERATIONS):
     for epoch in range(UPDATE_EPOCHS):
         epoch_kls = []
         for mb in yield_shuffled_minibatches(
-            flat_data, MINIBATCH_SIZE, generator=rng_key
+            flat_data, MINIBATCH_SIZE, rng_key=rng_key
         ):
             # Re-evaluate the policy and value function on the minibatch
             new_logits, new_values = model(mb["observations"])
@@ -308,7 +305,7 @@ for iteration in range(MAX_ITERATIONS):
             mb_advantages = mb["advantages"]
             mb_advantages = standardize_tensor(mb_advantages)
 
-            pg_loss, pg_info = clipped_surrogate_loss(
+            pg_loss, pg_info = compute_clipped_surrogate_loss(
                 ratio=ratio,
                 advantages=mb_advantages,
                 clip_coef=CLIP_COEF,
@@ -316,7 +313,7 @@ for iteration in range(MAX_ITERATIONS):
             pg_loss = pg_loss.mean()
 
             # 2. Value Loss
-            critic_loss, _ = clipped_mse_loss(
+            critic_loss, _ = compute_clipped_mse_loss(
                 predictions=new_values,
                 old_predictions=mb["values"],
                 targets=mb["returns"],
@@ -325,16 +322,17 @@ for iteration in range(MAX_ITERATIONS):
             critic_loss = critic_loss.mean()
 
             # 3. Entropy Loss
-            ent_loss, _ = entropy_loss(dist)
+            ent_loss, _ = compute_entropy_loss(dist)
             ent_loss = ent_loss.mean()
 
             # Total Loss
             loss = pg_loss + CRITIC_COEFF * critic_loss + ENTROPY_COEFF * ent_loss
 
             # Apply Updates
-            optimizer = apply_gradients_(
-                optimizer, loss, model=model, clip_grad_norm=MAX_GRAD_NORM
-            )
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
+            optimizer.step()
 
             # Track Metrics
             with torch.no_grad():
@@ -358,9 +356,8 @@ for iteration in range(MAX_ITERATIONS):
     # Logging
     if iteration % 10 == 0:
         explained_var = compute_explained_variance(
-            flat_returns.detach().cpu().numpy(),
-            flat_data["values"].detach().cpu().numpy(),
-        )
+            flat_data["returns"], flat_data["values"]
+        ).item()
 
         log_dict = {
             "learning_rate": scheduler.get_last_lr()[0],
@@ -369,10 +366,10 @@ for iteration in range(MAX_ITERATIONS):
             "loss/policy": pg_loss.item(),
             "loss/entropy": ent_loss.item(),
             "value/mean": flat_data["values"].mean().item(),
-            "value/return_mean": flat_returns.mean().item(),
+            "value/return_mean": flat_data["returns"].mean().item(),
             "value/explained_variance": explained_var,
-            "advantages/mean": flat_advantages.mean().item(),
-            "advantages/std": flat_advantages.std().item(),
+            "advantages/mean": flat_data["advantages"].mean().item(),
+            "advantages/std": flat_data["advantages"].std().item(),
             "ppo/clip_fraction": np.mean(clip_fractions),
             "ppo/approx_kl": np.mean(approx_kls),
             "global_step": global_step,

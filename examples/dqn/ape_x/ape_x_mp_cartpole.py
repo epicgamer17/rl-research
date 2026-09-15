@@ -4,7 +4,7 @@ APE-X DQN implemented with torch.multiprocessing.
 
 # TODO: attempt a cleanup if possible
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import os
 import time
 import torch
@@ -20,24 +20,16 @@ from tensordict import TensorDict
 from functools import partial
 from typing import Tuple, Dict, Any, Callable, List
 
-from atomic_rl.buffers.replay import (
-    init_per_buffer,
-    sample_per,
-    update_priorities,
-    with_per_tracking,
-    circular_write_strategy_,
-    make_n_step_accumulator,
-    PERBufferState,
-)
-from atomic_rl.losses import huber_loss
-from atomic_rl.td import compute_q_td_target
+from atomic_rl.buffers import SharedPERBuffer
+from atomic_rl.buffers.replay import make_n_step_accumulator
+from atomic_rl.losses import compute_huber_loss
+from atomic_rl.td import compute_q_td_target, compute_td_error
 from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
 )
 from atomic_rl.schedules import get_ape_x_epsilon
-from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # --- Constants ---
 ENV_NAME = "CartPole-v1"
@@ -60,6 +52,7 @@ ACTOR_BATCH_SIZE = 500
 
 ALPHA = 0.6
 BETA = 0.4
+PER_EPSILON = 1e-4
 N_STEP = 3
 MAX_GRAD_NORM = 10.0
 
@@ -83,73 +76,7 @@ class DuelingDQN(nn.Module):
         return v + a - a.mean(dim=1, keepdim=True)
 
 
-class SharedPERBuffer:
-    def __init__(self, capacity: int, shapes: Dict[str, Any]):
-        self.buffer_state = init_per_buffer(capacity, shapes)
-        # Move all tensors to shared memory
-        self.buffer_state.data.share_memory_()
-        self.buffer_state.sum_tree.share_memory_()
-        self.buffer_state.min_tree.share_memory_()
-
-        self.lock = mp.Lock()
-
-        # We need to share the pointer and size too.
-        # PERBufferState is a dataclass, so we might need to wrap its scalars in mp.Value if we want them shared.
-        self._pointer = mp.Value("i", 0)
-        self._size = mp.Value("i", 0)
-        self._max_priority = mp.Value("d", 1.0)
-
-        # This is a local function from with_per_tracking, which is not picklable.
-        # We'll initialize it in __init__ and __setstate__.
-        self.per_add = with_per_tracking(circular_write_strategy_)
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        # Don't pickle the non-picklable local function
-        if "per_add" in state:
-            del state["per_add"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        # Re-initialize the local function after unpickling
-        self.per_add = with_per_tracking(circular_write_strategy_)
-
-    def add_transitions(self, transitions: TensorDict):
-        with self.lock:
-            # Sync state from shared scalars
-            self.buffer_state.pointer = self._pointer.value
-            self.buffer_state.size = self._size.value
-            self.buffer_state.max_priority = self._max_priority.value
-
-            self.buffer_state = self.per_add(self.buffer_state, transitions)
-
-            # Sync back to shared scalars
-            self._pointer.value = self.buffer_state.pointer
-            self._size.value = self.buffer_state.size
-            self._max_priority.value = self.buffer_state.max_priority
-
-    def sample_batch(
-        self, batch_size: int, beta: float, min_size: int = 0
-    ) -> Tuple[Any, torch.Tensor, torch.Tensor]:
-        with self.lock:
-            if self._size.value < min_size:
-                return None, None, None
-
-            # Sync state
-            self.buffer_state.size = self._size.value
-
-            beta_tensor = torch.tensor(beta, dtype=torch.float32)
-            return sample_per(self.buffer_state, batch_size, beta_tensor)
-
-    def update_priorities(
-        self, tree_indices: torch.Tensor, td_errors: torch.Tensor, alpha: float
-    ):
-        with self.lock:
-            self.buffer_state = update_priorities(
-                self.buffer_state, tree_indices, td_errors, alpha
-            )
-            self._max_priority.value = self.buffer_state.max_priority
+# SharedPERBuffer is imported from atomic_rl.buffers
 
 
 def actor_worker(
@@ -261,8 +188,8 @@ def actor_worker(
                     collated["gamma"],
                 )
                 pred_sa = gather_q_values(q_values, collated["action"])
-                _, info_dict = loss_fn(pred_sa, td_target)
-            collated["priority"] = info_dict["priorities"]
+                td_errors = compute_td_error(pred_sa, td_target)
+            collated["priority"] = torch.abs(td_errors).detach()
             buffer.add_transitions(collated)
             local_batch = []
 
@@ -305,14 +232,16 @@ def learner_worker(
     step_count = 0
     while step_count < MAX_LEARNER_STEPS:
         # Sample
-        result = buffer.sample_batch(BATCH_SIZE, BETA, MIN_BUFFER_SIZE)
+        result = buffer.sample_batch(
+            BATCH_SIZE, BETA, MIN_BUFFER_SIZE, normalization="global"
+        )
         if result[0] is None:
             time.sleep(0.1)
             continue
 
-        batch, indices, is_weights = result
+        batch, coords, is_weights = result
         batch = batch.to(device)
-        indices = indices.to(device)
+        coords = coords.to(device)
         is_weights = is_weights.to(device)
 
         # 1. Forward Passes (Online and Target)
@@ -347,19 +276,18 @@ def learner_worker(
                 "td_targets/mean": td_target.mean().detach(),
             }
         )
-        optimizer = apply_gradients_(
-            optimizer,
-            weighted_loss,
-            model=local_model,
-            clip_grad_norm=MAX_GRAD_NORM,
-        )
+        optimizer.zero_grad(set_to_none=True)
+        weighted_loss.backward()
+        torch.nn.utils.clip_grad_norm_(local_model.parameters(), max_norm=MAX_GRAD_NORM)
+        optimizer.step()
 
         # Update shared model
         shared_model.load_state_dict(local_model.state_dict())
 
         # Update priorities
-        td_errors = info["priorities"].detach().cpu()
-        buffer.update_priorities(indices.cpu(), td_errors, ALPHA)
+        td_errors = compute_td_error(pred_sa, td_target)
+        priorities = torch.abs(td_errors).detach().cpu()
+        buffer.update_priorities(coords.cpu(), priorities, ALPHA)
 
         step_count += 1
         if step_count % TARGET_NET_UPDATE_FREQ == 0:
@@ -397,7 +325,7 @@ def main():
     )
     my_selector_fn = argmax_selector
     my_target_fn = compute_q_td_target
-    my_loss_fn = huber_loss
+    my_loss_fn = compute_huber_loss
 
     # Shared model for weight syncing
     shared_model = my_model_creator()
@@ -414,7 +342,7 @@ def main():
         "gamma": (),
         "priority": (),
     }
-    buffer = SharedPERBuffer(BUFFER_CAPACITY, buffer_shapes)
+    buffer = SharedPERBuffer(BUFFER_CAPACITY, buffer_shapes, epsilon=PER_EPSILON)
 
     processes = []
 

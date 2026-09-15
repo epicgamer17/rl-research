@@ -1,162 +1,323 @@
 import torch
+import torch.nn.functional as F
 from tensordict import TensorDict
 from typing import Tuple, Callable, List, Optional
-from ..utils import add_dirichlet_noise
+from .qtransforms import qtransform_by_parent_and_siblings
 
 
 # TODO: should we merge this with select_leaf?
 def puct_score(
-    q_values: torch.Tensor,
-    policy_prior: torch.Tensor,
-    visit_counts: torch.Tensor,
-    total_visit_counts: torch.Tensor,
-    min_q: torch.Tensor,
-    max_q: torch.Tensor,
-    pb_c_base: float = 19652,
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,  # [B]
+    depth: int,
+    *,
     pb_c_init: float = 1.25,
+    pb_c_base: float = 19652.0,
+    qtransform: Callable = qtransform_by_parent_and_siblings,
+    **kwargs,
 ) -> torch.Tensor:
     """
-    The PUCT score.
+    Computes PUCT scores matching mctx.muzero_action_selection.
 
-    The formula is: Q(s,a) + U(s,a)
-    where U(s,a) = C * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
-
-    Args:
-        q_values: Q-values of the actions.
-        policy_prior: Prior probabilities of the actions. Not logits!
-        visit_counts: Visit counts for each action.
-        total_visit_counts: Total visit count for the parent state.
-        pb_c_base: Base constant for PUCT.
-        pb_c_init: Additive constant for PUCT (used for virtual exploration).
+    Formula: Q(s,a) + c_puct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
     """
-    # 1. Fail Fast: Ensure shape contracts match expected [B, num_actions] and [B, 1] dimensions
-    assert (
-        q_values.shape == policy_prior.shape
-    ), f"q_values shape {q_values.shape} must match policy_prior shape {policy_prior.shape}"
-    assert (
-        q_values.shape == visit_counts.shape
-    ), f"q_values shape {q_values.shape} must match visit_counts shape {visit_counts.shape}"
-    assert (
-        total_visit_counts.shape[:-1] == q_values.shape[:-1]
-    ), f"total_visit_counts batch shape {total_visit_counts.shape[:-1]} must match q_values batch shape {q_values.shape[:-1]}"
+    batch_size = tree.batch_size[0]
+    batch_range = torch.arange(batch_size, device=tree.device)
 
-    # Ensure policy prior is normalized (sums to 1)
-    assert torch.allclose(
-        policy_prior.sum(dim=-1),
-        torch.ones_like(policy_prior.sum(dim=-1)),
-        atol=1e-5,
-    ), "Policy prior must be normalized (sum to 1) for PUCT calculation."
+    assert tree["node_visits"].ndim == 2, (
+        f"tree node buffers must be flat [B, N], got shape "
+        f"{tuple(tree['node_visits'].shape)}"
+    )
+    assert parent_nodes.shape == (
+        batch_size,
+    ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    assert (
+        isinstance(depth, int) and depth >= 0
+    ), f"depth must be a non-negative int, got {depth!r}"
+    assert pb_c_init >= 0, f"pb_c_init must be >= 0, got {pb_c_init}"
+    assert pb_c_base >= 0, f"pb_c_base must be >= 0, got {pb_c_base}"
 
-    tot_visits_t = torch.as_tensor(
-        total_visit_counts, dtype=q_values.dtype, device=q_values.device
+    # 1. Fetch node and child statistics
+    visit_counts = tree["children_visits"][
+        batch_range, parent_nodes
+    ]  # [B, num_actions]
+    node_visits = tree["node_visits"][batch_range, parent_nodes].unsqueeze(-1)  # [B, 1]
+    prior_logits = tree["children_prior_logits"][
+        batch_range, parent_nodes
+    ]  # [B, num_actions]
+    prior_probs = F.softmax(prior_logits, dim=-1)
+
+    # 2. Compute PUCT exploration penalty
+    pb_c = pb_c_init + torch.log((node_visits + pb_c_base + 1.0) / pb_c_base)
+    policy_score = (
+        torch.sqrt(node_visits.to(prior_probs.dtype))
+        * pb_c
+        * prior_probs
+        / (visit_counts + 1.0)
     )
 
-    pb_c = torch.log((tot_visits_t + pb_c_base + 1) / pb_c_base) + pb_c_init
-    pb_c = pb_c * (torch.sqrt(tot_visits_t) / (visit_counts + 1))
+    # 3. Compute transformed Q-value score
+    # NOTE: qtransform does the slicing for player, so return is [B, num_actions] (i think thats right?)
+    value_score = qtransform(tree, parent_nodes)  # [B, num_actions]
 
-    # MuZero: Normalize Q-values to [0, 1] before adding the PUCT term
-    normalized_q = _normalize_q_values(q_values, min_q, max_q)
-    raw_puct = normalized_q + pb_c * policy_prior
+    # 4. Add tiny uniform noise for tie breaking (matches mctx)
+    noise = 1e-7 * torch.rand_like(value_score)
+    scores = value_score + policy_score + noise
 
-    # Zero-prior guard: Actions with 0 prior (e.g. masked illegal actions) receive -1e9 penalty
-    return torch.where(policy_prior > 0, raw_puct, raw_puct.new_tensor(-1e9))
+    # 5. Mask invalid actions at root and internal nodes
+    # TODO: needed for qidentity and also vmix i think, to work for alphazero, but feels hacky. Make this simpler and less guessy. Follow simple not easy here
+    legal_mask = (prior_logits > -1e7) & torch.isfinite(prior_logits)
+    if depth == 0 and "root_legal_mask" in tree.keys():
+        legal_mask = legal_mask & tree["root_legal_mask"]
+
+    min_val = torch.finfo(scores.dtype).min
+    scores = torch.where(legal_mask, scores, min_val)
+
+    return scores
+
+
+def puct_selection(
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,
+    depth: int,
+    *,
+    pb_c_init: float = 1.25,
+    pb_c_base: float = 19652.0,
+    qtransform: Callable = qtransform_by_parent_and_siblings,
+    **kwargs,
+) -> torch.Tensor:
+    """Selects actions using PUCT argmax matching mctx.muzero_action_selection.
+
+    Args:
+        tree: The MCTS tree TensorDict.
+        parent_nodes: Parent node indices [B].
+        depth: Current tree depth.
+        pb_c_init: PUCT exploration constant c1.
+        pb_c_base: PUCT exploration constant c2.
+        qtransform: Q-value transformation function.
+
+    Returns:
+        Selected action indices [B] from parent_nodes.
+    """
+    scores = puct_score(
+        tree,
+        parent_nodes,
+        depth,
+        pb_c_init=pb_c_init,
+        pb_c_base=pb_c_base,
+        qtransform=qtransform,
+        **kwargs,
+    )
+    return scores.argmax(dim=-1)
+
+
+def quasi_sampling_selection(
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,
+    depth: int,
+    *,
+    qtransform: Optional[Callable] = None,
+    **kwargs,
+) -> torch.Tensor:
+    """Selects chance outcomes using quasi-sampling argmax (Stochastic MuZero Eq. 4 / Footnote 1).
+
+    Formula:
+        c* = argmax_c [ Pr(c | as) / (N(as, c) + 1) ]
+
+    Args:
+        tree: The MCTS tree TensorDict.
+        parent_nodes: Parent node indices [B].
+        depth: Current tree depth.
+        qtransform: Unused in chance selection, accepted for signature compatibility.
+
+    Returns:
+        Selected chance outcome indices [B] from parent_nodes.
+    """
+    batch_size = parent_nodes.shape[0]
+    batch_range = torch.arange(batch_size, device=parent_nodes.device)
+
+    # 1. Fetch prior logits over chance codes and child visits N(c)
+    prior_logits = tree["children_prior_logits"][
+        batch_range, parent_nodes
+    ]  # [B, num_outcomes]
+    children_visits = tree["children_visits"][
+        batch_range, parent_nodes
+    ]  # [B, num_outcomes]
+
+    # 2. Convert logits to probabilities Pr(c | as)
+    prior_probs = F.softmax(prior_logits, dim=-1)
+
+    # 3. Compute quasi-sampling score: Pr(c | as) / (N(c) + 1.0)
+    scores = prior_probs / (children_visits.to(prior_probs.dtype) + 1.0)
+
+    # 4. Tiny uniform noise for tie breaking (matches mctx)
+    noise = 1e-7 * torch.rand_like(scores)
+    scores = scores + noise
+
+    # 5. Mask invalid or padded branches if present
+    legal_mask = kwargs.get("legal_mask", None)
+    if legal_mask is None:
+        legal_mask = (prior_logits > -1e7) & torch.isfinite(prior_logits)
+
+    min_val = torch.finfo(scores.dtype).min
+    scores = torch.where(legal_mask, scores, min_val)
+
+    return scores.argmax(dim=-1)
+
+
+def make_stochastic_selection_fn(
+    decision_selection_fn: Callable[[TensorDict, torch.Tensor, int], torch.Tensor],
+    chance_selection_fn: Callable[[TensorDict, torch.Tensor, int], torch.Tensor],
+) -> Callable[[TensorDict, torch.Tensor, int], torch.Tensor]:
+    r"""Creates a composite selection function routing between decision and chance nodes.
+
+    In Stochastic MuZero (Antonoglou et al., ICLR 2022), tree search alternates between
+    decision nodes (choosing environment action $a \in \mathcal{A}$) and chance / afterstate
+    nodes (choosing chance code $c \in \mathcal{C}$).
+
+    Args:
+        decision_selection_fn: Callable `(tree, parent_nodes, depth, **kwargs) -> actions [B]`
+            used for decision nodes (e.g. `puct_selection` or a pre-configured partial).
+        chance_selection_fn: Callable `(tree, parent_nodes, depth, **kwargs) -> chance_codes [B]`
+            used for chance/afterstate nodes (e.g. `quasi_sampling_selection` or a pre-configured partial).
+
+    Returns:
+        A callable selection function `(tree, parent_nodes, depth, **kwargs) -> indices [B]`
+        compatible with `select_leaf` and MCTS search algorithms.
+    """
+    assert callable(
+        decision_selection_fn
+    ), f"decision_selection_fn must be callable, got {decision_selection_fn!r}"
+    assert callable(
+        chance_selection_fn
+    ), f"chance_selection_fn must be callable, got {chance_selection_fn!r}"
+
+    def stochastic_selection_fn(
+        tree: TensorDict,
+        parent_nodes: torch.Tensor,
+        depth: int,
+        **kwargs,
+    ) -> torch.Tensor:
+        batch_size = parent_nodes.shape[0]
+        device = parent_nodes.device
+        batch_range = torch.arange(batch_size, device=device)
+
+        is_chance = tree["is_chance"][batch_range, parent_nodes]
+        assert is_chance.shape == (batch_size,), (
+            f"is_chance mask shape mismatch: expected [{batch_size}], got {tuple(is_chance.shape)}"
+        )
+        assert is_chance.dtype == torch.bool, (
+            f"is_chance mask must be boolean, got dtype {is_chance.dtype}"
+        )
+
+        # Fast path 1: All nodes at this step are decision nodes (common at even depths)
+        if not is_chance.any():
+            return decision_selection_fn(tree, parent_nodes, depth, **kwargs)
+
+        # Fast path 2: All nodes at this step are chance nodes (common at odd depths)
+        if is_chance.all():
+            return chance_selection_fn(tree, parent_nodes, depth, **kwargs)
+
+        # Heterogeneous / mixed batch: evaluate both and route per-item
+        decision_actions = decision_selection_fn(tree, parent_nodes, depth, **kwargs)
+        chance_actions = chance_selection_fn(tree, parent_nodes, depth, **kwargs)
+        return torch.where(is_chance, chance_actions, decision_actions)
+
+    return stochastic_selection_fn
 
 
 # TODO: work with Batched MCTS, batch_mcts.pdf
 # TODO: work with Vectorized MCTS
 # TODO: work iwth Batched + Vectorized MCTS
-# TODO: can we reuse our action_selection.py methods/functions?
 # TODO: Stochastic MuZero
+# TODO: stochastic muzero will require a different selection strategy based on the node type. begs the question if it should take a selection fn instead of some sort... This would also be good, as even though stochastic muzero uses the quasi sampling, if we wanted to do real sampling (for possibly dreamer, or just standard MCTS) it would have to not use an argmax
 def select_leaf(
-    tree: TensorDict, pb_c_base: float, pb_c_init: float, max_depth: int = 512
-) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]:
-    """
-    Selects a leaf node to expand by following the PUCT policy.
+    tree: TensorDict,
+    selection_fn: Callable[[TensorDict, torch.Tensor, int], torch.Tensor],
+    max_depth: Optional[int] = None,
+) -> Tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+]:
+    """Selects leaf nodes to expand by descending the search tree.
 
     Args:
         tree: The MCTS tree TensorDict.
-        pb_c_base: PUCT base constant.
-        pb_c_init: PUCT init constant.
-        max_depth: Maximum depth to search to avoid infinite loops. For default AlphaZero and MuZero behaviour simply set this to num_simulations.
+        selection_fn: A callable `(tree, parent_nodes, depth) -> action [B]`
+            specifying how edges are chosen at each node (e.g. `functools.partial(puct_selection, ...)`,
+            a stochastic chance-aware selector, or Gumbel sequential halving).
+        max_depth: Maximum number of edges from the root to descend before
+            giving up on finding an unvisited node. Defaults to the number of
+            search simulations (the tree width), matching mctx.
 
     Returns:
-        A tuple containing:
-            - leaf_indices: The indices of the selected leaf nodes [B].
-            - trajectory: A list of (node_idx, action_idx, mask) tuples for backpropagation.
+        leaf_parents: Parent node indices [B] where expansion occurs.
+        leaf_actions: Actions taken [B] from leaf_parents.
+        expansion_mask: Mask [B] indicating which batch items require expansion (True)
+          vs items that hit terminal nodes or max depth (False).
+        trajectory: List of (node_idx, action_idx, active_mask) tuples.
     """
     batch_size = tree.batch_size[0]
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
 
-    current_node = tree["min_q"].new_zeros(batch_size, dtype=torch.long)
-    trajectory = []  # List of (node_idx, action_idx, mask)
+    assert callable(
+        selection_fn
+    ), f"selection_fn must be callable, got {selection_fn!r}"
 
-    # Track which batch elements are still descending the tree
-    active_mask = tree["min_q"].new_ones(batch_size, dtype=torch.bool)
+    if max_depth is None:
+        max_depth = tree["node_visits"].shape[-1] - 1
 
-    # The search depth is naturally bounded by the number of nodes or a safety limit
-    for _ in range(max_depth):
-        # 1. Get stats for current nodes
-        q_values = tree["children_q_values"][batch_range, current_node]
-        priors = tree["children_prior"][batch_range, current_node]
-        visits = tree["children_visits"][batch_range, current_node]
-        total_visits = visits.sum(dim=-1, keepdim=True)
+    assert tree["node_visits"].ndim == 2, (
+        f"tree node buffers must be flat [B, N], got shape "
+        f"{tuple(tree['node_visits'].shape)}"
+    )
+    assert (
+        isinstance(max_depth, int)
+        and not isinstance(max_depth, bool)
+        and max_depth >= 1
+    ), f"max_depth must be an int >= 1, got {max_depth!r}"
 
-        # 2. Calculate PUCT scores
-        scores = puct_score(
-            q_values,
-            priors,
-            visits,
-            total_visits,
-            tree["min_q"],
-            tree["max_q"],
-            pb_c_base,
-            pb_c_init,
-        )
+    current_node = torch.zeros(batch_size, dtype=torch.long, device=device)
+    active_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
 
-        # 3. Select best action
-        # TODO: should we use action_selection.py here? Does it make sense to use it?
-        action = torch.argmax(scores, dim=-1)
+    leaf_parents = torch.zeros(batch_size, dtype=torch.long, device=device)
+    leaf_actions = torch.zeros(batch_size, dtype=torch.long, device=device)
+    expansion_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
-        # 4. Check for leaf (child index is -1) or terminal node
-        next_node = tree["children_index"][batch_range, current_node, action]
-        is_leaf = next_node == -1
+    trajectory = []
+
+    for depth in range(max_depth):
+        # 1. Stop descent if node is terminal
         is_term = tree["is_terminal"][batch_range, current_node]
-
-        # 5. Record to trajectory (only for elements that were active at the START of this step)
-        trajectory.append((current_node.clone(), action.clone(), active_mask.clone()))
-
-        # 6. Update active mask: those who hit a leaf or terminal node are no longer active for the NEXT step
-        active_mask = active_mask & (~is_leaf) & (~is_term)
+        active_mask = active_mask & (~is_term)
 
         if not active_mask.any():
             break
 
-        # Update current_node for elements that haven't hit a leaf/terminal
+        # 2. Select actions for active parents via selection_fn
+        action = selection_fn(tree, current_node, depth)  # [B]
+
+        # 3. Record trajectory step for active items
+        trajectory.append((current_node.clone(), action.clone(), active_mask.clone()))
+
+        # 4. Check if child is an unvisited leaf (-1)
+        next_node = tree["children_index"][batch_range, current_node, action]
+        is_leaf = next_node == -1
+
+        # 5. Capture exact expansion targets for items hitting an unvisited leaf
+        newly_found_leaf = active_mask & is_leaf
+        if newly_found_leaf.any():
+            leaf_parents = torch.where(newly_found_leaf, current_node, leaf_parents)
+            leaf_actions = torch.where(newly_found_leaf, action, leaf_actions)
+            expansion_mask = expansion_mask | newly_found_leaf
+
+        # 6. Deactivate items reaching leaf
+        active_mask = active_mask & (~is_leaf)
+
+        # 7. Advance current_node for items still actively descending
         current_node = torch.where(active_mask, next_node, current_node)
 
-    return current_node, trajectory
-
-
-# TODO: soft min max stats? efficient_zero.pdf
-def _normalize_q_values(
-    q_values: torch.Tensor, min_q: torch.Tensor, max_q: torch.Tensor
-) -> torch.Tensor:
-    """
-    Normalizes Q-values to [0, 1] using the min/max observed in the tree.
-
-    Args:
-        q_values: Q-values to normalize [..., Num_Actions].
-        min_q: Minimum observed Q-value per batch element [B].
-        max_q: Maximum observed Q-value per batch element [B].
-    """
-    # Reshape min/max for broadcasting if q_values is [B, A]
-    if q_values.ndim > min_q.ndim:
-        min_q = min_q.view(-1, 1)
-        max_q = max_q.view(-1, 1)
-
-    span = max_q - min_q
-    # Protect against division by zero and handle uninitialized min/max
-    # TODO: is this justified by the original paper or is this soft min max stats from efficient zero bleeding through?
-    span = torch.where(span > 1e-6, span, torch.ones_like(span))
-    return (q_values - min_q) / span
+    return leaf_parents, leaf_actions, expansion_mask, trajectory

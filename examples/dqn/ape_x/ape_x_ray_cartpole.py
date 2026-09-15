@@ -33,7 +33,7 @@ NOTE: Our implementation uses ray which was not available at the time of the pap
 
 # TODO: attempt a cleanup if possible
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import os
 import time
 import ray
@@ -57,15 +57,14 @@ from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     make_n_step_accumulator,
 )
-from atomic_rl.losses import mse_loss, huber_loss
-from atomic_rl.td import compute_q_td_target
+from atomic_rl.losses import compute_mse_loss, compute_huber_loss
+from atomic_rl.td import compute_q_td_target, compute_td_error
 from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
 )
 from atomic_rl.schedules import get_ape_x_epsilon
-from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # --- Constants ---
 ENV_NAME = "CartPole-v1"
@@ -88,6 +87,7 @@ ACTOR_BATCH_SIZE = 500
 
 ALPHA = 0.6
 BETA = 0.4
+PER_EPSILON = 1e-4
 PREFETCH_COUNT = 3
 N_STEP = 3
 MAX_GRAD_NORM = 10.0
@@ -115,27 +115,37 @@ class DuelingDQN(nn.Module):
 
 @ray.remote
 class ReplayBufferActor:
-    def __init__(self, capacity: int, shapes: Dict[str, Any]):
+    def __init__(self, capacity: int, shapes: Dict[str, Any], epsilon: float):
         self.buffer_state = init_per_buffer(capacity, shapes)
+        self.epsilon = epsilon
         # Tracking logic initialized once locally
-        self.per_add = with_per_tracking(circular_write_strategy_)
+        self.per_add = with_per_tracking(circular_write_strategy_, epsilon=epsilon)
 
     def add_transitions(self, transitions: TensorDict):
         self.buffer_state = self.per_add(self.buffer_state, transitions)
 
     def sample_batch(
-        self, batch_size: int, beta: float, min_size: int = 0
-    ) -> Tuple[Any, torch.Tensor, torch.Tensor]:
+        self,
+        batch_size: int,
+        beta: float,
+        min_size: int = 0,
+        normalization: str = "global",
+    ) -> Tuple[Any, Any, torch.Tensor]:
         if self.buffer_state.size < min_size:
             return None, None, None
         beta_tensor = torch.tensor(beta, dtype=torch.float32)
-        return sample_per(self.buffer_state, batch_size, beta_tensor)
+        return sample_per(
+            self.buffer_state,
+            batch_size,
+            beta_tensor,
+            normalization=normalization,
+        )
 
     def update_priorities(
-        self, tree_indices: torch.Tensor, td_errors: torch.Tensor, alpha: float
+        self, coords: Union[torch.Tensor, Tuple[torch.Tensor, ...]], td_errors: torch.Tensor, alpha: float
     ):
         self.buffer_state = update_priorities(
-            self.buffer_state, tree_indices, td_errors, alpha
+            self.buffer_state, coords, td_errors, alpha=alpha, epsilon=self.epsilon
         )
 
     def get_info(self) -> Dict[str, Any]:
@@ -291,9 +301,9 @@ class ActorActor:
                         collated["gamma"],
                     )
                     pred_sa = gather_q_values(q_values, collated["action"])
-                    _, info_dict = self.loss_fn(pred_sa, td_target)
+                    td_errors = compute_td_error(pred_sa, td_target)
 
-                collated["priority"] = info_dict["priorities"]
+                collated["priority"] = torch.abs(td_errors).detach()
 
                 # Push the prioritized batch to the buffer
                 self.buffer.add_transitions.remote(collated)
@@ -346,7 +356,9 @@ class LearnerActor:
         # 1. Prime the queue if needed
         while len(self.prefetch_queue) < PREFETCH_COUNT:
             self.prefetch_queue.append(
-                self.buffer.sample_batch.remote(BATCH_SIZE, BETA, MIN_BUFFER_SIZE)
+                self.buffer.sample_batch.remote(
+                    BATCH_SIZE, BETA, MIN_BUFFER_SIZE, normalization="global"
+                )
             )
 
         # 2. Wait for at least one batch to be ready
@@ -357,13 +369,15 @@ class LearnerActor:
         if result[0] is None:
             # Maintain queue depth and return None
             self.prefetch_queue.append(
-                self.buffer.sample_batch.remote(BATCH_SIZE, BETA, MIN_BUFFER_SIZE)
+                self.buffer.sample_batch.remote(
+                    BATCH_SIZE, BETA, MIN_BUFFER_SIZE, normalization="global"
+                )
             )
             return None
 
-        batch, indices, is_weights = result
+        batch, coords, is_weights = result
         batch = batch.to(self.device)
-        indices = indices.to(self.device)
+        coords = coords.to(self.device)
         is_weights = is_weights.to(self.device)
 
         # 1. Forward Passes (Online and Target)
@@ -398,16 +412,15 @@ class LearnerActor:
                 "td_targets/mean": td_target.mean().detach(),
             }
         )
-        self.optimizer = apply_gradients_(
-            self.optimizer,
-            weighted_loss,
-            model=self.model,
-            clip_grad_norm=MAX_GRAD_NORM,
-        )
+        self.optimizer.zero_grad(set_to_none=True)
+        weighted_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=MAX_GRAD_NORM)
+        self.optimizer.step()
 
         # Update Priorities
-        td_errors = info["priorities"].detach().cpu()
-        self.buffer.update_priorities.remote(indices.cpu(), td_errors, ALPHA)
+        td_errors = compute_td_error(pred_sa, td_target)
+        priorities = torch.abs(td_errors).detach().cpu()
+        self.buffer.update_priorities.remote(coords.cpu(), priorities, ALPHA)
 
         self.step_count += 1
         if self.step_count % TARGET_NET_UPDATE_FREQ == 0:
@@ -435,7 +448,7 @@ def main():
     my_model_creator = lambda: DuelingDQN(obs_shape, num_actions)
     my_selector_fn = argmax_selector
     my_target_fn = compute_q_td_target
-    my_loss_fn = huber_loss
+    my_loss_fn = compute_huber_loss
 
     # 3. Initialize Buffer
     buffer_shapes = {
@@ -448,7 +461,9 @@ def main():
         "gamma": (),
         "priority": (),
     }
-    buffer = ReplayBufferActor.remote(BUFFER_CAPACITY, buffer_shapes)
+    buffer = ReplayBufferActor.remote(
+        BUFFER_CAPACITY, buffer_shapes, epsilon=PER_EPSILON
+    )
 
     # 4. Initialize Learner with Functional Logic
     learner = LearnerActor.remote(

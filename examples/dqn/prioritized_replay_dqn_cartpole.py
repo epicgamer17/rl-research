@@ -18,7 +18,8 @@ In summary, PER is a simple but effective technique that can significantly impro
 NOTE: below we only implement the TD error based priority method for simplicity.
 """
 
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -39,19 +40,15 @@ from atomic_rl.buffers.replay import (
     with_per_tracking,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.losses import with_per_weights, mse_loss
-from atomic_rl.td import compute_q_td_target
+from atomic_rl.losses import compute_mse_loss
+from atomic_rl.td import compute_q_td_target, compute_td_error
 from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
     with_epsilon_greedy,
 )
-from atomic_rl.utils import (
-    to_tensor,
-    to_numpy_action,
-)
-from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.utils import to_numpy_action
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # Constants
 BATCH_SIZE = 128
@@ -71,6 +68,7 @@ SEED = 42
 ALPHA = 0.6
 BETA_START = 0.4
 BETA_FRAMES = 100000
+PER_EPSILON = 1e-4
 
 # Seeding for reproducibility
 random.seed(SEED)
@@ -97,6 +95,7 @@ env = gym.make("CartPole-v1")
 env = gym.wrappers.RecordEpisodeStatistics(env)
 obs_shape = env.observation_space.shape
 num_actions = env.action_space.n
+
 device = torch.device("cpu")
 
 model = DQN(obs_shape, num_actions).to(device)
@@ -119,7 +118,7 @@ buffer_state = init_per_buffer(
     device=device,
 )
 # Compose circular write with PER tracking
-per_add_transition = with_per_tracking(circular_write_strategy_)
+per_add_transition = with_per_tracking(circular_write_strategy_, epsilon=PER_EPSILON)
 
 obs, info = env.reset(seed=SEED)
 rng_key = torch.Generator(device=device)
@@ -146,7 +145,7 @@ for step in range(MAX_STEPS):
 
     # 2. Act
     with torch.inference_mode():
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
         predictions = model(obs_tensor)
         action, info = action_selector(
             predictions=predictions,
@@ -165,12 +164,12 @@ for step in range(MAX_STEPS):
     # 3. Add to Buffer
     # TODO: URGENT. Creating a new tensor every step in the hotloop. should do in a more efficient way, maybe some thing like the rollout buffer in PPO (possible reuse?) ie store in a rollout buffer before sending to main replay buffer. Idea being its pre allocated basically. Must consider the N-Step case.
     transition = {
-        "obs": to_tensor(obs),
+        "obs": torch.as_tensor(obs),
         "action": action.squeeze(0).detach().to(torch.long),
-        "reward": to_tensor(reward),
-        "terminated": to_tensor(terminated),
-        "truncated": to_tensor(truncated),
-        "next_obs": to_tensor(next_obs),
+        "reward": torch.as_tensor(reward),
+        "terminated": torch.as_tensor(terminated),
+        "truncated": torch.as_tensor(truncated),
+        "next_obs": torch.as_tensor(next_obs),
         "gamma": torch.tensor(GAMMA, dtype=torch.float32),
     }
     buffer_state = per_add_transition(
@@ -198,8 +197,8 @@ for step in range(MAX_STEPS):
         beta_tensor = torch.tensor(beta, dtype=torch.float32, device=device)
 
         # Sample with PER
-        batch, tree_indices, is_weights = sample_per(
-            buffer_state, BATCH_SIZE, beta=beta_tensor
+        batch, coords, is_weights = sample_per(
+            buffer_state, BATCH_SIZE, beta=beta_tensor, normalization="global"
         )
 
         # 1. Forward Passes (Online and Target)
@@ -223,15 +222,23 @@ for step in range(MAX_STEPS):
         pred_sa = gather_q_values(q_values, batch["action"])
 
         # 5. Loss Calculation (PER weighted MSE)
-        per_loss_fn = with_per_weights(mse_loss, is_weights)
-        loss, info_dict = per_loss_fn(pred_sa, td_target)
+        raw_losses, info_dict = compute_mse_loss(pred_sa, td_target)
+        loss = (raw_losses * is_weights).mean()
 
         # Apply Updates
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
         # Update PER Priorities
+        td_errors = compute_td_error(pred_sa, td_target)
+        priorities = torch.abs(td_errors).detach()
         buffer_state = update_priorities(
-            buffer_state, tree_indices, info_dict["priorities"], alpha=ALPHA
+            buffer_state,
+            coords,
+            priorities,
+            alpha=ALPHA,
+            epsilon=PER_EPSILON,
         )
 
         if step % 100 == 0:

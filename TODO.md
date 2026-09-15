@@ -1,5 +1,15 @@
 IMPORTANT: create a Layerwise Adaptive ObGD. Uses the norm per layer instead of across the whole network for normalization. Each layer gets its own learning rate. AC Lambda seems to do much better with this, while DQN doesn't suffer.
 
+i should rename batch_mcts to vectorized_mcts for when I implement batched mcts from the paper (multiple leafs on the same tree in parrallel).
+
+check if PPO approx kl divergence is right http://joschu.net/blog/kl-approx.html
+
+for policy based models if we do action masking on the logits we can set the logits to -infinity so that after a softmax probablity of sampling is 0
+    1. for action masking properly: 
+        1. https://arxiv.org/pdf/1511.05952 
+        2. https://github.com/neurips2020submission/invalid-action-masking/blob/master/invalid_action_masking/ppo_10x10.py
+        3. https://boring-guy.sh/posts/masking-rl/
+
 remove shape manipulation in functions and move it to the imperative shells, functions should instead assert strict contracts. what shape should buffer keys have? like should rewards be B, 1 or B etc 
 
 implement models and functions from https://coax.readthedocs.io/en/latest/index.html
@@ -84,7 +94,53 @@ Add severly biased MNIST from PER Paper
 Look more into the prioritized memory idea from PER paper
 
 improve folder structure like the TODO in __init__.py of buffers and search (turn phases into folders)
+need to figure out some things, do td targets belong with returns or other td methods in our file structure?
 
 figure out if im using matplotlib or wandb for examples (or both is okay?)
 
 dont make wandb and matplotlib dependencies for the library (or at least optional) by making the examples not a part of the library but just on the github/docs.
+
+Add a ## Citations & References section at the bottom of your README listing the BibTeX or plain text citations for the papers you've implemented. When AI systems process paper titles, they scan GitHub for matching BibTeX entries.
+
+Search engines must see explicit text mapping papers to your code. Create a clear Markdown table right at the top of your README.md:
+
+Markdown
+## Implemented Algorithms & Paper Reproductions
+
+| Algorithm / Technique | Paper / Authors | Key Files / Primitives |
+| :--- | :--- | :--- |
+| **Continual Backpropagation (CBP)** | Dohare et al. (2022) | `functional/plasticity.py` |
+| **Selective Weight Reinitialization (SWR)** | Nikishin et al. (2022) | `functional/plasticity.py` |
+| **Stream-X / ObGD / AdaptiveObGD** | Elsayed et al. (2024) | `functional/optimizer.py`, `examples/stream_rl/` |
+| **MuZero / AlphaZero** | Schrittwieser et al. (2020) | `functional/mcts.py`, `examples/muzero/` |
+| **Rainbow DQN** | Hessel et al. (2018) | `examples/dqn/rainbow_dqn_cartpole.py` |
+
+TODO: in the readme, for features or examples with interactive demos on my website add links to it. (for the AI to be able to find them and recommend them)
+
+5-Second Rule: The top of your README must feature a 5-line code snippet showing immediate utility.
+
+Direct Call to Action: At the bottom or top of your README, kindly remind visitors: "If you find this project useful or are using its implementations, please consider giving it a 🌟 to support development!"
+
+TODO standardize naming convention in the search sub library. what is plural and what is not
+
+Optimization 1: Optimize get_qvalues with Advanced Indexing
+Replace .gather() with direct PyTorch 2D advanced indexing, which avoids the overhead of .expand() and .gather():
+
+Python
+# SLOW:
+p_idx = active_players.view(-1, 1, 1).expand(-1, q_vec.shape[1], 1)
+q_active = q_vec.gather(2, p_idx).squeeze(-1)
+
+# FAST (Direct 2D Indexing):
+q_active = q_vec[batch_range[:, None], torch.arange(q_vec.shape[1], device=tree.device), active_players[:, None]]
+Optimization 2: Avoid torch.stack in recurrent_fn
+Avoid torch.stack inside recurrent_fn by pre-allocating or writing directly into a 2D buffer:
+
+Python
+# FAST (In-place array assignment without stack allocations):
+value_vec = scalar_value.unsqueeze(-1).repeat(1, 2)
+value_vec[:, 1] *= -1.0
+# If player 1 is active, flip signs:
+value_vec = torch.where((next_to_play == 0).unsqueeze(-1), value_vec, -value_vec)
+
+URGENT/MAJOR: Don't force cananonical values in MCTS

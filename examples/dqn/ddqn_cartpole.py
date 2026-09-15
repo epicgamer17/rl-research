@@ -7,7 +7,7 @@ Standard DQN Target: $Y_{t}^{DQN} \equiv R_{t+1} + \gamma \max_{a} Q(S_{t+1}, a;
 NOTE: this is implemented inline with common Rainbow Implementations and may not be in line with the original paper.
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,7 +26,7 @@ from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     uniform_sample,
 )
-from atomic_rl.losses import mse_loss
+from atomic_rl.losses import compute_mse_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
@@ -34,8 +34,7 @@ from atomic_rl.action_selection import (
     with_epsilon_greedy,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # Constants
 BATCH_SIZE = 128
@@ -173,7 +172,7 @@ for step in range(MAX_STEPS):
     # --- 3. The Update Loop ---
     if step > MIN_BUFFER_SIZE and step % UPDATE_FREQ == 0:
         # Sample
-        batch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+        batch, _ = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
 
         # 1. Forward Passes (Online and Target)
         q_values = model(batch["obs"])
@@ -197,11 +196,13 @@ for step in range(MAX_STEPS):
         pred_sa = gather_q_values(q_values, batch["action"])
 
         # 5. Loss Calculation (Pure Primitive)
-        loss, info_dict = mse_loss(pred_sa, td_target)
+        loss, info_dict = compute_mse_loss(pred_sa, td_target)
         loss = loss.mean()
 
         # Apply Updates
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
         if step % 100 == 0:
             # W&B handles scalars and histograms of tensors (like priorities) automatically.

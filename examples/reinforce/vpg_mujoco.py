@@ -11,7 +11,7 @@ poor sample efficiency on complex tasks like HalfCheetah. Without the clipping o
 KL-divergence constraints of PPO, VPG updates can be too large, leading to instability.
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,15 +23,15 @@ import random
 import wandb
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
-from atomic_rl.losses import policy_gradient_loss, mse_loss
+from atomic_rl.losses import compute_policy_gradient_loss, compute_mse_loss
 from atomic_rl.utils import (
-    standardize_tensor,
-    to_tensor,
     to_numpy_action,
 )
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.normalization import (
+    standardize_tensor,
+)
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.envs.wrappers import VecNormalize
 
 # Constants
@@ -136,7 +136,7 @@ for episode in range(MAX_EPISODES):
     truncateds = []
 
     while not (terminated or truncated):
-        obs_tensor = to_tensor(obs, device=device)
+        obs_tensor = torch.as_tensor(obs, device=device)
         mu, std = actor(obs_tensor)
         value = critic(obs_tensor)
 
@@ -187,24 +187,26 @@ for episode in range(MAX_EPISODES):
     raw_advantages = returns - values_tensor.detach()
     advantages = standardize_tensor(raw_advantages)
 
-    pg_loss, info_dict = policy_gradient_loss(
+    pg_loss, info_dict = compute_policy_gradient_loss(
         advantages=advantages,
         log_probs=torch.stack(log_probs).flatten(),
     )
     pg_loss = pg_loss.mean()
 
-    critic_loss, _ = mse_loss(values_tensor, returns)
+    critic_loss, _ = compute_mse_loss(values_tensor, returns)
     critic_loss = critic_loss.mean()
 
     loss = pg_loss + CRITIC_COEFF * critic_loss
 
     # Apply Updates
-    optimizer = apply_gradients_(optimizer, loss)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
 
     if episode % 100 == 0:
         explained_var = compute_explained_variance(
-            returns.detach().cpu().numpy(), values_tensor.detach().cpu().numpy()
-        )
+            returns, values_tensor
+        ).item()
         log_dict = info_dict.copy()
         log_dict.update(
             {

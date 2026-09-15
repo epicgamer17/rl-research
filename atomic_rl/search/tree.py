@@ -1,64 +1,154 @@
 import torch
 from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional
-from ..utils import add_dirichlet_noise
+from typing import Optional
 
 
+# TODO: should we do something like our replay buffer. Like an init_mcts_tree and then init_stochastic, init_sampled_muzero, etc etc? Or leave it as is? Or a higher order functions that wrap or make initializations, like make_stochastic, or make_stochastic_init_mcts_tree or something like that? I think matching the replay buffer is maybe a little cleaner. I'm not sure if we should ALSO make the N-player logic a higher order wrapper or not (I lean not). For now keeping a single unified init_mcts_tree but I'm undecided.
 def init_mcts_tree(
     root_embeddings: torch.Tensor,
+    root_logits: torch.Tensor,
+    root_value: torch.Tensor,
+    root_to_play: torch.Tensor,
     num_simulations: int,
     num_actions: int,
+    num_players: int = 2,
+    legal_mask: Optional[torch.Tensor] = None,  # [B, num_actions] True for legal
 ) -> TensorDict:
-    """
-    Initializes the MCTS tree structure as a TensorDict.
+    """Initializes the MCTS tree structure as a TensorDict matching mctx semantics.
 
     Args:
         root_embeddings: Initial state representations [B, D]
+        root_logits: Initial policy logits at the root [B, num_actions]
+        root_value: Initial value estimate at the root [B]
         num_simulations: Number of simulations to perform.
         num_actions: Number of possible actions.
+        num_players: Number of players. Used for slicing rewards, discounts and values for n-player games (more than 2).
+        legal_mask: Boolean mask of legal actions at root [B, num_actions]
 
     Returns:
         A TensorDict representing the initial tree state.
     """
+    assert isinstance(num_simulations, int) and not isinstance(
+        num_simulations, bool
+    ), f"num_simulations must be an int, got {num_simulations!r}"
+    assert num_simulations >= 1, f"num_simulations must be >= 1, got {num_simulations}"
+    assert isinstance(num_actions, int) and not isinstance(
+        num_actions, bool
+    ), f"num_actions must be an int, got {num_actions!r}"
+    assert num_actions >= 1, f"num_actions must be >= 1, got {num_actions}"
+    assert root_embeddings.ndim >= 2, (
+        f"root_embeddings must be at least 2D [B, D...], got shape "
+        f"{tuple(root_embeddings.shape)}"
+    )
     batch_size = root_embeddings.shape[0]
+    assert root_logits.shape == (batch_size, num_actions), (
+        f"root_logits shape mismatch: expected [{batch_size}, {num_actions}], "
+        f"got {tuple(root_logits.shape)}"
+    )
+    assert root_value.shape == (
+        batch_size,
+        num_players,
+    ), f"root_value shape mismatch: expected [{batch_size, num_players}], got {tuple(root_value.shape)}"
+    if legal_mask is not None:
+        assert legal_mask.shape == (batch_size, num_actions), (
+            f"legal_mask shape mismatch: expected [{batch_size}, {num_actions}], "
+            f"got {tuple(legal_mask.shape)}"
+        )
     max_nodes = num_simulations + 1  # Root + 1 node per simulation
 
-    # We pre-allocate the tree to avoid dynamic resizing (Torch Compile friendly)
+    # Pre-allocate the tree tensors (Torch Compile friendly)
     tree = TensorDict(
         {
-            "embeddings": root_embeddings.new_zeros(
-                (batch_size, max_nodes, *root_embeddings.shape[1:])
+            # Node-level statistics [B, max_nodes]
+            "node_visits": root_embeddings.new_zeros(
+                (batch_size, max_nodes), dtype=torch.long
             ),
+            "raw_values": root_embeddings.new_zeros(
+                (batch_size, max_nodes, num_players), dtype=torch.float32
+            ),
+            "node_values": root_embeddings.new_zeros(
+                (batch_size, max_nodes, num_players), dtype=torch.float32
+            ),
+            # NO_PARENT initialized to -1
+            "parents": root_embeddings.new_full(
+                (batch_size, max_nodes), -1, dtype=torch.long
+            ),
+            "action_from_parent": root_embeddings.new_full(
+                (batch_size, max_nodes), -1, dtype=torch.long
+            ),
+            # Structural edges [B, max_nodes, num_actions]
             "children_index": root_embeddings.new_full(
-                (batch_size, max_nodes, num_actions),
-                -1,
-                dtype=torch.long,
+                (batch_size, max_nodes, num_actions), -1, dtype=torch.long
             ),
-            "children_prior": root_embeddings.new_zeros(
+            "children_prior_logits": root_embeddings.new_zeros(
                 (batch_size, max_nodes, num_actions)
             ),
             "children_visits": root_embeddings.new_zeros(
-                (batch_size, max_nodes, num_actions)
+                (batch_size, max_nodes, num_actions), dtype=torch.long
             ),
             "children_rewards": root_embeddings.new_zeros(
-                (batch_size, max_nodes, num_actions)
+                (batch_size, max_nodes, num_actions, num_players), dtype=torch.float32
             ),
-            "children_q_values": root_embeddings.new_zeros(
-                (batch_size, max_nodes, num_actions)
+            "children_discounts": root_embeddings.new_ones(
+                (batch_size, max_nodes, num_actions, num_players), dtype=torch.float32
             ),
-            "node_counts": root_embeddings.new_ones(batch_size, dtype=torch.long),
+            "children_values": root_embeddings.new_zeros(
+                (batch_size, max_nodes, num_actions, num_players), dtype=torch.float32
+            ),
+            # Model & Environment States
+            "embeddings": root_embeddings.new_zeros(
+                (batch_size, max_nodes, *root_embeddings.shape[1:])
+            ),
             "to_play": root_embeddings.new_zeros(
-                batch_size, max_nodes, dtype=torch.long
+                (batch_size, max_nodes), dtype=torch.long
             ),
             "is_terminal": root_embeddings.new_zeros(
                 (batch_size, max_nodes), dtype=torch.bool
             ),
-            "min_q": root_embeddings.new_full((batch_size,), 1e9),
-            "max_q": root_embeddings.new_full((batch_size,), -1e9),
+            # Chance node indicator (Stochastic MuZero)
+            "is_chance": root_embeddings.new_zeros(
+                (batch_size, max_nodes), dtype=torch.bool
+            ),
+            # Tree-wide min and max value statistics (MuZero MinMaxStats) [B]
+            "tree_min_value": root_embeddings.new_full((batch_size,), float("inf")),
+            "tree_max_value": root_embeddings.new_full((batch_size,), float("-inf")),
+            # Node counter starts at 1 (index 0 is root)
+            "node_counts": root_embeddings.new_ones(batch_size, dtype=torch.long),
+            # Root action mask (mctx uses root_invalid_actions = ~legal_mask)
+            "root_legal_mask": (
+                legal_mask
+                if legal_mask is not None
+                else root_embeddings.new_ones(
+                    (batch_size, num_actions), dtype=torch.bool
+                )
+            ),
         },
         batch_size=[batch_size],
     )
 
-    # Initialize root (index 0)
+    # Mask illegal actions in root prior logits
+    masked_root_logits = root_logits.clone()
+    if legal_mask is not None:
+        min_val = torch.finfo(masked_root_logits.dtype).min
+        masked_root_logits = masked_root_logits.masked_fill(~legal_mask, min_val)
+
+    # Populate root node (index 0)
     tree["embeddings"][:, 0] = root_embeddings
+    tree["raw_values"][:, 0] = root_value
+    tree["node_values"][:, 0] = root_value
+    tree["to_play"][:, 0] = root_to_play
+    tree["is_terminal"][:, 0] = False
+    tree["is_chance"][:, 0] = False
+    tree["children_prior_logits"][:, 0] = masked_root_logits
+    # The root is expanded once at init (mctx update_tree_node), so the first
+    # selection uses sqrt(1) * pb_c * prior (argmax-prior) rather than a
+    # noise-only tie-break from a zero visit count.
+    tree["node_visits"][:, 0] = 1
+
+    # Initialize tree-wide min/max bounds with acting player root value
+    p_idx = root_to_play.unsqueeze(-1)
+    root_acting_val = root_value.gather(1, p_idx).squeeze(-1)
+    tree["tree_min_value"].copy_(root_acting_val)
+    tree["tree_max_value"].copy_(root_acting_val)
+
     return tree

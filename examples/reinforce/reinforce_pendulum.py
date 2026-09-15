@@ -5,7 +5,8 @@ REINFORCE adapted for continuous action spaces using a Gaussian policy.
 The Actor outputs the mean (mu) and has a learnable log standard deviation (log_std).
 """
 
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,15 +18,15 @@ import random
 import wandb
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
-from atomic_rl.losses import policy_gradient_loss
+from atomic_rl.losses import compute_policy_gradient_loss
 from atomic_rl.utils import (
     ema_update_,
+    to_numpy_action,
+)
+from atomic_rl.normalization import (
     standardize_tensor,
     scale_tensor_by_std,
-    to_tensor,
-    to_numpy_action,
 )
 
 # Constants
@@ -97,7 +98,7 @@ for episode in range(MAX_EPISODES):
     truncateds = []
 
     while not (terminated or truncated):
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
         mu, std = actor(obs_tensor)
 
         # Sample action using Gaussian selector
@@ -152,14 +153,16 @@ for episode in range(MAX_EPISODES):
     # 3. Optional Scaling
     advantages = scale_tensor_by_std(raw_advantages)
 
-    loss, info_dict = policy_gradient_loss(
+    loss, info_dict = compute_policy_gradient_loss(
         advantages=advantages,
         log_probs=torch.stack(log_probs).flatten(),
     )
     loss = loss.mean()
 
     # Apply Updates
-    optimizer = apply_gradients_(optimizer, loss)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
 
     if episode % 100 == 0:
         log_dict = info_dict.copy()

@@ -1,7 +1,6 @@
 import torch
 from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional
-from ..utils import add_dirichlet_noise
+from typing import Optional
 
 
 # TODO: legal move masking for AlphaZero and terminal nodes for AlphaZero
@@ -9,47 +8,139 @@ from ..utils import add_dirichlet_noise
 # TODO: initial value for unvisited nodes, allow options, AlphaZero and MuZero: 0, Gumbel Muzero, v_mix, EfficientZero and Batch MCTS mean score
 def expand_node_(
     tree: TensorDict,
-    parent_nodes: torch.Tensor,
-    actions_taken: torch.Tensor,
-    policy_logits: torch.Tensor,
-    rewards: torch.Tensor,  # From dynamics_fn
-    next_embeddings: torch.Tensor,  # From dynamics_fn
-    next_to_play: torch.Tensor,  # From dynamics_fn
-    is_terminal: torch.Tensor = None,
+    parent_nodes: torch.Tensor,  # [B]
+    actions_taken: torch.Tensor,  # [B]
+    policy_logits: torch.Tensor,  # [B, A]
+    value: torch.Tensor,  # [B, P]
+    rewards: torch.Tensor,  # [B, P]
+    discounts: torch.Tensor,  # [B, P]
+    next_embeddings: torch.Tensor,  # [B, D...]
+    players: torch.Tensor,  # [B] next active player to play
+    legal_mask: Optional[torch.Tensor] = None,  # [B, A]
+    masks: Optional[torch.Tensor] = None,  # [B] boolean mask
+    is_chance: Optional[torch.Tensor] = None,  # [B] boolean indicator for chance nodes
 ):
-    """
-    Adds newly evaluated nodes to the tree.
-
-    Args:
-        tree: The MCTS tree TensorDict.
-        parent_nodes: Indices of the parent nodes [B].
-        actions_taken: Actions taken from parents that led to new nodes [B].
-        policy_logits: Predicted policy logits for the new nodes [B, A].
-        rewards: Rewards received during transition [B].
-        next_embeddings: Embeddings of the new nodes [B, D].
-        next_to_play: The player whose turn it is in the new node [B].
-        is_terminal: Boolean mask indicating terminal nodes [B].
-    """
+    """Adds newly evaluated nodes to the MCTS tree in-place for N-player games."""
     batch_size = tree.batch_size[0]
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
+    num_players = tree["node_values"].shape[-1]
+    num_actions = tree["children_index"].shape[-1]
 
-    # 1. Get the next available indices for each batch element
-    new_node_indices = tree["node_counts"]
+    # Fail fast on mismatched input shapes
+    assert (
+        tree["node_visits"].ndim == 2
+    ), f"tree node buffers must be flat [B, N], got shape {tuple(tree['node_visits'].shape)}"
+    assert parent_nodes.shape == (
+        batch_size,
+    ), f"parent_nodes shape mismatch: expected [{batch_size}], got {tuple(parent_nodes.shape)}"
+    assert actions_taken.shape == (
+        batch_size,
+    ), f"actions_taken shape mismatch: expected [{batch_size}], got {tuple(actions_taken.shape)}"
+    assert policy_logits.shape == (batch_size, num_actions), (
+        f"policy_logits shape mismatch: expected [{batch_size}, {num_actions}], "
+        f"got {tuple(policy_logits.shape)}"
+    )
+    assert players.shape == (
+        batch_size,
+    ), f"players shape mismatch: expected [{batch_size}], got {tuple(players.shape)}"
+    assert (
+        value.shape == rewards.shape == discounts.shape == (batch_size, num_players)
+    ), (
+        f"value/rewards/discounts must all be [{batch_size}, {num_players}], got "
+        f"{tuple(value.shape)}, {tuple(rewards.shape)}, {tuple(discounts.shape)}"
+    )
 
-    # 2. Update the parent to point to the new children
-    tree["children_index"][batch_range, parent_nodes, actions_taken] = new_node_indices
+    expected_embed = (batch_size, *tree["embeddings"].shape[2:])
+    assert (
+        next_embeddings.shape == expected_embed
+    ), f"next_embeddings shape {tuple(next_embeddings.shape)} does not match expected {expected_embed}"
 
-    # 3. Store the new node data
-    tree["embeddings"][batch_range, new_node_indices] = next_embeddings
-    tree["children_rewards"][batch_range, parent_nodes, actions_taken] = rewards
-    tree["to_play"][batch_range, new_node_indices] = next_to_play
-    if is_terminal is not None:
-        tree["is_terminal"][batch_range, new_node_indices] = is_terminal
+    if legal_mask is not None:
+        assert legal_mask.shape == (batch_size, num_actions), (
+            f"legal_mask shape mismatch: expected [{batch_size}, {num_actions}], "
+            f"got {tuple(legal_mask.shape)}"
+        )
+    if masks is not None:
+        assert masks.shape == (
+            batch_size,
+        ), f"masks shape mismatch: expected [{batch_size}], got {tuple(masks.shape)}"
 
-    # 4. Initialize priors for the new node (apply softmax to logits)
-    priors = torch.softmax(policy_logits, dim=-1)
-    tree["children_prior"][batch_range, new_node_indices] = priors
+    if is_chance is not None:
+        assert is_chance.shape == (
+            batch_size,
+        ), f"is_chance shape mismatch: expected [{batch_size}], got {tuple(is_chance.shape)}"
+        assert (
+            is_chance.dtype == torch.bool
+        ), f"is_chance must be boolean, got dtype {is_chance.dtype}"
 
-    # 5. Increment node counts
-    tree["node_counts"] += 1
+    # 1. Filter active batch elements if a mask is provided
+    if masks is not None:
+        b_idx = batch_range[masks]
+        p_idx = parent_nodes[masks]
+        a_idx = actions_taken[masks]
+
+        # Early return if no batch elements are active
+        if b_idx.numel() == 0:
+            return
+
+        policy_logits = policy_logits[masks]
+        value = value[masks]
+        rewards = rewards[masks]
+        discounts = discounts[masks]
+        next_embeddings = next_embeddings[masks]
+        players = players[masks]
+        if is_chance is not None:
+            active_is_chance = is_chance[masks]
+        else:
+            active_is_chance = None
+
+        if legal_mask is not None:
+            legal_mask = legal_mask[masks]
+    else:
+        b_idx = batch_range
+        p_idx = parent_nodes
+        a_idx = actions_taken
+        active_is_chance = is_chance
+
+    # 2. Allocate new node indices per batch item
+    new_node_indices = tree["node_counts"][b_idx]
+
+    # 3. Update structural forward edge: parent -> child
+    tree["children_index"][b_idx, p_idx, a_idx] = new_node_indices
+    tree["children_rewards"][b_idx, p_idx, a_idx] = rewards
+    tree["children_discounts"][b_idx, p_idx, a_idx] = discounts
+
+    # 4. Update structural reverse edge: child -> parent
+    tree["parents"][b_idx, new_node_indices] = p_idx
+    tree["action_from_parent"][b_idx, new_node_indices] = a_idx
+
+    # 5. Initialize children of the NEW node to UNVISITED (-1)
+    tree["children_index"][b_idx, new_node_indices] = -1
+
+    # 6. Initialize search statistics for the new node
+    tree["node_visits"][b_idx, new_node_indices] = 1
+    tree["children_visits"][b_idx, new_node_indices] = 0
+    tree["children_values"][b_idx, new_node_indices] = 0.0
+
+    # 7. Mask illegal actions safely across float dtypes
+    curr_logits = policy_logits.clone()
+    if legal_mask is not None:
+        min_val = torch.finfo(curr_logits.dtype).min
+        curr_logits = curr_logits.masked_fill(~legal_mask, min_val)
+
+    # 8. Populate child node state, turn order, and values
+    tree["embeddings"][b_idx, new_node_indices] = next_embeddings
+    tree["children_prior_logits"][b_idx, new_node_indices] = curr_logits
+    tree["raw_values"][b_idx, new_node_indices] = value
+    tree["node_values"][b_idx, new_node_indices] = value
+    tree["to_play"][b_idx, new_node_indices] = players
+
+    # A node is terminal if discounts for all players are 0.0
+    tree["is_terminal"][b_idx, new_node_indices] = (discounts == 0.0).all(dim=-1)
+    tree["is_chance"][b_idx, new_node_indices] = (
+        active_is_chance if active_is_chance is not None else False
+    )
+
+    # 9. Increment allocation count for active elements
+    tree["node_counts"][b_idx] += 1

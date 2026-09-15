@@ -39,20 +39,21 @@ from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
 )
-from atomic_rl.initialization import (
-    set_seed,
+from atomic_rl.networks.initialization import (
     lecun_uniform_,
     make_sparse_init,
 )
-from atomic_rl.optimizer import AdaptiveObGD
-from atomic_rl.traces import compute_accumulating_traces
+from atomic_rl.optimization import AdaptiveObGD
+from atomic_rl.td import compute_q_td_target, compute_accumulating_traces
 from atomic_rl.utils import (
-    to_tensor,
+    set_seed,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
     compute_welford_stats,
 )
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.td import compute_q_td_target
+
 
 from atomic_rl.envs.wrappers.normalization import (
     WelfordNormalizeObservation,
@@ -146,7 +147,7 @@ wandb.init(project="stream-q-lambda-cartpole")
 # Main Algorithmic Loop
 # ---------------------------------------------------------------------------
 for step in range(MAX_STEPS):
-    obs_t = to_tensor(obs, device=device).unsqueeze(0)
+    obs_t = torch.as_tensor(obs, device=device).unsqueeze(0)
     current_epsilon = get_linear_schedule(step, EPS_START, EPS_END, EPS_DECAY_FRAMES)
 
     # ---- 1. Policy Forward Pass & Action Selection ------------------------
@@ -175,8 +176,8 @@ for step in range(MAX_STEPS):
     next_obs, reward, terminated, truncated, info = env.step(int(action_np.item()))
     done = terminated or truncated
 
-    next_obs_t = to_tensor(next_obs, device=device).unsqueeze(0)
-    reward_t = to_tensor(reward, device=device)
+    next_obs_t = torch.as_tensor(next_obs, device=device).unsqueeze(0)
+    reward_t = torch.as_tensor(reward, device=device)
 
     # ---- 4. Complete Mathematical Target Calculation ----------------------
     q_current_all = model(obs_t)

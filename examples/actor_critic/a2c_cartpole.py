@@ -20,7 +20,8 @@ NOTE: perhaps this should be in VPG?
 NOTE: This does not implement the LSTM version which was also described in the A3C Paper or the equivalent Sarsa and DQN versions of the A3C algorithm.
 """
 
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,22 +34,22 @@ import wandb
 from functools import partial
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_n_step_returns
-from atomic_rl.losses import policy_gradient_loss, huber_loss, mse_loss, entropy_loss
+from atomic_rl.losses import compute_policy_gradient_loss, compute_huber_loss, compute_mse_loss, compute_entropy_loss
 from torch.optim.lr_scheduler import LinearLR
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
 )
 from atomic_rl.utils import (
-    standardize_tensor,
-    to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
 )
 from tensordict import TensorDict
 
@@ -123,15 +124,14 @@ shapes = {
     "observations": obs_shape,
     "actions": (1,),
     "logprobs": (1,),
-    "rewards": (),
-    "terminated": (),
-    "truncated": (),
+    "rewards": (1,),
+    "terminated": (1,),
+    "truncated": (1,),
     "values": (1,),
     "logits": (num_actions,),
 }
 buffer = init_rollout_buffer(
-    steps_per_env=STEPS_PER_ENV,
-    num_envs=NUM_ENVS,
+    capacity=(NUM_ENVS, STEPS_PER_ENV),
     shapes=shapes,
     device=device,
 )
@@ -151,7 +151,7 @@ for iteration in range(MAX_ITERATIONS):
     # NOTE: here we use torch.inference_mode() and do a re-eval pass to compute necessary data, but the re-eval could be integrated into the data collection loop and use python lists similar to VPG. We chose the re-eval pass instead in order to demonstrate the buffer system, and have a parallel to PPO's re-eval pass.
     with torch.inference_mode():
         for step in range(STEPS_PER_ENV):
-            obs_tensor = to_tensor(obs, device=device)
+            obs_tensor = torch.as_tensor(obs, device=device)
             logits, value = model(obs_tensor)
             dist = torch.distributions.Categorical(logits=logits)
             action, info_dict = sample_distribution(dist, explore=True)
@@ -167,35 +167,30 @@ for iteration in range(MAX_ITERATIONS):
                     "observations": obs_tensor,
                     "actions": action,
                     "logprobs": info_dict["log_prob"].detach(),
-                    "rewards": to_tensor(reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": torch.as_tensor(reward, device=device).unsqueeze(-1),
+                    "terminated": torch.as_tensor(terminated, device=device).unsqueeze(-1),
+                    "truncated": torch.as_tensor(truncated, device=device).unsqueeze(-1),
                     "values": value.detach(),
                     "logits": logits.detach(),
                 },
                 batch_size=[NUM_ENVS],
             )
-            store_rollout_step_(buffer=buffer, step=step, transition=transition)
+            write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
-                from atomic_rl.utils import extract_vector_env_final_obs
+                from atomic_rl.envs.utils import extract_vector_env_final_obs
 
                 env_indices, final_obs = extract_vector_env_final_obs(info)
                 # Filter to only record environments that were truncated
                 trunc_mask = truncated[env_indices]
                 if trunc_mask.any():
                     record_truncations_(
-                        buffer,
-                        step,
-                        torch.as_tensor(
-                            env_indices[trunc_mask], dtype=torch.long, device=device
-                        ),
-                        torch.as_tensor(
-                            final_obs[trunc_mask], dtype=torch.float32, device=device
-                        ),
+                        buffer=buffer,
+                        step=step,
+                        truncated_envs=torch.as_tensor(env_indices[trunc_mask], device=device),
+                        final_observations=torch.as_tensor(final_obs[trunc_mask], device=device),
                     )
-            # Update state for next tick
 
             if "final_info" in info:
                 for item in info["final_info"]:
@@ -208,31 +203,31 @@ for iteration in range(MAX_ITERATIONS):
                             }
                         )
 
+            # NOTE: obs = next_obs is moved to here.
             obs = next_obs
 
         # Compute last values for the re-evaluation pass
-        last_obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
+        last_obs_tensor = torch.as_tensor(obs, device=device)
         _, last_values = model(last_obs_tensor)
 
-        # Calculate Loss & Gradients
+        # Calculate Next Values (handling truncations)
         next_values = get_rollout_next_values(
             buffer, last_values, get_value_fn=lambda obs: model(obs)[1], device=device
         )
 
     # --- 3. The Update Loop ---
-    # TODO: could we change what return and advantage functions expect so we dont need to squeeze here?
     returns = compute_n_step_returns(
         rewards=buffer.data["rewards"],
         terminated=buffer.data["terminated"],
         truncated=buffer.data["truncated"],
-        values=buffer.data["values"].squeeze(-1),
-        next_values=next_values.squeeze(-1),
+        values=buffer.data["values"],
+        next_values=next_values,
         gamma=GAMMA,
         n=N_STEP,
     )
 
     # 2. Define Baseline & Calculate Raw Advantage (Explicit Math)
-    baseline = buffer.data["values"].detach().squeeze(-1)
+    baseline = buffer.data["values"].detach()
     advantages = returns - baseline
 
     # 3. Optional Scaling
@@ -251,26 +246,27 @@ for iteration in range(MAX_ITERATIONS):
     # dist has batch shape [B]. flat_data["actions"] is [B, 1]. Squeeze for log_prob, unsqueeze output.
     new_log_probs = dist.log_prob(flat_data["actions"].squeeze(-1)).unsqueeze(-1)
 
-    pg_loss, info_dict = policy_gradient_loss(
+    pg_loss, info_dict = compute_policy_gradient_loss(
         advantages=flat_advantages,
         log_probs=new_log_probs,
     )
 
-    ent_loss, _ = entropy_loss(dist)
+    ent_loss, _ = compute_entropy_loss(dist)
     ent_loss = ent_loss.mean()
 
     pg_loss = pg_loss.mean()
 
     # NOTE: i use my mse_loss from losses.py, but we don't need priorities here since it's not off policy.
-    critic_loss, _ = mse_loss(predictions=new_values, targets=flat_returns.detach())
+    critic_loss, _ = compute_mse_loss(predictions=new_values, targets=flat_returns.detach())
     critic_loss = critic_loss.mean()
 
     loss = pg_loss + CRITIC_COEFF * critic_loss - ENTROPY_COEFF * ent_loss
 
     # Apply Updates
-    optimizer = apply_gradients_(
-        optimizer, loss, model=model, clip_grad_norm=MAX_GRAD_NORM
-    )
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
+    optimizer.step()
 
     # Step the learning rate down
     scheduler.step()

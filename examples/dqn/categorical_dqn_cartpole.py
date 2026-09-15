@@ -19,7 +19,7 @@ This paradigm/approach of treating q value estimation, value estimation, or rewa
 NOTE: the below DQN implementation is not the same as used in the paper (it does not use dueling DQN, double DQN, etc).
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,17 +38,16 @@ from atomic_rl.buffers.replay import (
     circular_write_strategy_,
     uniform_sample,
 )
-from atomic_rl.losses import cross_entropy_loss
+from atomic_rl.losses import compute_cross_entropy_loss
 from atomic_rl.action_selection import (
     argmax_selector,
-    expected_value,
     gather_q_values,
     with_epsilon_greedy,
 )
+from atomic_rl.transforms import compute_expected_value
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
-from atomic_rl.metrics import log_distributional_metrics
+from atomic_rl.networks.update_target_net import hard_update_target_network_
+from atomic_rl.metrics.distributional import log_distributional_metrics
 
 from atomic_rl.td import compute_categorical_q_td_target
 
@@ -150,7 +149,7 @@ for step in range(MAX_STEPS):
         obs_tensor = torch.as_tensor(obs[None, ...], dtype=torch.float32, device=device)
 
         predictions = model(obs_tensor)
-        expected_qs = expected_value(predictions, support=SUPPORT.to(device))
+        expected_qs = compute_expected_value(predictions, support=SUPPORT.to(device))
         action, info = action_selector(
             predictions=expected_qs,
             epsilon=current_epsilon,
@@ -197,7 +196,7 @@ for step in range(MAX_STEPS):
     # --- 3. The Update Loop ---
     if step > MIN_BUFFER_SIZE and step % UPDATE_FREQ == 0:
         # Sample
-        batch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+        batch, _ = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
 
         # 1. Forward Passes (Online and Target)
         logits = model(batch["obs"])
@@ -206,7 +205,7 @@ for step in range(MAX_STEPS):
 
             # 2. Next Action Selection (Composed inline natively)
             # C51 uses the expected value of the distribution for action selection
-            next_expected_qs = expected_value(next_logits, support=SUPPORT.to(device))
+            next_expected_qs = compute_expected_value(next_logits, support=SUPPORT.to(device))
             next_actions, _ = argmax_selector(next_expected_qs)
 
             # 3. Target Calculation (Pure Primitive)
@@ -226,11 +225,13 @@ for step in range(MAX_STEPS):
         pred_sa_logits = gather_q_values(logits, batch["action"])
 
         # 5. Loss Calculation (Pure Primitive)
-        loss, info_dict = cross_entropy_loss(pred_sa_logits, td_target)
+        loss, info_dict = compute_cross_entropy_loss(pred_sa_logits, td_target)
         loss = loss.mean()
 
         # Apply Updates
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
         if step % 100 == 0:
             # Log all metrics from info_dict. W&B handles scalars and histograms of tensors.

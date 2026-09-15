@@ -1,41 +1,105 @@
-from ...initialization import _allocate_tensordict
+from ...utils import _allocate_tensordict
 from .state import BufferState, PERBufferState
-from .write import compute_is_weights
+from ...losses.weighting import compute_is_weights
+from .slicing import slice_unrolls
 import torch
 from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional, Union
+import math
+from typing import Tuple, Callable, List, Optional, Union, Any
 import random
 from collections import deque
 from dataclasses import dataclass
 
 
+# Option Comparison (Option A vs Option B):
+# - Option B: Maintain a full 2D boolean mask valid_mask: Tensor[num_seqs, max_steps] and call torch.nonzero(valid_mask) to gather coordinates. While conceptually simple, Option B must scan and allocate large 2D coordinate matrices on every sample call, adding memory traffic and CPU scanning overhead.
+# - Option A (Chosen): Maintain 1D sequence lengths valid_lengths: Tensor[num_seqs]. Using torch.cumsum + torch.searchsorted maps a 1D uniform integer u in [0, total_steps) directly into (seq_idx, step_idx) in O(B log N) time (< 10 microseconds).
+#   Every valid transition has exact 1/total_steps probability, zero padded dead space is sampled,
+#   and no large 2D index tables are allocated.
+
+
 def uniform_sample(
-    buffer_state: BufferState, rng_key: torch.Generator, batch_size: int
-) -> TensorDict:
-    """Uniform sampling."""
+    buffer_state: BufferState,
+    rng_key: torch.Generator,
+    batch_size: int,
+) -> Tuple[TensorDict, Union[torch.Tensor, Tuple[torch.Tensor, ...]]]:
+    """Uniform sampling supporting 1D items (transitions) or multi-dimensional items (sequences/observations).
+
+    Args:
+        buffer_state (BufferState): The buffer state.
+        rng_key (torch.Generator): RNG generator.
+        batch_size (int): Number of items to sample.
+
+    Returns:
+        Tuple[TensorDict, Union[torch.Tensor, Tuple[torch.Tensor, ...]]]:
+            (batch, coords) where coords is a 1D tensor for 1D sampling, or a tuple of index tensors
+            (coord_dim0, ..., step_indices) for multi-dimensional sampling.
+    """
+    if buffer_state.size < 1:
+        raise ValueError("Cannot sample from an empty buffer.")
+
     if buffer_state.size < batch_size:
         raise ValueError(
-            f"Buffer size ({buffer_state.size}) is smaller than batch size ({batch_size})."
+            f"Total valid buffer items ({buffer_state.size}) is smaller than batch size ({batch_size})."
         )
-    indices = torch.randint(0, buffer_state.size, (batch_size,), generator=rng_key)
-    return buffer_state.data[indices]
+
+    # 1. 1D Buffer: valid_lengths is a 0D scalar tracking total transitions
+    if buffer_state.valid_lengths.ndim == 0:
+        coords = torch.randint(0, buffer_state.size, (batch_size,), generator=rng_key)
+        return buffer_state.data[coords], coords
+
+    # 2. Multi-dimensional Buffer via Prefix Sum over valid transitions
+
+    flat_lengths = buffer_state.valid_lengths.view(-1)
+    cum_lengths = torch.cumsum(flat_lengths, dim=0)
+
+    u = torch.randint(
+        0,
+        buffer_state.size,
+        (batch_size,),
+        generator=rng_key,
+        device=flat_lengths.device,
+    )
+    flat_prefix_idx = torch.searchsorted(cum_lengths, u, right=True)
+    prev_cum = torch.where(
+        flat_prefix_idx > 0, cum_lengths[flat_prefix_idx - 1], torch.zeros_like(u)
+    )
+    step_idx = u - prev_cum
+
+    leading_coords = torch.unravel_index(
+        flat_prefix_idx, buffer_state.storage_shape[:-1]
+    )
+    coords = (*leading_coords, step_idx)
+
+    return buffer_state.data[coords], coords
 
 
-# TODO: unify sample API and make sample_per use and RNG key
+# TODO: unify sample API and make sample_per use an RNG key
 def sample_per(
-    buffer_state: PERBufferState, batch_size: int, beta: torch.Tensor
-) -> Tuple[TensorDict, torch.Tensor, torch.Tensor]:
-    """
-    Prioritized Experience Replay sampling.
+    buffer_state: PERBufferState,
+    batch_size: int,
+    beta: torch.Tensor,
+    normalization: str = "batch",
+) -> Tuple[
+    TensorDict,
+    Union[torch.Tensor, Tuple[torch.Tensor, ...]],
+    torch.Tensor,
+]:
+    """Prioritized Experience Replay sampling supporting 1D and multi-dimensional sample_dims.
+
+    # TODO/NOTE: We choose to add a flag ('batch' vs 'global') for normalization here, but in the future
+    # if there's too much branching we should split the function into separate global and batch functions. Its possible this is occuring because we are coupling the PER sampling with the IS weighting. Maybe the IS weighting should occur outside of sample_per removing this flag.
 
     Args:
         buffer_state (PERBufferState): The PER buffer state.
         batch_size (int): The size of the batch to sample.
         beta (torch.Tensor): The beta parameter for PER.
             Using a tensor for beta avoids torch.compile recompilation.
+        normalization (str): Normalization scheme for IS weights: "batch" (default) or "global".
 
     Returns:
-        Tuple[TensorDict, torch.Tensor, torch.Tensor]: The sampled batch, tree indices, and importance weights.
+        Tuple[TensorDict, Union[torch.Tensor, Tuple[torch.Tensor, ...]], torch.Tensor]:
+            (batch, coords, is_weights).
     """
     total_priority = buffer_state.sum_tree[0]
 
@@ -48,10 +112,6 @@ def sample_per(
 
     # Vectorized Tree Traversal
     indices = buffer_state.sum_tree.new_zeros(batch_size, dtype=torch.long)
-
-    # Depth of tree is log2(capacity). We loop exactly this many times.
-    import math
-
     depth = int(math.log2(buffer_state.tree_capacity))
 
     for _ in range(depth):
@@ -59,9 +119,13 @@ def sample_per(
         right_children = indices * 2 + 2
 
         left_priorities = buffer_state.sum_tree[left_children]
+        right_priorities = buffer_state.sum_tree[right_children]
 
-        # If target > left_priority, go right and subtract left_priority
-        go_right = targets > left_priorities
+        # Branch right if target > left_priority or if left child has 0 priority,
+        # but only if right child has priority > 0 to prevent descending into empty subtrees.
+        go_right = ((targets > left_priorities) | (left_priorities <= 0)) & (
+            right_priorities > 0
+        )
 
         targets = torch.where(go_right, targets - left_priorities, targets)
         indices = torch.where(go_right, right_children, left_children)
@@ -69,16 +133,68 @@ def sample_per(
     # 'indices' are now the tree indices (leaves). We need the data indices.
     data_indices = indices - (buffer_state.tree_capacity - 1)
 
-    # Clamp to handle potential precision issues leading to out-of-bounds indices
-    # TODO/NOTE: If an out-of-bounds index is sampled, mathematically it implies a precision error; you should resample or fall back to the last valid tree traversal step rather than clamping.
-    data_indices = torch.clamp(data_indices, 0, buffer_state.capacity - 1)
-
     # Importance Sampling (IS) Weights
     leaf_priorities = buffer_state.sum_tree[indices]
-    min_prob = buffer_state.min_tree[0] / total_priority
+
+    if normalization == "batch":
+        min_prob = torch.min(leaf_priorities) / total_priority
+    elif normalization == "global":
+        min_prob = buffer_state.min_tree[0] / total_priority
+    else:
+        raise ValueError(
+            f"Unsupported normalization: '{normalization}'. Expected 'batch' or 'global'."
+        )
 
     is_weights = compute_is_weights(leaf_priorities, min_prob, total_priority, beta)
 
-    batch = buffer_state.data[data_indices]
+    # Generic coordinate decomposition over storage dimensions
+    storage_shape = buffer_state.storage_shape
+    max_valid_flat = math.prod(storage_shape) - 1
+    data_indices = torch.clamp(data_indices, 0, max_valid_flat)
 
-    return batch, indices, is_weights
+    if len(storage_shape) == 1:
+        coords: Union[torch.Tensor, Tuple[torch.Tensor, ...]] = data_indices
+    else:
+        coords = torch.unravel_index(data_indices, storage_shape)
+
+    batch = buffer_state.data[coords]
+
+    return batch, coords, is_weights
+
+
+def with_unroll_slicing(sample_fn: Callable) -> Callable:
+    """Higher-order function that wraps a base sampling function with dynamic unroll slicing.
+
+    Creates an `unroll_sampler` that invokes `sample_fn` to sample coordinates and any auxiliary
+    outputs (such as PER importance sampling weights), then applies `slice_unrolls` to extract
+    K-step unroll trajectories [B, unroll_steps + 1] from `buffer_state.data`.
+
+    Args:
+        sample_fn (Callable): Base sampling function (e.g. `uniform_sample` or `sample_per`).
+            Must take `buffer_state` as its first argument and return a tuple where the second
+            element is `coords`, and any subsequent elements are preserved.
+
+    Returns:
+        Callable: An `unroll_sampler` function returning `(unrolls, valid_mask, coords, *extra_outputs)`.
+    """
+
+    def unroll_sampler(
+        buffer_state: BufferState,
+        *args: Any,
+        unroll_steps: int,
+        **kwargs: Any,
+    ) -> Tuple[Any, ...]:
+        """Samples dynamic unrolls using `sample_fn` coordinates and `slice_unrolls`."""
+        sample_results = sample_fn(buffer_state, *args, **kwargs)
+        _, coords, *extra_outputs = sample_results
+
+        unrolls, valid_mask = slice_unrolls(
+            buffer_state.data,
+            coords,
+            unroll_steps=unroll_steps,
+            valid_lengths=buffer_state.valid_lengths,
+        )
+
+        return (unrolls, valid_mask, coords, *extra_outputs)
+
+    return unroll_sampler

@@ -7,7 +7,7 @@ time (bit flips) and the target is more complex than the learner, the best
 approximation continually changes, requiring the learner to track it.
 """
 
-from atomic_rl.initialization import make_gnt_init
+from atomic_rl.networks.initialization import make_gnt_init
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,12 +15,12 @@ from atomic_rl.plasticity import (
     init_cbp_state,
     apply_continual_backprop_,
 )
-from atomic_rl.metrics import (
+from atomic_rl.metrics.plasticity import (
     compute_dead_units_proportion,
     compute_average_weight_magnitude,
     compute_average_gradient_magnitude,
 )
-from atomic_rl.metrics import (
+from atomic_rl.metrics.plasticity import (
     plot_plasticity_correlates,
     plot_continual_learning_performance,
 )
@@ -102,7 +102,7 @@ for step, (x, y) in enumerate(stream):
     a1_adam = F.relu(h1_adam)
     has_fired_adam |= (a1_adam > 0).squeeze()
     pred_adam = model_adam[2](a1_adam)
-    loss_adam = F.mse_loss(pred_adam, y)
+    loss_adam = F.compute_mse_loss(pred_adam, y)
     opt_adam.zero_grad()
     loss_adam.backward()
     opt_adam.step()
@@ -112,7 +112,7 @@ for step, (x, y) in enumerate(stream):
     a1_cbp = F.relu(h1_cbp)
     has_fired_cbp |= (a1_cbp > 0).squeeze()
     pred_cbp = model_cbp[2](a1_cbp)
-    loss_cbp = F.mse_loss(pred_cbp, y)
+    loss_cbp = F.compute_mse_loss(pred_cbp, y)
 
     opt_cbp.zero_grad()
     loss_cbp.backward()

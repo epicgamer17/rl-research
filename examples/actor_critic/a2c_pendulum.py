@@ -5,7 +5,7 @@ STRUCTURALLY SIMILAR TO a2c_cartpole.py but adapted for continuous actions.
 Uses standard Gymnasium Vector Envs and the functional rollout buffer system.
 """
 
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,22 +18,22 @@ import wandb
 from functools import partial
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_n_step_returns
-from atomic_rl.losses import policy_gradient_loss, mse_loss, entropy_loss
+from atomic_rl.losses import compute_policy_gradient_loss, compute_mse_loss, compute_entropy_loss
 from torch.optim.lr_scheduler import LinearLR
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
 )
 from atomic_rl.utils import (
-    standardize_tensor,
-    to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
 )
 from tensordict import TensorDict
 
@@ -149,8 +149,7 @@ shapes = {
     "std": (num_actions,),
 }
 buffer = init_rollout_buffer(
-    steps_per_env=STEPS_PER_ENV,
-    num_envs=NUM_ENVS,
+    capacity=(NUM_ENVS, STEPS_PER_ENV),
     shapes=shapes,
     device=device,
 )
@@ -166,7 +165,7 @@ for iteration in range(MAX_ITERATIONS):
     # NOTE: vectorized collection with inference_mode
     with torch.inference_mode():
         for step in range(STEPS_PER_ENV):
-            obs_tensor = to_tensor(obs, device=device)
+            obs_tensor = torch.as_tensor(obs, device=device)
             mu, std, value = model(obs_tensor)
 
             dist = torch.distributions.Normal(mu, std)
@@ -187,20 +186,20 @@ for iteration in range(MAX_ITERATIONS):
                     "logprobs": info_dict["log_prob"]
                     .sum(dim=-1, keepdim=True)
                     .detach(),
-                    "rewards": to_tensor(reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": torch.as_tensor(reward, device=device),
+                    "terminated": torch.as_tensor(terminated, device=device),
+                    "truncated": torch.as_tensor(truncated, device=device),
                     "values": value.detach(),
                     "mu": mu.detach(),
                     "std": std.detach(),
                 },
                 batch_size=[NUM_ENVS],
             )
-            store_rollout_step_(buffer=buffer, step=step, transition=transition)
+            write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
-                from atomic_rl.utils import extract_vector_env_final_obs
+                from atomic_rl.envs.utils import extract_vector_env_final_obs
 
                 env_indices, final_obs = extract_vector_env_final_obs(info)
                 # Filter to only record environments that were truncated
@@ -273,24 +272,25 @@ for iteration in range(MAX_ITERATIONS):
     dist = torch.distributions.Independent(dist, 1)
     new_log_probs = dist.log_prob(flat_data["actions"])
 
-    pg_loss, info_dict = policy_gradient_loss(
+    pg_loss, info_dict = compute_policy_gradient_loss(
         advantages=flat_advantages,
         log_probs=new_log_probs,
     )
     pg_loss = pg_loss.mean()
 
-    ent_loss, _ = entropy_loss(dist)
+    ent_loss, _ = compute_entropy_loss(dist)
     ent_loss = ent_loss.mean()
 
-    critic_loss, _ = mse_loss(predictions=new_values, targets=flat_returns.detach())
+    critic_loss, _ = compute_mse_loss(predictions=new_values, targets=flat_returns.detach())
     critic_loss = critic_loss.mean()
 
     loss = pg_loss + CRITIC_COEFF * critic_loss - ENTROPY_COEFF * ent_loss
 
     # Apply Updates
-    optimizer = apply_gradients_(
-        optimizer, loss, model=model, clip_grad_norm=MAX_GRAD_NORM
-    )
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
+    optimizer.step()
 
     # Step the learning rate down
     scheduler.step()
@@ -300,8 +300,8 @@ for iteration in range(MAX_ITERATIONS):
 
     if iteration % 100 == 0:
         explained_var = compute_explained_variance(
-            returns.detach().cpu().numpy(), buffer.data["values"].detach().cpu().numpy()
-        )
+            returns, buffer.data["values"]
+        ).item()
 
         log_dict = info_dict.copy()
         log_dict.update(

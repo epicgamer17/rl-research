@@ -13,7 +13,7 @@ range of meta_lr values, whereas IDBD will heavily depend on tuning meta_lr
 depending on the task's variance scale.
 """
 
-from atomic_rl.initialization import set_seed
+from atomic_rl.utils import set_seed
 import torch
 import math
 import os

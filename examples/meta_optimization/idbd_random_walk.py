@@ -11,7 +11,7 @@ Task:
 - Seed reset at the beginning of each algorithm/parameter run.
 """
 
-from atomic_rl.initialization import set_seed
+from atomic_rl.utils import set_seed
 import torch
 import math
 import os
@@ -21,6 +21,7 @@ from typing import Tuple
 
 # TODO: find better ranges for params and U shaped curves.
 
+from atomic_rl.td import semi_gradient_td_update_
 from atomic_rl.optimizer.metaoptimization import (
     IDBD,
     K1,
@@ -80,13 +81,23 @@ def run_tracking_experiment(
 
         if algorithm == "LMS":
             with torch.no_grad():
-                weights.add_(param * error * inputs)
+                semi_gradient_td_update_(
+                    error=error,
+                    weights=weights,
+                    alpha=param,
+                    update_vector=inputs,
+                )
 
         elif algorithm == "NLMS":
             # Standard NLMS update
             norm = torch.dot(inputs, inputs) + r_true
             with torch.no_grad():
-                weights.add_((param * error * inputs) / norm)
+                semi_gradient_td_update_(
+                    error=error,
+                    weights=weights,
+                    alpha=param,
+                    update_vector=inputs / norm,
+                )
 
         elif algorithm in ["IDBD", "K1", "K2"]:
             optimizer.step(inputs, error)

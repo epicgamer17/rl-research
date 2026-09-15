@@ -1,8 +1,18 @@
+import functools
+
 import pytest
 import torch
 
-from atomic_rl.search import init_mcts_tree, puct_score, select_leaf
-from atomic_rl.search.selection import _normalize_q_values
+from atomic_rl.search import (
+    init_mcts_tree,
+    make_stochastic_selection_fn,
+    puct_score,
+    puct_selection,
+    qtransform_by_min_max,
+    qtransform_identity,
+    quasi_sampling_selection,
+    select_leaf,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -11,44 +21,63 @@ pytestmark = pytest.mark.unit
 # ==========================================
 
 
-def test_normalize_q_values_standard():
+def test_qtrasforms_by_min_max_standard():
     """Verify standard min-max mapping to the [0, 1] interval."""
+    batch_size = 2
     q_values = torch.tensor([[0.0, 5.0, 10.0], [2.0, 3.0, 4.0]])
     min_q = torch.tensor([0.0, 2.0])
     max_q = torch.tensor([10.0, 4.0])
 
-    normalized = _normalize_q_values(q_values, min_q, max_q)
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, 3)
+    root_value = torch.stack([min_q, min_q], dim=-1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=2, num_actions=3
+    )
+    tree["children_values"][:, 0, :, 0] = q_values
+    tree["children_visits"][:, 0] = 1
+
+    normalized = qtransform_by_min_max(
+        tree,
+        torch.zeros(batch_size, dtype=torch.long),
+        min_value=min_q,
+        max_value=max_q,
+    )
     expected = torch.tensor([[0.0, 0.5, 1.0], [0.0, 0.5, 1.0]])
     torch.testing.assert_close(normalized, expected)
 
 
-def test_normalize_q_values_division_by_zero():
+def test_qtrasforms_by_min_max_division_by_zero():
     """Verify numerical safety adjustments when min_q equals max_q."""
+    batch_size = 2
     q_values = torch.tensor([[5.0, 5.0], [0.0, 0.0]])
     min_q = torch.tensor([5.0, 0.0])
     max_q = torch.tensor([5.0, 0.0])  # Span is 0.0
 
-    # Should safely treat span as 1.0 to map (q_values - min_q) / 1.0 -> 0.0
-    normalized = _normalize_q_values(q_values, min_q, max_q)
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, 2)
+    root_value = torch.stack([min_q, min_q], dim=-1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=2, num_actions=2
+    )
+    tree["children_values"][:, 0, :, 0] = q_values
+    tree["children_visits"][:, 0] = 1
+
+    # Should safely treat span as epsilon to map (q_values - min_q) / epsilon -> 0.0
+    normalized = qtransform_by_min_max(
+        tree,
+        torch.zeros(batch_size, dtype=torch.long),
+        min_value=min_q,
+        max_value=max_q,
+    )
     torch.testing.assert_close(normalized, torch.zeros_like(q_values))
 
 
 # ==========================================
 # Tests for PUCT Scores
 # ==========================================
-
-
-def test_puct_score_assertion():
-    """Verify that the implementation fails fast if the policy priors do not sum to 1."""
-    q_values = torch.tensor([[1.0, 2.0]])
-    priors_invalid = torch.tensor([[0.5, 0.8]])  # Sums to 1.3
-    visits = torch.tensor([[0, 0]])
-    total_visits = torch.tensor([[0]])
-    min_q = torch.tensor([0.0])
-    max_q = torch.tensor([2.0])
-
-    with pytest.raises(AssertionError, match="Policy prior must be normalized"):
-        puct_score(q_values, priors_invalid, visits, total_visits, min_q, max_q)
 
 
 def test_puct_score_mathematical_correctness():
@@ -63,18 +92,37 @@ def test_puct_score_mathematical_correctness():
     visits = torch.tensor([[1.0, 3.0]])
     total_visits = torch.tensor([[4.0]])
 
+    root_embeddings = torch.zeros(1, 2)
+    root_logits = torch.log(priors)  # Raw logits that softmax to [0.4, 0.6]
+    root_value = torch.zeros(1, 2)
+    root_to_play = torch.zeros(1, dtype=torch.long)
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=4, num_actions=2
+    )
+    tree["children_values"][0, 0, :, 0] = q_values
+    tree["children_visits"][0, 0] = visits.to(torch.long)
+    tree["node_visits"][0, 0] = int(total_visits.item())
+
     # Static min/max to ensure predictable normalization output:
-    # Action 0: (2.0 - 0.0) / 8.0 = 0.25
-    # Action 1: (6.0 - 0.0) / 8.0 = 0.75
-    min_q = torch.tensor([0.0])
-    max_q = torch.tensor([8.0])
+    #   Action 0: (2.0 - 0.0) / 8.0 = 0.25
+    #   Action 1: (6.0 - 0.0) / 8.0 = 0.75
+    qtransform = functools.partial(
+        qtransform_by_min_max,
+        min_value=torch.tensor([0.0]),
+        max_value=torch.tensor([8.0]),
+    )
 
     pb_c_base = 100.0
     pb_c_init = 2.0
 
     # Execute system function
     calculated_scores = puct_score(
-        q_values, priors, visits, total_visits, min_q, max_q, pb_c_base, pb_c_init
+        tree,
+        torch.tensor([0]),
+        depth=0,
+        pb_c_base=pb_c_base,
+        pb_c_init=pb_c_init,
+        qtransform=qtransform,
     )
 
     # Manual step-by-step verification oracle
@@ -90,17 +138,86 @@ def test_puct_score_mathematical_correctness():
     torch.testing.assert_close(calculated_scores, expected_scores, atol=1e-6, rtol=1e-6)
 
 
-def test_puct_score_zero_prior_guard():
-    """Verify that actions with prior=0 (e.g. masked illegal actions) receive -1e9 penalty."""
-    q_values = torch.tensor([[10.0, 5.0]])
-    priors = torch.tensor([[0.0, 1.0]])  # Action 0 masked (prior=0)
-    visits = torch.tensor([[0, 0]])
-    total_visits = torch.tensor([[0]])
-    min_q = torch.tensor([0.0])
-    max_q = torch.tensor([10.0])
+def test_search_py_puct_scoring_math_verification():
+    """
+    Verify the Upper Confidence Bound calculation using the MuZero PUCT formula
+    for the search_py backend.
 
-    scores = puct_score(q_values, priors, visits, total_visits, min_q, max_q)
-    assert scores[0, 0].item() == -1e9
+    Setup:
+    - Node visit count N(s) = 10
+    - Action A: Q = 0.5, P = 0.3, N(s,a) = 5
+    - Action B: Q = 0.2, P = 0.7, N(s,a) = 0
+
+    Expected math (hand-calculated):
+    - expected_score_a = 1.19773083
+    - expected_score_b = 2.76823163
+    """
+    import math
+
+    batch_size = 1
+    num_actions = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.log(torch.tensor([[0.3, 0.7]]))
+    root_value = torch.tensor([[0.2]])
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=10, num_actions=num_actions, num_players=1
+    )
+
+    tree["node_visits"][0, 0] = 10
+    tree["children_visits"][0, 0] = torch.tensor([5, 0], dtype=torch.long)
+    tree["children_rewards"][0, 0, :, 0] = torch.tensor([0.0, 0.0])
+    tree["children_discounts"][0, 0, :, 0] = torch.tensor([1.0, 1.0])
+    tree["children_values"][0, 0, :, 0] = torch.tensor([0.5, 0.2])
+
+    qtransform = functools.partial(
+        qtransform_by_min_max,
+        min_value=torch.tensor([0.2]),
+        max_value=torch.tensor([0.5]),
+    )
+
+    scores = puct_score(
+        tree,
+        torch.tensor([0]),
+        depth=0,
+        pb_c_init=1.25,
+        pb_c_base=19652.0,
+        qtransform=qtransform,
+    )
+
+    score_a = scores[0, 0].item()
+    score_b = scores[0, 1].item()
+
+    expected_score_a = 1.19773083
+    expected_score_b = 2.76823163
+
+    assert math.isclose(score_a, expected_score_a, rel_tol=1e-5), f"Action A score {score_a} != {expected_score_a}"
+    assert math.isclose(score_b, expected_score_b, rel_tol=1e-5), f"Action B score {score_b} != {expected_score_b}"
+    assert score_b > score_a
+
+
+def test_puct_score_zero_prior_guard():
+    """Verify that masked illegal root actions receive an extreme penalty and legal ones stay positive."""
+    root_embeddings = torch.zeros(1, 2)
+    root_logits = torch.tensor([[10.0, 5.0]])
+    root_value = torch.zeros(1, 2)
+    root_to_play = torch.zeros(1, dtype=torch.long)
+    legal_mask = torch.tensor([[False, True]])  # Action 0 masked as illegal
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=2,
+        legal_mask=legal_mask,
+    )
+    tree["node_visits"][0, 0] = 1
+
+    scores = puct_score(tree, torch.tensor([0]), depth=0)
+    assert scores[0, 0].item() == torch.finfo(torch.float32).min
     assert scores[0, 1].item() > 0.0
 
 
@@ -113,27 +230,36 @@ def test_select_leaf_early_termination():
     """Verify that leaf selection halts individual batch components when they hit unexpanded slots."""
     batch_size = 2
     root_embeddings = torch.zeros(batch_size, 2)
-    tree = init_mcts_tree(root_embeddings, num_simulations=5, num_actions=2)
+    root_logits = torch.zeros(batch_size, 2)
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=5, num_actions=2
+    )
 
-    # Setup priors to perfectly direct the deterministic argmax choice
-    tree["children_prior"][:, 0, :] = torch.tensor(
-        [1.0, 0.0]
+    # Setup logits to perfectly direct the deterministic argmax choice
+    tree["children_prior_logits"][:, 0, :] = torch.tensor(
+        [100.0, 0.0]
     )  # Forces Action 0 at root
+    tree["node_visits"][:, 0] = 1  # Activate the exploration term for determinism
 
     # Environment 0 has a child already expanded at index 1
     tree["children_index"][0, 0, 0] = 1
-    tree["children_prior"][0, 1, :] = torch.tensor(
-        [0.0, 1.0]
+    tree["children_prior_logits"][0, 1, :] = torch.tensor(
+        [0.0, 100.0]
     )  # Forces Action 1 at node 1
+    tree["node_visits"][0, 1] = 1
 
     # Environment 1 has no children expanded at all (remains -1 at root)
 
-    leaf_indices, trajectory = select_leaf(
-        tree, pb_c_base=100.0, pb_c_init=1.0, max_depth=5
+    leaf_parents, leaf_actions, expansion_mask, trajectory = select_leaf(
+        tree,
+        functools.partial(puct_selection, pb_c_base=100.0, pb_c_init=1.0),
+        max_depth=5,
     )
 
     # Env 0 should fall deep into slot 1. Env 1 should stop immediately at root (slot 0)
-    torch.testing.assert_close(leaf_indices, torch.tensor([1, 0], dtype=torch.long))
+    torch.testing.assert_close(leaf_parents, torch.tensor([1, 0], dtype=torch.long))
 
     # Validate the trajectory steps
     # Step 1: Both tracking routes were active
@@ -150,43 +276,44 @@ def test_select_leaf_early_termination():
 def test_select_leaf_deterministic_path():
     """
     Forces select_leaf down a strict, multi-step structural path
-    by overwhelming the exploration constants with hand-crafted Q-values.
+    by overwhelming the exploration constants with hand-crafted logits.
 
     Path target: Node 0 (Root) -> Action 1 -> Node 2 -> Action 0 -> Leaf (-1)
     """
     batch_size = 1
     root_embeddings = torch.zeros(batch_size, 4)
+    root_logits = torch.zeros(batch_size, 2)
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
 
     # Allocate standard tree structure
-    tree = init_mcts_tree(root_embeddings, num_simulations=4, num_actions=2)
+    tree = init_mcts_tree(
+        root_embeddings, root_logits, root_value, root_to_play, num_simulations=4, num_actions=2
+    )
 
     # Establish topology linking Node 0 to Node 2 via Action 1
     tree["children_index"][0, 0, 1] = 2
 
-    # Configure Node 0 (Root): Distort values to guarantee selection of Action 1
-    tree["children_q_values"][0, 0, 0] = 0.0
-    tree["children_q_values"][0, 0, 1] = 50.0  # Dominates entirely
-    tree["children_prior"][0, 0, :] = torch.tensor([0.5, 0.5])
-    tree["children_visits"][0, 0, :] = torch.tensor([0.0, 0.0])
+    # Configure Node 0 (Root): force selection of Action 1
+    tree["node_visits"][0, 0] = 1
+    tree["children_prior_logits"][0, 0, :] = torch.tensor([0.0, 100.0])
+    tree["children_visits"][0, 0, :] = torch.tensor([0, 0])
 
-    # Configure Node 2: Distort values to guarantee selection of Action 0
+    # Configure Node 2: force selection of Action 0
     # Node 2's children arrays default to -1, making whatever action is selected a leaf
-    tree["children_q_values"][0, 2, 0] = 50.0  # Dominates entirely
-    tree["children_q_values"][0, 2, 1] = 0.0
-    tree["children_prior"][0, 2, :] = torch.tensor([0.5, 0.5])
-    tree["children_visits"][0, 2, :] = torch.tensor([0.0, 0.0])
-
-    # Keep scaling properties linear and constant
-    tree["min_q"][0] = 0.0
-    tree["max_q"][0] = 50.0
+    tree["node_visits"][0, 2] = 1
+    tree["children_prior_logits"][0, 2, :] = torch.tensor([100.0, 0.0])
+    tree["children_visits"][0, 2, :] = torch.tensor([0, 0])
 
     # Execute selection pass
-    leaf_idx, trajectory = select_leaf(
-        tree, pb_c_base=19652, pb_c_init=1.25, max_depth=5
+    leaf_parents, leaf_actions, expansion_mask, trajectory = select_leaf(
+        tree,
+        functools.partial(puct_selection, pb_c_base=19652, pb_c_init=1.25),
+        max_depth=5,
     )
 
     # 1. The search loop should break and target Node 2 as the expansion candidate
-    assert leaf_idx.item() == 2
+    assert leaf_parents.item() == 2
 
     # 2. Verify chronological sequence preservation inside trajectory tracking
     assert len(trajectory) == 2
@@ -202,3 +329,249 @@ def test_select_leaf_deterministic_path():
     assert node_step_2.item() == 2
     assert action_step_2.item() == 0
     assert mask_step_2.item() is True
+
+
+def test_puct_score_internal_node_masking_with_qtransform_identity():
+    """Verify that internal nodes (depth > 0) properly mask illegal actions when using qtransform_identity."""
+    batch_size = 1
+    num_actions = 3
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.tensor([[0.0, 0.0, 0.0]])
+    root_value = torch.zeros(batch_size, 2)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=num_actions,
+    )
+
+    # Set up node 1 (an internal node, depth = 1)
+    tree["node_visits"][0, 1] = 5
+    # Action 0 is legal, Q = -0.5
+    # Action 1 is illegal, masked with -1e8
+    # Action 2 is legal, Q = -0.2
+    tree["children_prior_logits"][0, 1] = torch.tensor([0.0, -1e8, 0.0])
+    tree["children_values"][0, 1, :, 0] = torch.tensor([-0.5, 0.0, -0.2])
+    tree["children_visits"][0, 1] = torch.tensor([2, 0, 3], dtype=torch.long)
+
+    # Evaluate PUCT score at depth 1 with qtransform_identity
+    scores = puct_score(
+        tree,
+        torch.tensor([1]),
+        depth=1,
+        qtransform=qtransform_identity,
+    )
+
+    # Action 1 must be masked out to min_val despite having unvisited raw Q of 0.0
+    min_val = torch.finfo(torch.float32).min
+    assert scores[0, 1].item() == min_val
+    # Legal actions 0 and 2 must have valid finite scores
+    assert scores[0, 0].item() > min_val
+    assert scores[0, 2].item() > min_val
+    # Action 2 should have a higher score than Action 0 because Q(-0.2) > Q(-0.5)
+    assert scores[0, 2].item() > scores[0, 0].item()
+
+
+def test_quasi_sampling_selection():
+    """Verify quasi-sampling formula: argmax_c [ Pr(c | as) / (N(c) + 1) ]."""
+    from atomic_rl.search.selection import quasi_sampling_selection
+
+    batch_size = 1
+    num_actions = 2
+
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, num_actions)
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=10,
+        num_actions=num_actions,
+        num_players=1,
+    )
+
+    # Set prior probabilities: Pr(c=0) ≈ 0.70, Pr(c=1) ≈ 0.30
+    tree["children_prior_logits"][0, 0] = torch.log(torch.tensor([0.70, 0.30]))
+
+    parent_nodes = torch.tensor([0], dtype=torch.long)
+
+    # 1. With N(0)=0, N(1)=0:
+    # Score(0) = 0.70 / (0 + 1) = 0.70
+    # Score(1) = 0.30 / (0 + 1) = 0.30
+    # Expected: outcome 0 selected
+    tree["children_visits"][0, 0] = torch.tensor([0, 0], dtype=torch.long)
+    c_0 = quasi_sampling_selection(tree, parent_nodes, depth=1)
+    assert c_0.item() == 0
+
+    # 2. With N(0)=1, N(1)=0:
+    # Score(0) = 0.70 / (1 + 1) = 0.35
+    # Score(1) = 0.30 / (0 + 1) = 0.30
+    # Expected: outcome 0 still selected
+    tree["children_visits"][0, 0] = torch.tensor([1, 0], dtype=torch.long)
+    c_1 = quasi_sampling_selection(tree, parent_nodes, depth=1)
+    assert c_1.item() == 0
+
+    # 3. With N(0)=2, N(1)=0:
+    # Score(0) = 0.70 / (2 + 1) ≈ 0.233
+    # Score(1) = 0.30 / (0 + 1) = 0.300
+    # Expected: outcome 1 selected!
+    tree["children_visits"][0, 0] = torch.tensor([2, 0], dtype=torch.long)
+    c_2 = quasi_sampling_selection(tree, parent_nodes, depth=1)
+    assert c_2.item() == 1
+
+
+# ==========================================
+# Tests for Generic Stochastic Selection
+# ==========================================
+
+
+def test_make_stochastic_selection_fn_routing_decision_all():
+    """Verify stochastic selector routes to decision_selection_fn when all nodes are decision nodes."""
+    batch_size = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.tensor([[10.0, 0.0], [0.0, 10.0]])
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    tree["is_chance"] = torch.zeros(batch_size, 5, dtype=torch.bool)
+
+    decision_called = []
+    chance_called = []
+
+    def mock_decision_fn(t, parent_nodes, depth, **kwargs):
+        decision_called.append(True)
+        return torch.tensor([0, 1])
+
+    def mock_chance_fn(t, parent_nodes, depth, **kwargs):
+        chance_called.append(True)
+        return torch.tensor([1, 0])
+
+    stochastic_selector = make_stochastic_selection_fn(
+        decision_selection_fn=mock_decision_fn,
+        chance_selection_fn=mock_chance_fn,
+    )
+
+    parents = torch.zeros(batch_size, dtype=torch.long)
+    selected = stochastic_selector(tree, parents, depth=0)
+
+    assert torch.equal(selected, torch.tensor([0, 1]))
+    assert len(decision_called) == 1
+    assert len(chance_called) == 0  # Chance function must not be called
+
+
+def test_make_stochastic_selection_fn_routing_chance_all():
+    """Verify stochastic selector routes to chance_selection_fn when all nodes are chance nodes."""
+    batch_size = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, 2)
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    # Mark all nodes as chance nodes
+    tree["is_chance"] = torch.ones(batch_size, 5, dtype=torch.bool)
+
+    decision_called = []
+    chance_called = []
+
+    def mock_decision_fn(t, parent_nodes, depth, **kwargs):
+        decision_called.append(True)
+        return torch.tensor([0, 0])
+
+    def mock_chance_fn(t, parent_nodes, depth, **kwargs):
+        chance_called.append(True)
+        return torch.tensor([1, 1])
+
+    stochastic_selector = make_stochastic_selection_fn(
+        decision_selection_fn=mock_decision_fn,
+        chance_selection_fn=mock_chance_fn,
+    )
+
+    parents = torch.zeros(batch_size, dtype=torch.long)
+    selected = stochastic_selector(tree, parents, depth=1)
+
+    assert torch.equal(selected, torch.tensor([1, 1]))
+    assert len(decision_called) == 0  # Decision function must not be called
+    assert len(chance_called) == 1
+
+
+def test_make_stochastic_selection_fn_heterogeneous_batch():
+    """Verify stochastic selector routes per-element when batch contains both decision and chance nodes."""
+    batch_size = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, 2)
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    # Node 0 in batch 0 is decision (False), Node 0 in batch 1 is chance (True)
+    tree["is_chance"] = torch.zeros(batch_size, 5, dtype=torch.bool)
+    tree["is_chance"][1, 0] = True
+
+    def mock_decision_fn(t, parent_nodes, depth, **kwargs):
+        return torch.tensor([0, 0])
+
+    def mock_chance_fn(t, parent_nodes, depth, **kwargs):
+        return torch.tensor([1, 1])
+
+    stochastic_selector = make_stochastic_selection_fn(
+        decision_selection_fn=mock_decision_fn,
+        chance_selection_fn=mock_chance_fn,
+    )
+
+    parents = torch.zeros(batch_size, dtype=torch.long)
+    selected = stochastic_selector(tree, parents, depth=0)
+
+    # Item 0 (decision) gets 0; Item 1 (chance) gets 1
+    assert torch.equal(selected, torch.tensor([0, 1]))
+
+
+def test_init_mcts_tree_standard_is_chance():
+    """Verify init_mcts_tree pre-allocates is_chance initialized to False."""
+    batch_size = 2
+    tree = init_mcts_tree(
+        torch.zeros(batch_size, 2),
+        torch.zeros(batch_size, 2),
+        torch.zeros(batch_size, 1),
+        torch.zeros(batch_size, dtype=torch.long),
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    assert "is_chance" in tree.keys()
+    assert tree["is_chance"].shape == (batch_size, 5)
+    assert tree["is_chance"].dtype == torch.bool
+    assert not tree["is_chance"].any()  # Root and pre-allocated nodes are False by default

@@ -67,13 +67,30 @@ If a functional operation mathematically does not require gradients (like comput
 Never use .item(), .tolist(), or .numpy() inside the functional core or the main orchestration loop. These operations trigger a CUDA Synchronization, forcing the GPU to wait for the CPU, destroying performance.
 Avoid Python for loops over batch or feature dimensions at all costs. This is an absolute prerequisite if you want your functions to be friendly to torch.compile(). (If an operation is notoriously hard to vectorize, explore torch.vmap).
 PyTorch allows implicit broadcasting (e.g., adding a [Batch, 1] tensor to a [Batch, Features] tensor). While efficient, this is a massive source of silent bugs. Require explicit .unsqueeze() calls in the code so the reader can visually track how the dimensions are aligning before an operation.
+Although some functions simply wrap existing torch functions (against an earlier rule), they are sometimes there for a consistent API to prevent the case where a user using a more complex loss function, and then trying to switch it to a simpler one and having to switch to torch api or conventions which would be confusing and annoying. This is a core principle, for ease of testing. Basically it allows for easy swapping of functions/functionality that achieve a similar goal via different methods. 
+Functions that operate on sequence metrics or values (such as returns, GAE, and TD-targets) MUST support arbitrary trailing value channels `[B, T, *Channels]` (e.g. `[B, T, 1]` for single-agent scalar, `[B, T, N_players]` for MARL vector values, `[B, T, F]` for multi-objective rewards).
+Functions MUST enforce EXACT shape equality across input tensors (`assert tensor_a.shape == tensor_b.shape`) to fail fast at the origin if shapes mismatch, explicitly preventing accidental PyTorch broadcasting errors across players or features.
+Functions MUST NEVER attempt to guess semantic meanings of trailing dimensions or automatically squeeze/unsqueeze dimensions internally.
+Public functional APIs MUST enforce a Single Contract (Torch-Native First). Public functions should accept and return `torch.Tensor` directly, avoiding dynamic `isinstance` branching for NumPy arrays inside mathematical kernels.
+Functions that operate along specific axes (e.g. time $T$, action space $A$, or ensemble $N$) MUST accept explicit, defaulted `dim` parameters (`time_dim: int = 1`, `dim: int = 1`, `ensemble_dim: int = 0`). This allows functions to work on unbatched `[T, ...]`, batched `[B, T, ...]`, and ensemble `[N, B, ...]` tensors without magic rank-guessing.
+When input ranks are unambiguous (such as 1D action indices `[B]` passed to Q-value gathering with 2D Q-values `[B, A]`), functions may auto-unsqueeze (`actions.ndim == q_values.ndim - 1`) to provide friendly, ergonomic caller loops (Usability over Performance).
 If a function returns a view of a tensor rather than an allocated copy, it must be documented.
 If a function fundamentally requires a contiguous block of memory (common when reshaping after a .transpose()), use .contiguous() explicitly and document why it is necessary.
+Each function should make it's decisions clear. Functions should never make decisions for the user. An example of this is with mctx and qtransforms. mctx makes the decision that the qtrasnform_by_min_max and other qtransforms will use a pesimistic value for FPU, there is no indication of this to the user, and it couples two implementation details together. We want each implementation detail to exist as a function on its own so they can be reused across papers and algorithms.
+An important part of the philosophy in deciding whether or not a simple function deserves to exist is its utility for someone experimenting. In a way the functions implemented in the library are supposed to tell users what is "possible". An example of this (at the moment) is the dynamic_dirachlet_alpha it tells users that its possible to use that in an algorithm, instead of simply inlining that idea into an algorithm, which would make it easier to forget about its existence and miss, and force the user to dive into the papers or examples to discover its existence, instead of documentation or the library. 
 
 TorchRL-like conventions
 Never blindly zero-out values using a generic done mask. If an episode is Truncated (hit a time limit), the state still has a bootstrap value, and masking it to 0 artificially corrupts the value function. Your functional TD-learning and return functions must explicitly expect terminated masks, not generic done masks
 
 Relative imports (from .utils import ...) internally is the production best practice. PyTorch does exactly this — torch/nn/modules/linear.py uses from .module import Module, from ..parameter import Parameter. 
+
+*atomic_rl/metrics/*
+This package contains pure evaluation metrics and their respective visualizations, organized by semantic domain (e.g., plasticity, explained_variance, distributional, traces, saliency).
+- Dual Visualization Ecosystem:
+  1. Paper-Quality Visualizations (Matplotlib): Styled for direct inclusion in scientific papers (clean typography, high DPI, proper axis labels, clear palettes, grayscale readability).
+  2. Live Experiment Tracking (Weights & Biases / wandb): Formatted as lightweight dictionary payloads, Tables, or Images suitable for real-time monitoring during training runs.
+- Metrics & Visualization Symmetry:
+  As a rule of thumb, all metrics should have a respective visualization (and conversely, visualizations should be accompanied by clear underlying metric calculations unless the visualization is computed from raw values available during training). Related computation and visualization functions should live together in the corresponding domain file (e.g., `atomic_rl/metrics/plasticity.py` contains both `compute_dead_units_proportion` and `plot_plasticity_correlates`).
 
 *examples/*
 This layer contains examples of how to use the functions in the functional layer.
@@ -91,7 +108,20 @@ All components should make their behaviour clear. It should not be possible for 
 *envs/* 
 This layer contains the environments used in the examples.
 These environments are not only gym or RL environments, they can also be any function that returns data/examples that can be used to train or learn a model.
-Some examples of what should exist here: 
+By default, if an environment exists in a major standard library, use that library instead of creating a new one or re-inventing the wheel. 
+
+Standard Environment Library Guidelines (What to use and when)
+- Single-Agent Control & Atari: Use Gymnasium (`gym.make("CartPole-v1")`, `gym.make("Pendulum-v1")`, `gym.make("PongNoFrameskip-v4")`).
+- Continuous Control & Robotics: Use MuJoCo via Gymnasium (`gym.make("HalfCheetah-v4")`, `gym.make("Hopper-v4")`).
+- Multi-Agent & Board/Card Games: Use PettingZoo (`pettingzoo.classic.tictactoe_v3`, `pettingzoo.classic.leduc_holdem_v4`, `pettingzoo.classic.connect_four_v6`).
+- Grid Worlds & Symbolic Navigation: Use MiniGrid (`minigrid`) or standard Gymnasium environments.
+- Game-Theoretic Benchmarks: Use PettingZoo or OpenSpiel / RLCard.
+- Real-Time Strategy: Use MicroRTS (`gym_microrts`).
+
+Custom environments inside `atomic_rl/envs/` (under `mdp/`, `streams/`, or `custom/`) are ONLY permitted when an environment does not exist in standard libraries or is modified for a specific research requirement (e.g. Sutton's non-stationary tracking streams, synthetic plasticity tasks, or Catan initial placement).
+The `envs/functions` folder should include pure helper functions for envs (e.g., hand-coded dynamics functions for search algorithms). 
+
+Some examples of what could exist here: 
 - all gym environments
 - all openAI Gym environments
 - all deepMind Environments
@@ -101,10 +131,8 @@ Some examples of what should exist here:
 Essentially the goal here is to provide reusable "environments" that can be used to train or learn a model. Many of these will be used by the examples, but they can also be used by other examples, or by other projects. 
 These tend to be based of experiments from papers, but they don't have to be. For example the Permuted MNIST. 
 Wrappers for environments should be included here as well. Things like some of the wrappers for gym environments used in PPO for Atari. 
-By default if possible existing gym envs etc should be used instead of creating new ones. But if an env doesn't exist or needs to be modified for a specific purpose (e.g. for an algorithm), then it should be included here.
-The envs/functions folder should include helper functions for envs. Things like hand-coded dynamics functions, etc. 
-
 --- 
+
 
 Rough file structure: 
 1. 1 file per feature

@@ -1,4 +1,4 @@
-from atomic_rl.initialization import layer_init_
+from atomic_rl.networks.initialization import layer_init_
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,20 +11,19 @@ import wandb
 from tensordict import TensorDict
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
-    clipped_surrogate_loss,
-    entropy_loss,
-    probability_ratio,
-    clipped_mse_loss,
+    compute_clipped_surrogate_loss,
+    compute_entropy_loss,
+    compute_clipped_mse_loss,
 )
+from atomic_rl.losses.weighting import probability_ratio
 from torch.optim.lr_scheduler import LinearLR
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.bptt.unroll_rnn import unroll_rnn
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     flatten_rollout_buffer,
     record_truncations_,
     get_rollout_next_values,
@@ -32,9 +31,12 @@ from atomic_rl.buffers.rollout import (
     yield_sequential_minibatches,
 )
 from atomic_rl.utils import (
-    standardize_tensor,
-    to_tensor,
     to_numpy_action,
+)
+from atomic_rl.normalization import (
+    standardize_tensor,
+)
+from atomic_rl.envs.utils import (
     extract_vector_env_final_obs,
 )
 from atomic_rl.envs.wrappers import (
@@ -262,8 +264,7 @@ def train_ppo(use_lstm: bool = False):
         shapes["dones"] = ()
 
     buffer = init_rollout_buffer(
-        steps_per_env=STEPS_PER_ENV,
-        num_envs=NUM_ENVS,
+        capacity=(NUM_ENVS, STEPS_PER_ENV),
         shapes=shapes,
         device=device,
     )
@@ -329,7 +330,7 @@ def train_ppo(use_lstm: bool = False):
 
         with torch.inference_mode():
             for step in range(STEPS_PER_ENV):
-                obs_tensor = to_tensor(obs, device=device)
+                obs_tensor = torch.as_tensor(obs, device=device)
                 if use_lstm:
                     logits, value, next_lstm_state = model(
                         obs_tensor, next_lstm_state, next_done
@@ -348,9 +349,9 @@ def train_ppo(use_lstm: bool = False):
                     "observations": obs_tensor,
                     "actions": action,
                     "logprobs": info_dict["log_prob"].detach(),
-                    "rewards": to_tensor(reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": torch.as_tensor(reward, device=device),
+                    "terminated": torch.as_tensor(terminated, device=device),
+                    "truncated": torch.as_tensor(truncated, device=device),
                     "values": value.detach(),
                     "logits": logits.detach(),
                 }
@@ -359,7 +360,7 @@ def train_ppo(use_lstm: bool = False):
 
                 # TODO: URGENT. Creating a new tensor every step in the hotloop. should do in a more efficient way, maybe some thing like the rollout buffer in PPO (possible reuse?) ie store in a rollout buffer before sending to main replay buffer. Idea being its pre allocated basically. Must consider the N-Step case.
                 transition = TensorDict(transition_data, batch_size=[NUM_ENVS])
-                store_rollout_step_(buffer=buffer, step=step, transition=transition)
+                write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
                 if "final_observation" in info:
                     env_indices, final_obs = extract_vector_env_final_obs(info)
@@ -470,7 +471,7 @@ def train_ppo(use_lstm: bool = False):
                     num_envs=NUM_ENVS,
                     num_minibatches=4,
                     initial_lstm_states=initial_lstm_state,
-                    generator=rng_key,
+                    rng_key=rng_key,
                 )
             else:
                 flat_data = flatten_rollout_buffer(buffer)
@@ -479,7 +480,7 @@ def train_ppo(use_lstm: bool = False):
                 minibatch_generator = (
                     (mb, None)
                     for mb in yield_shuffled_minibatches(
-                        flat_data, MINIBATCH_SIZE, generator=rng_key
+                        flat_data, MINIBATCH_SIZE, rng_key=rng_key
                     )
                 )
 
@@ -500,12 +501,12 @@ def train_ppo(use_lstm: bool = False):
                 )
                 mb_advantages = standardize_tensor(mb["advantages"])
 
-                pg_loss, pg_info = clipped_surrogate_loss(
+                pg_loss, pg_info = compute_clipped_surrogate_loss(
                     ratio=ratio, advantages=mb_advantages, clip_coef=CLIP_COEF
                 )
                 pg_loss = pg_loss.mean()
 
-                critic_loss, _ = clipped_mse_loss(
+                critic_loss, _ = compute_clipped_mse_loss(
                     predictions=new_values,
                     old_predictions=mb["values"],
                     targets=mb["returns"],
@@ -513,13 +514,14 @@ def train_ppo(use_lstm: bool = False):
                 )
                 critic_loss = critic_loss.mean()
 
-                ent_loss, _ = entropy_loss(dist)
+                ent_loss, _ = compute_entropy_loss(dist)
                 ent_loss = ent_loss.mean()
 
                 loss = pg_loss + CRITIC_COEFF * critic_loss + ENTROPY_COEFF * ent_loss
-                optimizer = apply_gradients_(
-                    optimizer, loss, model=model, clip_grad_norm=MAX_GRAD_NORM
-                )
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
+                optimizer.step()
 
                 # Track Metrics
                 with torch.no_grad():

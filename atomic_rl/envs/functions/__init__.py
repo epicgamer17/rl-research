@@ -1,15 +1,15 @@
+from .pettingzoo import (
+    get_agent_index,
+    get_terminal_rewards_vec,
+)
 from .tictactoe import (
     check_tictactoe_winner,
     tictactoe_dynamics_fn,
-    get_canonical_obs,
-    embeddings_to_canonical,
-    get_legal_actions_mask,
 )
 
 __all__ = [
+    "get_agent_index",
+    "get_terminal_rewards_vec",
     "check_tictactoe_winner",
     "tictactoe_dynamics_fn",
-    "get_canonical_obs",
-    "embeddings_to_canonical",
-    "get_legal_actions_mask",
 ]

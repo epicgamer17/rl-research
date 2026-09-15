@@ -1,11 +1,14 @@
 from .bairds import BairdsCounterexampleEnv
-from .grid_world import GridWorldEnv
-from .slippery_grid_world import SlipperyGridEnv
+from .random_walk import RandomWalkEnv
+from .slippery_grid_world import SlipperyGridWorldEnv
 from .armed_bandits import ArmedBanditsEnv
 
 __all__ = [
     "BairdsCounterexampleEnv",
-    "GridWorldEnv",
-    "SlipperyGridEnv",
+    "RandomWalkEnv",
+    "SlipperyGridWorldEnv",
     "ArmedBanditsEnv",
 ]
+
+
+

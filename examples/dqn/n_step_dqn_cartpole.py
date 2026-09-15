@@ -7,7 +7,8 @@ This method increases the variance of updates but reduces the bias. In a sense, 
 This idea of bootstrapping the value n steps ahead is foundational to Reinforcement Learning and extremely common. The overall concept is used in N-Step TD (TD(lambda)), GAE (for policy gradients), and Monte Carlo returns. Note, however, that TD(lambda) and GAE use an exponentially weighted sum of all possible n-step returns (all values of n). rather than a single value of n. So learning from n-step returns is a general concept that applies to many other algorithms.
 """
 
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,20 +26,16 @@ from atomic_rl.buffers.replay import (
     uniform_sample,
     make_n_step_accumulator,
 )
-from atomic_rl.losses import mse_loss
+from atomic_rl.losses import compute_mse_loss
 from atomic_rl.td import compute_q_td_target
 from atomic_rl.action_selection import (
     argmax_selector,
     gather_q_values,
     with_epsilon_greedy,
 )
-from atomic_rl.utils import (
-    to_tensor,
-    to_numpy_action,
-)
+from atomic_rl.utils import to_numpy_action
 from atomic_rl.schedules import get_linear_schedule
-from atomic_rl.optimizer import apply_gradients_
-from atomic_rl.update_target_net import hard_update_target_network_
+from atomic_rl.networks.update_target_net import hard_update_target_network_
 
 # Constants
 BATCH_SIZE = 128
@@ -133,7 +130,7 @@ for step in range(MAX_STEPS):
 
     # 2. Act (Pure function)
     with torch.inference_mode():
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
 
         predictions = model(obs_tensor)
         action, info = action_selector(
@@ -153,12 +150,12 @@ for step in range(MAX_STEPS):
     # 3. Add to Buffer
     # TODO: URGENT. Creating a new tensor every step in the hotloop. should do in a more efficient way, maybe some thing like the rollout buffer in PPO (possible reuse?) ie store in a rollout buffer before sending to main replay buffer. Idea being its pre allocated basically. Must consider the N-Step case.
     n_step_transitions = accumulate_n_step(
-        to_tensor(obs).unsqueeze(0),
+        torch.as_tensor(obs).unsqueeze(0),
         action,
-        to_tensor([reward]),
-        to_tensor(next_obs).unsqueeze(0),
-        to_tensor([terminated]),
-        to_tensor([truncated]),
+        torch.as_tensor([reward]),
+        torch.as_tensor(next_obs).unsqueeze(0),
+        torch.as_tensor([terminated]),
+        torch.as_tensor([truncated]),
     )
 
     # TODO: this is a bit yuckier than the list but also more efficient. maybe update.
@@ -183,7 +180,7 @@ for step in range(MAX_STEPS):
     # --- 3. The Update Loop ---
     if step > MIN_BUFFER_SIZE and step % UPDATE_FREQ == 0:
         # Sample
-        batch = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
+        batch, _ = uniform_sample(buffer_state, rng_key, BATCH_SIZE)
 
         # 1. Forward Passes (Online and Target)
         q_values = model(batch["obs"])
@@ -206,11 +203,13 @@ for step in range(MAX_STEPS):
         pred_sa = gather_q_values(q_values, batch["action"])
 
         # 5. Loss Calculation (Pure Primitive)
-        loss, info_dict = mse_loss(pred_sa, td_target)
+        loss, info_dict = compute_mse_loss(pred_sa, td_target)
         loss = loss.mean()
 
         # Apply Updates
-        optimizer = apply_gradients_(optimizer, loss)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
         if step % 100 == 0:
             # W&B handles scalars and histograms of tensors (like priorities) automatically.

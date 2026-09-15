@@ -1,7 +1,6 @@
 import torch
 from tensordict import TensorDict
-from typing import Tuple, Callable, List, Optional
-from ..utils import add_dirichlet_noise
+from typing import List, Tuple
 
 
 # TODO: make this work with alternating and single player games. also make work for catan (inconsistent turn ordering, ie p1 twice then p2 3 times, then p3 once)
@@ -10,65 +9,98 @@ def backpropagate_(
     tree: TensorDict,
     trajectory: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     leaf_value: torch.Tensor,
-    gamma: float = 0.99,
 ):
     """
-    Backpropagates the leaf value up the search trajectory.
+    Backpropagates the leaf value up the search trajectory in-place.
+
+    Matches mctx's `search.backward`: each edge (s_t, a_t) stores the value of
+    its child node, so that Q(s, a) = reward(s, a) + discount(s, a) * V(s') is
+    reconstructed by `get_qvalues`. In particular, an alternating zero-sum game
+    is encoded by a negative discount on the edge, which flips the perspective
+    exactly once (in `get_qvalues`), not twice.
 
     Args:
-        tree: The MCTS tree TensorDict.
-        trajectory: List of (node_idx, action_idx, mask) tuples.
-        leaf_value: The predicted value of the leaf node [B].
-        gamma: Discount factor.
+        tree: The MCTS tree TensorDict matching mctx structure.
+        trajectory: List of (node_idx, action_idx, mask) tuples from root down to leaf.
+        leaf_value: The predicted value of the leaf node [B, num_players].
     """
+    # TODO: I think this is still okay for n players. But double check
     batch_size = tree.batch_size[0]
+    num_players = tree["node_values"].shape[-1]
     device = tree.device
     batch_range = torch.arange(batch_size, device=device)
 
-    # Iterate backwards through the trajectory
-    running_value = leaf_value
+    # Fail fast on mismatched input shapes before doing any tree work.
+    assert tree["node_visits"].ndim == 2, (
+        f"tree node buffers must be flat [B, N], got shape "
+        f"{tuple(tree['node_visits'].shape)}"
+    )
+    assert leaf_value.shape == (
+        batch_size,
+        num_players,
+    ), f"leaf_value shape mismatch: expected [{batch_size}, {num_players}], got {tuple(leaf_value.shape)}"
+
+    # Running return starts at the evaluated leaf node value.
+    # The leaf node itself was initialized by expand_node_ (node_visits=1,
+    # node_values=raw value), matching mctx's update_tree_node, so backprop does
+    # not touch it again.
+    running_value = leaf_value.clone()  # [B, num_players]
+
+    # Iterate backwards through trajectory (leaf -> root)
     for node_idx, action_idx, mask in reversed(trajectory):
-        # 1. Select only active elements for this step
-        # This prevents over-counting visits for elements that hit a leaf early.
         b_idx = batch_range[mask]
         n_idx = node_idx[mask]
         a_idx = action_idx[mask]
 
-        # 2. Update visit counts
+        if b_idx.numel() == 0:
+            continue
+
+        # Fetch reward and discount for transition from (n_idx, a_idx)
+        rewards = tree["children_rewards"][
+            b_idx, n_idx, a_idx
+        ]  # [b_active, num_players]
+        discounts = tree["children_discounts"][
+            b_idx, n_idx, a_idx
+        ]  # [b_active, num_players]
+
+        # Accumulate return for parent node s_t: G_t = R_t + discount_t * G_{t+1}
+        step_return = (
+            rewards + discounts * running_value[b_idx]
+        )  # [b_active, num_players]
+        running_value[b_idx] = step_return
+
+        # Store the child node value on the edge (mctx semantics), so that
+        # get_qvalues computes Q(s, a) = reward + discount * V(s'). Every
+        # trajectory edge points at a child that was already expanded (the
+        # deepest edge is the leaf just expanded by expand_node_), so the child
+        # index is always valid (>= 0).
+        child_idx = tree["children_index"][b_idx, n_idx, a_idx]
+        tree["children_values"][b_idx, n_idx, a_idx] = tree["node_values"][
+            b_idx, child_idx
+        ]
+
+        # Update parent node (s_t) statistics (includes Root node at t=0)
+        tree["node_visits"][b_idx, n_idx] += 1
+        n_visits = (
+            tree["node_visits"][b_idx, n_idx]
+            .unsqueeze(-1)
+            .to(tree["node_values"].dtype)
+        )
+
+        old_node_v = tree["node_values"][b_idx, n_idx]
+        tree["node_values"][b_idx, n_idx] += (step_return - old_node_v) / n_visits
+
+        # Update child edge (s_t, a_t) visit statistics
         tree["children_visits"][b_idx, n_idx, a_idx] += 1
 
-        # 3. Update Q-value (Running Mean)
-        q = tree["children_q_values"][b_idx, n_idx, a_idx]
-        n = tree["children_visits"][b_idx, n_idx, a_idx]
+        # Update tree-wide min and max statistics for acting player (MuZero MinMaxStats)
+        if "tree_min_value" in tree.keys():
+            parent_player = tree["to_play"][b_idx, n_idx].unsqueeze(-1)
+            acting_return = step_return.gather(1, parent_player).squeeze(-1)
+            tree["tree_min_value"][b_idx] = torch.minimum(
+                tree["tree_min_value"][b_idx], acting_return
+            )
+            tree["tree_max_value"][b_idx] = torch.maximum(
+                tree["tree_max_value"][b_idx], acting_return
+            )
 
-        # 4. MuZero style: include discounted reward in the return
-        # If parent and child are the same player, values align.
-        # If they are different (zero-sum), we flip the perspective.
-        next_n_idx = tree["children_index"][b_idx, n_idx, a_idx]
-        parent_player = tree["to_play"][b_idx, n_idx]
-        child_player = tree["to_play"][b_idx, next_n_idx]
-
-        is_same_player = (parent_player == child_player).float()
-        perspective_multiplier = is_same_player * 1.0 + (1.0 - is_same_player) * -1.0
-
-        reward = tree["children_rewards"][b_idx, n_idx, a_idx]
-        running_value_masked = (
-            reward + gamma * running_value[mask] * perspective_multiplier
-        )
-        running_value[mask] = running_value_masked
-
-        # 5. Update Q-value
-        new_q = (q * (n - 1) + running_value[mask]) / n
-        tree["children_q_values"][b_idx, n_idx, a_idx] = new_q
-
-        # 6. Update Min-Max Q-values for scaling
-        # We update the min/max for the whole batch element based on the new Q-value
-        # Use scatter_reduce or a loop? For simplicity and since b_idx is often small,
-        # we can use a simpler approach.
-        # Actually, running_value[mask] is the new G, and new_q is the mean.
-        # MuZero updates min/max using the Q-values.
-
-        # We need to handle the case where multiple elements in the batch have the same index?
-        # In MCTS, b_idx is unique within a step.
-        tree["min_q"][b_idx] = torch.min(tree["min_q"][b_idx], new_q)
-        tree["max_q"][b_idx] = torch.max(tree["max_q"][b_idx], new_q)

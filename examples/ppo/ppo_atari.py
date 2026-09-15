@@ -1,7 +1,8 @@
 # Fully Generated
 # TODO: compare with 37 implementation details of PPO results
 # TODO: attempt a cleanup if possible
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,32 +13,32 @@ import random
 import wandb
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_gae
 from atomic_rl.losses import (
-    clipped_surrogate_loss,
-    entropy_loss,
-    probability_ratio,
-    clipped_mse_loss,
-    mse_loss,
+    compute_clipped_surrogate_loss,
+    compute_entropy_loss,
+    compute_clipped_mse_loss,
+    compute_mse_loss,
 )
+from atomic_rl.losses.weighting import probability_ratio
 from torch.optim.lr_scheduler import LinearLR
-from atomic_rl.metrics import compute_explained_variance
+from atomic_rl.metrics.explained_variance import compute_explained_variance
 from atomic_rl.buffers.rollout import (
     init_rollout_buffer,
-    store_rollout_step_,
+    write_rollout_step_,
     record_truncations_,
     get_rollout_next_values,
     yield_shuffled_minibatches,
 )
 from atomic_rl.utils import (
     ema_update,
-    standardize_tensor,
-    to_tensor,
     to_numpy_action,
 )
+from atomic_rl.normalization import (
+    standardize_tensor,
+)
 from atomic_rl.envs.wrappers import FireResetEnv
-from atomic_rl.networks import AtariCNN
+from atomic_rl.networks.architectures import AtariCNN
 from tensordict import TensorDict
 
 # Constants
@@ -141,8 +142,7 @@ shapes = {
     "logits": (num_actions,),
 }
 buffer = init_rollout_buffer(
-    steps_per_env=STEPS_PER_ENV,
-    num_envs=NUM_ENVS,
+    capacity=(NUM_ENVS, STEPS_PER_ENV),
     shapes=shapes,
     device=device,
 )
@@ -176,7 +176,7 @@ for iteration in range(MAX_ITERATIONS):
     with torch.inference_mode():
         for step in range(STEPS_PER_ENV):
             # Atari observations are [C, H, W] after wrappers
-            obs_tensor = to_tensor(obs, device=device)
+            obs_tensor = torch.as_tensor(obs, device=device)
             logits, value = model(obs_tensor)
 
             dist = torch.distributions.Categorical(logits=logits)
@@ -197,19 +197,19 @@ for iteration in range(MAX_ITERATIONS):
                     "observations": obs_tensor,
                     "actions": action,
                     "logprobs": info_dict["log_prob"].detach(),
-                    "rewards": to_tensor(clipped_reward, device=device),
-                    "terminated": to_tensor(terminated, device=device),
-                    "truncated": to_tensor(truncated, device=device),
+                    "rewards": torch.as_tensor(clipped_reward, device=device),
+                    "terminated": torch.as_tensor(terminated, device=device),
+                    "truncated": torch.as_tensor(truncated, device=device),
                     "values": value.detach(),
                     "logits": logits.detach(),
                 },
                 batch_size=[NUM_ENVS],
             )
-            store_rollout_step_(buffer=buffer, step=step, transition=transition)
+            write_rollout_step_(buffer=buffer, step=step, transition=transition)
 
             # 4. Handle Truncations (Gymnasium auto-resets)
             if "final_observation" in info:
-                from atomic_rl.utils import extract_vector_env_final_obs
+                from atomic_rl.envs.utils import extract_vector_env_final_obs
 
                 env_indices, final_obs = extract_vector_env_final_obs(info)
                 # Filter to only record environments that were truncated
@@ -218,8 +218,8 @@ for iteration in range(MAX_ITERATIONS):
                     record_truncations_(
                         buffer=buffer,
                         step=step,
-                        truncated_envs=to_tensor(env_indices[trunc_mask], device),
-                        final_observations=to_tensor(final_obs[trunc_mask], device),
+                        truncated_envs=torch.as_tensor(env_indices[trunc_mask], device=device),
+                        final_observations=torch.as_tensor(final_obs[trunc_mask], device=device),
                     )
 
             if "final_info" in info:
@@ -274,7 +274,7 @@ for iteration in range(MAX_ITERATIONS):
     for epoch in range(UPDATE_EPOCHS):
         epoch_kls = []
         for mb in yield_shuffled_minibatches(
-            flat_data, MINIBATCH_SIZE, generator=rng_key
+            flat_data, MINIBATCH_SIZE, rng_key=rng_key
         ):
             # Re-evaluate model on minibatch
             new_logits, new_values = model(mb["observations"])
@@ -293,7 +293,7 @@ for iteration in range(MAX_ITERATIONS):
             mb_advantages = mb["advantages"]
             mb_advantages = standardize_tensor(mb_advantages)
 
-            pg_loss, pg_info = clipped_surrogate_loss(
+            pg_loss, pg_info = compute_clipped_surrogate_loss(
                 ratio=ratio,
                 advantages=mb_advantages,
                 clip_coef=CLIP_COEF,
@@ -301,7 +301,7 @@ for iteration in range(MAX_ITERATIONS):
             pg_loss = pg_loss.mean()
 
             # 2. Value Loss
-            critic_loss, _ = clipped_mse_loss(
+            critic_loss, _ = compute_clipped_mse_loss(
                 predictions=new_values,
                 old_predictions=mb["values"],
                 targets=mb["returns"],
@@ -310,16 +310,17 @@ for iteration in range(MAX_ITERATIONS):
             critic_loss = critic_loss.mean()
 
             # 3. Entropy Loss
-            ent_loss, _ = entropy_loss(dist)
+            ent_loss, _ = compute_entropy_loss(dist)
             ent_loss = ent_loss.mean()
 
             # Total Loss
             loss = pg_loss + CRITIC_COEFF * critic_loss + ENTROPY_COEFF * ent_loss
 
             # Backprop
-            optimizer = apply_gradients_(
-                optimizer, loss, model=model, clip_grad_norm=MAX_GRAD_NORM
-            )
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
+            optimizer.step()
 
             # Metrics tracking
             with torch.no_grad():
@@ -338,9 +339,8 @@ for iteration in range(MAX_ITERATIONS):
     # Logging
     if iteration % 10 == 0:
         explained_var = compute_explained_variance(
-            flat_returns.detach().cpu().numpy(),
-            flat_data["values"].detach().cpu().numpy(),
-        )
+            flat_returns, flat_data["values"]
+        ).item()
 
         log_dict = {
             "learning_rate": scheduler.get_last_lr()[0],

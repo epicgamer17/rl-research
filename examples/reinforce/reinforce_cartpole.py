@@ -8,7 +8,8 @@ Introduces policy gradient, simply put increase the probability of playing "good
 On-Policy Algorithm so it can't store old data. Simple places for inovation and changes, data efficiency, baseline methods/advantage computation, adding a value network, more efficient data collection, allowing for trajectories instead of only episodes, relying on Monte Carlo returns (high variance), allowing for offline data, among many others.
 """
 
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,15 +22,15 @@ import wandb
 from functools import partial
 
 from atomic_rl.action_selection import sample_distribution
-from atomic_rl.optimizer import apply_gradients_
 from atomic_rl.returns import compute_mc_returns
-from atomic_rl.losses import policy_gradient_loss
+from atomic_rl.losses import compute_policy_gradient_loss
 from atomic_rl.utils import (
     ema_update_,
+    to_numpy_action,
+)
+from atomic_rl.normalization import (
     standardize_tensor,
     scale_tensor_by_std,
-    to_tensor,
-    to_numpy_action,
 )
 
 # Constants
@@ -86,7 +87,7 @@ for episode in range(MAX_EPISODES):
     terminateds = []
     truncateds = []
     while not (terminated or truncated):
-        obs_tensor = to_tensor(obs[None, ...], device=device)
+        obs_tensor = torch.as_tensor(obs[None, ...], device=device)
         logits = actor(obs_tensor)
         dist = torch.distributions.Categorical(logits=logits)
         action, info_dict = sample_distribution(dist, explore=True)
@@ -144,7 +145,7 @@ for episode in range(MAX_EPISODES):
     advantages = scale_tensor_by_std(raw_advantages)
 
     # Others: learn a baseline with a neural network (advantage) (not done here)
-    loss, info_dict = policy_gradient_loss(
+    loss, info_dict = compute_policy_gradient_loss(
         advantages=advantages,  # NOTE: calculate this outside
         log_probs=torch.stack(log_probs),
     )
@@ -152,7 +153,9 @@ for episode in range(MAX_EPISODES):
     loss = loss.mean()
 
     # Apply Updates
-    optimizer = apply_gradients_(optimizer, loss)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
 
     if episode % 100 == 0:
         # W&B handles scalars and histograms of tensors (like priorities) automatically.

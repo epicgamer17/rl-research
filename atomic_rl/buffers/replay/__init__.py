@@ -3,10 +3,16 @@
 from .state import BufferState, PERBufferState, init_buffer, init_per_buffer
 from .write import (
     circular_write_strategy_,
-    compute_is_weights,
     reservoir_write_strategy_,
     update_priorities,
     with_per_tracking,
 )
-from .sampling import sample_per, uniform_sample
+from ...losses.weighting import compute_is_weights
+from .sampling import (
+    sample_per,
+    uniform_sample,
+    with_unroll_slicing,
+)
+from .slicing import slice_unrolls
 from .accumulate import make_n_step_accumulator, make_padded_chunk_accumulator
+from .shared_replay import SharedReplayBuffer, SharedPERBuffer

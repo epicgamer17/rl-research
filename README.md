@@ -29,7 +29,8 @@ The library ships as three flat, top-level import packages: `atomic_rl` (pure ma
 
 ```python
 import torch
-from atomic_rl.initialization import layer_init_, set_seed
+from atomic_rl.networks.initialization import layer_init_
+from atomic_rl.utils import set_seed
 from atomic_rl.action_selection import argmax_selector, with_epsilon_greedy
 from atomic_rl.td import compute_v_td_target
 from atomic_rl.networks.resnet import ResNetBlock
@@ -54,6 +55,35 @@ actions, _ = select(predictions=q_values, epsilon=0.1, num_actions=4,
 Complete, runnable algorithms (DQN, PPO, A2C, AlphaZero, MuZero, TD-learning, and more) live in the [`examples/`](examples/) directory.
 
 ---
+
+## 🌍 Supported Environments & Ecosystem
+
+`atomic-rl` integrates seamlessly with standard Python RL ecosystem libraries rather than re-inventing the wheel:
+
+| Ecosystem / Library | Target Domain | Status & Integration |
+|---|---|---|
+| **Gymnasium** | Classic Control, Box2D, Discrete & Continuous MDPs | Full Native Support (`gym.make(...)`) |
+| **MuJoCo** (`gymnasium[mujoco]`) | High-Dimensional Continuous Robotics | Full Support (`HalfCheetah-v4`, `Hopper-v4`, `Ant-v4`) |
+| **PettingZoo** (`pettingzoo[classic]`) | Multi-Agent Classic Board/Card Games & MPE | Full AEC & Parallel API Support (`tictactoe_v3`, `leduc_holdem_v4`) |
+| **Atari (ALE / Shimmy)** | Pixel-based Visual Control | Supported via Atari Wrappers (`PongNoFrameskip-v4`) |
+| **MicroRTS** (`gym_microrts`) | Multi-Discrete Real-Time Strategy | Supported via Multi-Discrete PPO |
+| **MiniGrid** (`minigrid`) | Grid-world Navigation & POMDPs | Fully Compatible |
+
+### 🧪 Demonstrated Environments in `examples/`
+
+| Category | Environment | Example Scripts |
+|---|---|---|
+| **Discrete Control** | `CartPole-v1` | `examples/dqn/`, `examples/ppo/`, `examples/actor_critic/`, `examples/stream_rl/` |
+| **Continuous Control** | `Pendulum-v1`, `HalfCheetah-v4` | `examples/ppo/ppo_pendulum.py`, `examples/ppo/ppo_mujoco.py`, `examples/actor_critic/` |
+| **Visual Control** | `PongNoFrameskip-v4` | `examples/ppo/ppo_atari.py`, `examples/ppo/ppo_lstm_atari.py` |
+| **Multi-Discrete** | `MicroRTS` | `examples/ppo/ppo_multidiscrete_microrts.py` |
+| **Multi-Agent Board Games** | `tictactoe_v3` (PettingZoo) | `examples/alphazero/alphazero_tictactoe.py`, `alphazero_mp_tictactoe.py` |
+| **Plasticity & Continual Learning** | Permuted MNIST, Bit-Flipping, ETTm2 | `examples/plasticity/`, `examples/stream_rl/` |
+| **Meta-Optimization & Tracking** | Drifting Concept, Non-Stationary Random Walk | `examples/meta_optimization/idbd_feature_selection.py`, `auto_step.py` |
+| **Tabular & Linear MDPs** | Sutton's Random Walk, Baird's Counterexample | `examples/td_learning/` |
+
+---
+
 
 ## 💡 The Philosophy: Resolving the RL Paradigm War
 
@@ -100,9 +130,10 @@ for step in range(MAX_STEPS):
     if step % UPDATE_FREQ == 0:
         batch, rng_key = sample_buffer(buffer_state, rng_key, BATCH_SIZE)
         
-        # Calculate Loss & Gradients via Pure Math
-        loss, grads = calculate_loss(params, batch)
-        params, optimizer_state = apply_gradients_(params, optimizer_state, grads)
+        # Standard PyTorch Optimization
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
         
         # Monolithic layout makes logging and tracking effortless
         wandb.log({"loss": loss, "step": step})
