@@ -125,6 +125,7 @@ This directory maintains a mapping between the research papers in this folder an
 - Metatrace Actor-Critic
 - Meta-Gradient Reinforcement Learning (Xu, van Hasselt, & Silver, NeurIPS 2018)
 - **Real-Time Recurrent Learning / RTUs** Also Real-Time Units (RTUs) (and related variants like Decoupled Neural Interfaces or SnAp-1) - basically BPTT but for stream RL.
+- https://arxiv.org/html/2411.04580v2 for Metrics for MuZero 
 
 ### Missing Features (TODO Find Papers):
 For Agent 57, we are missing:

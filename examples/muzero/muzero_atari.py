@@ -422,12 +422,13 @@ def actor_worker(
             values=TEMP_VALUES,
         )
 
+        # Generate soft visit policy targets (tau=1.0) matching MuZero pseudocode
         action_probs, root_values = run_batched_mcts(
             local_model,
             recurrent_fn,
             root_embed,
             num_simulations=num_simulations,
-            temperature=temp,
+            temperature=1.0,
             explore_dirichlet=True,
         )
 
@@ -435,9 +436,21 @@ def actor_worker(
             target_policy = action_probs[b_idx]
             root_val = root_values[b_idx].item()
 
-            dist = torch.distributions.Categorical(probs=target_policy)
-            action_idx_t, _ = sample_distribution(dist, explore=True)
-            action = action_idx_t.item()
+            if temp == 0.0:
+                action_idx_tensor, _ = argmax_selector(target_policy.unsqueeze(0))
+                action = action_idx_tensor.squeeze().item()
+            elif temp == 1.0:
+                dist = torch.distributions.Categorical(probs=target_policy)
+                action_idx_t, _ = sample_distribution(dist, explore=True)
+                action = action_idx_t.item()
+            else:
+                sampling_policy = torch.pow(target_policy, 1.0 / temp)
+                sampling_policy = sampling_policy / sampling_policy.sum(
+                    dim=-1, keepdim=True
+                )
+                dist = torch.distributions.Categorical(probs=sampling_policy)
+                action_idx_t, _ = sample_distribution(dist, explore=True)
+                action = action_idx_t.item()
 
             next_o, reward, terminated, truncated, _ = envs[b_idx].step(action)
             done = terminated or truncated

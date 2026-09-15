@@ -3,6 +3,7 @@ import torch
 from atomic_rl.returns import (
     compute_mc_returns,
     compute_n_step_returns,
+    compute_n_step_td_lambda_returns,
     compute_gae,
     compute_td_lambda_returns,
 )
@@ -536,4 +537,80 @@ def test_returns_custom_time_dim():
 
     nstep = compute_n_step_returns(r, t, t, v, nv, gamma=0.9, n=2, time_dim=0)
     assert nstep.shape == (T,)
+
+
+# ===========================================================================
+# Tests for compute_n_step_td_lambda_returns
+# ===========================================================================
+
+
+def test_n_step_td_lambda_returns_properties():
+    """Verify mathematical properties of truncated n-step TD(lambda) returns."""
+    B, T = 2, 5
+    rewards = torch.randn(B, T, 1)
+    terminated = torch.zeros(B, T, 1)
+    truncated = torch.zeros(B, T, 1)
+    values = torch.randn(B, T, 1)
+    next_values = torch.randn(B, T, 1)
+    gamma = 0.99
+    n = 3
+
+    # 1. Pure n-step equivalence when lambda = 1.0
+    res_lam1 = compute_n_step_td_lambda_returns(
+        rewards, terminated, truncated, values, next_values, gamma, td_lambda=1.0, n=n
+    )
+    expected_n = compute_n_step_returns(
+        rewards, terminated, truncated, values, next_values, gamma, n=n
+    )
+    torch.testing.assert_close(res_lam1, expected_n)
+
+    # 2. Pure 1-step equivalence when lambda = 0.0
+    res_lam0 = compute_n_step_td_lambda_returns(
+        rewards, terminated, truncated, values, next_values, gamma, td_lambda=0.0, n=n
+    )
+    expected_1 = compute_n_step_returns(
+        rewards, terminated, truncated, values, next_values, gamma, n=1
+    )
+    torch.testing.assert_close(res_lam0, expected_1)
+
+    # 3. Pure 1-step equivalence when n = 1 for any lambda
+    res_n1 = compute_n_step_td_lambda_returns(
+        rewards, terminated, truncated, values, next_values, gamma, td_lambda=0.5, n=1
+    )
+    torch.testing.assert_close(res_n1, expected_1)
+
+    # 4. Exact geometric mixture check for lambda = 0.5, n = 3:
+    # G_t^{\lambda:3} = (1 - 0.5) * G^{(1)} + (1 - 0.5) * 0.5 * G^{(2)} + 0.5^2 * G^{(3)}
+    #                = 0.5 * G^{(1)} + 0.25 * G^{(2)} + 0.25 * G^{(3)}
+    g1 = compute_n_step_returns(rewards, terminated, truncated, values, next_values, gamma, n=1)
+    g2 = compute_n_step_returns(rewards, terminated, truncated, values, next_values, gamma, n=2)
+    g3 = compute_n_step_returns(rewards, terminated, truncated, values, next_values, gamma, n=3)
+    expected_mix = 0.5 * g1 + 0.25 * g2 + 0.25 * g3
+
+    res_mix = compute_n_step_td_lambda_returns(
+        rewards, terminated, truncated, values, next_values, gamma, td_lambda=0.5, n=3
+    )
+    torch.testing.assert_close(res_mix, expected_mix)
+
+
+def test_n_step_td_lambda_returns_assertions():
+    """Verify input validation and assertions for compute_n_step_td_lambda_returns."""
+    r = torch.randn(2, 4, 1)
+    t = torch.zeros(2, 4, 1)
+    v = torch.randn(2, 4, 1)
+
+    # Invalid n < 1
+    with pytest.raises(AssertionError, match="n must be at least 1"):
+        compute_n_step_td_lambda_returns(r, t, t, v, v, gamma=0.99, td_lambda=0.5, n=0)
+
+    # Invalid td_lambda out of range
+    with pytest.raises(AssertionError, match="td_lambda must be in"):
+        compute_n_step_td_lambda_returns(r, t, t, v, v, gamma=0.99, td_lambda=1.5, n=3)
+    with pytest.raises(AssertionError, match="td_lambda must be in"):
+        compute_n_step_td_lambda_returns(r, t, t, v, v, gamma=0.99, td_lambda=-0.1, n=3)
+
+    # Shape mismatch
+    with pytest.raises(AssertionError, match="Exact shape mismatch"):
+        compute_n_step_td_lambda_returns(r, t, t, torch.randn(2, 4, 2), v, gamma=0.99, td_lambda=0.5, n=3)
+
 

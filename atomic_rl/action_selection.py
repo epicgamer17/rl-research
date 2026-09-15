@@ -1,5 +1,4 @@
-import math
-from typing import Tuple, Callable, Optional, Dict
+from typing import Tuple, Callable, Optional, Dict, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -243,10 +242,68 @@ def gather_q_values(
     return q_values.gather(dim, actions_expanded).squeeze(dim)
 
 
+def compute_dynamic_dirichlet_alpha(
+    num_actions: Optional[Union[int, torch.Tensor]] = None,
+    scale: float = 1.0,
+    power: float = 0.5,
+    mask: Optional[torch.Tensor] = None,
+) -> Union[float, torch.Tensor]:
+    """
+    Computes dynamic / adaptive Dirichlet concentration parameter alpha scaled by action count.
+
+    References:
+    - "Planning in Stochastic Environments with a Learned Model" (Stochastic MuZero)
+      Antonoglou et al., ICLR 2022 (Appendix A.3 & adaptive Dirichlet alpha = 1.0 / sqrt(len(actions)))
+    - "Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm" (AlphaZero)
+      Silver et al., Science 2018 (Dirichlet alpha scaled inversely with legal action count:
+      0.3 for chess ~35 moves, 0.15 for shogi ~92 moves, 0.03 for Go ~361 moves).
+
+    Math:
+        alpha = scale / (num_actions ** power)
+
+    Common Configurations:
+        - Stochastic MuZero (default): scale = 1.0, power = 0.5 -> alpha = 1.0 / sqrt(N)
+        - AlphaZero rule-of-thumb: scale = 10.0, power = 1.0 -> alpha = 10.0 / N
+
+    Args:
+        num_actions: Number of available or legal actions. Can be an integer or a tensor of counts [*Batch].
+            If None, `mask` must be provided to infer the count of valid actions.
+        scale: Numerator scaling constant (default: 1.0).
+        power: Exponent applied to action count (default: 0.5 for 1/sqrt(N); use 1.0 for 1/N).
+        mask: Optional boolean or binary mask [*Batch, Num_Actions]. If provided and num_actions is None,
+            num_actions is derived as mask.to(torch.float32).sum(dim=-1).
+
+    Returns:
+        float if num_actions is an int (and mask is None), or torch.Tensor if num_actions or mask is a tensor.
+    """
+    assert (
+        num_actions is not None or mask is not None
+    ), "Either num_actions or mask must be provided to compute_dynamic_dirichlet_alpha."
+
+    if num_actions is None:
+        num_actions = mask.to(torch.float32).sum(dim=-1)
+
+    if isinstance(num_actions, int):
+        assert num_actions > 0, f"num_actions must be strictly positive, got {num_actions}"
+        return float(scale / (num_actions ** power))
+
+    assert isinstance(num_actions, torch.Tensor), (
+        f"num_actions must be an int or torch.Tensor, got {type(num_actions)}"
+    )
+    assert (
+        num_actions > 0
+    ).all(), "All action counts in num_actions must be strictly positive."
+
+    return scale / torch.pow(num_actions.to(torch.float32), power)
+
+
+compute_adaptive_dirichlet_alpha = compute_dynamic_dirichlet_alpha
+
+
 def add_dirichlet_noise(
     logits: torch.Tensor,
     epsilon: float,
-    alpha: float,
+    alpha: Union[float, torch.Tensor],
     mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
@@ -258,6 +315,7 @@ def add_dirichlet_noise(
         logits: The logits to add noise to [..., Num_Actions].
         epsilon: The weight of the noise.
         alpha: The concentration parameter of the Dirichlet distribution.
+            Can be a scalar float or a tensor of shape [*Batch] or [*Batch, 1].
         mask: Optional boolean mask [..., Num_Actions] of valid actions.
 
     Returns:
@@ -272,11 +330,17 @@ def add_dirichlet_noise(
 
     # 1. Sample noise from Dirichlet distribution
     num_actions = probs.shape[-1]
-    alphas = torch.full((num_actions,), alpha, device=probs.device, dtype=probs.dtype)
-
-    # torch.distributions.Dirichlet handles batch shapes correctly via .sample()
-    dist = torch.distributions.Dirichlet(alphas)
-    noise = dist.sample(probs.shape[:-1])  # [..., Num_Actions]
+    if isinstance(alpha, (int, float)) or (isinstance(alpha, torch.Tensor) and alpha.ndim == 0):
+        alphas = torch.full((num_actions,), float(alpha), device=probs.device, dtype=probs.dtype)
+        dist = torch.distributions.Dirichlet(alphas)
+        noise = dist.sample(probs.shape[:-1])  # [..., Num_Actions]
+    else:
+        alpha_tensor = alpha.to(device=probs.device, dtype=probs.dtype)
+        if alpha_tensor.ndim < probs.ndim:
+            alpha_tensor = alpha_tensor.unsqueeze(-1)
+        alphas = alpha_tensor.expand_as(probs)
+        dist = torch.distributions.Dirichlet(alphas)
+        noise = dist.sample()  # [..., Num_Actions]
 
     if mask is not None:
         # Mask out noise for illegal actions

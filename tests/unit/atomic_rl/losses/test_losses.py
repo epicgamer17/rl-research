@@ -196,4 +196,29 @@ def test_losses_assertions():
         compute_entropy_loss(dist)
 
 
+def test_commitment_loss():
+    from atomic_rl.losses import compute_commitment_loss
+
+    continuous = torch.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+    discrete = torch.tensor([[1.0, 0.0], [0.0, 4.0]], requires_grad=True)
+    beta = 0.5
+
+    # L2 squared per row:
+    # row 0: (1-1)^2 + (2-0)^2 = 4.0 -> beta * 4.0 = 2.0
+    # row 1: (3-0)^2 + (4-4)^2 = 9.0 -> beta * 9.0 = 4.5
+    raw_loss, info = compute_commitment_loss(continuous, discrete, beta=beta)
+    expected_raw = torch.tensor([2.0, 4.5])
+    torch.testing.assert_close(raw_loss, expected_raw)
+
+    assert "loss/commitment" in info
+    assert math.isclose(info["loss/commitment"].item(), 3.25, rel_tol=1e-5)
+
+    # Check that discrete codes receive NO gradient (stop_gradient / detached)
+    loss = raw_loss.sum()
+    loss.backward()
+    assert discrete.grad is None
+    assert continuous.grad is not None
+
+
+
 

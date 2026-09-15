@@ -176,3 +176,56 @@ def test_wandb_metric_helpers():
     assert ep_dict["charts/episodic_length"] == 500
     assert ep_dict["charts/success_rate"] == 1.0
 
+
+# ==========================================
+# Tests for compute_codebook_entropy
+# ==========================================
+
+
+def test_compute_codebook_entropy():
+    from atomic_rl.metrics import compute_codebook_entropy
+
+    codebook_size = 4
+
+    # 1. Complete codebook collapse: all samples use code 0
+    collapsed_indices = torch.zeros(100, dtype=torch.long)
+    h_collapsed = compute_codebook_entropy(collapsed_indices, codebook_size=codebook_size)
+    assert h_collapsed.item() == pytest.approx(0.0, abs=1e-4)
+
+    # 2. Perfectly uniform codebook usage: 25 samples of each code (0, 1, 2, 3)
+    uniform_indices = torch.tensor([0, 1, 2, 3] * 25, dtype=torch.long)
+    h_uniform = compute_codebook_entropy(uniform_indices, codebook_size=codebook_size)
+    # Expected Shannon entropy = log(4) = 1.38629...
+    assert h_uniform.item() == pytest.approx(np.log(4), rel=1e-4)
+
+    # 3. Floating-point one-hot tensor input
+    one_hot = torch.eye(codebook_size).repeat(10, 1)  # [40, 4]
+    h_one_hot = compute_codebook_entropy(one_hot, codebook_size=codebook_size)
+    assert h_one_hot.item() == pytest.approx(np.log(4), rel=1e-4)
+
+
+def test_compute_codebook_perplexity_and_usage():
+    from atomic_rl.metrics import compute_codebook_perplexity, compute_codebook_usage
+
+    codebook_size = 4
+
+    # 1. Complete collapse: 1 active code, perplexity = 1.0
+    collapsed_indices = torch.zeros(50, dtype=torch.long)
+    perp_collapsed = compute_codebook_perplexity(collapsed_indices, codebook_size)
+    probs_col, active_col = compute_codebook_usage(collapsed_indices, codebook_size)
+    assert perp_collapsed.item() == pytest.approx(1.0, abs=1e-3)
+    assert active_col.item() == 1
+    assert probs_col[0].item() == 1.0
+    assert probs_col[1:].sum().item() == 0.0
+
+    # 2. Uniform usage: all 4 active, perplexity = 4.0
+    uniform_indices = torch.tensor([0, 1, 2, 3] * 20, dtype=torch.long)
+    perp_uniform = compute_codebook_perplexity(uniform_indices, codebook_size)
+    probs_uni, active_uni = compute_codebook_usage(uniform_indices, codebook_size)
+    assert perp_uniform.item() == pytest.approx(4.0, rel=1e-3)
+    assert active_uni.item() == 4
+    for k in range(4):
+        assert probs_uni[k].item() == pytest.approx(0.25, rel=1e-4)
+
+
+

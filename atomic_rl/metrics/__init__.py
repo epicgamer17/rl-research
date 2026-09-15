@@ -49,6 +49,10 @@ from .saliency import (
 )
 from .codebook import (
     compute_codebook_entropy,
+    compute_codebook_perplexity,
+    compute_codebook_usage,
+    plot_codebook_distribution,
+    create_wandb_codebook_metrics,
 )
 
 __all__ = [
@@ -85,4 +89,8 @@ __all__ = [
     "create_wandb_saliency_image",
     # Codebook Diagnostics
     "compute_codebook_entropy",
+    "compute_codebook_perplexity",
+    "compute_codebook_usage",
+    "plot_codebook_distribution",
+    "create_wandb_codebook_metrics",
 ]

@@ -19,6 +19,7 @@ from .transformer import (
     TransformerBlock,
     TransformerEncoder,
 )
+from .autoregressive import AutoregressivePolicyHead
 
 __all__ = [
     "NoisyLinear",
@@ -33,4 +34,5 @@ __all__ = [
     "MultiHeadSelfAttention",
     "TransformerBlock",
     "TransformerEncoder",
+    "AutoregressivePolicyHead",
 ]

@@ -5,10 +5,12 @@ import torch
 
 from atomic_rl.search import (
     init_mcts_tree,
+    make_stochastic_selection_fn,
     puct_score,
     puct_selection,
     qtransform_by_min_max,
     qtransform_identity,
+    quasi_sampling_selection,
     select_leaf,
 )
 
@@ -372,3 +374,204 @@ def test_puct_score_internal_node_masking_with_qtransform_identity():
     assert scores[0, 2].item() > min_val
     # Action 2 should have a higher score than Action 0 because Q(-0.2) > Q(-0.5)
     assert scores[0, 2].item() > scores[0, 0].item()
+
+
+def test_quasi_sampling_selection():
+    """Verify quasi-sampling formula: argmax_c [ Pr(c | as) / (N(c) + 1) ]."""
+    from atomic_rl.search.selection import quasi_sampling_selection
+
+    batch_size = 1
+    num_actions = 2
+
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, num_actions)
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=10,
+        num_actions=num_actions,
+        num_players=1,
+    )
+
+    # Set prior probabilities: Pr(c=0) ≈ 0.70, Pr(c=1) ≈ 0.30
+    tree["children_prior_logits"][0, 0] = torch.log(torch.tensor([0.70, 0.30]))
+
+    parent_nodes = torch.tensor([0], dtype=torch.long)
+
+    # 1. With N(0)=0, N(1)=0:
+    # Score(0) = 0.70 / (0 + 1) = 0.70
+    # Score(1) = 0.30 / (0 + 1) = 0.30
+    # Expected: outcome 0 selected
+    tree["children_visits"][0, 0] = torch.tensor([0, 0], dtype=torch.long)
+    c_0 = quasi_sampling_selection(tree, parent_nodes, depth=1)
+    assert c_0.item() == 0
+
+    # 2. With N(0)=1, N(1)=0:
+    # Score(0) = 0.70 / (1 + 1) = 0.35
+    # Score(1) = 0.30 / (0 + 1) = 0.30
+    # Expected: outcome 0 still selected
+    tree["children_visits"][0, 0] = torch.tensor([1, 0], dtype=torch.long)
+    c_1 = quasi_sampling_selection(tree, parent_nodes, depth=1)
+    assert c_1.item() == 0
+
+    # 3. With N(0)=2, N(1)=0:
+    # Score(0) = 0.70 / (2 + 1) ≈ 0.233
+    # Score(1) = 0.30 / (0 + 1) = 0.300
+    # Expected: outcome 1 selected!
+    tree["children_visits"][0, 0] = torch.tensor([2, 0], dtype=torch.long)
+    c_2 = quasi_sampling_selection(tree, parent_nodes, depth=1)
+    assert c_2.item() == 1
+
+
+# ==========================================
+# Tests for Generic Stochastic Selection
+# ==========================================
+
+
+def test_make_stochastic_selection_fn_routing_decision_all():
+    """Verify stochastic selector routes to decision_selection_fn when all nodes are decision nodes."""
+    batch_size = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.tensor([[10.0, 0.0], [0.0, 10.0]])
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    tree["is_chance"] = torch.zeros(batch_size, 5, dtype=torch.bool)
+
+    decision_called = []
+    chance_called = []
+
+    def mock_decision_fn(t, parent_nodes, depth, **kwargs):
+        decision_called.append(True)
+        return torch.tensor([0, 1])
+
+    def mock_chance_fn(t, parent_nodes, depth, **kwargs):
+        chance_called.append(True)
+        return torch.tensor([1, 0])
+
+    stochastic_selector = make_stochastic_selection_fn(
+        decision_selection_fn=mock_decision_fn,
+        chance_selection_fn=mock_chance_fn,
+    )
+
+    parents = torch.zeros(batch_size, dtype=torch.long)
+    selected = stochastic_selector(tree, parents, depth=0)
+
+    assert torch.equal(selected, torch.tensor([0, 1]))
+    assert len(decision_called) == 1
+    assert len(chance_called) == 0  # Chance function must not be called
+
+
+def test_make_stochastic_selection_fn_routing_chance_all():
+    """Verify stochastic selector routes to chance_selection_fn when all nodes are chance nodes."""
+    batch_size = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, 2)
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    # Mark all nodes as chance nodes
+    tree["is_chance"] = torch.ones(batch_size, 5, dtype=torch.bool)
+
+    decision_called = []
+    chance_called = []
+
+    def mock_decision_fn(t, parent_nodes, depth, **kwargs):
+        decision_called.append(True)
+        return torch.tensor([0, 0])
+
+    def mock_chance_fn(t, parent_nodes, depth, **kwargs):
+        chance_called.append(True)
+        return torch.tensor([1, 1])
+
+    stochastic_selector = make_stochastic_selection_fn(
+        decision_selection_fn=mock_decision_fn,
+        chance_selection_fn=mock_chance_fn,
+    )
+
+    parents = torch.zeros(batch_size, dtype=torch.long)
+    selected = stochastic_selector(tree, parents, depth=1)
+
+    assert torch.equal(selected, torch.tensor([1, 1]))
+    assert len(decision_called) == 0  # Decision function must not be called
+    assert len(chance_called) == 1
+
+
+def test_make_stochastic_selection_fn_heterogeneous_batch():
+    """Verify stochastic selector routes per-element when batch contains both decision and chance nodes."""
+    batch_size = 2
+    root_embeddings = torch.zeros(batch_size, 2)
+    root_logits = torch.zeros(batch_size, 2)
+    root_value = torch.zeros(batch_size, 1)
+    root_to_play = torch.zeros(batch_size, dtype=torch.long)
+
+    tree = init_mcts_tree(
+        root_embeddings,
+        root_logits,
+        root_value,
+        root_to_play,
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    # Node 0 in batch 0 is decision (False), Node 0 in batch 1 is chance (True)
+    tree["is_chance"] = torch.zeros(batch_size, 5, dtype=torch.bool)
+    tree["is_chance"][1, 0] = True
+
+    def mock_decision_fn(t, parent_nodes, depth, **kwargs):
+        return torch.tensor([0, 0])
+
+    def mock_chance_fn(t, parent_nodes, depth, **kwargs):
+        return torch.tensor([1, 1])
+
+    stochastic_selector = make_stochastic_selection_fn(
+        decision_selection_fn=mock_decision_fn,
+        chance_selection_fn=mock_chance_fn,
+    )
+
+    parents = torch.zeros(batch_size, dtype=torch.long)
+    selected = stochastic_selector(tree, parents, depth=0)
+
+    # Item 0 (decision) gets 0; Item 1 (chance) gets 1
+    assert torch.equal(selected, torch.tensor([0, 1]))
+
+
+def test_init_mcts_tree_standard_is_chance():
+    """Verify init_mcts_tree pre-allocates is_chance initialized to False."""
+    batch_size = 2
+    tree = init_mcts_tree(
+        torch.zeros(batch_size, 2),
+        torch.zeros(batch_size, 2),
+        torch.zeros(batch_size, 1),
+        torch.zeros(batch_size, dtype=torch.long),
+        num_simulations=4,
+        num_actions=2,
+        num_players=1,
+    )
+    assert "is_chance" in tree.keys()
+    assert tree["is_chance"].shape == (batch_size, 5)
+    assert tree["is_chance"].dtype == torch.bool
+    assert not tree["is_chance"].any()  # Root and pre-allocated nodes are False by default

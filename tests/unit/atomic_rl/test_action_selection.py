@@ -268,3 +268,77 @@ def test_gather_q_values_assertions():
     # Invalid 1D q_values
     with pytest.raises(AssertionError, match="Expected at least 2D q_values"):
         gather_q_values(torch.randn(2), torch.tensor([0]))
+
+
+# ==========================================
+# Tests for Dynamic / Adaptive Dirichlet Alpha
+# ==========================================
+
+
+def test_compute_dynamic_dirichlet_alpha_scalar():
+    from atomic_rl.action_selection import (
+        compute_dynamic_dirichlet_alpha,
+        compute_adaptive_dirichlet_alpha,
+    )
+
+    # Stochastic MuZero default: 1 / sqrt(N)
+    alpha_4 = compute_dynamic_dirichlet_alpha(num_actions=4)
+    assert isinstance(alpha_4, float)
+    assert alpha_4 == pytest.approx(1.0 / 2.0)
+
+    # Alias check
+    assert compute_adaptive_dirichlet_alpha is compute_dynamic_dirichlet_alpha
+
+    # AlphaZero rule-of-thumb: 10 / N
+    alpha_chess = compute_dynamic_dirichlet_alpha(num_actions=35, scale=10.0, power=1.0)
+    assert alpha_chess == pytest.approx(10.0 / 35.0)
+
+
+def test_compute_dynamic_dirichlet_alpha_from_mask():
+    from atomic_rl.action_selection import compute_dynamic_dirichlet_alpha
+
+    # Mask with shape [2, 4]: batch 0 has 4 valid, batch 1 has 1 valid
+    mask = torch.tensor([[1, 1, 1, 1], [1, 0, 0, 0]], dtype=torch.bool)
+    alphas = compute_dynamic_dirichlet_alpha(mask=mask, scale=1.0, power=0.5)
+
+    assert isinstance(alphas, torch.Tensor)
+    assert alphas.shape == (2,)
+    # batch 0: 1 / sqrt(4) = 0.5
+    # batch 1: 1 / sqrt(1) = 1.0
+    torch.testing.assert_close(alphas, torch.tensor([0.5, 1.0]))
+
+
+def test_compute_dynamic_dirichlet_alpha_assertions():
+    from atomic_rl.action_selection import compute_dynamic_dirichlet_alpha
+
+    with pytest.raises(AssertionError, match="Either num_actions or mask must be provided"):
+        compute_dynamic_dirichlet_alpha()
+
+    with pytest.raises(AssertionError, match="strictly positive"):
+        compute_dynamic_dirichlet_alpha(num_actions=0)
+
+    with pytest.raises(AssertionError, match="strictly positive"):
+        compute_dynamic_dirichlet_alpha(num_actions=torch.tensor([4, 0]))
+
+
+def test_add_dirichlet_noise_dynamic_batched():
+    from atomic_rl.action_selection import (
+        add_dirichlet_noise,
+        compute_dynamic_dirichlet_alpha,
+    )
+
+    # [B=2, Num_Actions=4]
+    logits = torch.zeros(2, 4)
+    mask = torch.tensor([[1, 1, 1, 1], [1, 1, 0, 0]], dtype=torch.bool)
+
+    alphas = compute_dynamic_dirichlet_alpha(mask=mask)
+    noisy_logits = add_dirichlet_noise(logits, epsilon=0.5, alpha=alphas, mask=mask)
+    noisy_probs = torch.softmax(noisy_logits, dim=-1)
+
+    assert noisy_probs.shape == (2, 4)
+    # Total probability per batch element sums to 1.0
+    torch.testing.assert_close(noisy_probs.sum(dim=-1), torch.ones(2))
+    # Batch 1 masked actions (2 and 3) must have exactly 0 probability
+    assert noisy_probs[1, 2].item() == 0.0
+    assert noisy_probs[1, 3].item() == 0.0
+

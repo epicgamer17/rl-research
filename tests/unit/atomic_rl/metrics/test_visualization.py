@@ -218,3 +218,41 @@ def test_plot_eval_vs_train(tmp_path):
     assert os.path.exists(save_file)
     plt.close(fig)
 
+
+def test_plot_codebook_distribution(tmp_path):
+    from atomic_rl.metrics import plot_codebook_distribution
+
+    chance_codes = torch.randint(0, 8, (100,))
+    save_file = tmp_path / "codebook_dist.png"
+
+    fig = plot_codebook_distribution(chance_codes, codebook_size=8, save_path=str(save_file))
+    assert isinstance(fig, plt.Figure)
+    assert os.path.exists(save_file)
+    plt.close(fig)
+
+
+@patch("wandb.Table")
+@patch("wandb.plot.bar")
+@patch("wandb.Histogram")
+def test_create_wandb_codebook_metrics(mock_hist, mock_bar, mock_table):
+    from atomic_rl.metrics import create_wandb_codebook_metrics
+
+    chance_codes = torch.tensor([0, 0, 1, 2, 2, 2, 3])
+    codebook_size = 4
+
+    metrics = create_wandb_codebook_metrics(
+        chance_codes, codebook_size, step=100, log_histogram=True, log_bar_chart=True
+    )
+
+    assert "codebook/entropy" in metrics
+    assert "codebook/perplexity" in metrics
+    assert "codebook/active_codes" in metrics
+    assert "codebook/uniformity" in metrics
+    assert metrics["codebook/active_codes"] == 4
+    for k in range(codebook_size):
+        assert f"codebook/code_{k}_prob" in metrics
+
+    assert "codebook/histogram" in metrics
+    assert "codebook/distribution_bar" in metrics
+
+

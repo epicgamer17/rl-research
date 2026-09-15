@@ -111,25 +111,121 @@ def puct_selection(
     return scores.argmax(dim=-1)
 
 
-# TODO: Stochastic MuZero Selection:
-# In Stochastic MuZero (ICLR 2022, Antonoglou et al.) and mctx, tree search features two alternating node types:
-# 1. Decision Nodes (is_chance=False): Choose an environment action a in {0, ..., A-1} via PUCT selection.
-# 2. Chance Nodes (is_chance=True): Choose a chance outcome/code c in {0, ..., C-1} from afterstates.
-#
-# Selection at chance nodes can be performed via:
-#   a) Quasi-sampling (argmax of prior / visit count):
-#      code = argmax(softmax(children_prior_logits) / (children_visits + 1), dim=-1)
-#   b) Categorical sampling:
-#      code = torch.multinomial(F.softmax(children_prior_logits, dim=-1), num_samples=1).squeeze(-1)
-#
-# Helper implementation pattern to build:
-# def make_stochastic_selection_fn(
-#     decision_selection_fn: Callable = puct_selection,
-#     chance_selection_fn: Optional[Callable] = None,
-#     num_actions: Optional[int] = None,
-# ) -> Callable[[TensorDict, torch.Tensor, int], torch.Tensor]:
-#     """Returns a higher-order selector branching on tree['is_chance']."""
-#     ...
+def quasi_sampling_selection(
+    tree: TensorDict,
+    parent_nodes: torch.Tensor,
+    depth: int,
+    *,
+    qtransform: Optional[Callable] = None,
+    **kwargs,
+) -> torch.Tensor:
+    """Selects chance outcomes using quasi-sampling argmax (Stochastic MuZero Eq. 4 / Footnote 1).
+
+    Formula:
+        c* = argmax_c [ Pr(c | as) / (N(as, c) + 1) ]
+
+    Args:
+        tree: The MCTS tree TensorDict.
+        parent_nodes: Parent node indices [B].
+        depth: Current tree depth.
+        qtransform: Unused in chance selection, accepted for signature compatibility.
+
+    Returns:
+        Selected chance outcome indices [B] from parent_nodes.
+    """
+    batch_size = parent_nodes.shape[0]
+    batch_range = torch.arange(batch_size, device=parent_nodes.device)
+
+    # 1. Fetch prior logits over chance codes and child visits N(c)
+    prior_logits = tree["children_prior_logits"][
+        batch_range, parent_nodes
+    ]  # [B, num_outcomes]
+    children_visits = tree["children_visits"][
+        batch_range, parent_nodes
+    ]  # [B, num_outcomes]
+
+    # 2. Convert logits to probabilities Pr(c | as)
+    prior_probs = F.softmax(prior_logits, dim=-1)
+
+    # 3. Compute quasi-sampling score: Pr(c | as) / (N(c) + 1.0)
+    scores = prior_probs / (children_visits.to(prior_probs.dtype) + 1.0)
+
+    # 4. Tiny uniform noise for tie breaking (matches mctx)
+    noise = 1e-7 * torch.rand_like(scores)
+    scores = scores + noise
+
+    # 5. Mask invalid or padded branches if present
+    legal_mask = kwargs.get("legal_mask", None)
+    if legal_mask is None:
+        legal_mask = (prior_logits > -1e7) & torch.isfinite(prior_logits)
+
+    min_val = torch.finfo(scores.dtype).min
+    scores = torch.where(legal_mask, scores, min_val)
+
+    return scores.argmax(dim=-1)
+
+
+def make_stochastic_selection_fn(
+    decision_selection_fn: Callable[[TensorDict, torch.Tensor, int], torch.Tensor],
+    chance_selection_fn: Callable[[TensorDict, torch.Tensor, int], torch.Tensor],
+) -> Callable[[TensorDict, torch.Tensor, int], torch.Tensor]:
+    r"""Creates a composite selection function routing between decision and chance nodes.
+
+    In Stochastic MuZero (Antonoglou et al., ICLR 2022), tree search alternates between
+    decision nodes (choosing environment action $a \in \mathcal{A}$) and chance / afterstate
+    nodes (choosing chance code $c \in \mathcal{C}$).
+
+    Args:
+        decision_selection_fn: Callable `(tree, parent_nodes, depth, **kwargs) -> actions [B]`
+            used for decision nodes (e.g. `puct_selection` or a pre-configured partial).
+        chance_selection_fn: Callable `(tree, parent_nodes, depth, **kwargs) -> chance_codes [B]`
+            used for chance/afterstate nodes (e.g. `quasi_sampling_selection` or a pre-configured partial).
+
+    Returns:
+        A callable selection function `(tree, parent_nodes, depth, **kwargs) -> indices [B]`
+        compatible with `select_leaf` and MCTS search algorithms.
+    """
+    assert callable(
+        decision_selection_fn
+    ), f"decision_selection_fn must be callable, got {decision_selection_fn!r}"
+    assert callable(
+        chance_selection_fn
+    ), f"chance_selection_fn must be callable, got {chance_selection_fn!r}"
+
+    def stochastic_selection_fn(
+        tree: TensorDict,
+        parent_nodes: torch.Tensor,
+        depth: int,
+        **kwargs,
+    ) -> torch.Tensor:
+        batch_size = parent_nodes.shape[0]
+        device = parent_nodes.device
+        batch_range = torch.arange(batch_size, device=device)
+
+        is_chance = tree["is_chance"][batch_range, parent_nodes]
+        assert is_chance.shape == (batch_size,), (
+            f"is_chance mask shape mismatch: expected [{batch_size}], got {tuple(is_chance.shape)}"
+        )
+        assert is_chance.dtype == torch.bool, (
+            f"is_chance mask must be boolean, got dtype {is_chance.dtype}"
+        )
+
+        # Fast path 1: All nodes at this step are decision nodes (common at even depths)
+        if not is_chance.any():
+            return decision_selection_fn(tree, parent_nodes, depth, **kwargs)
+
+        # Fast path 2: All nodes at this step are chance nodes (common at odd depths)
+        if is_chance.all():
+            return chance_selection_fn(tree, parent_nodes, depth, **kwargs)
+
+        # Heterogeneous / mixed batch: evaluate both and route per-item
+        decision_actions = decision_selection_fn(tree, parent_nodes, depth, **kwargs)
+        chance_actions = chance_selection_fn(tree, parent_nodes, depth, **kwargs)
+        return torch.where(is_chance, chance_actions, decision_actions)
+
+    return stochastic_selection_fn
+
+
 # TODO: work with Batched MCTS, batch_mcts.pdf
 # TODO: work with Vectorized MCTS
 # TODO: work iwth Batched + Vectorized MCTS

@@ -200,6 +200,114 @@ def compute_n_step_returns(
     return returns
 
 
+def compute_n_step_td_lambda_returns(
+    rewards: torch.Tensor,
+    terminated: torch.Tensor,
+    truncated: torch.Tensor,
+    values: torch.Tensor,
+    next_values: torch.Tensor,
+    gamma: float,
+    td_lambda: float,
+    n: int,
+    time_dim: int = 1,
+) -> torch.Tensor:
+    r"""
+    Computes batched truncated n-step TD(lambda) bootstrapped returns.
+
+    Reference:
+        Sutton & Barto (2018), "Reinforcement Learning: An Introduction", Section 12.1, Eq. 12.1
+        Stochastic MuZero (Antonoglou et al., ICLR 2022, Page 14)
+        MuZero Unplugged (Schrittwieser et al., 2021)
+
+    Formula:
+        G_t^{\lambda:n} = (1 - \lambda) * \sum_{m=1}^{n-1} \lambda^{m-1} G_t^{(m)} + \lambda^{n-1} G_t^{(n)}
+        where G_t^{(m)} is the m-step return: \sum_{i=0}^{m-1} \gamma^i r_{t+i} + \gamma^m (1 - terminated) V(s_{t+m})
+
+    Properties:
+        - When td_lambda == 1.0, exactly matches compute_n_step_returns(..., n=n).
+        - When td_lambda == 0.0 or n == 1, exactly matches 1-step TD returns.
+        - When 0 < td_lambda < 1, forms a normalized geometric mixture across lookahead horizons up to n.
+
+    Args:
+        rewards: Reward tensor [*Batch, T, *Channels].
+        terminated: Termination mask matching rewards shape.
+        truncated: Truncation mask matching rewards shape.
+        values: State values V(s_t) matching rewards shape.
+        next_values: Next state values V(s_{t+1}) matching rewards shape.
+        gamma: Discount factor.
+        td_lambda: Geometric decay factor lambda in [0.0, 1.0].
+        n: Truncation horizon (number of steps to look ahead, >= 1).
+        time_dim: Dimension index of the time axis (default: 1).
+
+    Returns:
+        Truncated n-step TD(lambda) returns matching rewards shape.
+        NOTE: The returned tensor is not explicitly detached.
+    """
+    assert rewards.ndim >= 1, f"Expected at least 1D rewards, got {rewards.shape}"
+    assert (
+        rewards.shape
+        == terminated.shape
+        == truncated.shape
+        == values.shape
+        == next_values.shape
+    ), (
+        f"Exact shape mismatch in n-step TD(lambda) returns! All input tensors must have the exact same shape.\n"
+        f"  rewards:     {rewards.shape}\n"
+        f"  terminated:  {terminated.shape}\n"
+        f"  truncated:   {truncated.shape}\n"
+        f"  values:      {values.shape}\n"
+        f"  next_values: {next_values.shape}"
+    )
+    assert n >= 1, f"n must be at least 1, got {n}"
+    assert 0.0 <= td_lambda <= 1.0, f"td_lambda must be in [0.0, 1.0], got {td_lambda}"
+
+    if time_dim < 0:
+        time_dim = rewards.ndim + time_dim
+    assert (
+        time_dim < rewards.ndim
+    ), f"time_dim {time_dim} is out of bounds for tensor of shape {rewards.shape}"
+
+    T = rewards.shape[time_dim]
+    done = (terminated.bool() | truncated.bool()).float()
+
+    # Base case: 1-step returns (Pure Bellman math)
+    # G_t^{(1)} = r_t + gamma * (1 - terminated_t) * V(s_{t+1})
+    current_g = rewards + gamma * (1.0 - terminated.float()) * next_values.detach()
+
+    if n == 1:
+        return current_g.clone()
+
+    # Accumulate weighted geometric mixture
+    w1 = 1.0 - td_lambda
+    total_returns = w1 * current_g.clone()
+
+    for i in range(1, n):
+        if T > i:
+            slice_all_except_last_i = [slice(None)] * rewards.ndim
+            slice_all_except_last_i[time_dim] = slice(0, T - i)
+
+            slice_shift_1 = [slice(None)] * rewards.ndim
+            slice_shift_1[time_dim] = slice(1, T - i + 1)
+
+            mask = (1.0 - done[tuple(slice_all_except_last_i)]).bool()
+            current_g[tuple(slice_all_except_last_i)] = torch.where(
+                mask,
+                rewards[tuple(slice_all_except_last_i)]
+                + gamma * current_g[tuple(slice_shift_1)],
+                current_g[tuple(slice_all_except_last_i)],
+            )
+
+        # Weight for step m = i + 1
+        if i == n - 1:
+            w = td_lambda ** i
+        else:
+            w = (1.0 - td_lambda) * (td_lambda ** i)
+
+        total_returns = total_returns + w * current_g
+
+    return total_returns
+
+
 def compute_gae(
     rewards: torch.Tensor,
     terminated: torch.Tensor,

@@ -1,5 +1,7 @@
 IMPORTANT: create a Layerwise Adaptive ObGD. Uses the norm per layer instead of across the whole network for normalization. Each layer gets its own learning rate. AC Lambda seems to do much better with this, while DQN doesn't suffer.
 
+i should rename batch_mcts to vectorized_mcts for when I implement batched mcts from the paper (multiple leafs on the same tree in parrallel).
+
 check if PPO approx kl divergence is right http://joschu.net/blog/kl-approx.html
 
 for policy based models if we do action masking on the logits we can set the logits to -infinity so that after a softmax probablity of sampling is 0

@@ -18,6 +18,7 @@ def expand_node_(
     players: torch.Tensor,  # [B] next active player to play
     legal_mask: Optional[torch.Tensor] = None,  # [B, A]
     masks: Optional[torch.Tensor] = None,  # [B] boolean mask
+    is_chance: Optional[torch.Tensor] = None,  # [B] boolean indicator for chance nodes
 ):
     """Adds newly evaluated nodes to the MCTS tree in-place for N-player games."""
     batch_size = tree.batch_size[0]
@@ -65,6 +66,14 @@ def expand_node_(
             batch_size,
         ), f"masks shape mismatch: expected [{batch_size}], got {tuple(masks.shape)}"
 
+    if is_chance is not None:
+        assert is_chance.shape == (
+            batch_size,
+        ), f"is_chance shape mismatch: expected [{batch_size}], got {tuple(is_chance.shape)}"
+        assert (
+            is_chance.dtype == torch.bool
+        ), f"is_chance must be boolean, got dtype {is_chance.dtype}"
+
     # 1. Filter active batch elements if a mask is provided
     if masks is not None:
         b_idx = batch_range[masks]
@@ -81,6 +90,10 @@ def expand_node_(
         discounts = discounts[masks]
         next_embeddings = next_embeddings[masks]
         players = players[masks]
+        if is_chance is not None:
+            active_is_chance = is_chance[masks]
+        else:
+            active_is_chance = None
 
         if legal_mask is not None:
             legal_mask = legal_mask[masks]
@@ -88,6 +101,7 @@ def expand_node_(
         b_idx = batch_range
         p_idx = parent_nodes
         a_idx = actions_taken
+        active_is_chance = is_chance
 
     # 2. Allocate new node indices per batch item
     new_node_indices = tree["node_counts"][b_idx]
@@ -124,6 +138,9 @@ def expand_node_(
 
     # A node is terminal if discounts for all players are 0.0
     tree["is_terminal"][b_idx, new_node_indices] = (discounts == 0.0).all(dim=-1)
+    tree["is_chance"][b_idx, new_node_indices] = (
+        active_is_chance if active_is_chance is not None else False
+    )
 
     # 9. Increment allocation count for active elements
     tree["node_counts"][b_idx] += 1

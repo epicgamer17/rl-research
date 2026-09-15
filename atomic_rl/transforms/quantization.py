@@ -39,17 +39,20 @@ def compute_straight_through_one_hot(
             - one_hot_st: Discretized one-hot tensor [*Batch, NumClasses] with gradient attached.
             - indices: Integer class indices [*Batch] resulting from the argmax.
     """
-    assert logits.ndim >= 1, f"logits must have at least 1 dimension, got shape {tuple(logits.shape)}"
+    assert (
+        logits.ndim >= 1
+    ), f"logits must have at least 1 dimension, got shape {tuple(logits.shape)}"
     num_classes = logits.shape[dim]
     assert num_classes >= 1, f"num_classes must be >= 1, got {num_classes}"
 
-    # TODO:
     # 1. Compute discrete argmax indices:
-    #    indices = logits.argmax(dim=dim)
+    indices = logits.argmax(dim=dim)
     # 2. Form hard one-hot:
-    #    hard_one_hot = F.one_hot(indices, num_classes=num_classes).to(dtype=logits.dtype)
+    hard_one_hot = F.one_hot(indices, num_classes=num_classes).to(dtype=logits.dtype)
+    if dim != -1 and dim != (logits.ndim - 1):
+        hard_one_hot = hard_one_hot.movedim(-1, dim)
     # 3. Apply straight-through trick:
-    #    one_hot_st = logits + (hard_one_hot - logits).detach()
+    one_hot_st = logits + (hard_one_hot - logits).detach()
     # 4. Return one_hot_st, indices
 
-    raise NotImplementedError("TODO: Implement compute_straight_through_one_hot")
+    return one_hot_st, indices

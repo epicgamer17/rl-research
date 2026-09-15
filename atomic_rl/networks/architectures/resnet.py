@@ -116,10 +116,21 @@ class ResNetBlock2d(nn.Module):
             return nn.BatchNorm2d(num_channels)
         elif self.norm_type == "group":
             return nn.GroupNorm(num_groups=min(32, num_channels), num_channels=num_channels)
+        elif self.norm_type == "layer":
+            # NOTE on LayerNorm for 2D Convolutions:
+            # In PyTorch, nn.LayerNorm operates on trailing dimensions, which requires either
+            # hardcoding spatial (H, W) shapes or permuting [B, C, H, W] -> [B, H, W, C] -> [B, C, H, W].
+            # Mathematically, GroupNorm with G=1 normalizes over all channels and spatial dimensions
+            # (C, H, W) independently for each sample, which is the exact mathematical definition
+            # of Layer Normalization for convolutional signals (Ba et al., 2016; He et al., ECCV 2018).
+            # It runs natively on contiguous NCHW tensors in a single optimized C++/CUDA kernel.
+            return nn.GroupNorm(num_groups=1, num_channels=num_channels)
         elif self.norm_type is None:
             return nn.Identity()
         else:
-            raise ValueError(f"Unsupported norm_type '{self.norm_type}'. Expected 'batch', 'group', or None.")
+            raise ValueError(
+                f"Unsupported norm_type '{self.norm_type}'. Expected 'batch', 'group', 'layer', or None."
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -247,6 +258,7 @@ class ResNetBackbone(nn.Module):
         dim (int): Spatial dimension, 1 or 2. Defaults to 2.
         pre_activation (bool): Use pre-activation layout if True. Defaults to False.
         norm_type (str, optional): Normalization type: "batch" for BatchNorm, "group" for GroupNorm,
+            "layer" for LayerNorm (GroupNorm with G=1 over C, H, W per Ba et al., 2016),
             or None for no normalization. Defaults to "batch".
     """
 
@@ -269,10 +281,14 @@ class ResNetBackbone(nn.Module):
                 return nn.BatchNorm2d(num_channels) if dim == 2 else nn.BatchNorm1d(num_channels)
             elif norm_type == "group":
                 return nn.GroupNorm(num_groups=min(32, num_channels), num_channels=num_channels)
+            elif norm_type == "layer":
+                # GroupNorm with G=1 is mathematically identical to LayerNorm (Ba et al., 2016)
+                # across channels and spatial dims, operating natively on contiguous NCHW tensors.
+                return nn.GroupNorm(num_groups=1, num_channels=num_channels)
             elif norm_type is None:
                 return nn.Identity()
             else:
-                raise ValueError(f"Unsupported norm_type '{norm_type}'")
+                raise ValueError(f"Unsupported norm_type '{norm_type}'. Expected 'batch', 'group', 'layer', or None.")
 
         self.stem = nn.Sequential(
             conv_cls(in_channels, num_filters, kernel_size=3, padding=1, bias=(norm_type is None)),

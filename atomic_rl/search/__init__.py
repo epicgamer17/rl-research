@@ -27,7 +27,13 @@ from .qtransforms import (
 )
 from .search import mcts_search
 
-from .selection import puct_score, puct_selection, select_leaf
+from .selection import (
+    make_stochastic_selection_fn,
+    puct_score,
+    puct_selection,
+    quasi_sampling_selection,
+    select_leaf,
+)
 from .tree import init_mcts_tree
 
 """

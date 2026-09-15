@@ -105,6 +105,10 @@ def init_mcts_tree(
             "is_terminal": root_embeddings.new_zeros(
                 (batch_size, max_nodes), dtype=torch.bool
             ),
+            # Chance node indicator (Stochastic MuZero)
+            "is_chance": root_embeddings.new_zeros(
+                (batch_size, max_nodes), dtype=torch.bool
+            ),
             # Tree-wide min and max value statistics (MuZero MinMaxStats) [B]
             "tree_min_value": root_embeddings.new_full((batch_size,), float("inf")),
             "tree_max_value": root_embeddings.new_full((batch_size,), float("-inf")),
@@ -134,6 +138,7 @@ def init_mcts_tree(
     tree["node_values"][:, 0] = root_value
     tree["to_play"][:, 0] = root_to_play
     tree["is_terminal"][:, 0] = False
+    tree["is_chance"][:, 0] = False
     tree["children_prior_logits"][:, 0] = masked_root_logits
     # The root is expanded once at init (mctx update_tree_node), so the first
     # selection uses sqrt(1) * pb_c * prior (argmax-prior) rather than a

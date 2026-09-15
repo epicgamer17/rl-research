@@ -71,3 +71,23 @@ def test_resnet_backbone():
     x1d = torch.randn(2, 4, 20)
     out1d = backbone1d(x1d)
     assert out1d.shape == (2, 8, 20)
+
+
+def test_resnet_v2_10_block_layernorm():
+    """Verify 10-block ResNet v2 pre-activation tower with LayerNorm matching Stochastic MuZero."""
+    tower = ResNetBackbone(
+        in_channels=16,
+        num_filters=64,
+        num_blocks=10,
+        pre_activation=True,
+        norm_type="layer",
+    )
+    x = torch.randn(2, 16, 4, 4, requires_grad=True)
+    out = tower(x)
+
+    assert out.shape == (2, 64, 4, 4)
+    loss = out.sum()
+    loss.backward()
+    assert x.grad is not None
+    assert x.grad.shape == (2, 16, 4, 4)
+

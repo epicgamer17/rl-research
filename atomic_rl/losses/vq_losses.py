@@ -51,13 +51,13 @@ def compute_commitment_loss(
     ), f"Shape mismatch: continuous {continuous_embeddings.shape} vs discrete {discrete_codes.shape}"
     assert beta >= 0.0, f"beta must be non-negative, got {beta}"
 
-    # TODO: Calculate squared L2 norm between continuous_embeddings and detached discrete_codes:
-    # detached_codes = discrete_codes.detach()
-    # raw_loss = beta * F.mse_loss(continuous_embeddings, detached_codes, reduction="none").sum(dim=-1)
-    #
-    # info = {
-    #     "loss/commitment": raw_loss.mean().detach(),
-    # }
-    # return raw_loss, info
+    # Calculate squared L2 norm between continuous_embeddings and detached discrete_codes:
+    detached_codes = discrete_codes.detach()
+    raw_loss = beta * F.mse_loss(
+        continuous_embeddings, detached_codes, reduction="none"
+    ).sum(dim=-1)
 
-    raise NotImplementedError("TODO: Implement compute_commitment_loss")
+    info = {
+        "loss/commitment": raw_loss.mean().detach(),
+    }
+    return raw_loss, info

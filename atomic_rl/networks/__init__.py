@@ -19,6 +19,7 @@ from .architectures import (
     MultiHeadSelfAttention,
     TransformerBlock,
     TransformerEncoder,
+    AutoregressivePolicyHead,
 )
 from .initialization import (
     make_gnt_init,
@@ -48,6 +49,7 @@ __all__ = [
     "MultiHeadSelfAttention",
     "TransformerBlock",
     "TransformerEncoder",
+    "AutoregressivePolicyHead",
     "make_gnt_init",
     "layer_init_",
     "lecun_uniform_",

@@ -1,228 +1,154 @@
+from typing import List, Optional, Tuple
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
 
-class SlipperyGridEnv(gym.Env):
+class SlipperyGridWorldEnv(gym.Env):
     """
-    A Standard Gym Environment for the Slippery Grid World.
+    Gymnasium environment for a 4x4 Slippery GridWorld (Single Player).
 
-    Designed for Debugging Stochastic MuZero.
+    Layout:
+        S . . .       S: Start (0, 0)
+        . H . H       .: Frozen safe ground
+        . . . H       H: Hole / Trap (Reward = -1.0, Terminal)
+        H . . G       G: Goal (3, 3) (Reward = +1.0, Terminal)
 
-    The Map:
-    - 0: Empty (Safe)
-    - 1: Agent Start
-    - 2: Wall (Bounce back)
-    - 3: Cliff (Terminates with negative reward)
-    - 4: Goal (Terminates with positive reward)
+    Actions:
+        0: UP
+        1: RIGHT
+        2: DOWN
+        3: LEFT
 
-    Stochasticity (The "Chance Codes"):
-    - 0: Intended Move (Prob = 1 - slip_prob)
-    - 1: Slip 90° Clockwise (Prob = slip_prob / 2)
-    - 2: Slip 90° Counter-Clockwise (Prob = slip_prob / 2)
+    Stochasticity (Slipping):
+        With probability 1 - slip_prob (e.g. 0.70): moves in intended direction.
+        With probability slip_prob / 2 (e.g. 0.15): slips 90 deg clockwise (CW).
+        With probability slip_prob / 2 (e.g. 0.15): slips 90 deg counter-clockwise (CCW).
+        Moving into a boundary wall bounces and stays in place.
+
+    Rewards:
+        Reaching Goal (G): +1.0 (Terminal)
+        Falling into Hole (H): -1.0 (Terminal)
+        Living step penalty: -0.01 (to encourage shortest path)
+        Timeout (max_steps): -1.0 (Terminal)
+
+    Observation:
+        One-hot float32 vector of length 16 representing current cell (row * 4 + col).
     """
 
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
+    metadata = {"render_modes": ["human"]}
 
-    def __init__(self, render_mode=None, slip_probability=0.3, max_episode_steps=100):
+    DEFAULT_MAP = [
+        "S...",
+        ".H.H",
+        "...H",
+        "H..G",
+    ]
+
+    ACTIONS = {
+        0: (-1, 0),  # UP
+        1: (0, 1),  # RIGHT
+        2: (1, 0),  # DOWN
+        3: (0, -1),  # LEFT
+    }
+
+    def __init__(
+        self,
+        grid_map: Optional[List[str]] = None,
+        slip_prob: float = 0.30,
+        max_steps: int = 30,
+    ):
         super().__init__()
+        self.map = grid_map if grid_map is not None else self.DEFAULT_MAP
+        self.height = len(self.map)
+        self.width = len(self.map[0])
+        self.slip_prob = slip_prob
+        self.max_steps = max_steps
 
-        self.slip_probability = slip_probability
-        self.max_episode_steps = max_episode_steps
-        self.render_mode = render_mode
-
-        # Default "Cliff" Map Layout
-        # 0: Empty, 1: Start, 2: Wall, 3: Cliff, 4: Goal
-        self.map_layout = np.array(
-            [
-                [0, 0, 0, 0, 0, 0],
-                [0, 2, 2, 2, 2, 0],
-                [0, 0, 0, 0, 0, 0],  # Safe path (longer)
-                [0, 3, 3, 3, 3, 4],  # Cliff path (shorter but risky)
-                [1, 0, 0, 0, 0, 0],  # Start
-            ],
-            dtype=np.int32,
+        self.num_states = self.height * self.width
+        self.action_space = gym.spaces.Discrete(4)
+        self.observation_space = gym.spaces.Box(
+            low=0.0, high=1.0, shape=(self.num_states,), dtype=np.float32
         )
 
-        self.h, self.w = self.map_layout.shape
-        self.window = None
-        self.clock = None
+        self.row = 0
+        self.col = 0
+        self.step_count = 0
 
-        # Action Space: 0:Up, 1:Right, 2:Down, 3:Left
-        self.action_space = spaces.Discrete(4)
-
-        # Observation Space: 3 Channels x Height x Width
-        # Channel 0: Agent Position (1.0 where agent is, 0.0 elsewhere)
-        # Channel 1: Hazards/Cliffs (1.0 where cliff is)
-        # Channel 2: Goal (1.0 where goal is)
-        self.observation_space = spaces.Box(
-            low=0, high=1, shape=(3, self.h, self.w), dtype=np.float32
-        )
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-
-        self.episode_step = 0
-
-        # Locate start position
-        start_indices = np.where(self.map_layout == 1)
-        self.agent_pos = np.array([start_indices[0][0], start_indices[1][0]])
-
-        # Prepare static feature maps
-        self._cliff_map = (self.map_layout == 3).astype(np.float32)
-        self._goal_map = (self.map_layout == 4).astype(np.float32)
-
-        if self.render_mode == "human":
-            self._render_frame()
-
-        return self._get_obs(), {
-            "chance": 0,
-            "legal_moves": [0, 1, 2, 3],  # All moves always valid input
-        }
-
-    def step(self, action):
-        self.episode_step += 1
-
-        # --- Stochastic Logic ---
-        # 0: Intended, 1: Slip CW, 2: Slip CCW
-        rand_val = self.np_random.random()
-        chance_outcome = 0
-        actual_move = action
-
-        if rand_val < self.slip_probability:
-            if rand_val < self.slip_probability / 2:
-                chance_outcome = 1  # Slip CW
-                actual_move = (action + 1) % 4
-            else:
-                chance_outcome = 2  # Slip CCW
-                actual_move = (action - 1) % 4
-
-        # --- Dynamics ---
-        # 0:Up, 1:Right, 2:Down, 3:Left
-        dy, dx = 0, 0
-        if actual_move == 0:
-            dy = -1
-        elif actual_move == 1:
-            dx = 1
-        elif actual_move == 2:
-            dy = 1
-        elif actual_move == 3:
-            dx = -1
-
-        target_y = self.agent_pos[0] + dy
-        target_x = self.agent_pos[1] + dx
-
-        # Boundary Check
-        if target_y < 0 or target_y >= self.h or target_x < 0 or target_x >= self.w:
-            target_y, target_x = self.agent_pos  # Hit boundary, stay put
-
-        cell_type = self.map_layout[target_y, target_x]
-
-        # Interaction Logic
-        reward = -0.1  # Step penalty
-        terminated = False
-
-        if cell_type == 2:  # Wall
-            # Bounce back to original position
-            target_y, target_x = self.agent_pos
-        elif cell_type == 3:  # Cliff
-            reward = -10.0
-            terminated = True
-        elif cell_type == 4:  # Goal
-            reward = 10.0
-            terminated = True
-
-        self.agent_pos = np.array([target_y, target_x])
-
-        truncated = self.episode_step >= self.max_episode_steps
-        if truncated:
-            reward = -10.0
-
-        if self.render_mode == "human":
-            self._render_frame()
-
-        # --- Info Dict (Crucial for Debugging) ---
-        info = {
-            "chance": chance_outcome,  # The Ground Truth Code (0, 1, or 2)
-            "actual_action": actual_move,
-            "legal_moves": [0, 1, 2, 3],  # All moves always valid input
-        }
-
-        return self._get_obs(), reward, terminated, truncated, info
-
-    def _get_obs(self):
-        obs = np.zeros((3, self.h, self.w), dtype=np.float32)
-
-        # Channel 0: Agent
-        obs[0, self.agent_pos[0], self.agent_pos[1]] = 1.0
-        # Channel 1: Cliff
-        obs[1] = self._cliff_map
-        # Channel 2: Goal
-        obs[2] = self._goal_map
-
+    def _get_obs(self) -> np.ndarray:
+        obs = np.zeros(self.num_states, dtype=np.float32)
+        obs[self.row * self.width + self.col] = 1.0
         return obs
 
-    def render(self):
-        if self.render_mode == "rgb_array":
-            return self._render_frame()
+    def reset(
+        self, seed: Optional[int] = None, options: Optional[dict] = None
+    ) -> Tuple[np.ndarray, dict]:
+        super().reset(seed=seed)
+        self.row = 0
+        self.col = 0
+        self.step_count = 0
 
-    def _render_frame(self):
-        # Optional: Simple PyGame render for human viewing
-        if self.window is None and self.render_mode == "human":
-            import pygame
-
-            pygame.init()
-            pygame.display.init()
-            self.window = pygame.display.set_mode((self.w * 64, self.h * 64))
-
-        if self.clock is None and self.render_mode == "human":
-            import pygame
-
-            self.clock = pygame.time.Clock()
-
-        # Canvas drawing
-        import pygame
-
-        canvas = pygame.Surface((self.w * 64, self.h * 64))
-        canvas.fill((255, 255, 255))
-
-        colors = {
-            0: (240, 240, 240),  # Floor
-            1: (240, 240, 240),  # Start (looks like floor)
-            2: (50, 50, 50),  # Wall
-            3: (200, 50, 50),  # Cliff
-            4: (50, 200, 50),  # Goal
+        mask = np.ones(4, dtype=bool)
+        info = {
+            "legal_moves": [0, 1, 2, 3],
+            "action_mask": mask,
+            "chance": 0,
+            "row": self.row,
+            "col": self.col,
+            "step_count": self.step_count,
         }
+        return self._get_obs(), info
 
-        for y in range(self.h):
-            for x in range(self.w):
-                color = colors.get(self.map_layout[y, x])
-                pygame.draw.rect(canvas, color, pygame.Rect(x * 64, y * 64, 64, 64))
-                pygame.draw.rect(
-                    canvas, (200, 200, 200), pygame.Rect(x * 64, y * 64, 64, 64), 1
-                )
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, dict]:
+        self.step_count += 1
+        terminated = False
+        truncated = False
 
-        # Draw Agent
-        pygame.draw.circle(
-            canvas,
-            (50, 50, 200),
-            (int((self.agent_pos[1] + 0.5) * 64), int((self.agent_pos[0] + 0.5) * 64)),
-            20,
-        )
+        # Determine actual movement direction stochastically
+        roll = self.np_random.random()
+        intended_prob = 1.0 - self.slip_prob
+        slip_half = self.slip_prob / 2.0
 
-        if self.render_mode == "human":
-            self.window.blit(canvas, (0, 0))
-            pygame.event.pump()
-            pygame.display.update()
-            self.clock.tick(self.metadata["render_fps"])
-        else:  # rgb_array
-            return np.transpose(
-                np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
-            )
+        if roll < intended_prob:
+            actual_action = action
+            chance_code = 0  # Intended
+        elif roll < intended_prob + slip_half:
+            actual_action = (action + 1) % 4  # 90 deg CW
+            chance_code = 1  # Slip CW
+        else:
+            actual_action = (action - 1) % 4  # 90 deg CCW
+            chance_code = 2  # Slip CCW
 
-    def close(self):
-        if self.window is not None:
-            import pygame
+        dr, dc = self.ACTIONS[actual_action]
+        new_row = min(max(0, self.row + dr), self.height - 1)
+        new_col = min(max(0, self.col + dc), self.width - 1)
 
-            pygame.display.quit()
-            pygame.quit()
+        self.row = new_row
+        self.col = new_col
+
+        cell = self.map[self.row][self.col]
+
+        if cell == "G":
+            reward = 1.0
+            terminated = True
+        elif cell == "H":
+            reward = -1.0
+            terminated = True
+        else:
+            reward = -0.01  # Small living step penalty
+            if self.step_count >= self.max_steps:
+                truncated = True
+                reward = -1.0
+
+        mask = np.ones(4, dtype=bool)
+        info = {
+            "legal_moves": [0, 1, 2, 3],
+            "action_mask": mask,
+            "chance": chance_code,
+            "row": self.row,
+            "col": self.col,
+            "cell": cell,
+            "step_count": self.step_count,
+        }
+        return self._get_obs(), reward, terminated, truncated, info
+
