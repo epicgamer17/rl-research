@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atomic-rl"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reinforcement learning utilities for Deep RL and the Alberta Plan: readable implementations of DQN, Rainbow, PPO, and MCTS."
 readme = "README.md"
 license = "MIT"
@@ -35,8 +35,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/epicgamer17/modular-rl"
-Repository = "https://github.com/epicgamer17/modular-rl"
+Homepage = "https://github.com/epicgamer17/atomic-rl"
+Repository = "https://github.com/epicgamer17/atomic-rl"
 
 [project.optional-dependencies]
 envs = [
